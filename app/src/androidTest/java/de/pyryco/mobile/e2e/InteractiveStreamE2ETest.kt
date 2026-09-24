@@ -15,6 +15,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
@@ -46,6 +47,7 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
+import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
@@ -60,6 +62,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Ignore
 import org.junit.Rule
@@ -128,6 +131,12 @@ class InteractiveStreamE2ETest {
     private val queuedDropDescription: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_queued_drop)
 
+    // #891: the footer's Status-sheet opener and the running-model row's unavailable note, from resources.
+    private val statusExpandDescription: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_status_expand)
+    private val runningModelUnavailable: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.status_sheet_running_model_unavailable)
+
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
@@ -150,6 +159,38 @@ class InteractiveStreamE2ETest {
 
         // 5. Match the displayed reply itself; queued prompt removal cannot offset this signal.
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+    }
+
+    /**
+     * #891: after one real turn, the Status sheet's running-model row shows what claude announced on its
+     * `system/init` line (`model_announced`). Asserts only that the row carries a non-empty value and not
+     * the unavailable note — the model name depends on the operator's claude and is never hard-coded.
+     */
+    @Test
+    fun interactiveTurn_pingPrompt_statusSheetShowsRunningModel() {
+        awaitChannelList()
+        awaitConnected()
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+        composeTestRule.onNode(hasContentDescription(statusExpandDescription)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(RUNNING_MODEL_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val shown =
+            composeTestRule
+                .onNode(hasTestTag(RUNNING_MODEL_TEST_TAG))
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.Text]
+                .joinToString("") { it.text }
+        assertTrue("running-model row is empty", shown.isNotBlank())
+        assertNotEquals(runningModelUnavailable, shown)
     }
 
     /**
@@ -319,9 +360,9 @@ class InteractiveStreamE2ETest {
     /**
      * Create-workspace-folder twin of the ping happy path (#566, Layer 3): drive the real
      * create-a-workspace-folder flow end to end against real claude, exercising the already-shipped
-     * #564 create wire and #565 recents wire. Long-press the channel-list FAB → Workspace Picker →
-     * "Create new folder…" → type a folder name → land in a fresh discussion whose workspace **is**
-     * the created folder → send the constrained ping to prove it is a usable live-session workspace →
+     * #564 create wire and #565 recents wire. Long-press the host row's add control → Add workspace
+     * (#904) → "Create new folder…" → type a folder name → the folder is selected → OK → land in a fresh
+     * discussion whose workspace **is** the created folder → send the constrained ping to prove it is a usable live-session workspace →
      * re-open the picker and confirm the folder shows in "Recent".
      *
      * **Reachability (the material difference from #537).** The create affordance is **ungated** — it
@@ -369,6 +410,14 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onNode(hasSetTextAction()).performTextInput(folderName)
         composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
+
+        // 3b. Add workspace (#904): the created folder becomes the modal's selection and starts nothing.
+        //     OK enables once the folder is selected and the host reads connected; OK starts the chat.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasText(OK_BUTTON) and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(folderName, substring = true).onFirst().assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(OK_BUTTON) and isEnabled()).onFirst().performClick()
 
         // 4. AC-1: creating the folder navigates into a fresh discussion whose cwd is the created folder.
         //    The send button marks the thread; the workspace chip reflects the folder's basename verbatim
@@ -1890,8 +1939,8 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Long-press the same control to open the Workspace Picker — a *tap* would create a scratch chat
-     * instead (the long press routes to `ChannelListEvent.TreeHostAddLongPressed`,
+     * Long-press the same control to open that host's Add workspace modal (#904) — a *tap* would create
+     * a scratch chat instead (the long press routes to `ChannelListEvent.TreeHostAddLongPressed`,
      * `combinedClickable.onLongClick`).
      */
     private fun openWorkspacePicker() {
@@ -1972,6 +2021,9 @@ class InteractiveStreamE2ETest {
         const val CREATE_FOLDER_ROW = "Create new folder under pyry-workspace"
         const val CREATE_BUTTON = "Create"
         const val RECENT_SECTION = "Recent"
+
+        // #904: Add workspace's submit — MobileModal's fixed footer label.
+        const val OK_BUTTON = "OK"
 
         // Collision-resistant folder-name prefix: a clean single path element (lowercase alphanumerics +
         // dash — the daemon rejects empty / absolute / separator-bearing / ".." names). Suffixed with

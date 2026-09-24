@@ -19,7 +19,6 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStoreException
-import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.RelayLinkStatus
@@ -827,6 +826,7 @@ class RelayConnectionFactoryTest {
                             // double here. The subject is the shared source and its lookup, not the cache;
                             // ConversationCacheBindingInstrumentedTest owns the real binding's proof.
                             single<ConversationCache> { InertConversationCache }
+                            single { InertAttachmentStore }
                         },
                         conversationRepositoryModule(useRelay),
                     )
@@ -953,6 +953,7 @@ class RelayConnectionFactoryTest {
                         single<ConversationCache> { InertConversationCache }
                         // #932: the thread's attachment reader needs a ContentResolver; nothing here reads a file.
                         single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
+                        single { InertAttachmentStore }
                     },
                 )
             val vms = mutableListOf<androidx.lifecycle.ViewModel>()
@@ -1221,6 +1222,7 @@ class RelayConnectionFactoryTest {
                         single<ConversationCache> { InertConversationCache }
                         // #932: the thread's attachment reader needs a ContentResolver; nothing here reads a file.
                         single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
+                        single { InertAttachmentStore }
                     },
                 )
             val vms = mutableListOf<ThreadViewModel>()
@@ -1311,6 +1313,7 @@ class RelayConnectionFactoryTest {
                         single<ConversationCache> { InertConversationCache }
                         // #932: the thread's attachment reader needs a ContentResolver; nothing here reads a file.
                         single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
+                        single { InertAttachmentStore }
                     },
                 )
             var vm: ThreadViewModel? = null
@@ -1592,21 +1595,4 @@ class RelayConnectionFactoryTest {
 
         fun turn(id: Long) = envelope("turn_state", """{"conversation_id":"c","state":"thinking"}""").copy(eventId = id)
     }
-}
-
-/** Satisfies the relay source's cache dependency in Android-less JVM containers; stores nothing. */
-private object InertConversationCache : ConversationCache {
-    override suspend fun readConversations(serverId: String): List<Conversation> = emptyList()
-
-    override suspend fun writeConversations(
-        serverId: String,
-        conversations: List<Conversation>,
-    ) = Result.success(Unit)
-
-    override suspend fun removeHost(serverId: String) = Result.success(Unit)
-
-    override suspend fun removeConversation(
-        serverId: String,
-        conversationId: String,
-    ) = Result.success(Unit)
 }

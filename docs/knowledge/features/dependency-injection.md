@@ -167,6 +167,28 @@ up the same `single<ConversationCache> { InertConversationCache }` override thei
 sibling container already carried for #796's `HostConversationSource` — before
 \#797 that override was only needed where the host-list source was built.
 
+### `AttachmentStore` and context-free thread destination containers (#899)
+
+`ThreadDestinationFactory` gained a matching `attachments: AttachmentStore? = null` constructor param
+(#899), resolved the same way as `cache`: `hostConversationModule` passes `if (useRelay) get() else
+null`, and that `get()` runs inside the `single { ThreadDestinationFactory(...) }` block — so it
+resolves an `AttachmentStore` the moment `ThreadDestinationFactory` itself is resolved, not only when a
+retrieval actually runs. `AttachmentStore`'s own `single` in `appModule` builds it from
+`androidContext().noBackupFilesDir`, so any `useRelay = true` container built with no `androidContext()`
+now fails the same `MissingAndroidContextException` way `ConversationCache`'s absence did for #797 — but
+for a **wider** set of containers than #797 touched, because `ThreadDestinationFactory` is built (and so
+`attachments` is resolved) by every test that constructs a thread or literal screen's Koin graph, not
+only `RelayConnectionFactoryTest`. Four containers needed the fix in rework: the three
+`RelayConnectionFactoryTest` containers plus one each in `SettingsNavigationTest`, `ArchiveNavigationTest`
+and `LiteralScreenNavigationTest`. Each now overrides `single { InertAttachmentStore }`
+(`app/src/sharedTest/java/de/pyryco/mobile/di/InertAttachmentStore.kt`) beside its existing
+`InertConversationCache` override, for the same reason: withholding `androidContext()` from the test
+container is load-bearing on its own, so the fake keeps the missing-dependency failure loud rather than
+silently building a real Keystore/filesystem-backed store other tests are meant to prove. Production
+wiring is unchanged — see [Attachment retrieval](attachment-retrieval.md). Any future container that
+builds a thread destination under `useRelay = true` with no `androidContext()` inherits this requirement
+too.
+
 ## Testing
 
 `RelayConnectionFactoryTest.destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect`
@@ -230,6 +252,12 @@ happens-before edge instead of a plain field read. Each class's `@After` also ca
 `assertAllClosed()` before `Dispatchers.resetMain()`, because an unguarded window between building
 the container and disposing it otherwise lets a background publish resume a torn-down Main on an
 unrelated test (#726) — see [the JVM unit-test pitfall](development-verification.md#test-scheduling-and-harnesses).
+Both `HostChannelListViewModelTest` and `HostDiscussionListViewModelTest` install a dispatching
+`StandardTestDispatcher(testScheduler)` as `Main` before resolving the ViewModel in their appModule
+test, rather than relying on the class's own `UnconfinedTestDispatcher`: an unconfined `Main` lets the
+source's `Dispatchers.Default` worker run the ViewModel and the test body in place, which can carry
+`closeAndAssertStopped()` itself onto that worker and make the #726 proof vacuous (#892) — see
+[the thread-identity detail](development-verification.md#test-scheduling-and-harnesses).
 
 `ConversationRepositoryBindingTest` verifies the generated flag and resolved
 singleton against Gradle's separate `expectedUseRelayRepository` test property.
@@ -349,3 +377,6 @@ same handshake. A settled assertion after `runCurrent()` misses the
 - Host source: [Dependency injection — host conversation source and destination ownership](dependency-injection-host-conversation-source.md) (host identity, snapshot lifetime, on-disk restore, attention state, exact-host access, destination ownership, retry, demo binding); [snapshot design and coherent-lookup revision](../../specs/architecture/704-host-conversation-snapshots.md); [conversation cache](conversation-cache.md) is the on-disk store #796 wired the source to, `docs/specs/architecture/796-cached-host-conversation-list-restore.md` its plan.
 - Attention state: `docs/specs/architecture/877-conversation-attention-state.md` (#877's plan, including its Revisions entry on `ConversationViewing` and its Security review); [conversation cache § Read positions](conversation-cache.md#read-positions-877) for the persisted half; [ChannelListViewModel § state projection](channel-list-viewmodel-projection.md#attention-join-877) for the join into `hostState`. Drawing the state and its live acceptance are the blocked follow-up ticket and #676.
 - Repository selection: [Stable conversation repository](stable-conversation-repository.md) is the normal build binding; [FakeConversationRepository](conversation-repository.md#phase-1-implementation--fakeconversationrepository) is the explicit demo/test selection. The [#631 plan](../../specs/architecture/631-default-real-repository.md) records the default change on the existing #350 selector.
+- [Attachment retrieval](attachment-retrieval.md) (#899) — the `AttachmentStore` single and the
+  `ThreadDestinationFactory` `attachments` param § AttachmentStore above wires; [caching conversation
+  repository](caching-conversation-repository.md) is the consumer.

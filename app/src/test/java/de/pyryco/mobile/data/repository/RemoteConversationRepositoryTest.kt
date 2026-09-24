@@ -7820,6 +7820,191 @@ class RemoteConversationRepositoryTest {
             }
         }
 
+    // ---- #875: fold model_refusal_fallback / model_refusal_no_fallback into the thread -----------
+
+    // AC #1: each frame adds one row carrying claude's values verbatim, identity from the envelope ts.
+    @Test
+    fun modelRefusal_bothFramesFoldOneRowEachCarryingValuesVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(refusalEnvelope("c1", fallbackModel = "claude-sonnet-5", banner = "Retried\u001b[31m on sonnet"))
+            pump.push(refusalEnvelope("c1", fallbackModel = null, originalModel = "", banner = "", ts = "2026-05-31T00:00:01Z", id = 2L))
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    ThreadItem.ModelRefusal("claude-opus-5-5", "claude-sonnet-5", "Retried\u001b[31m on sonnet", false, Instant.parse(TS)),
+                    ThreadItem.ModelRefusal("", null, "", false, Instant.parse("2026-05-31T00:00:01Z")),
+                ),
+                refusalRowsOf(emissions.last()),
+            )
+        }
+
+    // AC #2: a banner the daemon cut is marked; a null report or one naming other fields is not.
+    @Test
+    fun modelRefusal_bannerNamedInTruncatedFields_isMarkedCut() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(refusalEnvelope("c1", fallbackModel = "b", truncatedFields = """["original_model","banner"]"""))
+            pump.push(refusalEnvelope("c1", fallbackModel = null, truncatedFields = """["banner"]""", ts = "2026-05-31T00:00:01Z", id = 2L))
+            pump.push(
+                refusalEnvelope(
+                    "c1",
+                    fallbackModel = "b",
+                    truncatedFields = """["original_model"]""",
+                    ts = "2026-05-31T00:00:02Z",
+                    id = 3L,
+                ),
+            )
+            pump.push(refusalEnvelope("c1", fallbackModel = "b", truncatedFields = "null", ts = "2026-05-31T00:00:03Z", id = 4L))
+            runCurrent()
+
+            assertEquals(listOf(true, true, false, false), refusalRowsOf(emissions.last()).map { it.bannerTruncated })
+        }
+
+    // AC #1: the row interleaves with messages in arrival order and routes by its conversation_id.
+    @Test
+    fun modelRefusal_interleavesInArrivalOrderAndNeverCrossRoutes() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectMessages(repo, "c1")
+            val c2 = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
+            pump.push(refusalEnvelope("c1", fallbackModel = "b", id = 2L))
+            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "refusal:fallback", "m2"), threadShape(c1.last()))
+            assertEquals(emptyList<String>(), threadShape(c2.last()))
+        }
+
+    // AC #3: (type, ts) is the join key — a repeat is one row, a new ts or the sibling type is another.
+    @Test
+    fun modelRefusal_repeatOfOneTypeAndTimestamp_foldsOnce() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(refusalEnvelope("c1", fallbackModel = "b", ts = TS))
+            pump.push(refusalEnvelope("c1", fallbackModel = "b", ts = TS, id = 2L))
+            pump.push(refusalEnvelope("c1", fallbackModel = null, ts = TS, id = 3L))
+            pump.push(refusalEnvelope("c1", fallbackModel = "b", ts = "2026-05-31T00:00:01Z", id = 4L))
+            runCurrent()
+
+            assertEquals(
+                listOf("refusal:fallback", "refusal:no-fallback", "refusal:fallback"),
+                threadShape(emissions.last()),
+            )
+        }
+
+    // AC #4: a refusal is a report — no live event, the stall stands, the model menu and rows are untouched.
+    @Test
+    fun modelRefusal_changesNoTurnStatusModelOrExistingRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            val stalls = collectStall(repo, "c1")
+            val apiRetry = collectApiRetry(repo, "c1")
+            val compacting = collectCompacting(repo, "c1")
+            val modelMenu = collectModelMenu(repo, "c1")
+            val thread = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "assistant", "partial answer", "2026-05-31T10:00:00Z"))
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            val before = thread.last()
+            pump.push(refusalEnvelope("c1", fallbackModel = "b", id = 2L))
+            pump.push(refusalEnvelope("c1", fallbackModel = null, ts = "2026-05-31T00:00:01Z", id = 3L))
+            runCurrent()
+
+            assertEquals(listOf(false, true), stalls)
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), apiRetry)
+            assertEquals(listOf(false), compacting)
+            assertEquals(listOf<ModelMenu?>(null), modelMenu)
+            assertEquals(before, thread.last().take(before.size))
+            assertEquals(listOf("m1", "refusal:fallback", "refusal:no-fallback"), threadShape(thread.last()))
+        }
+
+    // AC #4: a malformed payload or ts drops that one frame; the lone collector survives.
+    @Test
+    fun modelRefusal_malformedDropped_collectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            // Missing the required fallback_model.
+            pump.push(
+                refusalProbe(
+                    1L,
+                    "model_refusal_fallback",
+                    """{"conversation_id":"c1","original_model":"a","scope":"session","refusal_category":"x","banner":"",""" +
+                        """"truncated_fields":null,"dropped_fields":null}""",
+                ),
+            )
+            // An object where banner declares a String.
+            pump.push(
+                refusalProbe(
+                    2L,
+                    "model_refusal_no_fallback",
+                    """{"conversation_id":"c1","original_model":"a","refusal_category":"x","banner":{"n":1},""" +
+                        """"truncated_fields":null,"dropped_fields":null}""",
+                ),
+            )
+            // A string where truncated_fields declares an array.
+            pump.push(
+                refusalProbe(
+                    3L,
+                    "model_refusal_no_fallback",
+                    """{"conversation_id":"c1","original_model":"a","refusal_category":"x","banner":"",""" +
+                        """"truncated_fields":"banner","dropped_fields":null}""",
+                ),
+            )
+            // A ts that is no instant.
+            pump.push(refusalEnvelope("c1", fallbackModel = "b", ts = "yesterday", id = 4L))
+            runCurrent()
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+
+            pump.push(refusalEnvelope("c1", fallbackModel = null, id = 5L))
+            runCurrent()
+            assertEquals(listOf("refusal:no-fallback"), threadShape(emissions.last()))
+        }
+
+    // AC #4 (fail-closed): nothing is decoded without the negotiated `interactive` capability.
+    @Test
+    fun modelRefusal_capabilityGateClosedOrUnrelated_foldsNothing() =
+        runTest {
+            for (capabilities in listOf(emptySet(), setOf("something_else"))) {
+                val pump = FakeSessionPump()
+                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { capabilities })
+                val emissions = collectMessages(repo, "c1")
+                runCurrent()
+
+                pump.push(refusalEnvelope("c1", fallbackModel = "b"))
+                pump.push(refusalEnvelope("c1", fallbackModel = null, id = 2L))
+                runCurrent()
+
+                assertEquals(emptyList<String>(), threadShape(emissions.last()))
+            }
+        }
+
     // ---- #874: fold compaction_boundary into the thread as ThreadItem.CompactionBoundary ---------
 
     // AC #1: one row carrying claude's counts and the manual trigger, identity from the envelope ts.
@@ -9527,6 +9712,7 @@ class RemoteConversationRepositoryTest {
                 is ThreadItem.UnrecognizedMessage -> "unrecognized:${it.site}"
                 is ThreadItem.Banner -> "banner:${it.level}"
                 is ThreadItem.CompactionBoundary -> "compaction:${it.preTokens}->${it.postTokens}:${it.manual}"
+                is ThreadItem.ModelRefusal -> if (it.fallbackModel != null) "refusal:fallback" else "refusal:no-fallback"
             }
         }
 
@@ -10037,6 +10223,41 @@ class RemoteConversationRepositoryTest {
     /** Every [ThreadItem.CompactionBoundary] in [thread], in order (#874). */
     private fun compactionRowsOf(thread: List<ThreadItem>): List<ThreadItem.CompactionBoundary> =
         thread.filterIsInstance<ThreadItem.CompactionBoundary>()
+
+    /**
+     * A model refusal envelope (#875): `model_refusal_fallback` when [fallbackModel] is non-null, else
+     * `model_refusal_no_fallback`, each carrying exactly its own wire fields. [truncatedFields] is a raw JSON
+     * literal so a test can send `null` or an array.
+     */
+    private fun refusalEnvelope(
+        conversationId: String,
+        fallbackModel: String?,
+        originalModel: String = "claude-opus-5-5",
+        banner: String = "Claude declined this request.",
+        truncatedFields: String = "null",
+        ts: String = TS,
+        id: Long = 1L,
+    ): Envelope {
+        val common =
+            """"conversation_id":"$conversationId","original_model":"$originalModel","refusal_category":"cyber",""" +
+                """"banner":${JsonPrimitive(banner)},"truncated_fields":$truncatedFields,"dropped_fields":null"""
+        return if (fallbackModel != null) {
+            refusalProbe(id, "model_refusal_fallback", """{$common,"fallback_model":"$fallbackModel","scope":"session"}""", ts)
+        } else {
+            refusalProbe(id, "model_refusal_no_fallback", "{$common}", ts)
+        }
+    }
+
+    /** A raw model refusal envelope of [type] carrying [payload] verbatim (#875). */
+    private fun refusalProbe(
+        id: Long,
+        type: String,
+        payload: String,
+        ts: String = TS,
+    ): Envelope = Envelope(id = id, type = type, ts = ts, payload = MobileJson.parseToJsonElement(payload))
+
+    /** Every [ThreadItem.ModelRefusal] in [thread], in order (#875). */
+    private fun refusalRowsOf(thread: List<ThreadItem>): List<ThreadItem.ModelRefusal> = thread.filterIsInstance<ThreadItem.ModelRefusal>()
 
     /** Every [ThreadItem.Banner] in [thread], in order (#873). */
     private fun bannerRowsOf(thread: List<ThreadItem>): List<ThreadItem.Banner> = thread.filterIsInstance<ThreadItem.Banner>()

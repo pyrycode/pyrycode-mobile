@@ -19,11 +19,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -53,6 +64,9 @@ private val ButtonGlyphSize = 28.dp
  * navigation and the next chat opened in that slot inherited whatever the composition held. The text
  * now lives in [ComposerDraftStore], keyed per host and conversation, and reaches here through
  * [ThreadScreen]'s `draft` / `onDraftChange`.
+ *
+ * [onAnchorChanged] reports the field's window bounds with the left edge moved in to where the typed text
+ * starts, which the screen uses to place the slash-command suggestions above the field (#885).
  */
 @Composable
 fun ThreadInputBar(
@@ -62,7 +76,9 @@ fun ThreadInputBar(
     modifier: Modifier = Modifier,
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
+    onAnchorChanged: (Rect) -> Unit = {},
 ) {
+    val textInset = with(LocalDensity.current) { FieldLeadingInset.toPx() }
     // One button, two jobs (#643) — the placement desktop's #678 settled, replacing the standalone
     // foot-of-list interrupt control. Text present wins over the in-flight turn deliberately: sending
     // while the agent is busy is a shipped path (the daemon queues it and QueuedBacklog renders it,
@@ -70,21 +86,49 @@ fun ThreadInputBar(
     // it. Stop therefore owns the button exactly when the composer is empty — the state anyone
     // reaching for stop is in.
     val stopping = isBusy && text.isBlank()
+    // #885: the field keeps its own cursor, and text replaced from outside (a slash-command completion, a
+    // cleared send) puts the cursor at the end. A String-valued field would keep the old offset, so an
+    // argument typed after picking `/model` from `/mo` would land inside the name. The draft returns
+    // asynchronously, so [text] can still be the value from before the field's own latest edit
+    // ([textAtLastEdit]); that is not an outside change, and the field keeps showing its own value.
+    var fieldValue by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+    var textAtLastEdit by remember { mutableStateOf<String?>(null) }
+    val shownValue =
+        if (fieldValue.text == text || text == textAtLastEdit) {
+            fieldValue
+        } else {
+            TextFieldValue(text, TextRange(text.length))
+        }
+    // Once the draft has caught up, the pre-edit text means nothing: a send that clears back to it is an
+    // outside change like any other.
+    LaunchedEffect(text) {
+        if (text == fieldValue.text) textAtLastEdit = null
+    }
     Surface(
         shape = FieldCorner,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier =
             modifier
                 .fillMaxWidth()
-                .heightIn(min = FieldMinHeight),
+                .heightIn(min = FieldMinHeight)
+                .onGloballyPositioned { coordinates ->
+                    val bounds = coordinates.boundsInWindow()
+                    onAnchorChanged(bounds.copy(left = bounds.left + textInset))
+                },
     ) {
         Row(
             modifier = Modifier.padding(start = FieldLeadingInset, end = FieldTrailingInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BasicTextField(
-                value = text,
-                onValueChange = onTextChange,
+                value = shownValue,
+                onValueChange = { value ->
+                    fieldValue = value
+                    if (value.text != text) {
+                        textAtLastEdit = text
+                        onTextChange(value.text)
+                    }
+                },
                 // The design's `Text area` py-12: the 48dp button sets the single-line height, this
                 // keeps wrapped text off the container's edge as the field grows.
                 modifier =

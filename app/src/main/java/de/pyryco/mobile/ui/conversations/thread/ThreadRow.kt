@@ -157,7 +157,58 @@ private fun ThreadItem.listKey(): String =
         is ThreadItem.Banner -> "banner:$occurredAt"
         // The daemon's per-compaction ts, which both thread writers dedup on (`holdsCompactionBoundary`, #874).
         is ThreadItem.CompactionBoundary -> "compaction:$occurredAt"
+        // The frame type and the daemon's per-refusal ts, which both thread writers dedup on (`holdsModelRefusal`, #875).
+        is ThreadItem.ModelRefusal -> if (fallbackModel != null) "refusal:fallback:$occurredAt" else "refusal:no-fallback:$occurredAt"
     }
+
+/**
+ * How many `Agent`/`Task` calls deep each subagent tool row sits (#896), keyed by the row's
+ * [de.pyryco.mobile.data.model.Message.id] — its own `tool_use_id`. Holds only rows nested at least one
+ * level; a row absent from the map renders at top level.
+ *
+ * `parentToolUseId` is a grouping hint, not a capability (`protocol-mobile.md` § `tool_use`), so every
+ * way it can fail degrades to top level rather than to an error:
+ * - `""` is the main thread, and a row restored from the disk cache carries `""` because the cache does
+ *   not persist the field.
+ * - A parent that names no *tool row* loaded in the thread matches nothing — an older page not yet
+ *   fetched, or an id that belongs to some other kind of row.
+ * - A chain that loops back on itself stops at the first row the walk reaches twice, which counts as
+ *   top level. The daemon never sends one; this only guarantees the walk ends.
+ *
+ * Matching does not depend on list order. Each row's depth is memoised as the walk passes it, so the
+ * whole derivation is O(tool rows) however deep the nesting goes.
+ */
+internal fun toolNestingDepths(items: List<ThreadItem>): Map<String, Int> {
+    val parentOf = mutableMapOf<String, String>()
+    for (item in items) {
+        val message = (item as? ThreadItem.MessageItem)?.message ?: continue
+        val toolCall = message.toolCall ?: continue
+        if (message.role == Role.Tool && message.id.isNotEmpty()) parentOf[message.id] = toolCall.parentToolUseId
+    }
+
+    val depthOf = mutableMapOf<String, Int>()
+    for (start in parentOf.keys) {
+        // Walk up until a row whose depth is known, a top-level row, or a row already on this path.
+        val path = mutableListOf<String>()
+        val onPath = mutableSetOf<String>()
+        var current = start
+        while (current !in depthOf) {
+            path += current
+            onPath += current
+            val parent = parentOf.getValue(current)
+            if (parent.isEmpty() || parent !in parentOf || parent in onPath) break
+            current = parent
+        }
+        // A walk that stopped on a known row continues from its depth; one that stopped on a top-level
+        // row starts that row at 0. Each earlier row on the path then sits one level below the next.
+        var base = depthOf[current] ?: -1
+        for (id in path.asReversed()) {
+            base += 1
+            depthOf[id] = base
+        }
+    }
+    return depthOf.filterValues { it > 0 }
+}
 
 /**
  * This row's correlation candidacy: the echo id a backlog item may claim, or `null` when the row is not

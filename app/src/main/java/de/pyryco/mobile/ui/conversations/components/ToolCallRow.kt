@@ -1,20 +1,25 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Build
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -27,39 +32,66 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 private val MessageRowVerticalSpacing = 12.dp
-private val ToolCallCornerRadius = 12.dp
+private val ToolCallCornerRadius = 6.dp
+private val ToolCallBorderWidth = 1.dp
 private val ToolCallHorizontalPadding = 12.dp
-private val ToolCallVerticalPadding = 8.dp
-private val ToolCallHeaderGap = 8.dp
-private val ToolCallIconSize = 18.dp
+private val ToolCallTopPadding = 8.dp
+private val ToolCallCollapsedBottomPadding = 8.dp
+private val ToolCallExpandedBottomPadding = 12.dp
+private val ToolCallGap = 12.dp
+private val ToolCallTrailingGap = 6.dp
+private val ToolCallStatusIconSize = 16.dp
+private val ToolCallSpinnerSize = 14.dp
 private val ToolCallSpinnerStrokeWidth = 2.dp
-private val ToolCallExpandedTopPadding = 8.dp
-private val ToolCallExpandedGap = 8.dp
+private val ToolCallChevronSize = 16.dp
+private val ToolCallSectionCaptionGap = 4.dp
+
+// Keeps a long MCP tool name (`mcp__server__tool`) from taking the subject's whole width.
+private val ToolNameMaxWidth = 160.dp
+
+// The expanded content scrolls inside this bound rather than growing the thread row without limit.
+private val ToolCallExpandedMaxHeight = 320.dp
 
 private const val CODE_ISH_LENGTH_THRESHOLD = 80
+private const val COMMAND_FIELD = "command"
 
+/** Tags the running row's elapsed reading, so tests can assert its absence without guessing a value. */
+internal const val TOOL_ELAPSED_TAG = "tool-row-elapsed"
+
+/**
+ * One tool call in the thread (#895, Figma `134:4939` collapsed / `134:4941` expanded): the verbatim tool
+ * name, the subject picked by [toolRowSubject], a trailing status and an expand chevron. Tapping expands the
+ * input, the output once resolved and, on a denied row, claude's reason.
+ *
+ * Every string on the row — tool name, input fields, précis, output, denial — is claude's or the daemon's
+ * and renders only as inert [Text] or [CodeBlock]: never a link, a path to open, markup or a log line.
+ *
+ * `expanded` survives an in-place update (a status flip, a new elapsed reading) because the caller's
+ * keyed `LazyColumn` item keeps this call site's identity.
+ */
 @Composable
 fun ToolCallRow(
     toolCall: ToolCall,
     modifier: Modifier = Modifier,
+    subagentDepth: Int = 0,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     ToolCallRowContent(
@@ -67,113 +99,205 @@ fun ToolCallRow(
         expanded = expanded,
         onToggle = { expanded = !expanded },
         modifier = modifier,
+        subagentDepth = subagentDepth,
     )
 }
 
+/**
+ * [subagentDepth] (#896) is how many `Agent`/`Task` calls deep a subagent's call sits; above 0 the row
+ * says so in its content description. The description joins the clickable `Column`'s merged node, so a
+ * screen reader announces it with the row rather than as a separate stop, and the level carries the
+ * nesting that the caller's indent shows.
+ */
 @Composable
 private fun ToolCallRowContent(
     toolCall: ToolCall,
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    subagentDepth: Int = 0,
 ) {
-    Row(
+    val clickLabel = stringResource(if (expanded) R.string.tool_row_collapse else R.string.tool_row_expand)
+    val subagentDescription =
+        if (subagentDepth > 0) stringResource(R.string.cd_tool_subagent_step, subagentDepth) else null
+    Surface(
         modifier =
             modifier
                 .fillMaxWidth()
                 .padding(bottom = MessageRowVerticalSpacing),
+        shape = RoundedCornerShape(ToolCallCornerRadius),
+        color = MaterialTheme.colorScheme.background,
+        border = BorderStroke(ToolCallBorderWidth, MaterialTheme.colorScheme.primaryContainer),
     ) {
-        Surface(
+        Column(
             modifier =
                 Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onToggle),
-            shape = RoundedCornerShape(ToolCallCornerRadius),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ) {
-            Column(
-                modifier =
-                    Modifier.padding(
-                        horizontal = ToolCallHorizontalPadding,
-                        vertical = ToolCallVerticalPadding,
+                    .then(
+                        if (subagentDescription != null) {
+                            Modifier.semantics { contentDescription = subagentDescription }
+                        } else {
+                            Modifier
+                        },
+                    ).clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onToggle)
+                    .padding(
+                        start = ToolCallHorizontalPadding,
+                        end = ToolCallHorizontalPadding,
+                        top = ToolCallTopPadding,
+                        bottom = if (expanded) ToolCallExpandedBottomPadding else ToolCallCollapsedBottomPadding,
                     ),
-            ) {
-                CollapsedHeaderRow(toolCall)
-                if (expanded) {
-                    ExpandedBody(toolCall)
-                }
+            verticalArrangement = Arrangement.spacedBy(ToolCallGap),
+        ) {
+            HeaderRow(toolCall, expanded)
+            if (expanded) {
+                ExpandedBody(toolCall)
             }
         }
     }
 }
 
+/**
+ * The trailing status and chevron sit outside the weighted name-and-subject group: a `Row` measures its
+ * unweighted children first, so they always get their width and the subject ellipsizes into what is left.
+ */
 @Composable
-private fun CollapsedHeaderRow(toolCall: ToolCall) {
+private fun HeaderRow(
+    toolCall: ToolCall,
+    expanded: Boolean,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(ToolCallHeaderGap),
+        horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
     ) {
-        ToolCallStatusIcon(toolCall)
-        Text(
-            text = buildSummaryAnnotated(toolCall),
+        Row(
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
+        ) {
+            Text(
+                text = toolCall.toolName,
+                modifier = Modifier.widthIn(max = ToolNameMaxWidth),
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.tertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = toolRowSubject(toolCall.toolName, toolCall.inputFields, toolCall.input),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TrailingStatus(toolCall)
+        Icon(
+            imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            modifier = Modifier.size(ToolCallChevronSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
 /**
- * Leading affordance for the row, a pure function of [ToolCall.status] (#388). Keeps a fixed
- * [ToolCallIconSize] footprint in all three states so a row resolving from running → done/failed never
- * reflows. The running spinner/failed glyph are design-owed (not yet in Figma `16-28`); they follow the
- * app's Material 3 progress idiom (mirroring [ThinkingIndicator]) until the frame lands. The [Done] arm
- * is the settled design — the existing per-tool icon, unchanged.
+ * Each status has its own glyph and content description, so the four can be told apart without colour.
+ * `cd_tool_running` and `cd_tool_failed` are matched by the scripted `tool` / `tool-failed` scenarios and
+ * `ScriptedToolRowTest`. Only a running row shows claude's elapsed reading; the row runs no timer of its
+ * own, and Figma's result-count slot stays empty because `tool_result` carries no count.
  */
 @Composable
-private fun ToolCallStatusIcon(toolCall: ToolCall) {
-    when (toolCall.status) {
-        ToolCallStatus.Running -> {
-            val description = stringResource(R.string.cd_tool_running)
-            CircularProgressIndicator(
-                modifier =
-                    Modifier
-                        .size(ToolCallIconSize)
-                        .semantics { contentDescription = description },
-                strokeWidth = ToolCallSpinnerStrokeWidth,
-            )
+private fun TrailingStatus(toolCall: ToolCall) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ToolCallTrailingGap),
+    ) {
+        when (toolCall.status) {
+            ToolCallStatus.Running -> {
+                toolCall.elapsedSeconds?.let { seconds ->
+                    Text(
+                        text = formatToolElapsed(seconds),
+                        modifier = Modifier.testTag(TOOL_ELAPSED_TAG),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                val description = stringResource(R.string.cd_tool_running)
+                CircularProgressIndicator(
+                    modifier =
+                        Modifier
+                            .size(ToolCallSpinnerSize)
+                            .semantics { contentDescription = description },
+                    strokeWidth = ToolCallSpinnerStrokeWidth,
+                )
+            }
+            ToolCallStatus.Done ->
+                StatusGlyph(
+                    imageVector = Icons.Outlined.Check,
+                    description = stringResource(R.string.cd_tool_done),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            ToolCallStatus.Failed ->
+                StatusGlyph(
+                    imageVector = Icons.Outlined.ErrorOutline,
+                    description = stringResource(R.string.cd_tool_failed),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            ToolCallStatus.Denied ->
+                StatusGlyph(
+                    imageVector = Icons.Outlined.Block,
+                    description = stringResource(R.string.cd_tool_denied),
+                    tint = MaterialTheme.colorScheme.error,
+                )
         }
-        ToolCallStatus.Done ->
-            Icon(
-                imageVector = iconForTool(toolCall.toolName),
-                contentDescription = null,
-                modifier = Modifier.size(ToolCallIconSize),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        // A denied call (#811) reuses the failed presentation until #658 designs its own.
-        ToolCallStatus.Failed, ToolCallStatus.Denied ->
-            Icon(
-                imageVector = Icons.Outlined.ErrorOutline,
-                contentDescription = stringResource(R.string.cd_tool_failed),
-                modifier = Modifier.size(ToolCallIconSize),
-                tint = MaterialTheme.colorScheme.error,
-            )
     }
+}
+
+@Composable
+private fun StatusGlyph(
+    imageVector: ImageVector,
+    description: String,
+    tint: Color,
+) {
+    Icon(
+        imageVector = imageVector,
+        contentDescription = description,
+        modifier = Modifier.size(ToolCallStatusIconSize),
+        tint = tint,
+    )
 }
 
 @Composable
 private fun ExpandedBody(toolCall: ToolCall) {
     Column(
-        modifier = Modifier.padding(top = ToolCallExpandedTopPadding),
-        verticalArrangement = Arrangement.spacedBy(ToolCallExpandedGap),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = ToolCallExpandedMaxHeight)
+                .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(ToolCallGap),
     ) {
-        ExpandedSection(label = "Input", content = toolCall.input)
-        // Output arrives on the correlated `tool_result` (#387); while running it is "" — gate it so the
-        // section appears only on resolution ("on resolution it reveals the output", AC#2).
-        if (toolCall.status != ToolCallStatus.Running) {
-            ExpandedSection(label = "Output", content = toolCall.output)
+        ExpandedSection(label = stringResource(R.string.tool_row_input)) {
+            if (toolCall.inputFields.isEmpty()) {
+                ToolContent(toolCall.input, isCommand = false)
+            } else {
+                toolCall.inputFields.forEach { (key, value) -> InputField(key, value) }
+            }
+        }
+        // Output arrives on the correlated `tool_result`; a running or denied call has none.
+        if (toolCall.status == ToolCallStatus.Done || toolCall.status == ToolCallStatus.Failed) {
+            ExpandedSection(label = stringResource(R.string.tool_row_output)) {
+                ToolContent(toolCall.output, isCommand = false)
+            }
+        }
+        // A denied row restored from the disk cache has no denial and shows no reason.
+        val denial = toolCall.denial
+        if (toolCall.status == ToolCallStatus.Denied && denial != null) {
+            ExpandedSection(label = stringResource(R.string.tool_row_denial)) {
+                DenialContent(denial)
+            }
         }
     }
 }
@@ -181,85 +305,73 @@ private fun ExpandedBody(toolCall: ToolCall) {
 @Composable
 private fun ExpandedSection(
     label: String,
-    content: String,
+    content: @Composable () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(ToolCallExpandedGap / 2)) {
+    Column(verticalArrangement = Arrangement.spacedBy(ToolCallSectionCaptionGap)) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (isCodeIsh(content)) {
-            CodeBlock(content = content, language = null)
-        } else {
-            Text(
-                text = content,
-                style =
-                    MaterialTheme.typography.bodyMedium.copy(
-                        fontFamily = FontFamily.Monospace,
-                    ),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        }
+        content()
     }
 }
 
 @Composable
-private fun buildSummaryAnnotated(toolCall: ToolCall): AnnotatedString {
-    val toolNameColor = MaterialTheme.colorScheme.tertiary
-    val argColor = MaterialTheme.colorScheme.onSurfaceVariant
-    return buildAnnotatedString {
-        withStyle(SpanStyle(color = toolNameColor, fontFamily = FontFamily.Monospace)) {
-            append(toolCall.toolName)
-        }
-        withStyle(SpanStyle(color = argColor)) {
-            append(" · ")
-            append(primaryArg(toolCall))
-        }
+private fun InputField(
+    key: String,
+    value: String,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(ToolCallSectionCaptionGap)) {
+        Text(
+            text = key,
+            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        ToolContent(value, isCommand = key == COMMAND_FIELD)
     }
 }
 
-private fun primaryArg(toolCall: ToolCall): String = toolCall.input.trim()
-
-private fun iconForTool(toolName: String): ImageVector =
-    when (toolName.trim().lowercase()) {
-        "read" -> Icons.Outlined.Description
-        "edit" -> Icons.Outlined.Edit
-        "bash" -> Icons.Outlined.Terminal
-        else -> Icons.Outlined.Build
+@Composable
+private fun DenialContent(denial: ToolDenial) {
+    Column(verticalArrangement = Arrangement.spacedBy(ToolCallSectionCaptionGap)) {
+        if (denial.message.isNotEmpty()) ToolContent(denial.message, isCommand = false)
+        if (denial.decisionReason.isNotEmpty()) ToolContent(denial.decisionReason, isCommand = false)
     }
+}
+
+/** Code-like content takes the bordered 12sp code block; the rest wraps as 12sp monospace prose. */
+@Composable
+private fun ToolContent(
+    content: String,
+    isCommand: Boolean,
+) {
+    if (isCommand || isCodeIsh(content)) {
+        CodeBlock(content = content, language = null, textStyle = MaterialTheme.typography.bodySmall)
+    } else {
+        Text(
+            text = content,
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+    }
+}
 
 private fun isCodeIsh(content: String): Boolean = content.contains('\n') || content.length > CODE_ISH_LENGTH_THRESHOLD
 
 private val PreviewReadToolCall =
     ToolCall(
         toolName = "Read",
-        input = "app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageBubble.kt",
+        input = "file_path=/Users/me/pyrycode-mobile/app/src/main/java/de/pyryco/mobile/MainActivity.kt",
+        inputFields = mapOf("file_path" to "/Users/me/pyrycode-mobile/app/src/main/java/de/pyryco/mobile/MainActivity.kt"),
         output =
             """
-            @Composable
-            fun MessageBubble(
-                message: Message,
-                modifier: Modifier = Modifier,
-            ) {
-                when (message.role) {
-                    Role.User -> UserMessageBubble(message.content, modifier)
-                    Role.Assistant -> AssistantMessage(message, modifier)
-                    Role.Tool -> message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier) }
+            class MainActivity : ComponentActivity() {
+                override fun onCreate(savedInstanceState: Bundle?) {
+                    super.onCreate(savedInstanceState)
                 }
             }
-            """.trimIndent(),
-    )
-
-private val PreviewEditToolCall =
-    ToolCall(
-        toolName = "Edit",
-        input = "app/src/main/java/de/pyryco/mobile/ui/theme/Theme.kt",
-        output =
-            """
-            @@ -42,3 +42,3 @@
-            -val Foo = 1
-            +val Foo = 2
             """.trimIndent(),
     )
 
@@ -267,23 +379,20 @@ private val PreviewBashToolCall =
     ToolCall(
         toolName = "Bash",
         input = "git status",
-        output =
-            """
-            On branch feature/131
-            nothing to commit, working tree clean
-            """.trimIndent(),
+        inputFields = mapOf("command" to "git status", "description" to "Show working tree status"),
+        output = "nothing to commit, working tree clean",
     )
 
-// status = Running: spinner in the leading slot, output not yet arrived (gated out while expanded).
 private val PreviewRunningToolCall =
     ToolCall(
         toolName = "Bash",
         input = "./gradlew assembleDebug",
         output = "",
         status = ToolCallStatus.Running,
+        inputFields = mapOf("command" to "./gradlew assembleDebug", "description" to "Build the debug APK"),
+        elapsedSeconds = 65,
     )
 
-// status = Failed: error-tinted leading glyph, error summary surfaced under Output when expanded.
 private val PreviewFailedToolCall =
     ToolCall(
         toolName = "Bash",
@@ -296,67 +405,47 @@ private val PreviewFailedToolCall =
         status = ToolCallStatus.Failed,
     )
 
+private val PreviewDeniedToolCall =
+    ToolCall(
+        toolName = "mcp__codegraph__codegraph_context",
+        input = "task=restyle the tool row",
+        output = "",
+        status = ToolCallStatus.Denied,
+        inputFields = mapOf("task" to "restyle the tool row"),
+        denial =
+            ToolDenial(
+                toolName = "mcp__codegraph__codegraph_context",
+                decisionReasonType = "user",
+                decisionReason = "",
+                message = "The user doesn't want to proceed with this tool use.",
+                truncatedFields = null,
+                droppedFields = null,
+            ),
+    )
+
 @Composable
 private fun ToolCallRowPreviewMatrix() {
-    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-        ToolCallRowContent(
-            toolCall = PreviewReadToolCall,
-            expanded = false,
-            onToggle = {},
-        )
-        ToolCallRowContent(
-            toolCall = PreviewReadToolCall,
-            expanded = true,
-            onToggle = {},
-        )
-        ToolCallRowContent(
-            toolCall = PreviewEditToolCall,
-            expanded = false,
-            onToggle = {},
-        )
-        ToolCallRowContent(
-            toolCall = PreviewEditToolCall,
-            expanded = true,
-            onToggle = {},
-        )
-        ToolCallRowContent(
-            toolCall = PreviewBashToolCall,
-            expanded = false,
-            onToggle = {},
-        )
-        ToolCallRowContent(
-            toolCall = PreviewBashToolCall,
-            expanded = true,
-            onToggle = {},
-        )
-        ToolCallRowContent(
-            toolCall = PreviewRunningToolCall,
-            expanded = false,
-            onToggle = {},
-        )
-        ToolCallRowContent(
-            toolCall = PreviewRunningToolCall,
-            expanded = true,
-            onToggle = {},
-        )
-        ToolCallRowContent(
-            toolCall = PreviewFailedToolCall,
-            expanded = false,
-            onToggle = {},
-        )
-        ToolCallRowContent(
-            toolCall = PreviewFailedToolCall,
-            expanded = true,
-            onToggle = {},
-        )
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        listOf(
+            PreviewReadToolCall,
+            PreviewBashToolCall,
+            PreviewRunningToolCall,
+            PreviewFailedToolCall,
+            PreviewDeniedToolCall,
+        ).forEach { toolCall ->
+            ToolCallRowContent(toolCall = toolCall, expanded = false, onToggle = {})
+        }
+        listOf(PreviewReadToolCall, PreviewRunningToolCall, PreviewDeniedToolCall).forEach { toolCall ->
+            ToolCallRowContent(toolCall = toolCall, expanded = true, onToggle = {})
+        }
     }
 }
 
-@Preview(name = "ToolCallRow — Light", showBackground = true, widthDp = 412)
+@Preview(name = "ToolCallRow — Light", showBackground = true, widthDp = 412, heightDp = 1100)
 @Composable
 private fun ToolCallRowLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
-        Surface {
+        Surface(color = MaterialTheme.colorScheme.background) {
             ToolCallRowPreviewMatrix()
         }
     }
@@ -366,12 +455,13 @@ private fun ToolCallRowLightPreview() {
     name = "ToolCallRow — Dark",
     showBackground = true,
     widthDp = 412,
+    heightDp = 1100,
     uiMode = Configuration.UI_MODE_NIGHT_YES,
 )
 @Composable
 private fun ToolCallRowDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
-        Surface {
+        Surface(color = MaterialTheme.colorScheme.background) {
             ToolCallRowPreviewMatrix()
         }
     }

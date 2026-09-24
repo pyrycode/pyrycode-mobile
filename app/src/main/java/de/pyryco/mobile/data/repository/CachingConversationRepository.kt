@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.cache.settledThreadRows
@@ -48,12 +49,17 @@ import java.util.concurrent.ConcurrentHashMap
  * wrapper's own [serverId], captured from the destination that issued the call, never a global
  * selection. Archive and unarchive stay plain delegation: they are not removals.
  *
+ * [retrieveAttachment] keeps a fetched file for this same [serverId] (#899) through [attachments], the
+ * app's one host-keyed store; the fetch itself runs on the delegate's live connection. With no store it is
+ * plain delegation.
+ *
  * Never logs a row, a conversation id or a server id.
  */
 class CachingConversationRepository(
     private val delegate: ConversationRepository,
     private val cache: ConversationCache,
     private val serverId: String,
+    private val attachments: AttachmentStore? = null,
 ) : ConversationRepository by delegate {
     // Ids this destination deleted. The thread that issued the delete keeps collecting until its PopBack,
     // and a write from that collector after the removal would put the rows straight back.
@@ -80,6 +86,13 @@ class CachingConversationRepository(
                 }
             }
         }
+
+    override suspend fun retrieveAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentRetrievalResult =
+        attachments?.retrieve(serverId, conversationId, attachmentId) { delegate.fetchAttachment(conversationId, attachmentId) }
+            ?: delegate.retrieveAttachment(conversationId, attachmentId)
 
     /**
      * Deletes on the daemon first; only once that succeeded does the cached copy go. A refused delete

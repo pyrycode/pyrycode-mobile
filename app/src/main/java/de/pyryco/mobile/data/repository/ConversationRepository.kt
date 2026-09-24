@@ -131,6 +131,19 @@ interface ConversationRepository {
     fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = flowOf(null)
 
     /**
+     * Emits the files the daemon has offered in [conversationId] on this connection (#898), in arrival order
+     * with one entry per attachment id, or an empty list until one arrives. Cold flow; re-emits when an offer
+     * for this conversation lands. The offer is **live-only** on the wire (no replay, no list verb), so this
+     * is the set of offers the connection happened to receive, never the set of files the conversation
+     * holds, and it starts empty on every new connection. Pass [AttachmentOffer.attachmentId] back to fetch
+     * the bytes.
+     *
+     * Default `flowOf(emptyList())` — implementations without a live wire (the fake, inline test doubles)
+     * inherit "nothing offered" and need no override, the same cascade-avoidance as [observeCompacting].
+     */
+    fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> = flowOf(emptyList())
+
+    /**
      * Emits the usage-limit reading claude last reported for [conversationId], or **`null` when there
      * is none to read** (#802). `null` until the wire says otherwise; a [UsageLimitReading] once a
      * non-benign frame lands; back to `null` on the benign clearing edge or once the reading's
@@ -496,6 +509,32 @@ interface ConversationRepository {
     ): AttachmentUploadResult = error("uploadAttachment is not implemented for this ConversationRepository")
 
     /**
+     * Fetch [attachmentId] of [conversationId] over this repository's connection (#899): one
+     * `request_attachment`, and the verified bytes in memory, or one [AttachmentRetrievalResult.Failed].
+     * Connection-level and host-blind; screens call [retrieveAttachment], which keeps the file for its host.
+     * Never throws except on cancellation.
+     *
+     * Default throws, like [requestSystemPrompt].
+     */
+    suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult = error("fetchAttachment is not implemented for this ConversationRepository")
+
+    /**
+     * The file [attachmentId] of [conversationId], kept in app-private storage for this repository's host
+     * (#899). A file kept earlier is returned without sending anything; otherwise it is fetched once, however
+     * many callers ask at the same time. The id may come from an offer or from an upload: the request is the
+     * same. Never throws except on cancellation.
+     *
+     * Default throws, like [requestSystemPrompt]: only the host-bound [CachingConversationRepository] keeps files.
+     */
+    suspend fun retrieveAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentRetrievalResult = error("retrieveAttachment is not implemented for this ConversationRepository")
+
+    /**
      * Store [systemPrompt] as [conversationId]'s system prompt (#823), one `set_system_prompt` per call,
      * returning after the daemon's ack. `null` clears it, `""` stores an explicitly empty prompt, and any
      * other string is stored **verbatim** — never trimmed or normalised. It takes effect at the
@@ -573,6 +612,28 @@ interface ConversationRepository {
      * [requestHistory].
      */
     fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = flowOf(null)
+
+    /**
+     * Emits the slash-command menu the daemon published for [conversationId] (#882) — the commands this
+     * conversation's session, in its working directory, will accept, for the composer to offer. Cold flow;
+     * re-emits on every change.
+     *
+     * **`null` means no frame heard**, which is distinct from a present menu with no rows. It covers no live
+     * connection, a connection without the `interactive` capability, a conversation this connection heard no
+     * frame for, and the window before the first frame lands. The wire's delivery is best-effort, so a
+     * consumer never blocks on it: it renders a usable UI without a menu and lets the next connect fill it.
+     *
+     * **Issues no request** — the frame has no inbound verb. It arrives once per claude child spawn on the
+     * live lane and per conversation on every (re)connect. Each frame replaces that conversation's menu
+     * wholesale, routed by the frame's own conversation id.
+     *
+     * **The menu is per host and per connection.** Each connection has its own repository, so a reconnect
+     * or host switch starts empty and the connect-time snapshot fills it again.
+     *
+     * Default emits `null` forever — the cascade-avoidance [observeModelMenu] uses, so inline test doubles
+     * need no override.
+     */
+    fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> = flowOf(null)
 
     /**
      * Ask for a fresh [observeSessionSettings] reading of [conversationId] (#590) — the caller-driven
@@ -716,6 +777,38 @@ sealed interface ThreadItem {
         val preTokens: Long?,
         val postTokens: Long?,
         val manual: Boolean,
+        val occurredAt: Instant,
+    ) : ThreadItem
+
+    /**
+     * claude refused a turn on one model and either retried it on another or did not (#875). Carried by the
+     * `model_refusal_fallback` / `model_refusal_no_fallback` frames, which are conversation-scoped with no
+     * `turn_id`, so the row drives no turn, no status indicator and no model state — `model_announced`
+     * stays the authority for which model runs. The wire cannot name the refused partial reply, so no other
+     * row is retracted or edited. The frames' `scope` and `refusal_category` drive nothing and are not
+     * carried; a field the daemon dropped for size simply arrives empty.
+     *
+     * **Every string here is claude-authored and unsanitized** — bounded daemon-side, never cleaned. Held
+     * verbatim; the render boundary owes the stripping (see `ModelRefusalRow`). Consumers must render them
+     * inert and attributed to claude, must not persist them, and must not log them.
+     *
+     * Identity: the frame type — `fallbackModel != null` — plus [occurredAt], the envelope's (or stored
+     * entry's) `ts`: the protocol's `(type, ts)` join key. Invariant: unique among a thread's refusal rows.
+     * The thread's `LazyColumn` keys the row on it, so a duplicate crashes the list; uniqueness is a producer
+     * obligation — both thread writers skip one the thread already holds (`holdsModelRefusal`) — documented
+     * here and asserted in tests, not enforced at construction (as [SessionBoundary]).
+     *
+     * @param originalModel The model claude says refused the turn; empty when claude named none.
+     * @param fallbackModel The model claude says it retried on — **non-null iff the frame was
+     *   `model_refusal_fallback`**, which is what makes it the row's type half.
+     * @param banner claude's display prose about the refusal; empty when it sent none.
+     * @param bannerTruncated Whether the daemon named `banner` in `truncated_fields` — its answer, never re-derived.
+     */
+    data class ModelRefusal(
+        val originalModel: String,
+        val fallbackModel: String?,
+        val banner: String,
+        val bannerTruncated: Boolean,
         val occurredAt: Instant,
     ) : ThreadItem
 }
@@ -981,6 +1074,58 @@ data class ModelMenuRow(
 )
 
 /**
+ * The slash commands a server published for one conversation (#882) — the return of
+ * [ConversationRepository.observeSlashCommandMenu]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § `slash_command_list`. A type rather than a bare list for [ModelMenu]'s reasons: [droppedCommands] must
+ * survive beside the rows, and an empty menu must stay distinct from the absent `null` one.
+ *
+ * `data` is load-bearing: structural equality is what makes the repository's `distinctUntilChanged` skip a
+ * value-identical re-snapshot on every reconnect.
+ *
+ * @param rows The published commands in **claude's own order**. Empty is a positive statement that claude
+ *   offered nothing.
+ * @param droppedCommands How many entries the producer cut that [rows] does **not** carry; `0` when nothing
+ *   was dropped. `rows.size + droppedCommands` is the menu's true size. Read as reported and **never
+ *   recomputed**: two daemon-side cuts feed it, so a non-zero count can sit beside any number of rows and a
+ *   short list is not evidence of a complete one. Never hardcode or infer a cap.
+ */
+data class SlashCommandMenu(
+    val rows: List<SlashCommandMenuRow>,
+    val droppedCommands: Int,
+)
+
+/**
+ * One published slash command in a [SlashCommandMenu] (#882). Every field is retained **exactly as the
+ * daemon reported it** — no trim, no case fold, no line fold, no validation.
+ *
+ * **SECURITY — these strings are workspace-authored.** [name], [argumentHint], [description] and every
+ * element of [aliases] were written by whoever wrote the repository the session runs in, a lower-trust origin
+ * than claude, and crossed the subprocess trust boundary. The daemon bounds them but **does not sanitize
+ * them**: newlines occur in real descriptions and nothing strips control characters or terminal escapes, so
+ * the render boundary owes the sanitization. They are safe to render as **inert text** only and must never be
+ * fed to a WebView, an HTML sink, an attribute, a URL, a filename, a cache key or a log line. Nothing keys off
+ * them — a retained menu is keyed by conversation id alone.
+ *
+ * @param name The command name **without** the leading `/`. Not an identifier: one real name is
+ *   `__remote-workflow`, so assume no character set.
+ * @param argumentHint What the command expects after it (`[name]`, `key=value`, `<model>`). Empty is the
+ *   ordinary case, not missing data.
+ * @param description The command's summary, which may span several lines.
+ * @param aliases Other names that invoke this command, in wire order. Empty covers both "none" and "cut to
+ *   nothing"; only [truncatedFields] naming `aliases` tells them apart, and then the aliases are unknown.
+ * @param truncatedFields The wire names of **this row's** cut fields (`name`, `argument_hint`,
+ *   `description`, `aliases`), or `null` when nothing was cut. A consumer must not present cut text as
+ *   complete.
+ */
+data class SlashCommandMenuRow(
+    val name: String,
+    val argumentHint: String,
+    val description: String,
+    val aliases: List<String>,
+    val truncatedFields: List<String>?,
+)
+
+/**
  * Claude's applied reasoning effort as reported beside the saved [SessionSettings.effort] (#590) — a
  * closed three-state reading, because the wire's `effective_effort` key has three meanings a consumer
  * must not collapse.
@@ -1113,6 +1258,27 @@ data class SessionFacts(
     val permissionMode: String,
     val truncatedFields: List<String>?,
 )
+
+/**
+ * A file the daemon offered in a conversation (#898, pyrycode#2082/#2166) — the element type of
+ * [ConversationRepository.observeAttachmentOffers]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § Attachments → `attachment_offered`.
+ *
+ * [attachmentId] is a validated lowercase UUIDv4, the id to pass back when fetching the file. It is not a
+ * capability: the daemon re-validates it on every fetch. [displayName] is the announced file name with every
+ * ISO control character, Unicode format character (bidi overrides included), line and paragraph separator
+ * and unpaired surrogate removed, cut to 255 UTF-8 bytes. It may be empty.
+ *
+ * **SECURITY.** [displayName] is claude-authored text even after cleaning. Render it as **inert text only**:
+ * never as a path or any part of one, never as a cache key or a log line, and never choose a viewer or
+ * handler from its extension, which is not evidence of what the bytes are. [toString] leaves it out.
+ */
+data class AttachmentOffer(
+    val attachmentId: String,
+    val displayName: String,
+) {
+    override fun toString(): String = "AttachmentOffer(attachmentId=$attachmentId)"
+}
 
 /**
  * The usage-limit reading claude last reported for one conversation (#802, pyrycode#1405/#1410) — the

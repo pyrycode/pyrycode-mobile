@@ -249,6 +249,15 @@ class StableConversationRepositoryTest {
             )
         }
 
+    // #899: a fetch with no live connection is a retryable failure, not a throw.
+    @Test
+    fun fetchAttachment_whileAbsent_isUnavailable() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            assertEquals(AttachmentRetrievalResult.Unavailable, facade.fetchAttachment("c1", "a1"))
+        }
+
     // #829: the upload runs on the connection live at entry; a later change of connection does not move it.
     @Test
     fun uploadAttachment_staysOnTheRepositoryLiveAtEntry() =
@@ -560,6 +569,45 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, sessionFacts, null), facts)
         }
 
+    // ---- #898: observeAttachmentOffers delegates and tracks connection churn ---------------------
+
+    @Test
+    fun observeAttachmentOffers_whileAbsent_emitsEmpty() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val offers = mutableListOf<List<AttachmentOffer>>()
+            backgroundScope.launch { facade.observeAttachmentOffers("c1").collect { offers += it } }
+            runCurrent()
+
+            assertEquals(listOf(emptyList<AttachmentOffer>()), offers)
+        }
+
+    // Offers are live-only: a reconnect or a host switch publishes a fresh repository, and the switch drops
+    // the previous connection's offers, so one host's file is never offered as the next one's.
+    @Test
+    fun observeAttachmentOffers_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val offers = mutableListOf<List<AttachmentOffer>>()
+            backgroundScope.launch { facade.observeAttachmentOffers("c1").collect { offers += it } }
+            runCurrent()
+
+            val offer = AttachmentOffer("b8e0c374-2f61-4a95-8d0e-5c37a91b6e28", "report.png")
+            repoA.pushAttachmentOffers(listOf(offer))
+            runCurrent()
+            assertEquals(listOf(emptyList(), listOf(offer)), offers)
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(emptyList(), listOf(offer), emptyList()), offers)
+        }
+
     // ---- #802: observeUsageLimit delegates and tracks connection churn ---------------------------
 
     @Test
@@ -720,6 +768,43 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, MENU, null), menus)
         }
 
+    // ---- #882: observeSlashCommandMenu delegates, and a host switch drops the previous host's menu --
+
+    @Test
+    fun observeSlashCommandMenu_whileAbsent_emitsNull() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            val menus = mutableListOf<SlashCommandMenu?>()
+            backgroundScope.launch { facade.observeSlashCommandMenu("c1").collect { menus += it } }
+            runCurrent()
+
+            assertEquals(listOf<SlashCommandMenu?>(null), menus)
+        }
+
+    // The menu is per host: a host switch reads the new connection's repository, which starts empty, rather
+    // than leaving another machine's commands standing.
+    @Test
+    fun observeSlashCommandMenu_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val menus = mutableListOf<SlashCommandMenu?>()
+            backgroundScope.launch { facade.observeSlashCommandMenu("c1").collect { menus += it } }
+            runCurrent()
+
+            repoA.pushSlashCommandMenu(SLASH_MENU)
+            runCurrent()
+            assertEquals(SLASH_MENU, menus.last())
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, SLASH_MENU, null), menus)
+        }
+
     @Test
     fun refreshSessionSettings_delegatesToLiveRepo() =
         runTest {
@@ -869,6 +954,14 @@ class StableConversationRepositoryTest {
 
         override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFacts
 
+        private val attachmentOffers = MutableStateFlow<List<AttachmentOffer>>(emptyList())
+
+        fun pushAttachmentOffers(value: List<AttachmentOffer>) {
+            attachmentOffers.value = value
+        }
+
+        override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> = attachmentOffers
+
         override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimit
 
         private val thinkingProgress = MutableStateFlow<ThinkingProgress?>(null)
@@ -896,6 +989,14 @@ class StableConversationRepositoryTest {
         }
 
         override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenu
+
+        private val slashCommandMenu = MutableStateFlow<SlashCommandMenu?>(null)
+
+        fun pushSlashCommandMenu(value: SlashCommandMenu?) {
+            slashCommandMenu.value = value
+        }
+
+        override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> = slashCommandMenu
 
         override fun refreshSessionSettings(conversationId: String) {
             refreshSessionSettingsCalls += conversationId
@@ -1027,6 +1128,13 @@ class StableConversationRepositoryTest {
             ModelMenu(
                 rows = listOf(ModelMenuRow("claude-sonnet-5", "sonnet", "Sonnet 5", listOf("low", "high"), true, null)),
                 droppedModels = 4,
+            )
+
+        /** One retained slash-command menu (#882) — arbitrary values; only their survival is asserted. */
+        val SLASH_MENU =
+            SlashCommandMenu(
+                rows = listOf(SlashCommandMenuRow("usage", "", "Show session cost", listOf("cost", "stats"), null)),
+                droppedCommands = 1,
             )
 
         fun conversation(id: String): Conversation =

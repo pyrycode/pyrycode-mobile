@@ -4,9 +4,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import de.pyryco.mobile.data.network.RelayConnectionController
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * JVM unit tests for the process-lifecycle driver (#302). No instrumentation, no Robolectric, no real
@@ -14,9 +22,10 @@ import org.junit.Test
  * lifecycle seam is a [LifecycleRegistry.createUnsafe] (the test-only factory that skips the
  * main-thread check, so a real `ProcessLifecycleOwner` is unnecessary).
  *
- * The driver launches no coroutines, so there is no virtual clock here — each `handleLifecycleEvent`
- * dispatches synchronously and the recorded [Call] list is the full, ordered assertion target.
+ * Lifecycle edges dispatch synchronously and the recorded [Call] list is the full, ordered assertion
+ * target. Only the push-wake window (#361) runs a timer; those cases drive it on virtual time.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class LifecycleConnectionDriverTest {
     // ---- AC 2: foreground dials (connect), and only connect ---------------------------------------
 
@@ -69,18 +78,103 @@ class LifecycleConnectionDriverTest {
     // ---- AC 3: push-wake while backgrounded takes the same reconnect path as foregrounding --------
 
     @Test
-    fun pushWakeWhileBackgrounded_drivesConnectNotClose() {
-        val (owner, controller) = newDriver()
+    fun pushWakeWhileBackgrounded_drivesConnectNotClose() =
+        runTest {
+            val (owner, controller) = newDriver(StandardTestDispatcher(testScheduler))
 
-        owner.foreground()
-        owner.background()
-        assertEquals(listOf(Call.Connect, Call.Close), controller.calls)
+            owner.foreground()
+            owner.background()
+            assertEquals(listOf(Call.Connect, Call.Close), controller.calls)
 
-        owner.driver.onPushWake()
+            owner.driver.onPushWake()
+            runCurrent()
 
-        // Identical to the foreground path: one extra connect(), no extra close().
-        assertEquals(listOf(Call.Connect, Call.Close, Call.Connect), controller.calls)
-    }
+            // Identical to the foreground path: one extra connect(), no extra close() before the window ends.
+            assertEquals(listOf(Call.Connect, Call.Close, Call.Connect), controller.calls)
+            owner.driver.dispose()
+        }
+
+    // ---- #361: a background wake holds the hosts open for a fixed window, then closes -------------
+
+    @Test
+    fun backgroundWake_closesAfterTheWindow() =
+        runTest {
+            val (owner, controller) = newDriver(StandardTestDispatcher(testScheduler))
+
+            // A process started by the push never reaches ON_START: it is background by construction.
+            owner.driver.onPushWake()
+            advanceTimeBy(WINDOW - 1.seconds)
+            runCurrent()
+            assertEquals(listOf(Call.Connect), controller.calls)
+
+            advanceTimeBy(1.seconds)
+            runCurrent()
+            assertEquals(listOf(Call.Connect, Call.Close), controller.calls)
+        }
+
+    @Test
+    fun foregroundWake_changesNothing() =
+        runTest {
+            val (owner, controller) = newDriver(StandardTestDispatcher(testScheduler))
+            owner.foreground()
+
+            owner.driver.onPushWake()
+            advanceTimeBy(WINDOW * 2)
+            runCurrent()
+
+            assertEquals(listOf(Call.Connect), controller.calls)
+        }
+
+    @Test
+    fun repeatedWakes_openOnceAndDoNotExtendTheWindow() =
+        runTest {
+            val (owner, controller) = newDriver(StandardTestDispatcher(testScheduler))
+
+            owner.driver.onPushWake()
+            repeat(5) {
+                advanceTimeBy(5.seconds)
+                owner.driver.onPushWake()
+            }
+            // 25 s after the first wake: still exactly one connect, nothing closed.
+            runCurrent()
+            assertEquals(listOf(Call.Connect), controller.calls)
+
+            // The window ends 30 s after the FIRST wake, not after the last one.
+            advanceTimeBy(5.seconds)
+            runCurrent()
+            assertEquals(listOf(Call.Connect, Call.Close), controller.calls)
+        }
+
+    @Test
+    fun foregroundDuringTheWindow_keepsHostsOpenUntilTheNextBackground() =
+        runTest {
+            val (owner, controller) = newDriver(StandardTestDispatcher(testScheduler))
+
+            owner.driver.onPushWake()
+            advanceTimeBy(10.seconds)
+            owner.foreground()
+            advanceTimeBy(WINDOW * 2)
+            runCurrent()
+            assertEquals(listOf(Call.Connect, Call.Connect), controller.calls)
+
+            owner.background()
+            assertEquals(listOf(Call.Connect, Call.Connect, Call.Close), controller.calls)
+        }
+
+    @Test
+    fun wakeAfterTheWindowExpired_opensAFreshWindow() =
+        runTest {
+            val (owner, controller) = newDriver(StandardTestDispatcher(testScheduler))
+
+            owner.driver.onPushWake()
+            advanceTimeBy(WINDOW)
+            runCurrent()
+            owner.driver.onPushWake()
+            advanceTimeBy(WINDOW)
+            runCurrent()
+
+            assertEquals(listOf(Call.Connect, Call.Close, Call.Connect, Call.Close), controller.calls)
+        }
 
     // ---- AC 4: rapid background/foreground toggling never doubles a connect without a close -------
 
@@ -130,10 +224,10 @@ class LifecycleConnectionDriverTest {
 
     // ---- helpers ---------------------------------------------------------------------------------
 
-    private fun newDriver(): Harness {
+    private fun newDriver(dispatcher: CoroutineDispatcher = Dispatchers.Unconfined): Harness {
         val owner = FakeLifecycleOwner()
         val controller = FakeRelayConnectionController()
-        val driver = LifecycleConnectionDriver(controller, owner.lifecycle)
+        val driver = LifecycleConnectionDriver(controller, owner.lifecycle, dispatcher, WINDOW)
         driver.start()
         owner.driver = driver
         return Harness(owner, controller)
@@ -144,6 +238,8 @@ class LifecycleConnectionDriverTest {
         val controller: FakeRelayConnectionController,
     )
 }
+
+private val WINDOW = 30.seconds
 
 private enum class Call { Connect, Close }
 

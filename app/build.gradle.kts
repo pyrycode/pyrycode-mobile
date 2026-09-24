@@ -10,6 +10,16 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Firebase client configuration (#579). Applied only when the file is present, so builds
+// without it (CI, fresh worktrees) still succeed, with push disabled.
+if (file("google-services.json").exists()) {
+    pluginManager.apply(
+        libs.plugins.google.services
+            .get()
+            .pluginId,
+    )
+}
+
 abstract class GitShaValueSource : ValueSource<String, ValueSourceParameters.None> {
     @get:Inject
     abstract val execOperations: ExecOperations
@@ -83,8 +93,18 @@ android {
     lint {
         abortOnError = true
     }
+    // Screen tests live in sharedTest and compile into both runs: on the JVM under Robolectric for
+    // every check, and on the emulator for an in-depth device run.
+    sourceSets {
+        getByName("test").kotlin.srcDir("src/sharedTest/java")
+        getByName("androidTest").kotlin.srcDir("src/sharedTest/java")
+    }
     testOptions {
+        unitTests.isIncludeAndroidResources = true
         unitTests.all {
+            it.maxHeapSize = "2g"
+            // Robolectric reads FileDescriptor internals when it sets up Android 16 shared memory.
+            it.jvmArgs("--add-opens=java.base/java.io=ALL-UNNAMED", "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
             // Independent expectation lets the binding test catch an incorrectly generated flag.
             it.systemProperty("expectedUseRelayRepository", providers.gradleProperty("useRelayRepository").orElse("true").get())
         }
@@ -109,6 +129,9 @@ android {
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.koin.bom))
+    // #361: push only. No firebase-analytics; builds without google-services.json run with push off.
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
@@ -140,6 +163,11 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.robolectric)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.espresso.core)
+    testImplementation(libs.androidx.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -147,6 +175,8 @@ dependencies {
     // The custom E2eInstrumentationRunner subclasses AndroidJUnitRunner — pull the runner artifact in
     // explicitly rather than rely on a transitive of espresso-core.
     androidTestImplementation(libs.androidx.test.runner)
+    // Shared screen tests carry Robolectric's annotations; the device run only needs them to compile.
+    androidTestImplementation(libs.robolectric.annotations)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

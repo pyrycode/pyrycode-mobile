@@ -37,14 +37,16 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.components.AddWorkspaceModal
 import de.pyryco.mobile.ui.components.EditChatModal
+import de.pyryco.mobile.ui.components.EditWorkspaceModal
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
 import de.pyryco.mobile.ui.conversations.components.TreeSectionHeader
 import de.pyryco.mobile.ui.conversations.components.TreeWorkspaceRow
-import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.host.HostEditorModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlin.time.Duration.Companion.days
@@ -145,7 +147,7 @@ sealed interface ChannelListEvent {
         val serverId: String,
     ) : ChannelListEvent
 
-    /** The same control held: pick that host's workspace first — the path the retired button long-pressed. */
+    /** The same control held: open Add workspace on **that** row's host (#904), a folder before the chat. */
     data class TreeHostAddLongPressed(
         val serverId: String,
     ) : ChannelListEvent
@@ -229,11 +231,57 @@ sealed interface ChannelListEvent {
      */
     data object ChatArchiveRequested : ChannelListEvent
 
-    data class WorkspacePicked(
-        val workspace: String,
+    /**
+     * An Add workspace row selected (#904): the row's raw path, never its displayed text. No `serverId`,
+     * for the reason [HostEditNameSubmitted] carries none: the target is the open modal's.
+     */
+    data class AddWorkspaceSelected(
+        val path: String,
     ) : ChannelListEvent
 
-    data object WorkspacePickerDismissed : ChannelListEvent
+    /** The new-folder dialog's name, already trimmed; the folder is created on the open modal's host. */
+    data class AddWorkspaceFolderCreateRequested(
+        val name: String,
+    ) : ChannelListEvent
+
+    /** The Add workspace modal's OK: start a chat in the selected folder. */
+    data object AddWorkspaceSubmitted : ChannelListEvent
+
+    /** The Add workspace modal's Cancel, Close and Back. */
+    data object AddWorkspaceDismissed : ChannelListEvent
+
+    /**
+     * A workspace row's pencil, in either section: open Edit workspace on **that** row's own host and exact
+     * `cwd` (#905). Never the shown name, which two workspaces can share; the view model reads it from the
+     * host's own snapshot.
+     */
+    data class TreeWorkspaceEditTapped(
+        val serverId: String,
+        val cwd: String,
+    ) : ChannelListEvent
+
+    /**
+     * The Edit workspace modal's OK, carrying the entered name already trimmed by the component. No ids, for
+     * the reason [HostEditNameSubmitted] carries none; the view model applies the label rule.
+     */
+    data class WorkspaceEditNameSubmitted(
+        val name: String,
+    ) : ChannelListEvent
+
+    /** The Edit workspace modal's Cancel, Close and Back from the editor. */
+    data object WorkspaceEditDismissed : ChannelListEvent
+
+    /** The modal's Archive workspace, which asks for a confirmation in place rather than archiving. */
+    data object WorkspaceArchiveRequested : ChannelListEvent
+
+    /** The archive confirmation accepted, through the shell's own OK. */
+    data object WorkspaceArchiveConfirmed : ChannelListEvent
+
+    /**
+     * The archive confirmation backed out of, through any of the shell's dismissal routes while it is up —
+     * distinct from [WorkspaceEditDismissed] because it returns to the editor instead of closing.
+     */
+    data object WorkspaceArchiveDeclined : ChannelListEvent
 }
 
 /**
@@ -241,7 +289,7 @@ sealed interface ChannelListEvent {
  * workspace rows and those workspaces' conversation rows.
  *
  * Stateless, and fed by exactly one model: [hostState] carries the host-qualified rows (#729), the
- * collapsed nodes, the last-opened target and the workspace picker's target. The flat `ChannelListUiState`
+ * collapsed nodes, the last-opened target and the open modals' targets. The flat `ChannelListUiState`
  * went with the floating action button that was its last consumer (#738), taking the loading and error
  * placeholders with it — a tree with no hosts is the only blank the list draws. The generic top app bar
  * is gone too; the list draws its own bar instead (#737, [ChannelListTopBar]).
@@ -266,12 +314,7 @@ fun ChannelListScreen(
             ConversationTree(hostState = hostState, onEvent = onEvent, modifier = bodyModifier)
         }
     }
-    WorkspacePicker(
-        // Read straight off the picker's own target rather than from a copy the route made of it.
-        visible = hostState.workspacePickerServerId != null,
-        onPicked = { path -> onEvent(ChannelListEvent.WorkspacePicked(path)) },
-        onDismiss = { onEvent(ChannelListEvent.WorkspacePickerDismissed) },
-    )
+    AddWorkspaceModalBinding(hostState = hostState, onEvent = onEvent)
     // The shared binding (#751), which owns the presence rule, the loading flag and the failure-string
     // resolution this screen used to spell out — Settings draws the same editor through the same call.
     HostEditorModal(
@@ -283,6 +326,38 @@ fun ChannelListScreen(
         onDismissRequest = { onEvent(ChannelListEvent.HostEditDismissed) },
     )
     ChatEditorModal(hostState = hostState, onEvent = onEvent)
+    WorkspaceEditorModal(hostState = hostState, onEvent = onEvent)
+}
+
+/**
+ * [AddWorkspaceModal] bound to the open [AddWorkspaceState] (#904), present exactly while there is one.
+ *
+ * OK follows the modal's **own** host's connection, read from that host's snapshot on every draw, so a
+ * disconnect disables it without closing the modal or losing the selection. Both failure strings are
+ * static: the shell announces them aloud, and the daemon's message never reaches this screen.
+ */
+@Composable
+private fun AddWorkspaceModalBinding(
+    hostState: HostChannelListState,
+    onEvent: (ChannelListEvent) -> Unit,
+) {
+    val state = hostState.addWorkspace ?: return
+    AddWorkspaceModal(
+        recent = hostState.addWorkspaceRecent,
+        selected = state.selected,
+        onSelect = { path -> onEvent(ChannelListEvent.AddWorkspaceSelected(path)) },
+        onCreateFolder = { name -> onEvent(ChannelListEvent.AddWorkspaceFolderCreateRequested(name)) },
+        onDismissRequest = { onEvent(ChannelListEvent.AddWorkspaceDismissed) },
+        onSubmit = { onEvent(ChannelListEvent.AddWorkspaceSubmitted) },
+        hostAvailable = hostState.isHostConnected(state.serverId),
+        loading = state.busy,
+        error =
+            when {
+                state.createFailed -> stringResource(R.string.add_workspace_create_failed)
+                state.startFailed -> stringResource(R.string.add_workspace_start_failed)
+                else -> null
+            },
+    )
 }
 
 /**
@@ -315,6 +390,41 @@ private fun ChatEditorModal(
                 editor.failed -> stringResource(R.string.edit_chat_save_failed)
                 else -> null
             },
+    )
+}
+
+/**
+ * [EditWorkspaceModal] bound to the open [WorkspaceEditorState] (#905), present exactly while there is one.
+ *
+ * OK and Archive follow the workspace's **own** host's connection, read on every draw as the chat editor
+ * does. The folder's own name comes from the same display rule the row uses, with no label. Both failure
+ * strings are static: the shell announces them aloud, and the daemon's message never reaches this screen.
+ */
+@Composable
+private fun WorkspaceEditorModal(
+    hostState: HostChannelListState,
+    onEvent: (ChannelListEvent) -> Unit,
+) {
+    val editor = hostState.workspaceEditor ?: return
+    EditWorkspaceModal(
+        serverId = editor.serverId,
+        cwd = editor.cwd,
+        initialName = editor.initialName,
+        folderName = workspaceDisplayName(editor.cwd, label = null),
+        onDismissRequest = { onEvent(ChannelListEvent.WorkspaceEditDismissed) },
+        onSubmit = { name -> onEvent(ChannelListEvent.WorkspaceEditNameSubmitted(name)) },
+        onArchiveRequested = { onEvent(ChannelListEvent.WorkspaceArchiveRequested) },
+        onArchiveConfirmed = { onEvent(ChannelListEvent.WorkspaceArchiveConfirmed) },
+        onArchiveDeclined = { onEvent(ChannelListEvent.WorkspaceArchiveDeclined) },
+        hostAvailable = hostState.isHostConnected(editor.serverId),
+        loading = editor.saving,
+        error =
+            when {
+                editor.archiveFailed -> stringResource(R.string.edit_workspace_archive_failed)
+                editor.failed -> stringResource(R.string.edit_workspace_save_failed)
+                else -> null
+            },
+        confirmingArchive = editor.confirmingArchive,
     )
 }
 
@@ -465,6 +575,8 @@ private fun LazyListScope.treeSection(
                     workspaceName = group.displayName,
                     expanded = workspaceKey !in hostState.collapsed,
                     onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(workspaceKey)) },
+                    // The group's own host and exact cwd, in both sections, never its shown name.
+                    onEditTapped = { onEvent(ChannelListEvent.TreeWorkspaceEditTapped(group.serverId, group.cwd)) },
                 )
             }
             if (workspaceKey in hostState.collapsed) return@forEach

@@ -40,6 +40,8 @@ import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModelRefusalFallbackPayloadDto
+import de.pyryco.mobile.data.network.ModelRefusalNoFallbackPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
@@ -57,6 +59,8 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_BANNER
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_COMPACTION_BOUNDARY
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_MESSAGE
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_MODEL_REFUSAL_FALLBACK
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_MODEL_REFUSAL_NO_FALLBACK
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SEND_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SESSION_TRANSITION
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TOOL_DENIED
@@ -412,6 +416,26 @@ private fun List<ThreadItem>.withHistoryEntry(
                         .toRow(occurredAt = entry.timestamp)
                         .let { row -> if (holdsCompactionBoundary(row)) this else this + row }
                 }
+            // Stamped with the entry's own ts, as the banner arm above, and decoded by the stored type, which
+            // is the only thing that tells the two frames apart, so a refusal on both lanes joins once (#875).
+            TYPE_MODEL_REFUSAL_FALLBACK ->
+                if (!interactive) {
+                    this
+                } else {
+                    MobileJson
+                        .decodeFromJsonElement<ModelRefusalFallbackPayloadDto>(entry.payload)
+                        .toRow(occurredAt = entry.timestamp)
+                        .let { row -> if (holdsModelRefusal(row)) this else this + row }
+                }
+            TYPE_MODEL_REFUSAL_NO_FALLBACK ->
+                if (!interactive) {
+                    this
+                } else {
+                    MobileJson
+                        .decodeFromJsonElement<ModelRefusalNoFallbackPayloadDto>(entry.payload)
+                        .toRow(occurredAt = entry.timestamp)
+                        .let { row -> if (holdsModelRefusal(row)) this else this + row }
+                }
             // Every other stored type — the state frames, the modal pair, the control verbs, and any
             // type a future daemon invents. See this function's KDoc: no row, no failure.
             else -> this
@@ -467,6 +491,7 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  *  - a [ThreadItem.UnrecognizedMessage] joins on its [historyRowId]-derived id.
  *  - a [ThreadItem.Banner] joins on its `ts` — see [holdsBanner].
  *  - a [ThreadItem.CompactionBoundary] joins on its `ts` — see [holdsCompactionBoundary].
+ *  - a [ThreadItem.ModelRefusal] joins on its frame type and `ts` — see [holdsModelRefusal].
  *
  * A duplicate is **skipped, not merged in place.** The only overlap a walk can produce is the narrow
  * ask-versus-answer race the protocol names, and in that window the live lane owns the newer state and
@@ -488,6 +513,7 @@ private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
         is ThreadItem.UnrecognizedMessage -> holdsUnrecognized(row.id)
         is ThreadItem.Banner -> holdsBanner(row)
         is ThreadItem.CompactionBoundary -> holdsCompactionBoundary(row)
+        is ThreadItem.ModelRefusal -> holdsModelRefusal(row)
     }
 
 /**
@@ -541,3 +567,19 @@ internal fun List<ThreadItem>.holdsBanner(banner: ThreadItem.Banner): Boolean =
  */
 internal fun List<ThreadItem>.holdsCompactionBoundary(boundary: ThreadItem.CompactionBoundary): Boolean =
     any { it is ThreadItem.CompactionBoundary && it.occurredAt == boundary.occurredAt }
+
+/**
+ * Whether this thread already holds a refusal of [refusal]'s frame type stamped with its `ts` (#875) — the
+ * protocol's `(type, ts)` join key, the type being whether a fallback model is present.
+ *
+ * **One identity, three readers:** this history merge, the live lane's `appendModelRefusal`, and the list key
+ * `ThreadRow.listKey` gives the row, so two refusals this predicate lets into one thread never share a key.
+ * Two *different* refusals of one type on one instant lose the second — the fail-safe direction, a missing
+ * row rather than a crashed thread; the daemon stamps one `ts` per refusal.
+ */
+internal fun List<ThreadItem>.holdsModelRefusal(refusal: ThreadItem.ModelRefusal): Boolean =
+    any {
+        it is ThreadItem.ModelRefusal &&
+            (it.fallbackModel != null) == (refusal.fallbackModel != null) &&
+            it.occurredAt == refusal.occurredAt
+    }

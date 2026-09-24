@@ -8,6 +8,7 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.BuildConfig
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
@@ -36,6 +37,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
+import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
@@ -43,6 +45,7 @@ import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.conversations.thread.asRememberedEffortStore
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
@@ -53,7 +56,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -86,14 +88,17 @@ val appModule =
         // excluded from both paths by definition, keeping the cache exactly as transferable as the
         // credentials it belongs to. ConversationCacheBindingInstrumentedTest holds this.
         single<ConversationCache> { FileConversationCache(File(androidContext().noBackupFilesDir, "conversations")) }
+        // #899: retrieved attachments, kept per host under noBackupFilesDir for the reason above. A `single`
+        // because its one-fetch-per-file bookkeeping is per instance.
+        single { AttachmentStore(File(androidContext().noBackupFilesDir, "attachments")) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
         // #790: a removed pairing takes its host's unsent composer text with it, and (#798) its cached
-        // conversation content. Bound here rather than in the unpair controller so neither screen that
+        // conversation content, and (#900) its retained attachment files. Bound here rather than in the unpair controller so neither screen that
         // opens the Edit host modal carries a draft-store or cache dependency it does not otherwise use,
         // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
         // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
         single {
-            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }))
+            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }, lazy { get() }))
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
         single {
@@ -101,7 +106,8 @@ val appModule =
                 get(),
                 get(),
                 get(),
-                pushToken = { get<AppPreferences>().pushToken.first() },
+                // #361: every host observes the stored token, so a rotation re-registers on open hosts.
+                pushTokens = get<AppPreferences>().pushToken,
             )
         }
         single(createdAtStart = true) {
@@ -124,14 +130,16 @@ val appModule =
         // (#350), which selects the StableConversationRepository facade by default or this demo Fake.
         single { FakeConversationRepository() }
         // #302: process-lifecycle driver. Eagerly created at startKoin (Application.onCreate, main
-        // thread) so it registers as a ProcessLifecycleOwner observer immediately; resolvable so a
-        // future FCM service can get() it for onPushWake(). The registry owns all saved hosts.
+        // thread) so it registers as a ProcessLifecycleOwner observer immediately; resolvable so the
+        // FCM service (#361) can get() it for onPushWake(). The registry owns all saved hosts.
         single(createdAtStart = true) {
             LifecycleConnectionDriver(
                 controller = get<RelayConnectionController>(),
                 lifecycle = ProcessLifecycleOwner.get().lifecycle,
             ).also { it.start() }
-        }
+        } onClose { it?.dispose() }
+        // #361: the FCM service's token writes outlive the service instance that received them.
+        single { PushTokenSink(get()) } onClose { it?.dispose() }
         // The stable facade follows the registry's selection and that host's connection churn.
         // Registered as its own resolvable type only; conversationRepositoryModule (#350) flag-selects
         // whether this facade or the Fake wins the ConversationRepository binding.
@@ -157,7 +165,7 @@ val appModule =
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
         viewModel {
             val handle = get<SavedStateHandle>()
-            get<ThreadDestinationFactory>().thread(handle, get(), get()).also { thread ->
+            get<ThreadDestinationFactory>().thread(handle, get(), get(), get()).also { thread ->
                 // #877: the thread is what knows its conversation is being viewed. The view opens the
                 // conversation on its own host and holds it read until this view model is cleared.
                 val viewing =
@@ -199,7 +207,17 @@ fun hostConversationModule(
 ): Module =
     module {
         // #797: the demo branch resolves no cache, as HostConversationSource's does below.
-        single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository, cache = if (useRelay) get() else null) }
+        single {
+            ThreadDestinationFactory(
+                useRelay,
+                get(),
+                get(),
+                get(),
+                decorateRepository,
+                cache = if (useRelay) get() else null,
+                attachments = if (useRelay) get() else null,
+            )
+        }
         // #877: one viewing tracker per app, shared by the thread destinations and the host source.
         single { ConversationViewing() }
         single {
@@ -237,6 +255,7 @@ internal class ThreadDestinationFactory(
     private val store: PairedServerCollectionStore,
     private val decorateRepository: (ConversationRepository) -> ConversationRepository,
     private val cache: ConversationCache? = null,
+    private val attachments: AttachmentStore? = null,
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -269,7 +288,7 @@ internal class ThreadDestinationFactory(
             // (E2eTestApplication's TappingConversationRepository) observes the restored thread too. A
             // blank owner gets no cache, so no rows are ever filed under the empty id.
             decorateRepository(
-                if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId) else stable,
+                if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId, attachments) else stable,
             )
         }
 
@@ -281,6 +300,9 @@ internal class ThreadDestinationFactory(
         // daemon's session settings now, and no other thread state reads a device preference.
         draftStore: ComposerDraftStore,
         attachmentReader: AttachmentReader,
+        // #686: the one exception — the remembered effort a successful write sets and an opening
+        // recalls. It never touches `defaultEffort`. The demo host stays inert.
+        preferences: AppPreferences,
     ): ThreadViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
         val bundle = if (useRelay) registry.connectionFor(serverId) else null
@@ -310,6 +332,9 @@ internal class ThreadDestinationFactory(
             questionBatch = { id -> bundle?.coordinator?.observeQuestionBatch(id) ?: flowOf(null) },
             answerQuestionBatch = { batch, answers -> checkNotNull(bundle).coordinator.answerQuestionBatch(batch, answers) },
             refuseQuestionBatch = { batch -> checkNotNull(bundle).coordinator.refuseQuestionBatch(batch) },
+            // #678: the open host's roster and live count; the demo early-return above keeps the defaults.
+            backgroundTasks = { id -> bundle?.coordinator?.observeBackgroundTasks(id) ?: flowOf(null) },
+            backgroundTaskCount = { id -> bundle?.coordinator?.observeLiveBackgroundTaskCount(id) ?: flowOf(0) },
             // #861: the walk restart waits for the published repository, not the socket — the supervisor's
             // Connected precedes the handshake that publishes it.
             repositoryAvailable = bundle?.coordinator?.currentRepository?.map { it != null } ?: flowOf(false),
@@ -317,6 +342,7 @@ internal class ThreadDestinationFactory(
             // replaces that bundle, and the thread must see the replacement to take the action away.
             pairingRejected = pairingRejected(registry.hostConnections, serverId),
             attachmentReader = attachmentReader,
+            rememberedEffort = preferences.asRememberedEffortStore(),
         )
     }
 

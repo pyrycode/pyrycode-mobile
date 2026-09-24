@@ -82,18 +82,19 @@ cache (enforced on write) and [`CachingConversationRepository`](caching-conversa
 
 - **`settledThreadRows(rows)`** drops only the in-flight rows — a `Message` with `isStreaming` or
   whose `toolCall?.status == ToolCallStatus.Running` — leaving `UnrecognizedMessage`,
-  [`Banner`](banner-notice-row.md) and [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874)
-  rows and the row count untouched. This is what a thread may keep **drawing** once its connection is
-  gone, not what the cache may **hold**: it is also the caching repository's merge-base rebase on a
-  disconnect (see that doc), where the bound would otherwise shrink a long thread on screen the moment
-  it goes offline.
+  [`Banner`](banner-notice-row.md), [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874)
+  and [`ModelRefusal`](model-refusal-row.md) rows and the row count untouched. This is what a thread may
+  keep **drawing** once its connection is gone, not what the cache may **hold**: it is also the caching
+  repository's merge-base rebase on a disconnect (see that doc), where the bound would otherwise shrink a
+  long thread on screen the moment it goes offline.
 - **`cacheableThreadRows(rows)`** is `settledThreadRows(rows)` with `UnrecognizedMessage` rows
   (unbounded, model-adjacent JSON; its KDoc forbids persisting it), [`Banner`](banner-notice-row.md)
-  rows (claude-authored prose; restored by history replay instead, #873) and
+  rows (claude-authored prose; restored by history replay instead, #873),
   [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) rows (never
-  cached; restored by history replay instead, #874) additionally dropped, and the result bounded to the
-  newest `MAX_CACHED_THREAD_ROWS` (200) via `takeLast` — the thread is in arrival order, so "newest" is
-  the tail. This is what may reach disk.
+  cached; restored by history replay instead, #874) and [`ModelRefusal`](model-refusal-row.md) rows
+  (claude-authored model names and prose; restored by history replay instead, #875) additionally
+  dropped, and the result bounded to the newest `MAX_CACHED_THREAD_ROWS` (200) via `takeLast` — the
+  thread is in arrival order, so "newest" is the tail. This is what may reach disk.
 
 **Identity is exact, case-sensitive string equality** on `serverId` and on `Conversation.id` —
 the same rule [`PairedServerCollectionStore`](paired-server-store.md#the-contract) states for
@@ -143,10 +144,11 @@ The thread document is the same shape, file-private to `FileConversationCache.kt
 `CachedThread(version: Int, rows: List<CachedThreadRow>)`, `CachedThreadRow(message:
 CachedMessage? = null, boundary: CachedBoundary? = null)` — exactly one of the two is set, mapping
 `ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` (never `UnrecognizedMessage`,
-[`Banner`](banner-notice-row.md) or
-[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874), which
+[`Banner`](banner-notice-row.md),
+[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) or
+[`ModelRefusal`](model-refusal-row.md), which
 `cacheableThreadRows` drops before a `CachedThreadRow` is ever built; `ThreadItem.toRecord()` throws
-if any of the three ever reaches it).
+if any of the four ever reaches it).
 `CachedMessage(id, sessionId, role, content, timestamp, tool: CachedToolCall? = null)` carries no
 `isStreaming` field — a restored row is always settled, so the field would have nothing to encode.
 `CachedToolCall(toolName, input, output, status)` and `CachedBoundary(previousSessionId,
@@ -277,28 +279,33 @@ host directory rather than in its own family root.
 
 [#798](../../specs/architecture/798-clear-cache-on-removal.md) wires `removeHost` to the one place a
 pairing is actually removed: `internal fun forgetRemovedHost(drafts: ComposerDraftStore, cache:
-Lazy<ConversationCache>): suspend (String) -> Unit` in `di/ObservablePairedServerStore.kt` is the
-production `onHostRemoved` hook `ObservablePairedServerStore.remove` runs once `delegate.remove` and
-the revision bump have both succeeded — see [paired server store § Wiring &
-usage](paired-server-store.md#wiring--usage) for the hook's own contract. It clears the host's
-composer drafts first (`ComposerDraftStore.clearHost`, see [Thread screen § Composer draft
-ownership](thread-screen.md#composer-draft-ownership)), then calls `cache.value.removeHost(serverId)`
-inside `withContext(NonCancellable)` so a view model cleared mid-cleanup cannot strand the forgotten
-host's content on disk, and logs a static `event=host_cache_remove_failed` line on failure without
-surfacing it — the pairing is already gone by then, so reporting a failure would claim the host is
-still paired when it is not. Never logs the id.
+Lazy<ConversationCache>, attachments: Lazy<AttachmentStore>): suspend (String) -> Unit` in
+`di/ObservablePairedServerStore.kt` is the production `onHostRemoved` hook
+`ObservablePairedServerStore.remove` runs once `delegate.remove` and the revision bump have both
+succeeded — see [paired server store § Wiring & usage](paired-server-store.md#wiring--usage) for the
+hook's own contract. It clears the host's composer drafts first (`ComposerDraftStore.clearHost`, see
+[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership)), then, inside one
+`withContext(NonCancellable)` block so a view model cleared mid-cleanup cannot strand the forgotten
+host's content or files on disk, calls `cache.value.removeHost(serverId)` and then
+[`attachments.value.removeHost(serverId)`](attachment-retrieval.md#host-store--datacacheattachmentstorekt)
+(#900) — each runs whether or not the other one failed. A failed cache removal logs the static
+`event=host_cache_remove_failed`; a failed attachment removal logs the static
+`event=host_attachments_remove_failed`. Neither is surfaced — the pairing is already gone by then, so
+reporting a failure would claim the host is still paired when it is not — and neither logs the id or the
+removal's own message.
 
-`cache` is `Lazy<ConversationCache>`, not `ConversationCache`, so resolving the paired-server store
-binding never constructs the cache: the cache's root is `Context.noBackupFilesDir` (see § Root and
-storage scope above), and the JVM tests that resolve `appModule`'s paired-server store without a
-`Context` would otherwise fail with `MissingAndroidContextException` the moment that binding runs. The
-Koin binding is `single { ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() })) }`.
+`cache` and `attachments` are both `Lazy`, not their plain types, so resolving the paired-server store
+binding never constructs either: both roots are `Context`-derived directories (the cache's is
+`Context.noBackupFilesDir`, see § Root and storage scope above; the attachment store's is
+`noBackupFilesDir/attachments`), and the JVM tests that resolve `appModule`'s paired-server store without
+a `Context` would otherwise fail with `MissingAndroidContextException` the moment that binding runs. The
+Koin binding is `single { ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }, lazy { get() })) }`.
 
 Named rather than written inline in `appModule`, for the same reason the #790 draft eviction was: a
 JVM test that restates the hook as its own lambda stays green if production forgets a step, while one
 that binds `forgetRemovedHost` itself cannot. `HostChannelListViewModelTest`'s fixture binds
-`forgetRemovedHost(drafts, lazyOf(cache))` over a real `FileConversationCache` on a `TemporaryFolder`
-for exactly this reason.
+`forgetRemovedHost(drafts, lazyOf(cache), lazyOf(attachments))` over a real `FileConversationCache` and a
+real `AttachmentStore` on a `TemporaryFolder` for exactly this reason.
 
 Permanent deletion does not go through this hook — see [Caching conversation repository §
 delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798) for
@@ -423,3 +430,6 @@ cache's or the wrapper's own unit suite.
   [`CachingConversationRepository.delete`](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798);
   archive and unarchive call neither), [#877](../../specs/architecture/877-conversation-attention-state.md)
   (done — read-position family)
+- [Clear retained attachment files on unpair (#900)](../../specs/architecture/900-clear-attachments-on-unpair.md) —
+  gave `forgetRemovedHost` its third, attachment-store step; see [Attachment retrieval § Host
+  store](attachment-retrieval.md#host-store--datacacheattachmentstorekt)

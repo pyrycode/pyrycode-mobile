@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -463,7 +464,7 @@ class RelayRepositoryCoordinatorTest {
     @Test
     fun onOpen_withStoredToken_registersOnceWithLiveDeviceName() =
         runTest {
-            val env = newEnv(deviceName = "Pixel-8", pushToken = { "fcm-tok" })
+            val env = newEnv(deviceName = "Pixel-8", pushTokens = flowOf("fcm-tok"))
             env.connections.value = StubRelayTransport()
             runCurrent()
             val pump = env.pumps.single()
@@ -488,7 +489,7 @@ class RelayRepositoryCoordinatorTest {
     @Test
     fun onOpen_withNoStoredToken_sendsNothing() =
         runTest {
-            val env = newEnv(deviceName = "Pixel-8", pushToken = { null })
+            val env = newEnv(deviceName = "Pixel-8", pushTokens = flowOf(null))
             env.connections.value = StubRelayTransport()
             runCurrent()
             val pump = env.pumps.single()
@@ -510,7 +511,7 @@ class RelayRepositoryCoordinatorTest {
     @Test
     fun reconnect_reRegistersOncePerConnection() =
         runTest {
-            val env = newEnv(deviceName = "Pixel-8", pushToken = { "fcm-tok" })
+            val env = newEnv(deviceName = "Pixel-8", pushTokens = flowOf("fcm-tok"))
 
             // Connection 1 reaches Open → one register frame on pump 1.
             env.connections.value = StubRelayTransport()
@@ -544,7 +545,7 @@ class RelayRepositoryCoordinatorTest {
     @Test
     fun registrationFailure_doesNotCrashOrWedgeTheConnection() =
         runTest {
-            val env = newEnv(deviceName = "Pixel-8", pushToken = { "fcm-tok" })
+            val env = newEnv(deviceName = "Pixel-8", pushTokens = flowOf("fcm-tok"))
 
             env.connections.value = StubRelayTransport()
             runCurrent()
@@ -575,7 +576,7 @@ class RelayRepositoryCoordinatorTest {
     @Test
     fun preOpenClosed_abortsWithoutRegistering() =
         runTest {
-            val env = newEnv(deviceName = "Pixel-8", pushToken = { "fcm-tok" })
+            val env = newEnv(deviceName = "Pixel-8", pushTokens = flowOf("fcm-tok"))
             env.connections.value = StubRelayTransport()
             runCurrent()
             val pump = env.pumps.single()
@@ -590,6 +591,61 @@ class RelayRepositoryCoordinatorTest {
 
             env.coordinator.close()
         }
+
+    // #361: a rotated token reaches every open host without a reconnect; an offline host sends it on its
+    // next Open through the #365 path. The three coordinators stand in for three saved hosts' bundles,
+    // which all share the one persisted token stream.
+    @Test
+    fun tokenRotation_reRegistersOnOpenHostsAndReachesOfflineHostOnConnect() =
+        runTest {
+            val tokens = MutableStateFlow<String?>("tok-1")
+            val openA = newEnv(deviceName = "Pixel-8", pushTokens = tokens)
+            val openB = newEnv(deviceName = "Pixel-8", pushTokens = tokens)
+            val offline = newEnv(deviceName = "Pixel-8", pushTokens = tokens)
+            val openPumps =
+                listOf(openA, openB).map { env ->
+                    env.connections.value = StubRelayTransport()
+                    runCurrent()
+                    env.pumps.single().also { pump ->
+                        pump.open()
+                        runCurrent()
+                        pump.push(ackEnvelope(pump.sent.single { it.type == "register_push_token" }.id))
+                        runCurrent()
+                    }
+                }
+
+            tokens.value = "tok-2"
+            runCurrent()
+
+            openPumps.forEach { pump ->
+                assertEquals(listOf("tok-1", "tok-2"), pump.registeredTokens())
+                pump.push(ackEnvelope(pump.sent.last { it.type == "register_push_token" }.id))
+            }
+            assertTrue("an offline host has no pump to send on", offline.pumps.isEmpty())
+            // No reconnect was needed: each open host still has its single original connection.
+            assertEquals(1, openA.pumps.size)
+            assertEquals(1, openB.pumps.size)
+
+            offline.connections.value = StubRelayTransport()
+            runCurrent()
+            val late = offline.pumps.single()
+            late.open()
+            runCurrent()
+            assertEquals(listOf("tok-2"), late.registeredTokens())
+            late.push(ackEnvelope(late.sent.single { it.type == "register_push_token" }.id))
+            runCurrent()
+
+            listOf(openA, openB, offline).forEach { it.coordinator.close() }
+        }
+
+    private fun FakeManagedPump.registeredTokens(): List<String> =
+        sent
+            .filter { it.type == "register_push_token" }
+            .map {
+                it.payload.jsonObject
+                    .getValue("token")
+                    .jsonPrimitive.content
+            }
 
     // ---- #392: pyrycode-leg readiness + combined two-part connection status ----------------------
 
@@ -1269,7 +1325,7 @@ class RelayRepositoryCoordinatorTest {
 
     private fun TestScope.newEnv(
         deviceName: String = "",
-        pushToken: suspend () -> String? = { null },
+        pushTokens: Flow<String?> = flowOf(null),
         relayStatus: MutableStateFlow<RelayLinkStatus> = MutableStateFlow(RelayLinkStatus.Connected),
     ): Env {
         val connections = MutableStateFlow<RelayTransport?>(null)
@@ -1281,7 +1337,7 @@ class RelayRepositoryCoordinatorTest {
                 createPump = { FakeManagedPump().also { pumps += it } },
                 dispatcher = StandardTestDispatcher(testScheduler),
                 deviceName = deviceName,
-                pushToken = pushToken,
+                pushTokens = pushTokens,
             )
         coordinator.start()
         return Env(connections, pumps, coordinator, relayStatus)

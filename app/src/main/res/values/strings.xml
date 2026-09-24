@@ -25,6 +25,8 @@
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <!-- A Chats row's pencil (#827); %1$s is the chat's (clamped) name or the untitled fallback. -->
     <string name="cd_tree_chat_edit">Edit chat %1$s</string>
+    <!-- A workspace row's pencil (#905), in both sections; %1$s is the workspace's (clamped) shown name. -->
+    <string name="cd_tree_workspace_edit">Edit workspace %1$s</string>
     <string name="untitled_discussion">Untitled discussion</string>
     <string name="channels_section_header">Channels</string>
     <string name="chats_section_header">Chats</string>
@@ -71,7 +73,23 @@
     <string name="thread_footer_change_model">Change model</string>
     <string name="thread_footer_change_effort">Change effort</string>
     <string name="thread_footer_change_permission">Change permission mode</string>
+    <!-- #884: the composer footer's Actions button (Figma 110:3494) and its click label. -->
+    <string name="thread_footer_actions">Actions</string>
+    <string name="thread_footer_open_actions">Open actions</string>
     <string name="thread_footer_pending">Applying</string>
+    <!-- #678: the read-only background-task panel the Actions menu opens. Client-owned copy only. -->
+    <string name="background_tasks_title">Background tasks</string>
+    <string name="background_tasks_close">Close</string>
+    <string name="background_tasks_unreported">No background-task report yet</string>
+    <string name="background_tasks_empty">No background tasks</string>
+    <string name="background_tasks_partial">Partial list (%1$d not shown)</string>
+    <string name="background_tasks_truncated">Truncated by the daemon</string>
+    <string name="background_tasks_no_change">No change reported</string>
+    <string name="background_tasks_finished">Finished</string>
+    <string name="status_sheet_running_model">Running model</string>
+    <string name="status_sheet_running_model_unavailable">Not announced yet</string>
+    <string name="status_sheet_running_build">Claude Code %1$s</string>
+    <string name="status_sheet_running_truncated">" (truncated)"</string>
     <string name="thread_effort_note_selected_unavailable">Selected effort. The running effort is unavailable.</string>
     <string name="thread_effort_note_default_unavailable">Claude\'s default applies. The running effort is unavailable.</string>
     <string name="thread_effort_note_not_reported">Claude reports no effort parameter.</string>
@@ -81,6 +99,11 @@
     <string name="cd_thread_thinking">Agent is thinking</string>
     <string name="thread_thinking_progress_label">Thinking… ~%1$d tokens this step</string>
     <string name="cd_thread_thinking_progress">Claude is thinking, about %1$d tokens into its current reasoning step</string>
+    <!-- #897: the open tool call in the thinking arm's slot. %1$s is the daemon's tool name, %2$s claude's elapsed reading. -->
+    <string name="thread_tool_running_label">Running %1$s…</string>
+    <string name="thread_tool_running_elapsed_label">Running %1$s… %2$s</string>
+    <string name="cd_thread_tool_running">Claude is running %1$s</string>
+    <string name="cd_thread_tool_running_elapsed">Claude is running %1$s, %2$s elapsed</string>
     <string name="thread_api_retry_label">Retrying — attempt %1$d/%2$d</string>
     <string name="thread_api_retry_label_unknown">Retrying…</string>
     <string name="cd_thread_api_retry">Claude is retrying, attempt %1$d of %2$d</string>
@@ -135,8 +158,23 @@
     <string name="thread_banner_attribution">"Claude: "</string>
     <string name="thread_banner_truncated">" (truncated)"</string>
     <string name="cd_thread_banner_warning">Warning from Claude</string>
+    <string name="thread_refusal_refused_on">"Refused on "</string>
+    <string name="thread_refusal_continued_on">", continued on "</string>
+    <string name="thread_refusal_refused_by">"Refused by "</string>
+    <string name="thread_refusal_unknown_model">unknown model</string>
+    <string name="cd_thread_refusal_expand">Show Claude\'s explanation</string>
+    <string name="cd_thread_refusal_collapse">Hide Claude\'s explanation</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
+    <string name="cd_tool_done">Tool call done</string>
+    <string name="cd_tool_denied">Tool call denied</string>
+    <!-- #896: a tool call a subagent made, and how many agent calls deep it sits. -->
+    <string name="cd_tool_subagent_step">Subagent step, level %1$d</string>
+    <string name="tool_row_input">Input</string>
+    <string name="tool_row_output">Output</string>
+    <string name="tool_row_denial">Denied by claude</string>
+    <string name="tool_row_expand">Show tool details</string>
+    <string name="tool_row_collapse">Hide tool details</string>
     <string name="thread_overflow_new_session">Reset session</string>
     <string name="thread_overflow_rename">Rename</string>
     <string name="thread_overflow_change_workspace">Change workspace…</string>
@@ -221,6 +259,32 @@
     <string name="edit_chat_archive">Archive chat</string>
     <!-- Generic for the same reason edit_host_save_failed is: the shell announces it aloud (#827). -->
     <string name="edit_chat_save_failed">Couldn\'t rename the chat. Try again.</string>
+    <!--
+      The host row's Add workspace modal (#904). "Recent" and the create entry keep the bottom
+      sheet's wording, which the device suites match. Both failures are static for the reason
+      edit_chat_save_failed is: the shell announces them aloud.
+    -->
+    <string name="add_workspace_title">Add workspace</string>
+    <string name="add_workspace_recent">Recent</string>
+    <string name="add_workspace_new_folder">New folder</string>
+    <string name="add_workspace_empty">No recent folders on this host yet.</string>
+    <string name="add_workspace_create_folder">Create new folder under pyry-workspace…</string>
+    <string name="add_workspace_create_failed">Couldn\'t create the folder. Try again.</string>
+    <string name="add_workspace_start_failed">Couldn\'t start a chat in this folder. Try again.</string>
+    <!--
+      The Edit workspace modal (#905), in desktop's EditWorkspaceDialogView copy. The length line counts
+      UTF-8 bytes because that is the unit the daemon bounds a label in. The confirmation names the
+      workspace by its (clamped) shown name as a format argument. Both failures are static for the
+      reason edit_chat_save_failed is: the shell announces them aloud.
+    -->
+    <string name="edit_workspace_title">Edit workspace</string>
+    <string name="edit_workspace_name_label">Workspace name (optional):</string>
+    <string name="edit_workspace_name_length">UTF-8 bytes: %1$d/%2$d</string>
+    <string name="edit_workspace_archive">Archive workspace</string>
+    <string name="edit_workspace_archive_confirm_title">Archive workspace?</string>
+    <string name="edit_workspace_archive_confirm_body">Every active chat and channel in %1$s on this host moves to Archive.</string>
+    <string name="edit_workspace_save_failed">Couldn\'t rename the workspace. Try again.</string>
+    <string name="edit_workspace_archive_failed">Couldn\'t archive the workspace. Try again.</string>
     <!--
       The Log data entry and its modal (#683). The row headline joins the Storage section in
       Clear cache\'s language; the title repeats it so the modal names what it was opened from.
