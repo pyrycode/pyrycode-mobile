@@ -93,12 +93,12 @@ val appModule =
         single { AttachmentStore(File(androidContext().noBackupFilesDir, "attachments")) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
         // #790: a removed pairing takes its host's unsent composer text with it, and (#798) its cached
-        // conversation content. Bound here rather than in the unpair controller so neither screen that
+        // conversation content, and (#900) its retained attachment files. Bound here rather than in the unpair controller so neither screen that
         // opens the Edit host modal carries a draft-store or cache dependency it does not otherwise use,
         // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
         // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
         single {
-            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }))
+            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }, lazy { get() }))
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
         single {

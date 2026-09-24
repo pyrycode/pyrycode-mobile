@@ -88,6 +88,23 @@ class AttachmentStore(
         }
     }
 
+    /**
+     * Delete every file kept for [serverId] (#900), leaving every other host's files readable. An unknown
+     * host is a successful no-op. A directory left behind reports failure with a static message that names
+     * no id and no path; never throws except on cancellation.
+     */
+    suspend fun removeHost(serverId: String): Result<Unit> =
+        withContext(ioDispatcher) {
+            val directory = File(root, sha256Hex(serverId))
+            val removed =
+                try {
+                    directory.deleteRecursively() || !directory.exists()
+                } catch (_: SecurityException) {
+                    false
+                }
+            if (removed) Result.success(Unit) else Result.failure(IOException("attachment host removal failed"))
+        }
+
     private suspend fun lead(
         key: Key,
         fetch: suspend () -> AttachmentFetchResult,
