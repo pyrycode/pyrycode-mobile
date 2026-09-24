@@ -2,16 +2,23 @@
 
 `de.pyryco.mobile.push` is the Android half of push ([#361](../codebase/361.md)). It captures and
 persists each FCM token and turns a received push into a payload-free
-[`LifecycleConnectionDriver.onPushWake()`](lifecycle-connection-driver.md) call. There is no push
-sender: the daemon stores tokens (`internal/relay/handlers/register_push_token.go`) but nothing in
-pyrycode or pyrycode-relay sends FCM yet, so a push cannot wake the app in production. This package is
-in place and tested against a synthetic message; it has never received a live one.
+[`LifecycleConnectionDriver.onPushWake()`](lifecycle-connection-driver.md) call. The daemon stores
+tokens (`internal/relay/handlers/register_push_token.go`) and, from pyry v0.23.0
+(`cmd/pyry/push_wake.go`), asks the relay to wake a device that has no open session, on `TurnEnd` and on
+a surfaced prompt, coalescing per device for 30 s; pyrycode-relay#130 sends the FCM data message and is
+deployed. A push therefore does wake the app in production, on a device image with Play services.
 
 [§ Attention alerts and the tap route](#attention-alerts-and-the-tap-route-685) below (#685) is the
 alert *publisher* this wake feeds: it needs no push to fire, only a saved host that is still connected
-when the app backgrounds, so it is proven complete against fakes and Robolectric even though no push
-has ever reached the phone. [#955](https://github.com/pyrycode/pyrycode-mobile/issues/955) is the
-still-blocked live end-to-end proof.
+when the app backgrounds, so it was proven complete against fakes and Robolectric before any push had
+reached the phone. [#955](https://github.com/pyrycode/pyrycode-mobile/issues/955) is the live
+end-to-end proof: a real FCM push from the production relay wakes the backgrounded app both for a turn
+that ended while it was away and for a permission prompt that surfaced while it was away, and each posts
+exactly one notification whose tap opens the right thread —
+`InteractiveStreamE2ETest#interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` and
+`InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`, LIVE
+only (see [docs/e2e-interactive-stream.md § Live mode](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay)).
+This package's own tests below still cover the same pipeline against fakes, for the deterministic gates.
 
 ## Why the SDK is unconditional but push can still be off
 
@@ -130,10 +137,13 @@ it drives an Android `Service` class, not a Compose screen, so it does not belon
 emits — a turn the attention fold counted for the first time, or a prompt newly outstanding, on any
 saved host. It needs no push: the source emits from the same live-event and modal/batch collectors that
 already drive `attention`, so an alert can fire the moment the app backgrounds while a host is still
-connected. That window is narrow in production today — `LifecycleConnectionDriver` closes every host on
-`onStop`, and only a push wake reopens one, and nothing sends push yet (above) — which is why #955,
-the live end-to-end proof, stays blocked. This package's own tests (`AttentionNotifierTest`,
-`HostConversationSourceAttentionTest`) prove the pipeline with fakes instead.
+connected. That window is narrow in production — `LifecycleConnectionDriver` closes every host on
+`onStop`, and only a push wake reopens one. #955's live run proved the reopened window reaches this
+notifier: the daemon's `push_wake` (above) brings FCM in, `onPushWake` reconnects the host, the missed
+event replays on the fresh connection, and the alert posts from there — one notification, whether the
+missed event is a `TurnEnd` or a newly outstanding prompt. This package's own tests
+(`AttentionNotifierTest`, `HostConversationSourceAttentionTest`) prove the pipeline with fakes for the
+deterministic gates.
 
 **Dedupe runs before the gates, not after.** `AttentionNotifier.handle` records an alert's digest in
 `AlertLedger` first; only a digest new to the ledger is even considered for the foreground, switch, mute
