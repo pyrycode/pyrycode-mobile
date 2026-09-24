@@ -196,15 +196,18 @@ one-line hand-off.
 and a null `workspace` means the server picks the scratch `cwd`). The reply rides the **same** correlation
 primitive: `RelayRequests.sendAndAwaitReply` hands the raw reply `JsonElement` back, and the caller decodes it.
 
-The flow (≤ ~10 lines):
+The flow (≤ ~10 lines) — since #956 the body behind both `createDiscussion` and `createChannel` is one
+private `create(payload)`, so the shape below is shared, not `createDiscussion`-only:
 
 ```kotlin
 // ConversationCommands
-suspend fun createDiscussion(workspace: String?): Conversation {
+suspend fun createDiscussion(workspace: String?): Conversation = create(CreateConversationPayloadDto(cwd = workspace))
+
+private suspend fun create(payload: CreateConversationPayloadDto): Conversation {
     val request = Envelope(
         id = requests.nextRequestId(),
         type = TYPE_CREATE_CONVERSATION, ts = Clock.System.now().toString(),
-        payload = MobileJson.encodeToJsonElement(CreateConversationPayloadDto(cwd = workspace)),
+        payload = MobileJson.encodeToJsonElement(payload),
     )
     val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
     val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
@@ -214,10 +217,11 @@ suspend fun createDiscussion(workspace: String?): Conversation {
 ```
 
 - **The request encoder is `CreateConversationPayloadDto`** (`is_promoted` always `false`, optional
-  `cwd`; `name` unmodeled — discussions are server-auto-named). Under `MobileJson` (`explicitNulls =
-  false`) a null `cwd` is **omitted** from the JSON (not `"cwd":null`), which the server decodes
-  identically to an absent key (its `*string` field has no `omitempty`) — so `createDiscussion(null)`
-  encodes to `{"is_promoted":false}` and means "server assigns the scratch cwd". See the
+  `cwd`, `name` always `null`/omitted — discussions are server-auto-named). Under `MobileJson`
+  (`explicitNulls = false`) a null `cwd` is **omitted** from the JSON (not `"cwd":null`), which the
+  server decodes identically to an absent key (its `*string` field has no `omitempty`) — so
+  `createDiscussion(null)` encodes to `{"is_promoted":false}` and means "server assigns the scratch
+  cwd". See the
   [wire-layer doc](mobile-protocol-v2-wire-layer-application-payloads.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
 - **The returned `cwd` is the server's reply value, never the input.** A null `workspace` returns the
   server-assigned scratch cwd (`DEFAULT_SCRATCH_CWD`); this is the one divergence from
@@ -229,6 +233,42 @@ suspend fun createDiscussion(workspace: String?): Conversation {
   projection is never mutated by a failure path (AC #3). The decode runs in the **caller's** coroutine
   (after the `RelayRequests.pendingRequests` entry is removed), so it never throws inside the single inbound
   collector.
+
+### `createChannel(name, workspace)` — a named, promoted channel in one step (#956)
+
+Creates a **promoted, named** channel directly, instead of an unpromoted discussion that is promoted
+afterwards. It is `createDiscussion` with two deltas, reusing the same `create(payload)` body above:
+
+```kotlin
+// ConversationCommands
+suspend fun createChannel(name: String, workspace: String): Conversation =
+    create(CreateConversationPayloadDto(isPromoted = true, name = name, cwd = workspace))
+```
+
+- **`isPromoted = true` and `name` are both set** — `createDiscussion` never sets either. `name` and
+  `workspace` are sent **verbatim** (no trim); trimming is the caller's job (the follow-up Create channel
+  modal), and the daemon re-validates both, the same posture as `rename`'s name.
+- **`CreateConversationPayloadDto.name` exists only for this caller.** Before #956 the DTO's KDoc forbade
+  modelling `name` ("discussions are server-auto-named, so the create flow never sends a `name`") because
+  no consumer needed it; `createChannel` is that consumer, so the field was added (declared between
+  `isPromoted` and `cwd`, matching Go struct order) and the KDoc rewritten. `createDiscussion`'s wire shape
+  is unchanged — a null `name` is **omitted** under `MobileJson` (`explicitNulls = false`), so
+  `createDiscussion` still encodes to `{"is_promoted":false}` / `{"is_promoted":false,"cwd":…}`, never a
+  `"name"` key.
+- **The returned conversation holds the daemon's values, not the request's** — same rule as
+  `createDiscussion`'s `cwd`, extended to `name`. A reply whose `name` differs from the request (the
+  daemon truncated or otherwise altered it) is what the caller gets back.
+- **Same failure contract as `createDiscussion`**: a server `error`, a disconnected session or a malformed
+  reply all throw before `ConversationListProjection.upsertConversation` runs, so nothing is inserted.
+- **No logging** — `ConversationCommands` is documented as "Nothing here logs"; the channel name and
+  workspace path are operator-chosen and stay off the log, the same posture as `sendMessage`'s text and
+  `mapError`'s server message.
+
+`RemoteConversationRepository.createChannel` is a one-line hand-off to
+`conversationCommands.createChannel`, `StableConversationRepository.createChannel` delegates through
+`live` (throws `IllegalStateException` with no live connection, like every one-shot), and
+`FakeConversationRepository.createChannel` shares a private `insertNew(name, cwd, isPromoted)` helper
+with `createDiscussion` — the same de-duplication `create(payload)` does on the remote side.
 
 ### Confirmed-insert via `ConversationListProjection.upsertConversation` (the projection's second writer)
 
