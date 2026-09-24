@@ -993,9 +993,21 @@ Prerequisites on the host:
   machine `cmdline-tools` was absent at authoring time — install it before the first run.
 - `python3` (decodes the base64url pairing payload).
 
-The script: starts the relay → mints a device token with `pyry pair` and parses the payload → starts
-the daemon (`PYRY_MOBILE_V2=1`, pointed at the loopback relay) → runs `pixel2Api33AtdDebugAndroidTest`
-with the four values injected as instrumentation arguments → tears everything down.
+The script: starts the relay → starts the daemon (`PYRY_MOBILE_V2=1`, pointed at the loopback relay,
+alongside any other harness daemons the mode needs) → builds the app and test APKs
+(`assembleDebug assembleDebugAndroidTest`, the same `-PuseRelayRepository` build properties the test task
+uses) → mints each device pairing token with `pyry pair` and parses the payload → runs
+`pixel2Api33AtdDebugAndroidTest`, which finds the APKs already built, with the four values injected as
+instrumentation arguments → tears everything down. Minting moves after the build (#993): a daemon redeems
+a pairing code only within a 15-minute window, and a slow or contended Gradle build (28 minutes observed on
+#966's live gate, against a 3-minute green baseline) can otherwise burn that window before the test task
+ever starts, expiring every code at once and failing every pairing method with an anonymous 30-second
+timeout that looks like a problem in the branch under test. When the test task fails, the script scans the
+harness daemon logs it captured (`DAEMON_LOG` and, when present, the two-host, operator-bypass and answer
+daemon logs) for `redemption_window_elapsed` and prints `pairing_codes_stale` naming each daemon whose code
+went stale — a daemon rejected a handshake because its pairing code outlived the 15-minute redemption
+window before the test redeemed it — instead of leaving the cause to the anonymous timeout. No pairing
+code, token or key appears in that message; a clean log leaves the failure output unchanged.
 
 Every rung-3 run (default and `LIVE=1`) logs the revisions under test in step 3: a `mobile revision:`
 line (`git rev-parse HEAD` at the repo root) and a `daemon revision:` line (`go version -m` on the

@@ -353,6 +353,24 @@ incoming status, uses explicit optional branches, and returns that status.
 isolated home, including retention of failure artifacts. Check both the process
 status and executed XML results; neither overrides a disagreement with the other.
 
+A post-test diagnostic step needs its own status capture, distinct from that
+teardown. Appending `|| STATUS=$?` to the Gradle test invocation (`STATUS=0` set
+just before it) captures the test task's exit code before `set -euo pipefail` can
+exit the script, so a following diagnostic step still runs; the step's own
+explicit `exit "${STATUS}"` then keeps the run non-zero. A helper called from that
+step must be written with `if` statements, never a trailing `cond && grep` chain —
+`set -e` kills the run at the call site when such a chain's last command finds
+nothing, which for a log scan is the common, successful case
+(`report_stale_pairing_codes` in `e2e-emulator.sh`, #993).
+
+Splitting a Gradle build step ahead of the device test task, to keep build time out
+of a time-limited window elsewhere in the harness (#993 moved e2e pairing-code
+minting after `assembleDebug assembleDebugAndroidTest`, so a slow build no longer
+burns the daemon's 15-minute redemption window), is not defeated by the test
+task's own `--rerun` (`PYRY_FORCE_TEST_RUN=1`): that flag reruns only the test task
+itself, not its dependencies, so the compile and package tasks the split build
+already ran still report `UP-TO-DATE` in the test task's `--console=plain` output.
+
 The Android gate must search only the report path selected by `DEVICE`:
 `connected/debug` for `connected`, otherwise `managedDevice/debug/<DEVICE>`, under
 `app/build/outputs/androidTest-results`. Freshness alone is insufficient: a fresh
