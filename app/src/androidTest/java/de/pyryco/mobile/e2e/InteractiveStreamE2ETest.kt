@@ -2867,7 +2867,14 @@ class InteractiveStreamE2ETest {
             }
         if (started.contains("Error")) throw AssertionError("Home did not start: $started")
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
-        runBlocking { withTimeoutOrNull(CONNECT_TIMEOUT_MS) { bundle.coordinator.currentRepository.first { it == null } } }
+        // The awaited value is itself null, so the block returns a flag: withTimeoutOrNull's null means only a timeout.
+        runBlocking {
+            withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+                bundle.coordinator.currentRepository
+                    .first { it == null }
+                    .let { true }
+            }
+        }
             ?: throw AssertionError("the app did not go to the background: its host link stayed open ($started)")
         val woke = AtomicBoolean(false)
         watch.launch {
