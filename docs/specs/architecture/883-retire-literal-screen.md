@@ -36,3 +36,7 @@ KDoc in `CompactingIndicator`, `ApiRetryIndicator` and `QueuedMessageRow` names 
 - `RelayConnectionFactoryTest`: remove the literal VMs, their requests and the snapshot replies. Host B's outbound list, which held only B's `request_snapshot`, is asserted empty instead, which keeps the "A's actions do not leak to B" check.
 - Scoped `testDebugUnitTest` on `RelayConnectionFactoryTest`, `lint`, `assembleDebug`, `compileDebugAndroidTestKotlin`, and the focused device run of `ThreadOverflowMenuTest` and `ThreadScreenOverflowTest`.
 - No rung-3 scenario: this removes an operator-facing flow rather than shipping one.
+
+## Revisions
+
+**2026-09-24, merging `main`.** `LiteralScreenNavigationTest` is kept rather than deleted. Only two of its four tests touched the literal screen, and `main` has since extended the other two, the workspace-picker owner tests, for #904, #899 and #685. The literal-screen steps come out: in `hostStreamsBackReopenAndRestorationKeepDestinationIdentity`, the overflow-menu trips to `LITERAL_SCREEN` on hosts A and B, replaced on B by a state restoration of the thread; and the `Routes.literal` navigation in `unknownAndRemovedHostsReturnToListWithoutResolvingAnotherHost`. The file and class keep their name, so `main`'s lines stay on the path it uses. `LiteralScreenSurfaceTest` and `StallPromotionBannerTest` are still deleted.
