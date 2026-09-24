@@ -1105,6 +1105,19 @@ reconnect-commands and background-task methods, on the same mechanism. Shell cle
 result and retains failure artifacts; a clean XML report with a failing process status is not
 a passing gate.
 
+`--tests` runs a chosen subset in place of the curated list, as a comma-separated
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#method` list, with a floor of one executed test:
+
+```bash
+python3 scripts/android-test-gate.py live --tests 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread'
+```
+
+The dispatcher uses it for `PYRY_REAL_CLAUDE_GATE_BASELINE_CMD`. When a live gate fails, it re-runs only
+the failed methods on the same merged tree, and a method that passes there is a flake, not the branch's
+failure. Methods that fail again are run on `main`, and a failure that reproduces there is inherited.
+Before this, every flake in the full list sent the ticket back to the builder, which is how #1016 spent
+three rework rounds on failures its branch did not cause.
+
 For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
 assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The workflow
 summary is in [README § Pre-ship gate](../README.md#pre-ship-gate); the README deliberately does not
