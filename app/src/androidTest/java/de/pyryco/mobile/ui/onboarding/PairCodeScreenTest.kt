@@ -1,7 +1,6 @@
 package de.pyryco.mobile.ui.onboarding
 
 import android.Manifest
-import android.graphics.Bitmap
 import android.os.ParcelFileDescriptor
 import android.provider.Settings
 import android.view.View
@@ -14,7 +13,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -22,7 +20,6 @@ import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
@@ -55,7 +52,6 @@ import org.junit.Test
 import org.junit.rules.TestRule
 import org.junit.runners.model.Statement
 import org.koin.core.context.GlobalContext
-import java.io.File
 
 @OptIn(ExperimentalTestApi::class)
 class PairCodeScreenTest {
@@ -103,18 +99,7 @@ class PairCodeScreenTest {
         val dir =
             InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
                 ?: instrumentation.targetContext.getExternalFilesDir(null)?.path ?: return
-        File(dir).mkdirs()
-        File(
-            dir,
-            "$name.png",
-        ).outputStream().use {
-            rule
-                .onNode(
-                    isRoot() and hasAnyDescendant(hasText("Pairing")),
-                ).captureToImage()
-                .asAndroidBitmap()
-                .compress(Bitmap.CompressFormat.PNG, 100, it)
-        }
+        rule.saveScreenshot(dir, name) { rule.onNode(isRoot() and hasAnyDescendant(hasText("Pairing"))) }
     }
 
     private fun show(small: Boolean = false) {
