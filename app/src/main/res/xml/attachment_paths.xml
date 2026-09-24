@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- #985: the attachment provider's one root, the AttachmentStore directory AppModule wires,
+     File(noBackupFilesDir, "attachments"). FileProvider has no no-backup tag, so the root is reached from
+     filesDir's sibling; FileProvider canonicalises it, and AttachmentActionsTest pins that it serves this
+     directory and nothing in filesDir, noBackupFilesDir itself or the cache. -->
+<paths>
+    <files-path
+        name="attachments"
+        path="../no_backup/attachments/" />
+</paths>

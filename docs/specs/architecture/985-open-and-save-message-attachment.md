@@ -111,3 +111,12 @@ The ticket names none. Pending for the documentation stage: `docs/knowledge/feat
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+### 2026-09-24: Phase B departures
+
+- **Open runs on the main thread, with no IO hop.** `rememberAttachmentActions.open` calls `openAttachment` directly. The URI build is one canonicalisation of a path already in the store, and `startActivity` must follow it immediately. The plan's `rememberCoroutineScope` hop added a second `attachmentContentUri` call and nothing else.
+- **`copyAttachment` does not special-case cancellation.** Its three steps are blocking calls, which coroutine cancellation does not interrupt: a copy that has started finishes or fails whole, and a failure discards the document. The plan's "discards on cancellation" had no path to run on. What remains is a thread left between the picker's result and the launch of the copy. That leaves the empty document the picker created, the same as a picker the user backs out of after naming a file. The security review's Concurrency SHOULD FIX stands as implemented this way.
+- **A clickable item merges its text into its own semantics node.** `MessageAttachmentsTest`'s long-name case measures the name's own bounds, so it now looks the name up with `useUnmergedTree = true`; found through the merged tree, it measured the whole 60dp row.
+- **Open question resolved:** Robolectric resolves the manifest's provider meta-data, and `getUriForFile` works. FileProvider caches each authority's canonical roots in a static map, though, and Robolectric gives every test a fresh data directory. `AttachmentActionsTest` clears that cache before each test, and says why. Widening the path to `../no_backup/` fails `filesOutsideTheStoreRoot_areNeverServed`, so the test is known to bite.

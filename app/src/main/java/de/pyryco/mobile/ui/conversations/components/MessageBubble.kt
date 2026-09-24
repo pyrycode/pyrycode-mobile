@@ -64,7 +64,8 @@ private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
  *
  * [attachmentStates], [onAttachmentShown] and [onRetryAttachment] (#984) are read only by the two bubble
  * roles, for the message's attachments: each attachment's state by id, the report that one is on screen,
- * and its retry control.
+ * and its retry control. [onOpenAttachment] and [onSaveAttachment] (#985) are a ready attachment's tap and
+ * long-press.
  */
 @Composable
 fun MessageBubble(
@@ -74,6 +75,8 @@ fun MessageBubble(
     attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
     onAttachmentShown: (String) -> Unit = {},
     onRetryAttachment: (String) -> Unit = {},
+    onOpenAttachment: (AttachmentTarget) -> Unit = {},
+    onSaveAttachment: (AttachmentTarget) -> Unit = {},
 ) {
     val attachments: @Composable () -> Unit = {
         MessageAttachments(
@@ -81,6 +84,8 @@ fun MessageBubble(
             states = attachmentStates,
             onShown = onAttachmentShown,
             onRetry = onRetryAttachment,
+            onOpen = onOpenAttachment,
+            onSave = onSaveAttachment,
         )
     }
     when (message.role) {
