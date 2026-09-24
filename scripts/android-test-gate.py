@@ -30,6 +30,8 @@ LIVE_MINIMUM = 22
 LIVE_MINIMUM += 2
 # #967 adds the two reconnect methods and the background-task method.
 LIVE_MINIMUM += 3
+# #955 adds the two push methods.
+LIVE_MINIMUM += 2
 # #1016 adds two attachment-exchange methods.
 LIVE_MINIMUM += 2
 # #1020 adds the third, the peer's file after a history reload, now that history replay names it.
@@ -177,7 +179,7 @@ def managed_avd(device):
     if device != "pixel2Api33Atd":
         return None
     home = Path(os.environ.get("ANDROID_USER_HOME") or Path.home() / ".android") / "avd" / "gradle-managed"
-    found = sorted(home.glob("dev33_aosp_atd_*_Pixel_2.ini"))
+    found = sorted(home.glob("dev33_google_atd_*_Pixel_2.ini"))
     return (home, found[0].stem) if found else None
 
 

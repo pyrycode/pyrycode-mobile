@@ -11,6 +11,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Pairing](features/scanner-screen.md): camera scanner, [pair with code](features/paste-code-dialog.md), [fingerprint confirmation](features/pairing-confirm-gate.md), and [paired-server storage](features/paired-server-store.md).
 - [Channels and discussions](features/channel-list-screen.md): list surfaces, promotion and archive flows.
 - [Conversation thread](features/thread-screen.md): messages, live turns, status rows and thread actions.
+- [Markdown reader](features/markdown-reader-screen.md): in-app reader for a `.md`/`.markdown` attachment, opened from the thread's file rows instead of another app.
 - [Slash-command type-ahead](features/slash-command-type-ahead.md): composer suggestions from the conversation's published slash-command menu, filtering, completion and dismissal.
 - [Banner notice row](features/banner-notice-row.md): claude's `banner` frame surfaced as an inert thread row, live and on history reload.
 - [Model refusal row](features/model-refusal-row.md): a model refusal or fallback explained in the thread, live and on history reload.
@@ -30,7 +31,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Relay transport](features/relay-ws-transport.md): WebSocket framing and connection lifecycle.
 - [Reconnect supervision](features/relay-reconnect-supervisor.md): reconnect, retry and handoff behavior.
 - [Lifecycle driver](features/lifecycle-connection-driver.md): foreground and background connection ownership, and the push-wake background window.
-- [Push messaging service](features/push-messaging-service.md): FCM token capture and the push trust boundary; no server-side sender exists yet.
+- [Push messaging service](features/push-messaging-service.md): FCM token capture and the push trust boundary; the daemon (v0.23.0+) and relay send the wake, and #955 is the live proof it reaches a backgrounded phone.
 - [Device key storage](features/device-static-keystore.md): Android Keystore wrapping and key continuity.
 
 ## Decisions
