@@ -118,11 +118,12 @@ class ScriptedUsageLimitTest {
     // AC #4: the benign frame clears the arm, even naming a different limit than the warning it clears.
     @Test
     fun benignFrame_clearsTheArm() {
-        harness.pushTurnState("thinking")
         harness.pushRateLimited(status = "allowed_warning", limitType = "seven_day")
         awaitDisplayed(label("allowed_warning"))
 
         harness.pushRateLimited(status = "allowed", limitType = "five_hour")
+        // The sync point: thinking first shows only once the frame after the benign one has folded.
+        harness.pushTurnState("thinking")
 
         awaitDisplayed(thinkingDescription)
         composeRule.onNodeWithContentDescription(label("allowed_warning")).assertDoesNotExist()
