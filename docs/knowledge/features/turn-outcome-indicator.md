@@ -80,12 +80,13 @@ fun TurnOutcomeIndicator(report: TurnOutcomeReport?, modifier: Modifier = Modifi
 ```
 
 Early-return on `null` — the sibling totality idiom shared with [`ApiRetryIndicator`](api-retry-indicator.md)
-/ [`UsageLimitIndicator`](usage-limit-indicator.md) / [`CompactingIndicator`](compacting-indicator.md).
+/ [`ResettingIndicator`](resetting-indicator.md) / [`CompactingIndicator`](compacting-indicator.md).
 Otherwise the sibling row (16dp horizontal / 8dp vertical padding, 8dp gap, `bodySmall` /
 `onSurfaceVariant`, merged `semantics`), with `Icons.Outlined.StopCircle` for `Interrupted` and
 `Icons.Outlined.ErrorOutline` for `Failed`/`StoppedEarly` — no spinner, since a finished turn is not
-progress (the same reasoning [`UsageLimitIndicator`](usage-limit-indicator.md#shape) already applies to
-its own `Icons.Outlined.Info`). The row's merged `contentDescription` is the visible label.
+progress (the same reasoning the pre-#1002 `UsageLimitIndicator` applied to its own `Icons.Outlined.Info`,
+and [`NoticePill`](notice-pill.md) now applies to the usage-limit reading's own icon-free pill). The row's
+merged `contentDescription` is the visible label.
 
 Label assembly (`strings.xml`, all copy client-owned):
 
@@ -103,13 +104,15 @@ never markup, a URL, an attribute, a filename, a cache key or a log.
 ## Placement in the thread
 
 Joins [`ThreadScreen`](thread-screen.md)'s single mutually-exclusive status slot (`ThreadStatusArea`,
-`ThreadScreen.kt`) as a fifth arm, directly **below compaction and above thinking** — the bottom of the
-ladder: `api-retry → usage limit → compaction → turn outcome → thinking`. Compaction is mid-turn progress
-and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed; no AC is spent
-on the combination, and `ScriptedTurnOutcomeTest.compaction_winsTheSlotOverTheOutcome` pins that
-compaction still wins the slot when both are somehow live. See [API-retry indicator §
-Placement](api-retry-indicator.md#placement-in-the-thread), [Usage-limit indicator §
-Placement](usage-limit-indicator.md#placement-in-the-thread) and [Compacting indicator §
+`ThreadScreen.kt`), directly **below compaction and above thinking** — the current ladder, turn status
+only: `api-retry → resetting → compaction → turn outcome → thinking/running tool`. Compaction is mid-turn
+progress and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed; no AC
+is spent on the combination, and `ScriptedTurnOutcomeTest.compaction_winsTheSlotOverTheOutcome` pins that
+compaction still wins the slot when both are somehow live. Claude's usage-limit report shared this ladder
+between #804 and #1002; it now draws as a pill in [Thread top overlay](thread-top-overlay.md) instead,
+pinned over the message area rather than a `ThreadStatusArea` arm, because a live reading was masking
+every arm below it including this one. See [API-retry indicator §
+Placement](api-retry-indicator.md#placement-in-the-thread) and [Compacting indicator §
 Placement](compacting-indicator.md#placement-in-the-thread) for the rest of the ladder's rationale, and
 [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
 for the `ThreadStatusArea` composable this arm was added to.

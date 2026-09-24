@@ -66,6 +66,7 @@ import de.pyryco.mobile.ui.conversations.thread.QuestionBatchModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
 import de.pyryco.mobile.ui.onboarding.CameraPreview
 import de.pyryco.mobile.ui.onboarding.PairCodePhase
 import de.pyryco.mobile.ui.onboarding.PairCodeScreen
@@ -464,6 +465,8 @@ internal fun PyryNavHost(
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
                 val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
+                val usageLimitDismissals = koinInject<UsageLimitDismissals>()
+                val dismissedUsageLimits by usageLimitDismissals.dismissed.collectAsStateWithLifecycle()
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
                         when (event) {
@@ -520,6 +523,9 @@ internal fun PyryNavHost(
                     // thread stays on the back stack beneath it, so Cancel returns to the cached history.
                     showRePair = rePairAvailable,
                     onRePair = { navController.navigate(Routes.pairCode(target.serverId)) },
+                    // #1002: app-scoped, so a usage reading hidden here stays hidden in every thread.
+                    dismissedUsageLimits = dismissedUsageLimits,
+                    onDismissUsageLimit = usageLimitDismissals::dismiss,
                 )
                 // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
