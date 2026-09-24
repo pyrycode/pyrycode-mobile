@@ -643,19 +643,21 @@ the footer before the first message and asserts claude applies exactly that leve
 `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` (**two** turns, one in its
 fresh chat and one in its fresh channel) taps an effort level on a priming chat, restarts the app
 in-process the way `interactiveTurn_twoHostsCollidingConversationId_stayPerHost` does (destroy the
-activity, `rebuildGraph`, relaunch), then opens a fresh chat and a fresh channel — each with an explicit
-saved model but no saved effort — and asserts the recalled level reaches both before their first message
-and stays the applied value after a real turn in each; a conversation with its own saved effort keeps it.
-Every fixture in this last scenario carries an explicit saved model, not the ticket's literal empty one:
-the phone matches a saved `""` model against no published row, so a chat with no model chosen offers no
-effort levels to recall into. That gap is [#972](https://github.com/pyrycode/pyrycode-mobile/issues/972);
-the acceptance criterion itself asks only for an empty saved *effort*, which these fixtures satisfy. The
-live run that closed the ticket also resolved the plan's two open questions: `createChannel` accepts a
-created chat's own scratch `cwd` directly (no `createWorkspaceFolder` fallback was needed), and the first
-fresh settings reply after a real turn's reply already carries `effective_effort`. See [Thread composer
-footer § Applied effort](knowledge/features/thread-composer-footer.md#applied-effort-889) and [Thread
-composer footer — remembered effort recall](knowledge/features/thread-composer-footer-effort-recall.md)
-for the production ranking and recall rules these methods assert against.
+activity, `rebuildGraph`, relaunch), then opens a fresh chat and a fresh channel — every fixture, including
+the priming chat, keeps saved model `""` throughout — and asserts the recalled level reaches both before
+their first message and stays the applied value after a real turn in each; a conversation with its own
+saved effort keeps it. The remembered and explicit levels come from the published `default` row (failing
+with "the published default row does not offer two effort levels" when it offers fewer than two), since
+[#972](https://github.com/pyrycode/pyrycode-mobile/issues/972) made `ThreadRunConfig.effortChoices` look up
+that row for a `""`-model reading instead of matching `""` against no published row; the priming chat's
+footer is asserted against `INHERITED_RUN_CONFIG_LABEL` ("default"), not a row display name. The live run
+that closed [#545](https://github.com/pyrycode/pyrycode-mobile/issues/545) also resolved the plan's two
+open questions: `createChannel` accepts a created chat's own scratch `cwd` directly (no
+`createWorkspaceFolder` fallback was needed), and the first fresh settings reply after a real turn's reply
+already carries `effective_effort`. See [Thread composer footer §
+Sourcing](knowledge/features/thread-composer-footer.md#sourcing) and [Thread composer footer — remembered
+effort recall](knowledge/features/thread-composer-footer-effort-recall.md) for the production ranking and
+recall rules these methods assert against.
 
 The **operator-bypass permission** scenario (#687 —
 `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) is likewise **always-on** (not
