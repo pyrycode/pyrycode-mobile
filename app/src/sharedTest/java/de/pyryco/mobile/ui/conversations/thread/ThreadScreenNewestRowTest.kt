@@ -1,11 +1,13 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.LocalOverscrollFactory
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
@@ -78,7 +80,7 @@ class ThreadScreenNewestRowTest {
     fun a_scroll_refused_under_a_resting_finger_does_not_stop_later_rows_being_followed() {
         var state by mutableStateOf(threadState(rows(count = 30)))
         setScreen { state }
-        val list = composeRule.onNode(hasScrollAction())
+        val list = composeRule.onNode(hasScrollToIndexAction())
         list.performTouchInput {
             down(center)
             repeat(10) { moveBy(Offset(0f, 150f)) }
@@ -109,24 +111,31 @@ class ThreadScreenNewestRowTest {
     /**
      * A real drag, not `performScrollToIndex`: only input through the nested-scroll chain as
      * `NestedScrollSource.UserInput` sets the yield flag. Under reverseLayout older rows sit above, so the
-     * finger moves down to reach them.
+     * finger moves down to reach them. The list is selected by `ScrollToIndex` because on a device the
+     * composer's text field also exposes `ScrollBy`.
      */
     private fun scrollAwayFromTheNewestEnd() {
-        composeRule.onNode(hasScrollAction()).performTouchInput { swipeDown() }
+        composeRule.onNode(hasScrollToIndexAction()).performTouchInput { swipeDown() }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Row 30.").assertDoesNotExist()
     }
 
+    /**
+     * Overscroll is off: on a device a finger resting past the newest edge holds the stretch effect, which
+     * keeps drawing frames, so `waitForIdle` never returns. Robolectric draws no such frames.
+     */
     private fun setScreen(state: () -> ThreadUiState) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
-                ThreadScreen(
-                    state = state(),
-                    onBack = {},
-                    onSendMessage = {},
-                    connectionState = ConnectionState.Connected,
-                    onRetry = {},
-                )
+            CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
             }
         }
     }

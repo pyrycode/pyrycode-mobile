@@ -235,6 +235,28 @@ a hardware Ctrl+Z to a Compose field there actually types a plain "z" and can pa
 green without exercising undo at all. A test that must prove undo or redo — as
 opposed to typing or pasting — needs a device.
 
+A device's `ClipboardManager` throws `SecurityException` when a test puts a
+`content://` URI on the clip that the calling app cannot read; Robolectric's
+clipboard does not model this permission check, so the same test passes there and
+fails only on the device sweep (#992). Production code must keep refusing the
+app's own content URIs (`AttachmentReader.isForeignContentUri`), so granting the
+test app read access is not an option. Guard the device run instead —
+`assumeTrue("<reason>", Build.FINGERPRINT == "robolectric")` on the affected
+method — and name the device-only harness that still proves the real path in the
+skip reason and a KDoc line, e.g. `ComposerImagePasteDeviceTest`, which inserts a
+real `MediaStore` image, pastes it and removes it afterward.
+
+On a device, a real drag that ends with the finger still down past a scroll edge
+can hold the stretch overscroll effect, which keeps drawing frames — `waitForIdle`
+then never returns, because the instrumentation idle check treats those redraws as
+ongoing activity. Robolectric draws no such frames, so the same test passes there
+while hanging the managed device (`ThreadScreenNewestRowTest`, #992; a thread dump
+located the hang inside `waitForIdle`). The fix is
+`CompositionLocalProvider(LocalOverscrollFactory provides null)` around the test's
+`setContent`, which drops only the visual stretch: drags still reach the list as
+`NestedScrollSource.UserInput` through the nested-scroll chain, so a test
+asserting scroll-yield or auto-follow behavior is unaffected.
+
 ## Test scheduling and harnesses
 
 The routine UI gate excludes `de.pyryco.mobile.e2e` through the instrumentation

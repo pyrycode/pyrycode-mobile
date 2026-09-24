@@ -5,6 +5,7 @@ import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,6 +17,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -54,8 +56,17 @@ class ComposerPasteTest {
         composeRule.waitForIdle()
     }
 
+    /**
+     * Robolectric only: a device's clipboard service refuses a content URI this app cannot read, and
+     * the URI must stay foreign to pass `isForeignContentUri`. `ComposerImagePasteDeviceTest` is the
+     * device proof, pasting a real `MediaStore` image.
+     */
     @Test
     fun pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty() {
+        assumeTrue(
+            "Device clipboard rejects an unreadable URI; ComposerImagePasteDeviceTest covers the device",
+            Build.FINGERPRINT == "robolectric",
+        )
         setBar()
         val image = Uri.parse("content://media/external/images/media/7")
         putOnClipboard(ClipData(ClipDescription("image", arrayOf("image/png")), ClipData.Item(image)))
