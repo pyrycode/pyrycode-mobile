@@ -15,8 +15,9 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Thread screen — how it works, overlays, retry and the app bar](thread-screen-how-it-works-overlays-and-app-bar.md) — `Connection-banner wiring`, `Thinking-indicator placement (post-#407)`, `Interrupt-affordance placement (post-#459)`, `Stall-promotion-banner placement (post-#396, retired from the screen in #883)`, `Permission-modal overlay placement (post-#446)`, `fun retry() — non-suspend, VM owns the launch`, `connectionState: StateFlow<ConnectionState> — same lifetime as state`, `ThreadTopAppBar — Figma 16:8 chrome`, `Modifier ordering inside the body`
 - [Thread screen — testing](thread-screen-testing.md) — `Testing`
 - [Thread screen — previews and edge cases](thread-screen-previews-and-edge-cases.md) — `Previews`, `Edge cases / limitations`
+- [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md) — split out 2026-09-24: `Composer draft ownership`, `Composer pending attachments`
 
-The sections that stay here: `## What it does`, `## Wiring`, `## Configuration`, `## Related`.
+The sections that stay here: `## What it does`, `## Wiring` (minus the two subsections above), `## Configuration`, `## Related`.
 
 ## What it does
 
@@ -97,67 +98,9 @@ The facade follows reconnect and preserves the picker's existing generic failure
 UI and cancellation behavior. Production-route picker tests exercise this boundary;
 see [DI testing](dependency-injection.md#testing).
 
-### Composer draft ownership
+### Composer drafts and attachments
 
-Unsent composer text is owned by `ComposerDraftStore` ([#789](https://github.com/pyrycode/pyrycode-mobile/issues/789)) — an app-scoped Koin `single { ComposerDraftStore() }` in `di/AppModule.kt`, one process-wide instance reaching every thread destination, the same per-call shape `preferences` already used. Before this, the self-owning `ThreadInputBar` overload held its text in `rememberSaveable`, so a draft's lifetime was the thread destination's composition: navigating away lost it, and the next chat opened in that slot inherited whatever that composition state happened to hold. The store is keyed by the `(serverId, conversationId)` pair, never the conversation id alone — ids are host-local (see [Host identity and snapshots](dependency-injection-host-conversation-source.md#host-identity-and-snapshots)), so a bare-id key would leak one host's unsent text into another host's composer. In-memory only: nothing is written to disk or `SavedStateHandle`, so a draft does not survive process death, but it does survive navigation, configuration change, and the lifecycle driver's foreground/background connection cycling, since the store holds no connection and no disk handle.
-
-**Created:** `ThreadDestinationFactory.thread` takes the store as a third constructor argument (`.thread(get(), get(), get())`) and passes it to `ThreadViewModel`, which also reads `serverId` off the same `SavedStateHandle` the factory reads it from, beside the existing `conversationId` read. **Restored:** `ThreadViewModel.draft: StateFlow<String>` maps `draftStore.drafts` down to this pair's entry, `stateIn`'d on `viewModelScope` with `SharingStarted.Eagerly` and seeded from `draftStore.draftFor(serverId, conversationId)` so the initial value and the first emission can never disagree — this is what makes returning to a chat show its exact prior text, whitespace included. `MainActivity`'s `PyryNavHost` collects it with `collectAsStateWithLifecycle()` alongside the destination's other flows and binds it to `ThreadScreen`'s `draft` parameter; `onDraftChange = vm::onDraftChange` closes the loop, calling `draftStore.setDraft(serverId, conversationId, text)` on every keystroke. Both `ThreadScreen` parameters default to `""` / `{}` so the ~30 existing `androidTest` call sites, none of which type into the composer, keep rendering an empty composer unchanged. The self-owning `ThreadInputBar` overload is deleted; the stateless overload (`text`, `onTextChange`, `onSend`) is the only one left, and `ThreadScreen`'s `bottomBar` mount now passes `text = draft`, `onTextChange = onDraftChange`, `onSend = { onSendMessage(draft) }`.
-
-**Cleared:** only from inside `ThreadViewModel.sendMessage`'s `launchGuardedRepoCall` block, after `repository.sendMessage` returns — "the suspend call returned" is "the daemon accepted it," the same success-only-continuation shape `sendArchive` already used. The three failure types the guard swallows (`RelayErrorException`, a not-connected `IllegalStateException`, an unwired `UnsupportedOperationException`) all skip the clear, so a refused send leaves the text in place instead of silently eating it as the old tap-to-clear behavior did. The clear is additionally guarded on equality — `if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")` — reading `ComposerDraftStore` directly rather than the exposed `draft` flow. An earlier version of this design compared against `draft` and was wrong: `draft` is a *derived* flow, so an edit made from inside an already-running coroutine does not reach it until that dispatch yields, and the guard cleared text it had never seen (caught by `sendMessage_whenTheDraftChangedInFlight_leavesTheNewTextAlone`, see [thread-screen-testing.md](thread-screen-testing.md)). The rule going forward: expose the derived flow for rendering, read the store's own `MutableStateFlow.value` for deciding. `ThreadEvent.NewSession` (Reset session) reads and writes nothing on the store, so it leaves a conversation's draft untouched.
-
-**Evicted, not just cleared, when the host or the conversation goes away ([#790](https://github.com/pyrycode/pyrycode-mobile/issues/790)).** Nothing in the shapes above removes a draft except an accepted send, so a draft otherwise outlives the thing it was written for: a `serverId` is stable across a re-pair, so unpairing and re-pairing the same server resurfaces text typed before the unpair, and a deleted conversation's draft would sit in the map for the life of the process. Two evictions close that:
-
-- `ComposerDraftStore.clearHost(serverId)` drops that host's whole bucket — `_drafts.update { it - serverId }`, a no-op on an unknown or already-empty id. It runs from `ObservablePairedServerStore.remove`, *after* `delegate.remove` and the revision bump, as the first step of [`forgetRemovedHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost), the required `onHostRemoved: suspend (String) -> Unit` constructor parameter — not from `HostEditorController.confirmUnpair`, even though `confirmUnpair` already carries the matching "only after removal succeeds" idiom for `AppPreferences.removeDefaultWorkspace`. Neither owner of the unpair gesture (`ChannelListViewModel`, `SettingsViewModel`) owns a composer, so a controller-side hook would have threaded a `ComposerDraftStore` dependency through both purely to reach a nested controller; the store is also the seam the paired-server-store overview already requires every app mutation to go through, so a future removal path inherits the eviction without having to remember it. `forgetRemovedHost`'s second step removes the host's cached conversation content ([#798](https://github.com/pyrycode/pyrycode-mobile/issues/798)) — same hook, same ordering guarantee, no separate wiring. See [paired-server-store.md § Wiring & usage](paired-server-store.md#wiring--usage) for the hook's contract (required, must not throw, must suspend rather than block) and why `save`/`setDisplayName` deliberately do not evict.
-- `ComposerDraftStore.clearConversation(serverId, conversationId)` drops one pair — `setDraft(serverId, conversationId, "")` under a name that says "this chat is gone" rather than "edited to empty". It runs inside `ThreadEvent.DeleteConfirm`'s `launchGuardedRepoCall` block, after `repository.delete` returns and before the `PopBack` send — the same success-only position `sendMessage`'s own clear occupies, so a failed delete (any of the three throwables the guard swallows) leaves the draft for a conversation that still exists. Keyed by the constructor's own `serverId`/`conversationId` — the pair `onDraftChange` wrote under — never re-derived from `state.value`. That same `repository.delete` call is where the conversation's cached content leaves too, once the destination's repository is a [`CachingConversationRepository`](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798) — a separate override on the repository, not a second draft-store call.
-
-Both draft evictions are synchronous `MutableStateFlow.update` calls with no coroutine of their own; `ThreadViewModel.draft` picks up an eviction the same way it picks up any other emission, and a `StateFlow` dropping equal consecutive values means evicting one host's bucket cannot recompose another host's composer. No log line on either path carries draft text — a draft is private message content, and neither `ObservablePairedServerStore` nor `ComposerDraftStore` is a `data class`, so a bound `onHostRemoved` receiver can't render into a crash trace via a generated `toString()`.
-
-### Composer pending attachments
-
-Beside the text map, `ComposerDraftStore` keeps a second `(serverId, conversationId)`-keyed map of
-`PendingAttachment` entries ([#932](https://github.com/pyrycode/pyrycode-mobile/issues/932)) — a content
-URI plus display name, MIME type, size and, once uploaded, an acknowledged id. Same nesting, same
-"empty entries and buckets are absent" rule, same eviction: `clearHost` / `clearConversation` drop a
-pair's attachments together with its text (see § Composer draft ownership above).
-`ThreadViewModel.pendingAttachments` mirrors `draft`'s shape — mapped from the store, seeded
-synchronously, `Eagerly`. `addAttachment` refuses an entry over `AttachmentUploadLimit.MAX_BYTES` or one
-that would push the pair past `MessageAttachmentIds.MAX` (32), checked inside the store's own
-`update {}` so two concurrent adds can't both pass at 31.
-
-`sendMessage` snapshots the pair's attachment list at tap time. An entry that already carries an
-`attachmentId` is skipped; the rest are read through `AttachmentReader` — bytes only at send time, one
-file's at once, the store itself never holds file bytes — and uploaded via
-[`ConversationRepository.uploadAttachment`](attachment-upload.md), in order. Any read or upload failure
-stops the send: text and every entry stay, and ids already acknowledged are kept so a retry does not
-re-upload them. On success `uploadAttachment`'s ids are named to `sendMessage`, then text and the sent
-snapshot's attachments clear together — an entry added after the snapshot survives, the same
-"the message is what was tapped" guarantee the text draft's in-flight guard already gives.
-
-**Reading a content URI is a trust boundary.** `ContentResolver.openInputStream` opens `file://`,
-`android.resource://` and this app's own non-exported providers with the app's identity, so a URI handed
-back by another app's picker could otherwise make the app upload its own private files.
-`ContentResolverAttachmentReader.isForeignContentUri` refuses everything but a `content` URI whose
-provider authority is neither this app's package nor a dotted sub-authority of it, checked before the
-resolver is touched. `Uri.getAuthority()` keeps a `userId@` prefix — the form a pick from another Android
-profile carries — and the resolver strips that prefix before choosing a provider, so comparing the raw
-authority against the package name let `content://0@de.pyryco.mobile.fileprovider/…` through as
-"foreign". The guard compares `authority.substringAfterLast('@')` instead, which still accepts a
-genuinely foreign authority behind a user-id prefix.
-
-`AttachmentReader` is bound as a `Lazy<AttachmentReader>` constructor parameter on
-`ThreadDestinationFactory`, not resolved eagerly — the real reader needs `androidContext()`, and several
-test containers build the factory without one. Resolving lazily means only a container that actually
-builds a thread destination pays for it; one that does (`NotificationTapNavigationTest`,
-`LiteralScreenNavigationTest`) must bind an inert `AttachmentReader { AttachmentRead.Unreadable }`, the
-posture `RelayConnectionFactoryTest` already used for its own inert override.
-
-**The picker and the strip ([#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)).** The
-paperclip opens `rememberAttachmentPicker`'s `OpenMultipleDocuments()` launcher; a cancel calls nothing,
-otherwise `describePickedAttachment` drops any refused URI and hands the rest to `addPickedAttachments`,
-which adds each via `addAttachment` and reports `TOO_LARGE`/`TOO_MANY` refusals as one counts-only
-notice. `ComposerAttachmentStrip` renders the list as a `LazyRow` between the status area and input field
-when non-empty, thumbnailing an image or falling back to the file tile. `attachmentsSending` blocks a
-second `sendMessage` and hides remove controls while `sendWithAttachments` runs.
+Split out on 2026-09-24 into [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md): `Composer draft ownership` (the `ComposerDraftStore` text map, its creation/restore/clear/eviction rules) and `Composer pending attachments` (the parallel attachment map, the `AttachmentReader` trust boundary, the [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) picker and strip, and the [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934) paste path that joins the same sink). Both subsections kept their heading and anchor.
 
 ## Configuration
 

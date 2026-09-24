@@ -211,6 +211,30 @@ the rendered text being removed. This covers production, JVM tests and
 `androidTest` call sites in one pass. Record the graph gap when it affects the
 blast-radius decision.
 
+A `BasicTextField(state: TextFieldState, ...)` field (Compose foundation 1.10.4,
+found migrating [`ThreadInputBar`](thread-input-bar.md#draft-binding--cursor-at-end-undo-and-redo-885-934)
+for #934) is not a drop-in replacement for the `value`/`onValueChange` overload in
+tests, in three ways:
+
+- It exposes a `ScrollBy` semantics action the legacy field never did. A selector
+  that finds "the" scrollable node with `hasScrollAction()` then matches two nodes
+  once such a field and a scrollable list share a screen. Match the list with a
+  more specific action instead, e.g. `hasScrollToIndexAction()` or
+  `hasScrollToNodeAction()`, if only the list should carry it.
+- Undo and redo bypass `InputTransformation` — they write the field's buffer
+  directly and never call `commitEditAsUser`. A binding that reports edits only
+  through the transformation misses them; see the linked section for the
+  `snapshotFlow`/`accountedText` fix this required.
+- `SemanticsActions.PasteText`, unlike undo/redo, **does** route through
+  `Modifier.contentReceiver` the same way a real user Paste does — both under
+  Robolectric and on the device — so a paste test needs no text-toolbar
+  workaround.
+
+Robolectric's `KeyCharacterMap` ignores the Ctrl meta state, so a test that sends
+a hardware Ctrl+Z to a Compose field there actually types a plain "z" and can pass
+green without exercising undo at all. A test that must prove undo or redo — as
+opposed to typing or pasting — needs a device.
+
 ## Test scheduling and harnesses
 
 The routine UI gate excludes `de.pyryco.mobile.e2e` through the instrumentation

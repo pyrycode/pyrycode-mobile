@@ -193,7 +193,7 @@ connection bundle. The production binding is
 [`forgetRemovedHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost),
 defined beside `ObservablePairedServerStore` in `di/ObservablePairedServerStore.kt`: it
 clears every composer draft held for the host — see
-[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership) —
+[Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership) —
 then removes the host's cached conversation content and (#900) its retained attachment
 files, since a `serverId` is stable across a re-pair and both would otherwise resurface
 content from before the unpair.
@@ -281,7 +281,7 @@ the full gesture (`openHostEditor` → `requestHostUnpair` → `confirmHostUnpai
 assert a failed removal drops no draft, a successful one drops the removed host's
 whole bucket, a same-conversation-id draft on another host survives, and no draft
 text reaches a captured log line. See
-[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership).
+[Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership).
 The sibling case for the same gesture's other half,
 `confirmingUnpairRemovesThatHostsCachedContentAndOnlyAfterTheRemovalSucceeded` (#798),
 binds `forgetRemovedHost` over a real `FileConversationCache` on a `TemporaryFolder`
@@ -355,7 +355,7 @@ against the same DataStore before checking both records after reopening.
   by `ChannelListViewModel` and `SettingsViewModel`, each with its own instance and scope)
 - [Draft eviction on unpair (#790)](../../specs/architecture/790-drop-drafts-on-host-or-conversation-removal.md) —
   the `onHostRemoved` hook on `remove`; see [Wiring & usage](#wiring--usage) here and
-  [Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership)
+  [Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership)
 - [Clear cached content on removal (#798)](../../specs/architecture/798-clear-cache-on-removal.md) —
   made `onHostRemoved` suspend and awaited, and gave it `forgetRemovedHost` as its production
   binding; see [Conversation cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost)
