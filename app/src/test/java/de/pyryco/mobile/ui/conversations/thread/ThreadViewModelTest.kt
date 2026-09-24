@@ -27,6 +27,7 @@ import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.StableConversationRepository
+import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
@@ -1442,7 +1443,7 @@ class ThreadViewModelTest {
     fun guardedRepoCalls_whenRepositoryThrowsEachHandledType_areSwallowedWithoutCrashing() =
         runTest {
             // AC #2/#3: the one-shot repo launches that still use the shared guard (sendMessage and the
-            // DeleteConfirm / RenameSubmit / SaveAsChannelSubmit overflow arms) swallow the three relay
+            // DeleteConfirm / RenameSubmit overflow arms) swallow the three relay
             // failure types. Archive (since #556) and change-workspace (since #561) are deliberately excluded —
             // each routes through its own surfacing path (sendArchive / sendChangeWorkspace), which does not
             // catch UnsupportedOperationException, so calling either here would let that iteration escape as an
@@ -1468,7 +1469,6 @@ class ThreadViewModelTest {
                     vm.sendMessage("hi")
                     vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
                     vm.onOverflowEvent(ThreadEvent.RenameSubmit("new name"))
-                    vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit("chan", WorkspaceChoice.SCRATCH))
                     advanceUntilIdle()
                 }
                 assertTrue("guarded repo-call failures must be swallowed, not propagated: $uncaught", uncaught.isEmpty())
@@ -3640,113 +3640,217 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    // ---- #957: Save as channel in the modal shell --------------------------------------------------
+
+    private fun TestScope.saveAsChannelVm(repo: SaveAsChannelRepo): ThreadViewModel =
+        makeVm(SavedStateHandle(initialState = mapOf("conversationId" to SAVE_AS_CONV)), repo)
+
     @Test
-    fun onOverflowEvent_saveAsChannel_setsDialogStateWithSeededName() =
+    fun saveAsChannel_opensSeededWithTheChatsOwnName() =
         runTest {
-            val repo = RecordingRepo()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, repo)
+            val vm = saveAsChannelVm(SaveAsChannelRepo(name = "Release notes"))
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
 
             vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+
+            assertEquals(SaveAsChannelDialogState(initialName = "Release notes"), vm.state.value.saveAsChannelDialog)
+            collector.cancel()
+        }
+
+    @Test
+    fun saveAsChannel_opensSeededWithNewChannelWhenTheChatHasNoName() =
+        runTest {
+            for (unnamed in listOf(null, "  ")) {
+                val vm = saveAsChannelVm(SaveAsChannelRepo(name = unnamed))
+                val collector = launch { vm.state.collect {} }
+                advanceUntilIdle()
+
+                vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+
+                assertEquals(SaveAsChannelDialogState(initialName = "New channel"), vm.state.value.saveAsChannelDialog)
+                collector.cancel()
+            }
+        }
+
+    @Test
+    fun saveAsChannelSubmit_promotesInPlaceWithTheTrimmedNameAndClosesWithoutAPromptWrite() =
+        runTest {
+            val repo = SaveAsChannelRepo()
+            val vm = saveAsChannelVm(repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "  Ops  ", systemPrompt = " \n\t "))
+            advanceUntilIdle()
+
+            // workspace = null: the conversation keeps its own cwd, id and history.
+            assertEquals(listOf("promote:$SAVE_AS_CONV:Ops:null"), repo.calls)
+            assertNull(vm.state.value.saveAsChannelDialog)
+            collector.cancel()
+        }
+
+    @Test
+    fun saveAsChannelSubmit_writesANonBlankPromptVerbatimAfterTheConfirmedPromote() =
+        runTest {
+            val repo = SaveAsChannelRepo()
+            val vm = saveAsChannelVm(repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = "  Be brief.\n"))
             advanceUntilIdle()
 
             assertEquals(
-                SaveAsChannelDialogState(initialName = "New channel"),
+                listOf("promote:$SAVE_AS_CONV:Ops:null", "prompt:$SAVE_AS_CONV:  Be brief.\n"),
+                repo.calls,
+            )
+            assertNull(vm.state.value.saveAsChannelDialog)
+            collector.cancel()
+        }
+
+    @Test
+    fun saveAsChannelSubmit_aFailedPromoteKeepsTheModalOpenAndOkPromotesAgain() =
+        runTest {
+            val repo = SaveAsChannelRepo(promoteFailures = 1)
+            val vm = saveAsChannelVm(repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = "Be brief."))
+            advanceUntilIdle()
+
+            assertEquals(
+                SaveAsChannelDialogState(initialName = "Chat", failure = SaveAsChannelFailure.Promote),
                 vm.state.value.saveAsChannelDialog,
             )
-            assertTrue(repo.promoteCalls.isEmpty())
+            assertEquals(listOf("promote:$SAVE_AS_CONV:Ops:null"), repo.calls)
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = "Be brief."))
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf("promote:$SAVE_AS_CONV:Ops:null", "promote:$SAVE_AS_CONV:Ops:null", "prompt:$SAVE_AS_CONV:Be brief."),
+                repo.calls,
+            )
+            assertNull(vm.state.value.saveAsChannelDialog)
             collector.cancel()
         }
 
     @Test
-    fun onOverflowEvent_saveAsChannelSubmit_dedicated_callsPromoteWithSlugPath() =
+    fun saveAsChannelSubmit_aFailedPromptWriteKeepsTheModalOpenAndOkRetriesOnlyThatWrite() =
         runTest {
-            val repo = RecordingRepo()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, repo)
+            val repo = SaveAsChannelRepo(promptFailures = 1)
+            val vm = saveAsChannelVm(repo)
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
 
             vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = "Be brief."))
             advanceUntilIdle()
 
-            vm.onOverflowEvent(
-                ThreadEvent.SaveAsChannelSubmit(
-                    name = "Investment Strategy Review",
-                    workspace = WorkspaceChoice.DEDICATED,
-                ),
-            )
-            advanceUntilIdle()
-
-            assertEquals(null, vm.state.value.saveAsChannelDialog)
             assertEquals(
-                listOf(
-                    Triple(
-                        "seed-channel-personal",
-                        "Investment Strategy Review",
-                        "pyry-workspace/channels/investment-strategy-review",
-                    ),
-                ),
-                repo.promoteCalls,
-            )
-            collector.cancel()
-        }
-
-    @Test
-    fun onOverflowEvent_saveAsChannelSubmit_scratch_callsPromoteWithNullWorkspace() =
-        runTest {
-            val repo = RecordingRepo()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, repo)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
-            advanceUntilIdle()
-
-            vm.onOverflowEvent(
-                ThreadEvent.SaveAsChannelSubmit(
-                    name = "kitchenclaw refactor",
-                    workspace = WorkspaceChoice.SCRATCH,
-                ),
-            )
-            advanceUntilIdle()
-
-            assertEquals(null, vm.state.value.saveAsChannelDialog)
-            assertEquals(
-                listOf(
-                    Triple("seed-channel-personal", "kitchenclaw refactor", null),
-                ),
-                repo.promoteCalls,
-            )
-            collector.cancel()
-        }
-
-    @Test
-    fun onOverflowEvent_saveAsChannelDismiss_clearsDialogWithoutPromote() =
-        runTest {
-            val repo = RecordingRepo()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, repo)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-
-            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
-            advanceUntilIdle()
-            assertEquals(
-                SaveAsChannelDialogState(initialName = "New channel"),
+                SaveAsChannelDialogState(initialName = "Chat", promoted = true, failure = SaveAsChannelFailure.SystemPrompt),
                 vm.state.value.saveAsChannelDialog,
             )
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = "Be briefer."))
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(
+                    "promote:$SAVE_AS_CONV:Ops:null",
+                    "prompt:$SAVE_AS_CONV:Be brief.",
+                    "prompt:$SAVE_AS_CONV:Be briefer.",
+                ),
+                repo.calls,
+            )
+            assertNull(vm.state.value.saveAsChannelDialog)
+            collector.cancel()
+        }
+
+    @Test
+    fun saveAsChannelSubmit_whileAWriteIsInFlightIsIgnored() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val repo = SaveAsChannelRepo(promoteGate = gate)
+            val vm = saveAsChannelVm(repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = ""))
+            advanceUntilIdle()
+            assertEquals(
+                true,
+                vm.state.value.saveAsChannelDialog
+                    ?.saving,
+            )
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = ""))
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(listOf("promote:$SAVE_AS_CONV:Ops:null"), repo.calls)
+            assertNull(vm.state.value.saveAsChannelDialog)
+            collector.cancel()
+        }
+
+    @Test
+    fun saveAsChannel_aResultLandingAfterCancelDoesNotReopenTheModal() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val repo = SaveAsChannelRepo(promoteFailures = 1, promoteGate = gate)
+            val vm = saveAsChannelVm(repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = ""))
+            advanceUntilIdle()
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelDismiss)
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertNull(vm.state.value.saveAsChannelDialog)
+            collector.cancel()
+        }
+
+    @Test
+    fun saveAsChannel_cancelAndInvalidSubmitsSendNothing() =
+        runTest {
+            val repo = SaveAsChannelRepo()
+            val vm = saveAsChannelVm(repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            // A submit with no open modal, a blank name and an over-limit prompt are all refused.
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = ""))
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit(name = "   ", systemPrompt = ""))
+            vm.onOverflowEvent(
+                ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = "a".repeat(SystemPromptLimit.MAX_BYTES + 1)),
+            )
+            advanceUntilIdle()
+            assertEquals(SaveAsChannelDialogState(initialName = "Chat"), vm.state.value.saveAsChannelDialog)
 
             vm.onOverflowEvent(ThreadEvent.SaveAsChannelDismiss)
             advanceUntilIdle()
 
-            assertEquals(null, vm.state.value.saveAsChannelDialog)
-            assertTrue(repo.promoteCalls.isEmpty())
+            assertNull(vm.state.value.saveAsChannelDialog)
+            assertTrue(repo.calls.isEmpty())
             collector.cancel()
         }
+
+    @Test
+    fun saveAsChannelSubmit_toStringRedactsThePrompt() {
+        val event = ThreadEvent.SaveAsChannelSubmit(name = "Ops", systemPrompt = "sk-secret")
+
+        assertFalse(event.toString().contains("sk-secret"))
+    }
 
     // --- helpers ---
 
@@ -4476,6 +4580,87 @@ class ThreadViewModelTest {
             .filter { it.message.isStreaming }
             .map { it.message.content }
 
+    /**
+     * One conversation for Save as channel (#957), recording each write in call order. The first
+     * [promoteFailures] promotes and [promptFailures] prompt writes throw; [promoteGate] holds every
+     * promote open until it completes.
+     */
+    private class SaveAsChannelRepo(
+        name: String? = "Chat",
+        private var promoteFailures: Int = 0,
+        private var promptFailures: Int = 0,
+        private val promoteGate: CompletableDeferred<Unit>? = null,
+    ) : ConversationRepository {
+        val calls = mutableListOf<String>()
+        private val conversation =
+            Conversation(
+                id = SAVE_AS_CONV,
+                name = name,
+                cwd = "scratch/chat",
+                currentSessionId = "$SAVE_AS_CONV-s1",
+                sessionHistory = listOf("$SAVE_AS_CONV-s1"),
+                isPromoted = false,
+                lastUsedAt = Instant.parse("2026-05-17T00:00:00Z"),
+            )
+
+        override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = flowOf(listOf(conversation))
+
+        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
+
+        override fun observeLastMessage(conversationId: String): Flow<Message?> = flowOf(null)
+
+        override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
+
+        override suspend fun promote(
+            conversationId: String,
+            name: String,
+            workspace: String?,
+        ): Conversation {
+            calls += "promote:$conversationId:$name:$workspace"
+            promoteGate?.await()
+            if (promoteFailures > 0) {
+                promoteFailures--
+                throw RelayErrorException(code = "server.error", retryable = false, message = "no")
+            }
+            return conversation.copy(name = name, isPromoted = true)
+        }
+
+        override suspend fun setSystemPrompt(
+            conversationId: String,
+            systemPrompt: String?,
+        ) {
+            calls += "prompt:$conversationId:$systemPrompt"
+            if (promptFailures > 0) {
+                promptFailures--
+                throw IllegalStateException("not connected")
+            }
+        }
+
+        override suspend fun archive(conversationId: String): Unit = TODO("not used")
+
+        override suspend fun unarchive(conversationId: String): Unit = TODO("not used")
+
+        override suspend fun rename(
+            conversationId: String,
+            name: String,
+        ): Conversation = TODO("not used")
+
+        override suspend fun startNewSession(
+            conversationId: String,
+            workspace: String?,
+        ): Session = TODO("not used")
+
+        override suspend fun changeWorkspace(
+            conversationId: String,
+            workspace: String,
+        ): Session = TODO("not used")
+
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+        ): Message = TODO("not used")
+    }
+
     private class RecordingRepo : ConversationRepository {
         val archiveCalls = mutableListOf<String>()
         val deleteCalls = mutableListOf<String>()
@@ -4813,6 +4998,7 @@ class ThreadViewModelTest {
         const val RUN_CONFIG_CONV = "seed-channel-personal"
 
         const val ACTIVE_CONV = "thread-406-active"
+        const val SAVE_AS_CONV = "chat-957"
 
         val WARNING_READING =
             UsageLimitReading(
