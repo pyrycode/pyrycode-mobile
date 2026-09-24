@@ -64,6 +64,8 @@ internal fun RelayLinkStatus.toLegVisual(): ConnectionLegVisual =
             ConnectionLegVisual(ConnectionLegCategory.Up, "Reachable", "Relay: reachable, no daemon")
         RelayLinkStatus.PairingRejected ->
             ConnectionLegVisual(ConnectionLegCategory.Down, "Pairing rejected", "Relay: pairing rejected")
+        is RelayLinkStatus.UpdateRequired ->
+            ConnectionLegVisual(ConnectionLegCategory.Down, "Update required", "Relay: update required")
         RelayLinkStatus.Offline ->
             ConnectionLegVisual(ConnectionLegCategory.Down, "Offline", "Relay: offline")
         RelayLinkStatus.Idle ->

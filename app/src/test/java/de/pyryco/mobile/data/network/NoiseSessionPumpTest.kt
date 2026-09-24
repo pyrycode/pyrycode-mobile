@@ -197,6 +197,74 @@ class NoiseSessionPumpTest {
             os.pump.close()
         }
 
+    // ---- #1008: the sealed app-too-old error hands its minimum to the supervisor hook ------------
+
+    @Test
+    fun open_updateRequiredError_handsTheMinimumOverAndStillForwards() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f)
+            val env =
+                envelope(
+                    id = 3L,
+                    type = "error",
+                    payload = """{"code":"client.update_required","message":"update","retryable":false,"min_client_version":"1.4.0"}""",
+                )
+
+            f.transport.pushInbound(noiseMsg(os.responderPair, env))
+            runCurrent()
+
+            assertEquals(listOf("1.4.0"), f.clientMinimums)
+            assertEquals(listOf("error"), os.received.map { it.type })
+            assertTrue(os.pump.state.value is PumpState.Open)
+
+            os.pump.close()
+        }
+
+    @Test
+    fun open_errorsWithoutAnUpdateRequiredMinimum_handNothingOverAndKeepTheSessionOpen() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f)
+            val payloads =
+                listOf(
+                    // No minimum: the daemon could not parse the app's version.
+                    """{"code":"client.update_required","message":"update","retryable":false}""",
+                    // Another code carrying the field is not the app-too-old rejection.
+                    """{"code":"auth.invalid_token","message":"bad","retryable":false,"min_client_version":"1.4.0"}""",
+                    // Not an ErrorPayload at all: must not tear the session down.
+                    """{"code":7}""",
+                    """["client.update_required"]""",
+                )
+
+            payloads.forEachIndexed { i, payload ->
+                f.transport.pushInbound(noiseMsg(os.responderPair, envelope(id = i + 1L, type = "error", payload = payload)))
+            }
+            runCurrent()
+
+            assertEquals(emptyList<String>(), f.clientMinimums)
+            assertEquals(payloads.size, os.received.size)
+            assertTrue(os.pump.state.value is PumpState.Open)
+
+            os.pump.close()
+        }
+
+    @Test
+    fun open_nonErrorEnvelopeWithTheUpdateCode_handsNothingOver() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f)
+            val payload = """{"code":"client.update_required","message":"m","retryable":false,"min_client_version":"1.4.0"}"""
+
+            f.transport.pushInbound(noiseMsg(os.responderPair, envelope(type = "message", payload = payload)))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), f.clientMinimums)
+            assertEquals(1, os.received.size)
+
+            os.pump.close()
+        }
+
     @Test
     fun open_undecryptableNoiseMsgTearsDownWithoutCrash() =
         runTest {
@@ -611,6 +679,9 @@ class NoiseSessionPumpTest {
         val dispatcher = StandardTestDispatcher(scheduler)
         val responder = TestResponder()
         val transport = FakeRelayTransport()
+
+        /** Every minimum the pump handed to its `onClientMinimum` hook (#1008), in order. */
+        val clientMinimums = mutableListOf<String>()
         val factory =
             NoiseSessionFactory(
                 deviceStaticKeyStore = FakeDeviceStaticKeyStore(newDeviceKeyPair()),
@@ -635,11 +706,18 @@ class NoiseSessionPumpTest {
                     dispatcher = dispatcher,
                     rekeyIntervalMs = rekeyIntervalMs,
                     rekeyRespTimeoutMs = rekeyRespTimeoutMs,
+                    onClientMinimum = { clientMinimums += it },
                 )
             rekeyIntervalMs != null ->
-                NoiseSessionPump(transport, factory, dispatcher = dispatcher, rekeyIntervalMs = rekeyIntervalMs)
+                NoiseSessionPump(
+                    transport,
+                    factory,
+                    dispatcher = dispatcher,
+                    rekeyIntervalMs = rekeyIntervalMs,
+                    onClientMinimum = { clientMinimums += it },
+                )
             else ->
-                NoiseSessionPump(transport, factory, dispatcher = dispatcher)
+                NoiseSessionPump(transport, factory, dispatcher = dispatcher, onClientMinimum = { clientMinimums += it })
         }
     }
 

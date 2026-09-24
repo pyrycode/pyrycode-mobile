@@ -35,6 +35,15 @@ sealed class RelayLinkStatus {
      *  the next foreground dials once more. Static: carries no relay- or daemon-supplied data (#841). */
     data object PairingRejected : RelayLinkStatus()
 
+    /** The host refused this app build as too old (the `4412` close, #1008). Only an app update recovers,
+     *  so the supervisor has stopped redialling this host; an explicit retry or the next foreground dials
+     *  once more. [minClientVersion] is the host's minimum from its sealed `client.update_required` error,
+     *  already validated as three bounded decimal parts, or `null` when the host sent none (or none valid).
+     *  Daemon-authored: render as text only, never log it. */
+    data class UpdateRequired(
+        val minClientVersion: String?,
+    ) : RelayLinkStatus()
+
     /** Unreachable / sustained unavailability. */
     data object Offline : RelayLinkStatus()
 }

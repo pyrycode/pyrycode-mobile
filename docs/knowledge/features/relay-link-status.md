@@ -21,15 +21,19 @@ sealed class RelayLinkStatus {
     data class Reconnecting(val secondsRemaining: Int) : RelayLinkStatus()
     data object DaemonAbsent : RelayLinkStatus()           // relay reachable, no daemon (the 4404 close)
     data object PairingRejected : RelayLinkStatus()        // host refused the credential (4401 / 4426)
+    data class UpdateRequired(val minClientVersion: String?) : RelayLinkStatus()  // app too old (4412, #1008)
     data object Offline : RelayLinkStatus()                // unreachable / sustained unavailability
 }
 ```
 
-It mirrors `ConnectionState`'s four cases and adds `DaemonAbsent` (#391), `Idle` (#499) and
-`PairingRejected` (#841). All three are static `data object`s carrying **no relay-supplied text**: for
-`DaemonAbsent`/`PairingRejected` the relay's `reason` string / `cause` never flow into it — the only
-relay datum that crosses into this model is the integer close `code`, compared against `4404`, `4401`
-and `4426` (see [Security](#security)); `Idle` carries no data at all.
+It mirrors `ConnectionState`'s four cases and adds `DaemonAbsent` (#391), `Idle` (#499),
+`PairingRejected` (#841) and `UpdateRequired` (#1008). `DaemonAbsent`/`PairingRejected`/`Idle` are
+static `data object`s carrying **no relay-supplied text**: the relay's `reason` string / `cause` never
+flow into them — the only relay datum that crosses into those three is the integer close `code`,
+compared against `4404`, `4401` and `4426` (see [Security](#security)); `Idle` carries no data at all.
+`UpdateRequired` is the one non-static case: its `minClientVersion` is daemon-authored, not
+relay-authored, and reaches the model only after AEAD decrypt + validation (see below) — render it as
+text only, never log it.
 
 ## `PairingRejected` — a rejected credential halts redial (#841)
 
@@ -53,6 +57,31 @@ bundle is keyed to the exact saved record, so an initial `PairingRejected` on it
 token/server-key pair was refused, and an automatic retry cannot succeed with a rejected credential. A
 credential change replaces the record and `reconcile` builds a fresh bundle starting from `Idle`, so a
 stale rejection from an older credential can never reach the flow.
+
+## `UpdateRequired` — an app-too-old rejection halts redial (#1008)
+
+A `4412` close means the host has refused this app build as older than it will serve — pyrycode#2576's
+`client.update_required` rejection. Like `PairingRejected`, a redial cannot recover: the host will refuse
+the same build again, so the [supervisor](relay-reconnect-supervisor.md) branches `4412` to
+`UpdateRequired` and halts (the same `haltUntilRetry()`); an explicit retry or the next foreground
+`connect()` dials exactly once more. No daemon sends `4412` yet — this state is proven with fakes.
+
+**The minimum arrives on a different path than the close.** Before the `4412` close, the host sends a
+sealed `error` envelope (`code == "client.update_required"`, `retryable: false`) carrying an optional
+`min_client_version`, decrypted by [`NoiseSessionPump`](noise-session-pump.md) and handed to the
+supervisor's `recordClientMinimum`, which validates it (exactly three `.`-separated ASCII-decimal parts,
+each 1–6 digits — `internal fun validMinClientVersion` in `MobileWireModels.kt`) before it can reach
+`UpdateRequired`; an invalid or absent value leaves `minClientVersion == null`. The daemon omits the
+field when it could not parse this app's version, and its seal can fail entirely, in which case the
+`4412` close arrives with no readable error at all — `UpdateRequired(null)` is a normal, correct outcome,
+not a bug. The supervisor never reads the close **reason**, only the code.
+
+The error and the close race each other (the error may decrypt before or after the `4412` `Down` is
+processed), so the minimum is latched per dial rather than read inline — see the [supervisor's halt
+section](relay-reconnect-supervisor.md#halt-on-a-rejected-pairing-841-or-an-app-too-old-rejection-1008)
+for the latch. `RelayConnectionRegistry.pairingStatus`'s initial-retry rule leaves `UpdateRequired` out of
+its retry-once set, the same as `PairingRejected` and for the same reason: retrying a build the host has
+already refused cannot succeed.
 
 ## `Idle` — deliberately not dialing (#499)
 
@@ -99,9 +128,11 @@ sole producer:
   existing consumer is untouched. `toConnectionState()` is an `internal` top-level mapping fun:
   identity for the four shared cases, **`Idle → ConnectionState.Connected`** (#499 — deliberately idle,
   banner stays hidden), **`DaemonAbsent → ConnectionState.Offline`** (the relay is up but unusable
-  end-to-end — the nearest legacy banner meaning until #392 gives `DaemonAbsent` its own copy), and
+  end-to-end — the nearest legacy banner meaning until #392 gives `DaemonAbsent` its own copy),
   **`PairingRejected → ConnectionState.Offline`** (#841 — same nearest-legacy-meaning rationale; the
-  Settings status line and the host row give it its own label/treatment instead).
+  Settings status line and the host row give it its own label/treatment instead), and
+  **`UpdateRequired → ConnectionState.Offline`** (#1008 — same rationale; the Settings status line gives
+  it its own "Update required" label, see [Connection status line](connection-status-line.md)).
 
 ```
             ┌─ relayStatus (asStateFlow) ─────────▶ #392 combined {relay, pyrycode}
@@ -135,30 +166,41 @@ full state machine and backoff cadence.
 ## Security
 
 `security-sensitive`. The relay-controlled WS close `code` is **untrusted** and crosses into trusted
-state at exactly three integer comparisons — `event.code == RELAY_NO_DAEMON_CLOSE` (`4404`),
-`== RELAY_TOKEN_REJECTED_CLOSE` (`4401`) and `== HANDSHAKE_FAILED_CLOSE` (`4426`, #841). Integer `==`
-cleanly excludes `null` (a clean dial failure / malformed stored data) and every other code, so those
-**cannot masquerade as `DaemonAbsent`/`PairingRejected`**. No relay-supplied string or `Throwable` flows
-into the model; both are static objects. The supervisor's **no-log contract** holds — each branch reads
-`code` only to compare it, never to log it. A hostile relay spamming `4404` only forces `DaemonAbsent`
-plus continued redial on the **same** capped-exponential backoff (no tighter loop, no amplification).
+state at exactly four integer comparisons — `event.code == RELAY_NO_DAEMON_CLOSE` (`4404`),
+`== RELAY_TOKEN_REJECTED_CLOSE` (`4401`), `== HANDSHAKE_FAILED_CLOSE` (`4426`, #841) and
+`== CLIENT_UPDATE_REQUIRED_CLOSE` (`4412`, #1008). Integer `==` cleanly excludes `null` (a clean dial
+failure / malformed stored data) and every other code, so those **cannot masquerade as
+`DaemonAbsent`/`PairingRejected`/`UpdateRequired`**. No relay-supplied string or `Throwable` flows into
+the model; `DaemonAbsent` and `PairingRejected` are static objects. The supervisor's **no-log contract**
+holds — each branch reads `code` only to compare it, never to log it, and no branch reads the close
+**reason**. A hostile relay spamming `4404` only forces `DaemonAbsent` plus continued redial on the
+**same** capped-exponential backoff (no tighter loop, no amplification).
 
-A hostile relay forging `4401`/`4426` can halt redial for that host (denial of service), but it could
-already deny service by dropping or refusing connections — the halt is bounded by the next explicit
-retry or foreground, and the design deliberately never mutates or deletes the saved pairing on
-rejection, so a forged code can never destroy a credential (accepted risk, see the #841 plan's security
-review, verdict PASS). Halting also *reduces* how often the refused token is re-presented to the relay —
-from every ≤30 s to once per explicit user action or foreground.
+A hostile relay forging `4401`/`4426`/`4412` can halt redial for that host (denial of service), but it
+could already deny service by dropping or refusing connections — the halt is bounded by the next
+explicit retry or foreground, and the design deliberately never mutates or deletes the saved pairing on
+rejection, so a forged code can never destroy a credential (accepted risk, see the #841 and #1008 plans'
+security reviews, both verdict PASS). Halting also *reduces* how often a refused token/build is
+re-presented to the relay — from every ≤30 s to once per explicit user action or foreground.
+
+`UpdateRequired.minClientVersion` is a **second, independent** trust boundary: it is daemon-authored
+(not relay-authored), reaches the app only inside the AEAD-authenticated Noise session, and cannot be
+forged by a relay that has no session key. A relay forging the `4412` close without the sealed error
+still only produces `UpdateRequired(null)` — the missing minimum, never a fabricated one. Its shape is
+constrained to three bounded decimal parts before it reaches `UpdateRequired`, so the value is safe to
+render as text once a future ticket adds a visible label for it.
 
 ## Related
 
 - Ticket notes: [`../codebase/391.md`](../codebase/391.md) (the type + `DaemonAbsent`) ·
   [`../codebase/499.md`](../codebase/499.md) (the `Idle` sixth case + the divergent banner/Settings
-  mapping) — files/line refs, patterns, lessons. #841 (`PairingRejected`) landed after the
-  per-ticket archive was frozen (2026-09-05); see its spec below instead.
+  mapping) — files/line refs, patterns, lessons. #841 (`PairingRejected`) and #1008 (`UpdateRequired`)
+  landed after the per-ticket archive was frozen (2026-09-05); see their specs below instead.
 - Specs: `docs/specs/architecture/391-relay-leg-daemon-absent-status.md` (§ Design, § Security review —
   Verdict PASS) · `docs/specs/architecture/841-rejected-pairing-relay-state.md` (`PairingRejected`,
-  the halt/resume design, § Security review — Verdict PASS).
+  the halt/resume design, § Security review — Verdict PASS) ·
+  `docs/specs/architecture/1008-update-required-halt.md` (`UpdateRequired`, the sealed-error capture +
+  per-dial minimum latch, § Security review — Verdict PASS).
 - Producer: [Relay reconnect supervisor](relay-reconnect-supervisor.md) ([#391](../codebase/391.md)) —
   the single source of truth (`relayStatus`) and the `toConnectionState()` derivation.
 - Legacy sibling it's derived to: [Connection state](connection-state.md) (`ConnectionState`, #196).
