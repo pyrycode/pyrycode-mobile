@@ -88,6 +88,7 @@ import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -472,6 +473,18 @@ fun ThreadScreen(
                                     listState.scrollToItem(0)
                                 }
                             }
+                    }
+                    // #981: the list keeps its first visible row anchored by key, so under reverseLayout a new
+                    // newest row lands at index 0 below the viewport. The streaming pin above only covers a
+                    // row that is still streaming when it collects; a reply that arrives whole, a tool row or
+                    // the operator's own echo needs this one. A streaming row that grows keeps its key and is
+                    // left to the pin. drop(1) skips the first value, because userScrolledAway is not saved
+                    // and a recreation must not pull a reader who had scrolled away back to the newest end.
+                    val newestRowKey by rememberUpdatedState(rows.lastOrNull()?.listKey(rows.lastIndex))
+                    LaunchedEffect(listState) {
+                        snapshotFlow { newestRowKey }
+                            .drop(1)
+                            .collect { if (!userScrolledAway) listState.scrollToItem(0) }
                     }
                     LazyColumn(
                         state = listState,
