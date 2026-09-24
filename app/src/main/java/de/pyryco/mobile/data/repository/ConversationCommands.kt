@@ -70,13 +70,31 @@ internal class ConversationCommands(
      * not connected, and the #318 decode exception ([kotlinx.serialization.SerializationException] /
      * [IllegalArgumentException]) for a malformed reply — none of which mutate [ConversationListProjection] (AC #3).
      */
-    suspend fun createDiscussion(workspace: String?): Conversation {
+    suspend fun createDiscussion(workspace: String?): Conversation = create(CreateConversationPayloadDto(cwd = workspace))
+
+    /**
+     * Create a named, promoted channel in [workspace] over one v2 `create_conversation` (#956) —
+     * `is_promoted=true`, [name] and [workspace] all sent **verbatim** (the caller trims) — instead of a
+     * discussion promoted afterwards. Same reply, decode, confirmed insert and failure contract as
+     * [createDiscussion]; the returned conversation holds the daemon's values, never the request's.
+     */
+    suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = create(CreateConversationPayloadDto(isPromoted = true, name = name, cwd = workspace))
+
+    /**
+     * The shared `create_conversation` round trip behind [createDiscussion] and [createChannel]: send
+     * [payload], await the correlated `conversation_created`, decode it through [ConversationResponseDto]
+     * and only then insert it into [ConversationListProjection].
+     */
+    private suspend fun create(payload: CreateConversationPayloadDto): Conversation {
         val request =
             Envelope(
                 id = requests.nextRequestId(),
                 type = TYPE_CREATE_CONVERSATION,
                 ts = Clock.System.now().toString(),
-                payload = MobileJson.encodeToJsonElement(CreateConversationPayloadDto(cwd = workspace)),
+                payload = MobileJson.encodeToJsonElement(payload),
             )
         // Throws on a server `error` / not-Open session; the decode + confirmed insert below are
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).

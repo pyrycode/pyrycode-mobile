@@ -1024,6 +1024,166 @@ class RemoteConversationRepositoryTest {
             assertEquals("c-new", create().getOrThrow().id)
         }
 
+    // ---- createChannel (#956): promoted create_conversation → conversation_created reply --------
+
+    // AC #1: one create_conversation with is_promoted=true and the name and cwd verbatim — the
+    // surrounding whitespace survives, so nothing on the way trims.
+    @Test
+    fun createChannel_sendsOneCreateConversationWithPromotedTrueAndVerbatimNameAndCwd() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startCreateChannel(repo, "  Weekly planning ", "/work/wp")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "create_conversation" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"is_promoted":true,"name":"  Weekly planning ","cwd":"/work/wp"}"""),
+                sent.payload,
+            )
+
+            pump.push(conversationCreatedEnvelope(inReplyTo = sent.id, id = "c-new", cwd = "/work/wp", isPromoted = true))
+            runCurrent()
+        }
+
+    // AC #1: the return is the daemon's confirmed conversation, not the request echoed back.
+    @Test
+    fun createChannel_onCreatedReply_returnsDaemonValuesNotRequest() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val create = startCreateChannel(repo, "  Weekly planning ", "/work/wp")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(
+                conversationCreatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "c-chan",
+                    isPromoted = true,
+                    name = "Weekly planning",
+                    cwd = "/srv/work/wp",
+                ),
+            )
+            runCurrent()
+
+            val conversation = create().getOrThrow()
+            assertEquals("c-chan", conversation.id)
+            assertTrue(conversation.isPromoted)
+            assertEquals("Weekly planning", conversation.name)
+            assertEquals("/srv/work/wp", conversation.cwd)
+        }
+
+    // AC #1: the confirmed conversation appears as a promoted row — Channels, not Discussions.
+    @Test
+    fun createChannel_onSuccess_appearsInChannelsTierOnly() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val channels = collectConversations(repo, ConversationFilter.Channels)
+            val discussions = collectConversations(repo, ConversationFilter.Discussions)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreateChannel(repo, "Weekly planning", "/work/wp")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(
+                conversationCreatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "c-chan",
+                    isPromoted = true,
+                    name = "Weekly planning",
+                    cwd = "/work/wp",
+                    lastUsedAt = "2026-05-08T11:00:00Z",
+                ),
+            )
+            runCurrent()
+
+            val created = create().getOrThrow()
+            assertEquals(listOf("c-chan", "chan"), channels.last().map { it.id })
+            assertEquals(created, channels.last().first())
+            assertEquals(listOf("disc"), discussions.last().map { it.id })
+        }
+
+    // AC #2: a server error throws RelayErrorException and inserts nothing.
+    @Test
+    fun createChannel_onServerError_throwsRelayErrorAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreateChannel(repo, "Weekly planning", "/work/wp")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "protocol.malformed", retryable = false))
+            runCurrent()
+
+            val ex = create().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("protocol.malformed", (ex as RelayErrorException).code)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #2: a disconnected session (pump.send returns false) throws IllegalStateException; no fold.
+    @Test
+    fun createChannel_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreateChannel(repo, "Weekly planning", "/work/wp")
+            runCurrent()
+
+            val ex = create().exceptionOrNull()
+            assertTrue("expected IllegalStateException, got $ex", ex is IllegalStateException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #2: a malformed conversation_created reply throws the #318 decode exception before the fold.
+    @Test
+    fun createChannel_onMalformedCreatedReply_throwsAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreateChannel(repo, "Weekly planning", "/work/wp")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            // Payload omits the required `cwd` → ConversationResponseDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "conversation_created",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"id":"c-bad","name":"Weekly planning","is_promoted":true,"last_used_at":"2026-05-08T10:00:00Z"}""",
+                        ),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            assertTrue(create().exceptionOrNull() is IllegalArgumentException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
     // ---- promote (#348): promote_conversation request → conversation_updated reply --------------
 
     // AC #1, #4: an explicit workspace pins the cwd; the request carries all three required fields.
@@ -9295,6 +9455,17 @@ class RemoteConversationRepositoryTest {
         var outcome: Result<Conversation>? = null
         backgroundScope.launch { outcome = runCatching { repo.createDiscussion(workspace) } }
         return { requireNotNull(outcome) { "createDiscussion has not completed" } }
+    }
+
+    /** Launch [RemoteConversationRepository.createChannel] like [startCreate] (#956). */
+    private fun TestScope.startCreateChannel(
+        repo: RemoteConversationRepository,
+        name: String,
+        workspace: String,
+    ): () -> Result<Conversation> {
+        var outcome: Result<Conversation>? = null
+        backgroundScope.launch { outcome = runCatching { repo.createChannel(name, workspace) } }
+        return { requireNotNull(outcome) { "createChannel has not completed" } }
     }
 
     /**
