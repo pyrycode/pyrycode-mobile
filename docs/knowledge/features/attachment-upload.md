@@ -2,13 +2,17 @@
 
 Uploads a file's bytes, name and declared MIME type to a conversation on **its owning host**, as
 `attachment_chunk` frames over the connection the call was made on (#829). Data layer only — no UI.
-[#670](https://github.com/pyrycode/pyrycode-mobile/issues/670)'s composer is the consumer;
-[#830](https://github.com/pyrycode/pyrycode-mobile/issues/830) sends a message naming the uploaded ids;
-[#671](https://github.com/pyrycode/pyrycode-mobile/issues/671) reuses the chunk payload shape for
-retrieval; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674) proves the flow live. Wire
-contract: `../pyrycode/docs/protocol-mobile.md` § Attachments (`attachment_chunk`, `attachment_stored`,
-"The `attachment_id` shape"). That section still says nothing emits `attachment_stored` — stale; the
-daemon has emitted it since pyrycode#1897. That correction belongs to the pyrycode repo, not here.
+[#932](https://github.com/pyrycode/pyrycode-mobile/issues/932) wires this call and the three-argument
+`sendMessage` into the composer draft's send path (data only — see § Consumer below);
+[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) is the picker and the strip that let a user
+actually fill that path — see [Thread screen § Composer pending attachments](thread-screen.md#composer-pending-attachments);
+[#830](https://github.com/pyrycode/pyrycode-mobile/issues/830) sends a
+message naming the uploaded ids; [#671](https://github.com/pyrycode/pyrycode-mobile/issues/671) reuses
+the chunk payload shape for retrieval; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)
+proves the flow live. Wire contract: `../pyrycode/docs/protocol-mobile.md` § Attachments
+(`attachment_chunk`, `attachment_stored`, "The `attachment_id` shape"). That section still says nothing
+emits `attachment_stored` — stale; the daemon has emitted it since pyrycode#1897. That correction belongs
+to the pyrycode repo, not here.
 
 ## The chunk plan — `data/network/AttachmentPayloads.kt`
 
@@ -119,6 +123,17 @@ fails any still-active transfer `ReconnectRequired` — the daemon discards a pa
 connection, so a retry after reconnecting resends every chunk from scratch. No upload timeout: a daemon
 that never answers is ended by the connection's own liveness teardown, the same choice
 `pyrycode-desktop`'s `attachmentTransfer` made (`pyrycode-desktop` `docs/knowledge/features/attachment-transfer.md`).
+
+### Composer draft — the production caller (#932)
+
+`ThreadViewModel.sendMessage` is the first production caller of both `uploadAttachment` and the
+three-argument `sendMessage`. It reads `ComposerDraftStore`'s per-pair pending-attachment list, uploads
+whichever entries have no acknowledged id yet in send order, and names only those ids — see
+[Thread screen § Composer pending attachments](thread-screen.md#composer-pending-attachments) for the
+store shape, the retry-keeps-earlier-ids behavior and the content-URI trust boundary
+(`ContentResolverAttachmentReader.isForeignContentUri`). [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)
+landed the picker and the strip that fill this path from the UI; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)
+still owns the live proof.
 
 ### `StableConversationRepository` — the one one-shot that doesn't throw
 

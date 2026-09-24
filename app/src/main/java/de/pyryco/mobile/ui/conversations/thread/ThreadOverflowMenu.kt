@@ -16,7 +16,6 @@ fun ThreadOverflowMenu(
     isPromoted: Boolean,
     onDismiss: () -> Unit,
     onEvent: (ThreadEvent) -> Unit,
-    onShowLiteralScreen: () -> Unit,
     modifier: Modifier = Modifier,
     // Gated on the thread state's "mutations supported" signal (#507): false in relay mode, where these
     // actions throw or no-op. Defaulted for previews/tests only — production always threads the real value.
@@ -28,15 +27,6 @@ fun ThreadOverflowMenu(
         onDismissRequest = onDismiss,
         modifier = modifier,
     ) {
-        // First item, outside the promotion conditionals: always available regardless of
-        // connection / parse / promotion state (AC#1). Pure navigation — bypasses ThreadEvent.
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.thread_overflow_show_literal_screen)) },
-            onClick = {
-                onDismiss()
-                onShowLiteralScreen()
-            },
-        )
         if (!isPromoted) {
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.save_as_channel_action)) },

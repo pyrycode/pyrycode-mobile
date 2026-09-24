@@ -66,8 +66,8 @@ import org.koin.dsl.module
 /**
  * The Settings destination on the production graph, bindings and `Routes` (#749).
  *
- * Mounts `PyryNavHost` directly rather than the Activity, so — like `LiteralScreenNavigationTest`,
- * whose harness this copies — it proves route ownership and cannot prove the startup gate.
+ * Mounts `PyryNavHost` directly rather than the Activity, so it proves route ownership and cannot
+ * prove the startup gate.
  */
 @RunWith(AndroidJUnit4::class)
 class SettingsNavigationTest {

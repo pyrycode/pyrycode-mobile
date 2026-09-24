@@ -42,8 +42,9 @@ import de.pyryco.mobile.notifications.AttentionNotifier
 import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
-import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
+import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.asRememberedEffortStore
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
@@ -166,6 +167,8 @@ val appModule =
         // typed it. Holds no connection and no disk handle, so it is unaffected by reconnects and by
         // the lifecycle driver's background close.
         single { ComposerDraftStore() }
+        // #932: reads a pending attachment's bytes through its content URI when the thread sends it.
+        single<AttachmentReader> { ContentResolverAttachmentReader(androidContext().contentResolver, androidContext().packageName) }
         viewModel { ScannerViewModel() }
         viewModel {
             val registry = get<RelayConnectionRegistry>()
@@ -191,7 +194,6 @@ val appModule =
                 thread.addCloseable(viewing)
             }
         }
-        viewModel { get<ThreadDestinationFactory>().literal(get()) }
     }
 
 /**
@@ -231,6 +233,9 @@ fun hostConversationModule(
                 decorateRepository,
                 cache = if (useRelay) get() else null,
                 attachments = if (useRelay) get() else null,
+                // #932: resolved when a thread is built, not with the factory, so a container without a
+                // ContentResolver can still build the factory for its other destinations.
+                attachmentReader = inject(),
             )
         }
         // #877: one viewing tracker per app, shared by the thread destinations and the host source.
@@ -271,6 +276,7 @@ internal class ThreadDestinationFactory(
     private val decorateRepository: (ConversationRepository) -> ConversationRepository,
     private val cache: ConversationCache? = null,
     private val attachments: AttachmentStore? = null,
+    private val attachmentReader: Lazy<AttachmentReader>,
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -323,7 +329,7 @@ internal class ThreadDestinationFactory(
         val repository = repository(serverId, bundle)
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
-            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore)
+            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore, attachmentReader = attachmentReader.value)
         }
         val connection =
             object : ConnectionStateSource {
@@ -355,19 +361,15 @@ internal class ThreadDestinationFactory(
             // #843: read through the registry by id, not off the captured bundle — a successful re-pair
             // replaces that bundle, and the thread must see the replacement to take the action away.
             pairingRejected = pairingRejected(registry.hostConnections, serverId),
+            attachmentReader = attachmentReader.value,
             rememberedEffort = preferences.asRememberedEffortStore(),
         )
     }
 
-    fun literal(handle: SavedStateHandle): LiteralScreenViewModel {
-        RelayLog.d { "event=literal_destination_bound" }
-        return LiteralScreenViewModel(handle, repository(handle.get<String>("serverId").orEmpty()))
-    }
-
     /**
      * The Settings destination, owned by the server id the gear captured into its route (#749).
-     * Unlike [thread] and [literal] the owner is optional — a blank one means the destination owns
-     * no host — and unlike them it is never resolved to a bundle here: this screen reads identity
+     * Unlike [thread] the owner is optional — a blank one means the destination owns
+     * no host — and, unlike the thread, it is never resolved to a bundle here: this screen reads identity
      * and status only, so an owner that is saved but not yet connected is still its owner.
      *
      * [preferences] is the one process-wide store, but Settings no longer reads or writes it

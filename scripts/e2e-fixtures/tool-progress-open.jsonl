@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"id":"tool-1","content":[{"type":"tool_use","id":"toolu_e2e","name":"Bash","input":{"command":"echo hello"}}]}}
+{"type":"tool_progress","tool_use_id":"toolu_e2e-heartbeat-0","tool_name":"Bash","parent_tool_use_id":"toolu_e2e","elapsed_time_seconds":30,"heartbeat":true,"session_id":"43143143-4314-4314-8314-431431431431","uuid":"95095095-9509-4509-8509-950950950950"}

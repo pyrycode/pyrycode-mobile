@@ -3,7 +3,7 @@
 Split from [Dependency injection](dependency-injection.md) — read that first for Koin
 wiring, `appModule`, the flag-gated selector pattern, testing and configuration. This
 document covers how `HostConversationSource` aggregates per-host state and how host-qualified
-destinations (thread, literal, settings, archive) get their exact-host dependencies: host
+destinations (thread, settings, archive) get their exact-host dependencies: host
 identity and snapshots, snapshot lifetime, on-disk restore, attention state (#877), exact-host
 repository access, destination ownership, exact-host retry and the demo binding.
 
@@ -225,15 +225,16 @@ of the check; a later disconnect can still make an operation fail. See the
 ### Destination ownership
 
 `ThreadDestinationFactory` is a scope-free singleton in `hostConversationModule`.
-The Koin `viewModel` definitions call `thread(handle, preferences)` and
-`literal(handle)`; the factory reads `serverId` from the destination's
+The Koin `viewModel` definition calls `thread(handle, preferences)`
+(`literal(handle)`, the matching method for the now-retired literal-screen
+destination, was removed by [#883](../../specs/architecture/883-retire-literal-screen.md)); the factory reads `serverId` from the destination's
 `SavedStateHandle`, while each ViewModel reads its unchanged host-local
 `conversationId`. [Navigation](navigation.md#host-qualified-destinations) supplies
 both arguments and scopes ViewModels to individual back-stack entries.
 
 `ThreadDestinationFactory.settings(handle, preferences)` (#749; dropped its third `repository`
 parameter in #715) is the third destination method, in the same shape but with two deliberate
-differences from `thread`/`literal`: the owner it reads from the `SavedStateHandle` is **optional**
+differences from `thread`: the owner it reads from the `SavedStateHandle` is **optional**
 (`handle.get<String>("serverId").orEmpty()` — a blank owner is a valid destination state, not an
 error), and it never resolves that id to a connection bundle — `SettingsViewModel` reads a saved
 host's identity and status only, so a saved-but-disconnected owner is still its owner. `preferences`
@@ -298,8 +299,7 @@ connection cannot substitute for A's unavailable one.
 The same bundle supplies the thread's supervisor state, live-session events,
 current modal, modal answer/cancel and interrupt callbacks. Repository-backed
 session/queue state, Send, Reset session, queue drop and existing thread actions
-use the owner facade. Literal Request/Retry use a facade over that same host's
-coordinator. Compatibility selection cannot change an open prompt's display or
+use the owner facade. Compatibility selection cannot change an open prompt's display or
 answer target, even with colliding conversation/modal ids. App preferences remain
 shared. The navigation guard waits for saved-host initialization and rejects
 unknown/removed hosts before constructing their ViewModels; there is no fallback
@@ -328,8 +328,7 @@ retired or background owner, and it never retries another selected host.
 Checking identity before calling the supervisor outside this monitor leaves a
 check/use race: bundle teardown closes the supervisor but does not permanently
 disable its `retry()`/`connect()` path. Keep validation and the nonblocking call
-under one lifecycle boundary. Literal-screen Retry is a separate snapshot re-fetch;
-it retains the destination repository and existing snapshot error mapping.
+under one lifecycle boundary.
 
 The tree's per-host reconnect control (#840) mirrors this same pairing rather
 than adding a second one. `HostConversationSource.relay(...)` gained a trailing
@@ -351,7 +350,7 @@ states `Connected`. Lists and exact lookup use the existing
 relay hosts never enter these snapshots or lookups, even though their connection
 owners still exist.
 
-Demo thread, literal and picker repositories also resolve that same singleton.
+Demo thread and picker repositories also resolve that same singleton.
 The thread gets `FakeConnectionStateSource` (`Connected`) and its inert default
 live-event, hidden-modal and control dependencies. Saved real hosts never supply
 demo content, permissions or controls. `selectedServerId()` returns `demo` in this

@@ -80,7 +80,6 @@ class LiteralScreenNavigationTest {
     @Test fun hostStreamsBackReopenAndRestorationKeepDestinationIdentity() {
         val restoration = start()
         lateinit var first: ThreadViewModel
-        lateinit var firstLiteral: LiteralScreenViewModel
         compose.runOnIdle {
             val list = model<ChannelListViewModel>()
             list.onHostRowTapped(a)
@@ -98,15 +97,6 @@ class LiteralScreenNavigationTest {
         compose.runOnIdle { first = model() }
         restoration.emulateSavedInstanceStateRestore()
         awaitTarget(a, Routes.CONVERSATION_THREAD)
-        compose.onNodeWithContentDescription("More actions").performClick()
-        compose.onNodeWithText("Show the literal screen").performClick()
-        awaitTarget(a, Routes.LITERAL_SCREEN)
-        compose.runOnIdle { firstLiteral = model() }
-        compose.onNodeWithText("Try again").performClick()
-        awaitTarget(a, Routes.LITERAL_SCREEN)
-        compose.runOnIdle { assertTrue(model<LiteralScreenViewModel>().state.value is LiteralScreenUiState.Error) }
-        compose.runOnIdle { nav.popBackStack() }
-        awaitTarget(a, Routes.CONVERSATION_THREAD)
         compose.runOnIdle { nav.popBackStack() }
         compose.runOnIdle {
             assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
@@ -116,16 +106,9 @@ class LiteralScreenNavigationTest {
         compose.runOnIdle { model<DiscussionListViewModel>().onHostRowTapped(b) }
         awaitTarget(b, Routes.CONVERSATION_THREAD)
         compose.runOnIdle { assertNotSame(first, model<ThreadViewModel>()) }
-        compose.onNodeWithContentDescription("More actions").performClick()
-        compose.onNodeWithText("Show the literal screen").performClick()
-        awaitTarget(b, Routes.LITERAL_SCREEN)
-        compose.runOnIdle { assertNotSame(firstLiteral, model<LiteralScreenViewModel>()) }
         restoration.emulateSavedInstanceStateRestore()
-        awaitTarget(b, Routes.LITERAL_SCREEN)
-        compose.runOnIdle {
-            nav.popBackStack()
-            nav.popBackStack()
-        }
+        awaitTarget(b, Routes.CONVERSATION_THREAD)
+        compose.runOnIdle { nav.popBackStack() }
         compose.waitForIdle()
         compose.runOnIdle { model<DiscussionListViewModel>().onHostRowTapped(a) }
         awaitTarget(a, Routes.CONVERSATION_THREAD)
@@ -137,8 +120,6 @@ class LiteralScreenNavigationTest {
         compose.runOnIdle { nav.navigate(Routes.thread(a)) }
         awaitTarget(a, Routes.CONVERSATION_THREAD)
         compose.runOnIdle { runBlocking { store.remove(a.serverId) } }
-        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CHANNEL_LIST }
-        compose.runOnIdle { nav.navigate(Routes.literal(a)) }
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CHANNEL_LIST }
         compose.runOnIdle { nav.navigate(Routes.thread(b)) }
         awaitTarget(b, Routes.CONVERSATION_THREAD)
@@ -310,6 +291,8 @@ class LiteralScreenNavigationTest {
                     // for why these containers override it rather than supply the Context.
                     single<ConversationCache> { InertConversationCache }
                     single { InertAttachmentStore }
+                    // The real reader needs androidContext() for its ContentResolver (#932).
+                    single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                 },
             )
         return StateRestorationTester(compose).also { tester ->

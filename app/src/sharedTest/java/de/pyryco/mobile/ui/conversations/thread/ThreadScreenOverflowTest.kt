@@ -59,7 +59,6 @@ class ThreadScreenOverflowTest {
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
 
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_show_literal_screen)).assertIsDisplayed()
         composeTestRule.onNodeWithText("Reset session").assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertIsDisplayed()

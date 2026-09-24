@@ -20,9 +20,11 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 E2E_PACKAGE = "de.pyryco.mobile.e2e"
-SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "reconnect", "replay-order")
+SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "replay-order")
 # The live gate's executed-test floor: the size of scripts/e2e-emulator.sh's LIVE curated list (#848),
 # so a method silently dropped from that list reddens the gate. Raise it with the list.
+# 20 while #977 keeps the #687 bypass method out of the list; #981 restores it and 21.
+# #965 adds the stop method on top: 21 while #687 stays out, 22 once #981 restores it.
 LIVE_MINIMUM = 21
 
 
@@ -142,7 +144,7 @@ def changed_paths(base="main"):
         return None
 
 
-# ---- scripted-all: the seven scenarios on one emulator this script boots ------------------------------
+# ---- scripted-all: the eight scenarios on one emulator this script boots ------------------------------
 # Each `scripted <scenario>` run has Gradle boot and tear down its own managed emulator, and Gradle's own
 # waits for the device cost about 10 of each scenario's 23 seconds (measured 2026-09-23). scripted-all boots
 # the managed device's AVD once, read-only from its snapshot, and runs every scenario against it through

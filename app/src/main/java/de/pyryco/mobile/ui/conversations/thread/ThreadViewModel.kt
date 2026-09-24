@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.model.scopedTo
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
+import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -43,6 +44,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -120,6 +122,10 @@ class ThreadViewModel(
     // which [connectionStateSource]'s legacy four cases fold into Offline. Defaulted to never, as the
     // demo path's fake host is never rejected.
     pairingRejected: Flow<Boolean> = flowOf(false),
+    // #932: reads a pending attachment's bytes through its content URI at send time. Defaulted to a reader
+    // that can read nothing, so the fake-backed graph and existing tests stay inert; production passes
+    // ContentResolverAttachmentReader.
+    private val attachmentReader: AttachmentReader = AttachmentReader { AttachmentRead.Unreadable },
     // #686: the phone's one remembered effort level, recalled once per opening by [effortRecall].
     // Defaulted to a store that remembers nothing, so the demo path and existing tests stay inert.
     rememberedEffort: RememberedEffortStore = RememberedEffortStore.None,
@@ -162,6 +168,36 @@ class ThreadViewModel(
                 SharingStarted.Eagerly,
                 draftStore.draftFor(serverId, conversationId),
             )
+
+    /**
+     * This chat's pending attachments (#932) in the order added, empty when it has none. Read from
+     * [draftStore] beside [draft], exposed the same way and for the same reasons.
+     */
+    val pendingAttachments: StateFlow<List<PendingAttachment>> =
+        draftStore.attachments
+            .map { it[serverId]?.get(conversationId).orEmpty() }
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                draftStore.attachmentsFor(serverId, conversationId),
+            )
+
+    private val _attachmentsSending = MutableStateFlow(false)
+
+    /**
+     * Whether a send carrying attachments is uploading or sending right now (#933). The strip shows it, and
+     * [sendMessage] refuses a second tap while it holds, so one snapshot is never uploaded twice. Written on
+     * the main thread only, and cleared however the send ends.
+     */
+    val attachmentsSending: StateFlow<Boolean> = _attachmentsSending.asStateFlow()
+
+    private val attachmentRefusalChannel = Channel<AttachmentRefusal>(capacity = Channel.BUFFERED)
+
+    /**
+     * One notice per pick that had entries refused (#933), with how many were refused for each reason. Counts
+     * only, never a name, URI or type, so the snackbar it drives shows fixed local text.
+     */
+    val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -1087,6 +1123,9 @@ class ThreadViewModel(
      * between them.
      */
     fun sendMessage(text: String) {
+        if (_attachmentsSending.value) return
+        val attachments = draftStore.attachmentsFor(serverId, conversationId)
+        if (attachments.isNotEmpty()) return sendWithAttachments(text, attachments)
         if (text.isBlank()) return
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
@@ -1094,6 +1133,106 @@ class ThreadViewModel(
             repository.sendMessage(state.value.conversationId, text)
             if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
         }
+    }
+
+    /**
+     * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
+     * (#932). Blank text is allowed here: a message may carry attachments alone.
+     *
+     * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
+     * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that
+     * upload. One file's bytes are live at a time. The first failed read or upload stops the send before
+     * anything else is uploaded or sent; a thrown upload or send is swallowed by [launchGuardedRepoCall].
+     * Either way the text and every entry stay in the draft — the way a failed text send is reported.
+     *
+     * On success the text clears under [sendMessage]'s in-flight guard, and only the snapshot's entries
+     * are removed, so an attachment added while this send was in flight survives it.
+     */
+    private fun sendWithAttachments(
+        text: String,
+        attachments: List<PendingAttachment>,
+    ) {
+        _attachmentsSending.value = true
+        launchGuardedRepoCall {
+            try {
+                val target = state.value.conversationId
+                val ids = mutableListOf<String>()
+                for (entry in attachments) {
+                    ids += entry.attachmentId ?: upload(target, entry) ?: return@launchGuardedRepoCall
+                }
+                // #686: a message sent while this opening's recall write is outstanding follows it.
+                effortRecall.awaitWrite()
+                repository.sendMessage(target, text, ids)
+                if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+                draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
+            } finally {
+                // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
+                _attachmentsSending.value = false
+            }
+        }
+    }
+
+    /** Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not. */
+    private suspend fun upload(
+        target: String,
+        entry: PendingAttachment,
+    ): String? {
+        val bytes =
+            when (val read = attachmentReader.read(entry.uri)) {
+                is AttachmentRead.Bytes -> read.bytes
+                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large")
+                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed")
+            }
+        val result = repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType)
+        if (result !is AttachmentUploadResult.Stored) return attachmentSendFailed("upload_failed")
+        draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
+        return result.attachmentId
+    }
+
+    private fun attachmentSendFailed(outcome: String): String? {
+        RelayLog.d { "event=composer_attachment_send outcome=$outcome" }
+        return null
+    }
+
+    /**
+     * Add a file to this chat's pending attachments (#932). The outcome is returned so the UI can show a
+     * refusal; a refusal is also logged, by static code only — never the URI, name or type.
+     */
+    fun addAttachment(
+        uri: String,
+        displayName: String,
+        mimeType: String,
+        size: Long?,
+    ): AttachmentAddOutcome {
+        val outcome = draftStore.addAttachment(serverId, conversationId, uri, displayName, mimeType, size)
+        when (outcome) {
+            AttachmentAddOutcome.ADDED -> Unit
+            AttachmentAddOutcome.TOO_LARGE -> RelayLog.d { "event=composer_attachment_add outcome=too_large" }
+            AttachmentAddOutcome.TOO_MANY -> RelayLog.d { "event=composer_attachment_add outcome=too_many" }
+        }
+        return outcome
+    }
+
+    /**
+     * Add what the picker returned (#933), in its order, through [addAttachment]. Refused entries are skipped
+     * and the rest still added; when any were refused, one [attachmentRefusals] notice counts them by reason.
+     */
+    fun addPickedAttachments(picked: List<PickedAttachment>) {
+        var tooLarge = 0
+        var tooMany = 0
+        for (entry in picked) {
+            when (addAttachment(entry.uri, entry.displayName, entry.mimeType, entry.size)) {
+                AttachmentAddOutcome.ADDED -> Unit
+                AttachmentAddOutcome.TOO_LARGE -> tooLarge++
+                AttachmentAddOutcome.TOO_MANY -> tooMany++
+            }
+        }
+        if (tooLarge > 0 || tooMany > 0) attachmentRefusalChannel.trySend(AttachmentRefusal(tooLarge, tooMany))
+    }
+
+    /** Remove one pending attachment from this chat (#932), leaving the rest in order. */
+    fun removeAttachment(key: Long) {
+        draftStore.removeAttachment(serverId, conversationId, key)
     }
 
     /**

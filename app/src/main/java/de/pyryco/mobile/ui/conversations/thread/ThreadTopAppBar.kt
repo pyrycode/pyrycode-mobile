@@ -67,7 +67,6 @@ fun ThreadTopAppBar(
     overflowExpanded: Boolean,
     onOverflowDismiss: () -> Unit,
     onOverflowEvent: (ThreadEvent) -> Unit,
-    onShowLiteralScreen: () -> Unit,
     isPromoted: Boolean,
     modifier: Modifier = Modifier,
     mutationsSupported: Boolean = true,
@@ -117,7 +116,6 @@ fun ThreadTopAppBar(
                     mutationsSupported = mutationsSupported,
                     onDismiss = onOverflowDismiss,
                     onEvent = onOverflowEvent,
-                    onShowLiteralScreen = onShowLiteralScreen,
                 )
             }
         }
@@ -150,7 +148,6 @@ private fun ThreadTopAppBarLightPreview() {
             overflowExpanded = false,
             onOverflowDismiss = {},
             onOverflowEvent = {},
-            onShowLiteralScreen = {},
             isPromoted = true,
         )
     }
@@ -168,7 +165,6 @@ private fun ThreadTopAppBarDarkPreview() {
             overflowExpanded = false,
             onOverflowDismiss = {},
             onOverflowEvent = {},
-            onShowLiteralScreen = {},
             isPromoted = true,
         )
     }

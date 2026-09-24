@@ -51,7 +51,6 @@ val appModule = module {
             thread.addCloseable(viewing)
         }
     }
-    viewModel { get<ThreadDestinationFactory>().literal(get()) }
 }
 
 // The #350 selector — the *only* module that binds the ConversationRepository interface.
@@ -177,7 +176,7 @@ retrieval actually runs. `AttachmentStore`'s own `single` in `appModule` builds 
 `androidContext().noBackupFilesDir`, so any `useRelay = true` container built with no `androidContext()`
 now fails the same `MissingAndroidContextException` way `ConversationCache`'s absence did for #797 — but
 for a **wider** set of containers than #797 touched, because `ThreadDestinationFactory` is built (and so
-`attachments` is resolved) by every test that constructs a thread or literal screen's Koin graph, not
+`attachments` is resolved) by every test that constructs a thread destination's Koin graph, not
 only `RelayConnectionFactoryTest`. Four containers needed the fix in rework: the three
 `RelayConnectionFactoryTest` containers plus one each in `SettingsNavigationTest`, `ArchiveNavigationTest`
 and `LiteralScreenNavigationTest`. Each now overrides `single { InertAttachmentStore }`
@@ -192,11 +191,14 @@ too.
 ## Testing
 
 `RelayConnectionFactoryTest.destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect`
-resolves production thread/literal bindings against two Noise peers. It combines
+resolves the production thread binding against two Noise peers. It combines
 colliding conversation, modal and queue ids with distinct content and snapshots,
 then checks owner-specific outbound frames and no corresponding action on B.
 It covers selection changes, A disconnect/handshake/reconnect while B remains
-usable, literal Retry, and demo isolation with both real hosts saved.
+usable, and demo isolation with both real hosts saved. [#883](../../specs/architecture/883-retire-literal-screen.md)
+removed this test's literal-VM arms; host B's outbound list, which had held only
+B's `request_snapshot`, is now asserted empty instead — still proving A's actions
+never leak to B.
 
 The same class's
 `destinationRetryKeepsLifecycleLockThroughDialAndRejectsRetiredOwners` asserts
@@ -226,7 +228,10 @@ archive door, added after a rework found it still navigating to the pre-#715 uns
 including the actual workspace picker with distinct A/B recents, folder creation,
 selection changes and reconnect. Constructor-only tests and direct
 `WorkspacePickerInternal(repository = fake)` tests bypass the descendant's
-independent injection and cannot establish that ownership boundary.
+independent injection and cannot establish that ownership boundary. It kept its
+name and its workspace-picker coverage across [#883](../../specs/architecture/883-retire-literal-screen.md)'s
+removal of the literal-screen destination it originally covered — see
+[Navigation § Testing](navigation.md#testing).
 
 `HostChannelListViewModelTest.appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton`
 resolves the actual `appModule` ViewModel definition with JVM preferences and the

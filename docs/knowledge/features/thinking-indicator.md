@@ -367,8 +367,9 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   session transition, or reconnect (see
   [Thinking-progress state § Edge cases](thinking-progress-state.md#edge-cases--limitations)). Not
   handled here: a client-side timeout would be exactly the "infer something from a gap" the wire contract
-  forbids. The operator is never trapped by it — the interrupt control, the composer and
-  `StallPromotionBanner` all stay live beside this slot regardless of what it shows.
+  forbids. The operator is never trapped by it — the interrupt control and the composer stay live beside
+  this slot regardless of what it shows (as, until [#883](../../specs/architecture/883-retire-literal-screen.md)
+  retired it, did the stall promotion banner).
 - **A reading can briefly describe the previous inference request (#803, code-review NIT, not fixed
   here).** The reading clears only on turn end or session transition, not when `turn_state` leaves
   `thinking` for an intermediate phase. In a turn shaped thinking → tool → thinking, the arm can come back
@@ -392,17 +393,24 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   text past the ellipsis with it. Desktop has the identical limitation. No tool name long enough to trigger
   this has been seen in practice; a fix (if ever needed) belongs to the Figma frame's eventual retune, not
   a client-side truncation rule invented here.
-- **Coverage is component + rung 2, not rung 3, for the running-tool label too (#897).** `OpenToolCallTest`
-  (pure, no Compose) proves the selector: no rows, only-closed rows, one running row, two running rows
-  (the later one wins with its own reading even when the older one has one and the newer doesn't), and a
-  later closed row not hiding an earlier still-running one. `RunningToolIndicatorTest`
+- **Coverage now spans component, rung 2, rung 3 and rung 4 for the running-tool label (#897, e2e #950).**
+  `OpenToolCallTest` (pure, no Compose) proves the selector: no rows, only-closed rows, one running row,
+  two running rows (the later one wins with its own reading even when the older one has one and the newer
+  doesn't), and a later closed row not hiding an earlier still-running one. `RunningToolIndicatorTest`
   (`app/src/sharedTest/.../thread/`, Robolectric) drives `ThreadScreen` through open → progress → result
   and open → denial, proves a newer open call replaces an older one, proves the label is absent when
   `isBusy` is false even with a `Running` row, and proves it still loses to the token-reading label,
-  compaction and the turn-outcome arm. No rung-3 real-Claude scenario lands with this ticket — the
-  elapsed half is transient and a durable assertion needs a tool call held open past the ~30s heartbeat;
-  the follow-up (a `@Test` on `InteractiveStreamE2ETest`, `@Ignore`-gated if the signal can't be held, plus
-  a rung-4 scripted twin) is filed as [#950](https://github.com/pyrycode/pyrycode-mobile/issues/950).
+  compaction and the turn-outcome arm. #950 closed the rung-3/rung-4 gap: the rung-4 `tool` scenario
+  (`DeterministicInteractiveStreamE2ETest`) now also asserts the label without an elapsed reading inside
+  its existing held-open window, and a new `tool-progress` scenario proves the label adds claude's elapsed
+  reading after a scripted `tool_progress` heartbeat and clears when the call's `tool_result` lands while
+  the turn stays busy. On rung 3, `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`
+  (`InteractiveStreamE2ETest`) holds a real tool call open on a permission prompt (the #849 lever) and
+  proves the label without an elapsed reading against real claude; the elapsed half stays
+  `@Ignore`-gated as `interactiveTurn_longRunningTool_statusAreaShowsElapsed` — claude's first heartbeat
+  lands at ~30s on the one committed capture and cannot be held reliably, so only that half remains
+  manual. See `docs/e2e-interactive-stream.md` § "What rung 3 is made of" and § "Scenarios (#454)" for
+  both scenarios' mechanics.
 
 ## Related
 
@@ -446,8 +454,8 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   [#368](https://github.com/pyrycode/pyrycode-mobile/issues/368). #803 split from
   [#653](https://github.com/pyrycode/pyrycode-mobile/issues/653), sibling data slice
   [#801](../codebase/801.md) (PR #809). #897 split from
-  [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658), e2e follow-up filed as
-  [#950](https://github.com/pyrycode/pyrycode-mobile/issues/950).
+  [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658); its e2e follow-up shipped as
+  [#950](https://github.com/pyrycode/pyrycode-mobile/issues/950) (see § Edge cases / limitations above).
 - Server SSOT: pyrycode#607 (`turn_state` wire), #616 (capability-gated fan-out), ADR 025 § Phase 2
   structured streaming, EPIC pyrycode#596; pyrycode#1386 and `docs/protocol-mobile.md § thinking_progress`
   for the #803 reading. #897 renders only client-observed `ToolCall` state and adds no wire dependency.

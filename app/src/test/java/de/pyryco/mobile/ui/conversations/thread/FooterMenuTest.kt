@@ -115,6 +115,42 @@ class FooterMenuTest {
         assertNull(footerMenu(FooterControl.Effort, config(savedModel = "sonnet")))
     }
 
+    // ---- #972: no model override reads the inherited-default row's levels -----------------------
+
+    private val inherited =
+        ThreadModelChoice(
+            value = "default",
+            label = "Default",
+            detail = "",
+            effortChoices = listOf(ThreadEffortChoice(value = "low", label = "low"), ThreadEffortChoice(value = "high", label = "high")),
+        )
+
+    @Test
+    fun effort_withNoModelOverride_offersTheDefaultRowsLevels() {
+        val config = config(choices = listOf(opus, inherited), savedModel = "", savedEffort = "")
+
+        assertEquals(inherited.effortChoices, config.effortChoices)
+        assertTrue(footerControlEnabled(FooterControl.Effort, config))
+        assertFalse(footerControlEnabled(FooterControl.Effort, config.copy(sessionId = "")))
+    }
+
+    @Test
+    fun effort_withNoModelOverrideAndNoDefaultRow_offersNothing() {
+        val config = config(savedModel = "", savedEffort = "")
+
+        assertTrue(config.effortChoices.isEmpty())
+        assertFalse(footerControlEnabled(FooterControl.Effort, config))
+    }
+
+    @Test
+    fun effort_withNoModelOverride_leavesTheModelSelectionUnwidened() {
+        val config = config(choices = listOf(opus, inherited), savedModel = "", savedEffort = "")
+
+        assertNull(config.selectedChoice)
+        assertEquals(INHERITED_RUN_CONFIG_LABEL, config.modelLabel)
+        assertEquals("", footerMenu(FooterControl.Model, config)?.selectedValue)
+    }
+
     @Test
     fun effort_selectedValueFollowsThePendingTap() {
         val menu = footerMenu(FooterControl.Effort, config(pendingEffort = "max"))

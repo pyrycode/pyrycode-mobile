@@ -24,6 +24,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -212,6 +213,8 @@ private val FooterChevronSize = 14.dp
 private val FooterLabelMaxWidth = 140.dp
 private val StatusOpenerSize = 32.dp
 private val StatusOpenerIconSize = 16.dp
+private val AttachIconWidth = 11.dp
+private val AttachIconHeight = 12.dp
 private const val PENDING_ALPHA = 0.55f
 
 /**
@@ -220,7 +223,7 @@ private const val PENDING_ALPHA = 0.55f
  *
  * It replaces #602's single monospace `model · effort` line (`ThreadStatusRow`). The design has no
  * footer affordance for the Status sheet, so a trailing icon keeps it one tap away. The design's
- * attachment segment belongs to another ticket. The Actions button (#884) leads the row, as in the design,
+ * paperclip (#933) sits just before that icon and calls [onAttach], which opens the file picker. The Actions button (#884) leads the row, as in the design,
  * and always opens its menu. The `Cxt:` segment (#946) follows the buttons as plain text, not a control.
  *
  * Stateless. The model and effort buttons show [ThreadRunConfig.modelLabel] / [ThreadRunConfig.effortLabel].
@@ -239,6 +242,7 @@ fun ThreadComposerFooter(
     onStatusClick: () -> Unit,
     onAnchorChanged: (FooterControl, Rect) -> Unit,
     modifier: Modifier = Modifier,
+    onAttach: () -> Unit = {},
 ) {
     Row(
         modifier = modifier.fillMaxWidth().padding(horizontal = FooterHorizontalPadding),
@@ -283,6 +287,22 @@ fun ThreadComposerFooter(
         // The segment takes the row's leftover width in place of a spacer, so the Status opener keeps the end.
         // As a weighted child it is measured last: on a narrow row it ellipsizes rather than squeeze the opener.
         ContextSegment(percent = runConfig.contextPercent, modifier = Modifier.weight(1f))
+        // Figma's `Attachment` (115:3654): the paperclip at the footer's trailing end, before the Status opener
+        // the design does not have.
+        Box(
+            modifier =
+                Modifier
+                    .size(StatusOpenerSize)
+                    .clickable(role = Role.Button, onClick = onAttach),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_attach_file),
+                contentDescription = stringResource(R.string.cd_attach_files),
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(AttachIconWidth, AttachIconHeight),
+            )
+        }
         Box(
             modifier =
                 Modifier

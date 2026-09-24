@@ -29,6 +29,8 @@ import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
+import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
+import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.NavigationPeer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.Dispatchers
@@ -148,6 +150,8 @@ class NotificationTapNavigationTest {
                     single { preferences }
                     single<ConversationCache> { InertConversationCache }
                     single { InertAttachmentStore }
+                    // The real reader needs androidContext() for its ContentResolver (#932).
+                    single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                 },
             )
         compose.setContent {

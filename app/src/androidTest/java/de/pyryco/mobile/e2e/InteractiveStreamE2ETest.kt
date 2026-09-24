@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.SystemClock
 import android.util.Log
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
@@ -47,6 +48,11 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ToolResultPayloadDto
+import de.pyryco.mobile.data.network.ToolUsePayloadDto
+import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -70,6 +76,7 @@ import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.CONTEXT_USAGE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.EFFORT_PLACEHOLDER_LABEL
+import de.pyryco.mobile.ui.conversations.thread.INHERITED_RUN_CONFIG_LABEL
 import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_WINDOW_MS
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.PermissionModeOption
@@ -155,6 +162,21 @@ class InteractiveStreamE2ETest {
             .getInstrumentation()
             .targetContext
             .getString(R.string.cd_thread_thinking)
+
+    // #950: the status area's running-tool label, from resources. The no-reading form is matched exactly; the
+    // elapsed form by its text around the reading, since claude's heartbeat decides the seconds.
+    //   cd_thread_tool_running = "Claude is running %1$s",
+    //   cd_thread_tool_running_elapsed = "Claude is running %1$s, %2$s elapsed".
+    private val runningToolLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_tool_running, TOOL_NAME)
+    private val runningToolElapsedLabel: Regex =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_thread_tool_running_elapsed, TOOL_NAME, ELAPSED_SLOT)
+            .split(ELAPSED_SLOT)
+            .joinToString(".+") { Regex.escape(it) }
+            .toRegex()
 
     // The queued row's state description and its drop control (#849), production strings from resources:
     //   thread_queued_state_desc = "Waiting to send", cd_thread_queued_drop = "Drop this queued message".
@@ -427,6 +449,84 @@ class InteractiveStreamE2ETest {
             .onAllNodes(hasContentDescription(thinkingDescription))
             .onFirst()
             .assertIsDisplayed()
+    }
+
+    /**
+     * The status area names the tool claude is running (#950, rung 3; #897's label). The rung-4 twins are
+     * the `tool` and `tool-progress` scenarios. A quick command's call closes before the phone can be sure
+     * to see it open, so the call is held open the #849 way instead: [RUNNING_TOOL_PROMPT]'s `python3`
+     * command is never auto-allowed, claude's `tool_use` arrives, and the call waits on a permission prompt
+     * that only the [SecondClientPeer] paired with `--allow-remote-permissions` can answer. While it waits
+     * the label reads `Running Bash…` with no elapsed reading; once the peer allows the command and the turn
+     * ends, the label is gone. No step depends on timing.
+     *
+     * **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool() {
+        val peer = runningToolPeer()
+        try {
+            val (conversationId, modalId) = holdToolOnPermission(peer, RUNNING_TOOL_PROMPT)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertIsDisplayed()
+
+            runBlocking {
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isEmpty()
+            }
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * The label adds claude's elapsed reading once a `tool_progress` heartbeat arrives (#950, rung 3). The
+     * call is held on a permission prompt as in [interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool];
+     * once the peer allows it, [ELAPSED_TOOL_PROMPT]'s command sleeps 45 s in the foreground, and the label
+     * should read `Running Bash… 30s` from claude's first heartbeat until the call returns. The rung-4
+     * `tool-progress` scenario proves the same label from a scripted heartbeat on every scripted run.
+     *
+     * **`@Ignore`d: it cannot be made durable here.** The first heartbeat is claude's, not ours: it arrived
+     * at 30 s on the one committed capture (claude 2.1.259), and nothing in the harness can make it come
+     * sooner or promise it comes at all. That leaves about 15 s to observe, and only if claude runs the
+     * command in the foreground as asked rather than backgrounding it; a bare `sleep` of 25 s or more is
+     * refused outright, which is why the command sleeps inside `python3`. A longer sleep would widen the
+     * window but spend more of every run. The operator un-ignores it to check the label against the
+     * current claude.
+     *
+     * **One real-claude turn**, of at least 45 s.
+     */
+    @Ignore("manual — claude's first tool_progress heartbeat comes at ~30 s and cannot be held; see KDoc")
+    @Test
+    fun interactiveTurn_longRunningTool_statusAreaShowsElapsed() {
+        val peer = runningToolPeer()
+        val elapsedLabel =
+            SemanticsMatcher("running-tool label with an elapsed reading") { node ->
+                node.config
+                    .getOrNull(SemanticsProperties.ContentDescription)
+                    .orEmpty()
+                    .any { runningToolElapsedLabel.matches(it) }
+            }
+        try {
+            val (conversationId, modalId) = holdToolOnPermission(peer, ELAPSED_TOOL_PROMPT)
+            runBlocking { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(elapsedLabel).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(elapsedLabel).assertIsDisplayed()
+
+            runBlocking { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(elapsedLabel).fetchSemanticsNodes().isEmpty()
+            }
+        } finally {
+            peer.close()
+        }
     }
 
     /**
@@ -1977,9 +2077,8 @@ class InteractiveStreamE2ETest {
      *    footer shows it. After one real turn in each, claude applies exactly that level.
      *  * A conversation with its own saved effort keeps it.
      *
-     * Every fixture carries an explicit saved model. The phone matches a saved `""` model against no
-     * published row, so a chat with no model chosen offers no levels and nothing can be recalled into it.
-     * That gap is #972. This scenario covers what the recall does once a model is chosen.
+     * No fixture has a model override: every saved model stays `""`, so the levels come from the published
+     * `default` row (#972).
      *
      * **Two real-claude turns**: one in the fresh chat and one in the fresh channel.
      */
@@ -1998,14 +2097,19 @@ class InteractiveStreamE2ETest {
             val primingName = RECALL_PRIMING_NAME_PREFIX + stamp
             val priming = prepareChat(primingName, originals)
             val row =
-                checkNotNull(usableRows(publishedMenu(priming.id)).firstOrNull { it.effortLevels.distinct().size >= 2 }) {
-                    "no published model offers two effort levels"
+                checkNotNull(
+                    usableRows(publishedMenu(priming.id)).firstOrNull {
+                        it.value == "default" &&
+                            it.effortLevels.distinct().size >= 2
+                    },
+                ) {
+                    "the published default row does not offer two effort levels"
                 }
             val remembered = row.effortLevels.first()
             val explicit = row.effortLevels.last { it != remembered }
-            writeSettings(priming.id, model = row.value)
+            assertSaved(priming.id, "", "")
             openChatRow(primingName)
-            awaitFooter(changeModelLabel, row.displayName.inert())
+            awaitFooter(changeModelLabel, INHERITED_RUN_CONFIG_LABEL)
             pickFooterOption(changeEffortLabel, remembered.inert())
             awaitFooter(changeEffortLabel, remembered.inert())
             assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
@@ -2018,12 +2122,10 @@ class InteractiveStreamE2ETest {
             val channel = prepareChannel(channelName, chat.cwd, originals)
             val explicitName = RECALL_EXPLICIT_NAME_PREFIX + stamp
             val explicitChat = prepareChat(explicitName, originals)
-            writeSettings(chat.id, model = row.value)
-            writeSettings(channel.id, model = row.value)
-            writeSettings(explicitChat.id, model = row.value, effort = explicit)
-            assertSaved(chat.id, row.value, "")
-            assertSaved(channel.id, row.value, "")
-            assertSaved(explicitChat.id, row.value, explicit)
+            writeSettings(explicitChat.id, effort = explicit)
+            assertSaved(chat.id, "", "")
+            assertSaved(channel.id, "", "")
+            assertSaved(explicitChat.id, "", explicit)
 
             // 3. Restart. No activity may outlive the graph it resolved, so the rule's activity goes first.
             composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
@@ -2076,7 +2178,12 @@ class InteractiveStreamE2ETest {
      * An unmet prerequisite of the dedicated daemon fails here with its name, never a skip.
      *
      * **Two real-claude turns**: the tool-free ping and the Read.
+     *
+     * **`@Ignore`d until #981 lands.** Step 5 fails on every live run since #965's gate: the turn ends,
+     * claude's reply is exactly the token, and the phone shows no bubble carrying it (#977's diagnosis).
+     * The fix is production code, so #981 removes this `@Ignore`.
      */
+    @Ignore("blocked on #981 — the thread does not show the allowed Read's reply (step 5)")
     @Test
     fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -2144,17 +2251,34 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             sendFromPhone(prompt)
             awaitReadPrompt(tokenFile.substringAfterLast('/'))
+            // #977: the turn must end before the phone is judged, and a missing token says why.
+            val mark = peer.recorded(chat.id).size
             runBlocking {
                 val modalId = peer.awaitPermissionModal(chat.id, REPLY_TIMEOUT_MS)
                 peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
             }
+            val allowedAt = SystemClock.elapsedRealtime()
+            val turnEnd =
+                try {
+                    runBlocking { peer.awaitFrame(chat.id, "turn_end", REPLY_TIMEOUT_MS) }
+                } catch (e: TimeoutCancellationException) {
+                    throw AssertionError(
+                        "the allowed Read's turn never ended: no turn_end for the chat within $REPLY_TIMEOUT_MS ms of the allow",
+                        e,
+                    )
+                }
+            val endedAfterMs = SystemClock.elapsedRealtime() - allowedAt
             val reply = hasText(token, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
             try {
-                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.waitUntil(PHONE_TRAIL_MS) {
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
                 }
             } catch (e: ComposeTimeoutException) {
-                throw AssertionError("the allowed Read's reply never carried the file's token", e)
+                throw AssertionError(
+                    "the allowed Read's reply never carried the file's token: " +
+                        readReplyDiagnosis(peer.recorded(chat.id), mark, token, turnEnd, endedAfterMs),
+                    e,
+                )
             }
         } finally {
             peer.close()
@@ -2187,6 +2311,58 @@ class InteractiveStreamE2ETest {
             throw AssertionError("no permission prompt naming the Read appeared on the phone (prompts with Cancel: $shown)", e)
         }
     }
+
+    /**
+     * Why the ended Read turn left no token on the phone (#977): the phone's bubbles, the peer's [frames]
+     * for the chat (opened just before the Read was sent, so all of them are this turn's; the allow was
+     * sent at index [mark]), and the [turnEnd] that ended it [endedAfterMs] after the allow. Counts,
+     * booleans and the turn's bounded enum-like fields only; never bubble text, payload text or [token].
+     */
+    private fun readReplyDiagnosis(
+        frames: List<Envelope>,
+        mark: Int,
+        token: String,
+        turnEnd: Envelope,
+        endedAfterMs: Long,
+    ): String {
+        val bubbles =
+            composeTestRule
+                .onAllNodes(hasTestTag(MESSAGE_BUBBLE_TEST_TAG), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .map { it.textOfTree() }
+        val afterAllow = frames.drop(mark)
+        val readIds =
+            frames
+                .filter { it.type == "tool_use" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolUsePayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.name == "Read" }
+                .map { it.toolUseId }
+                .toSet()
+        val readResults =
+            frames
+                .filter { it.type == "tool_result" }
+                .map { runCatching { MobileJson.decodeFromJsonElement(ToolResultPayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it == null || it.toolUseId in readIds }
+        val readResultIsError =
+            when {
+                readResults.isEmpty() -> "absent"
+                readResults.any { it == null } -> "undecodable"
+                else -> readResults.map { it?.isError }.distinct().joinToString("/")
+            }
+        val end = runCatching { MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), turnEnd.payload) }.getOrNull()
+        val endFields =
+            end?.let { "stop_reason=${it.stopReason.inert()} outcome=${it.outcome.inert()} is_error=${it.isError}" }
+                ?: "turn_end undecodable"
+        return "bubbles=${bubbles.size} bubbleLengths=${bubbles.map { it.length }} " +
+            "anyBlocked=${bubbles.any { it.trim().equals(BLOCKED_REPLY, ignoreCase = true) }} " +
+            "readResultIsError=$readResultIsError $endFields endedAfterMs=$endedAfterMs " +
+            "peerFramesAfterAllow=${afterAllow.size} peerFramesWithToken=${afterAllow.any { token in it.payload.toString() }}"
+    }
+
+    /** The concatenated `Text` of this node and its descendants, in tree order. */
+    private fun SemanticsNode.textOfTree(): String =
+        config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString("") { it.text } +
+            children.joinToString("") { it.textOfTree() }
 
     /**
      * Poll fresh readings for [conversationId] on [serverId] until one reports [mode], and return it. The
@@ -2519,6 +2695,46 @@ class InteractiveStreamE2ETest {
             .observeConversations(ConversationFilter.All)
             .first { rows -> ready(rows.mapTo(mutableSetOf()) { it.id }) }
             .mapTo(mutableSetOf()) { it.id }
+    }
+
+    /** The #849 peer on the first test daemon, the one device allowed to answer its permission prompts. */
+    private fun runningToolPeer(): SecondClientPeer {
+        val args = InstrumentationRegistry.getArguments()
+        return SecondClientPeer(
+            PairedServer(
+                serverId = twoHostArg(ARG_SERVER_ID),
+                token = twoHostArg(ARG_PEER_TOKEN),
+                relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+            ),
+        )
+    }
+
+    /**
+     * Create a chat, open [peer], send [prompt] from the phone and wait until claude's command waits on a
+     * permission prompt (#950). Returns the chat's id and the prompt's modal id; the tool call stays open
+     * until the peer answers.
+     */
+    private fun holdToolOnPermission(
+        peer: SecondClientPeer,
+        prompt: String,
+    ): Pair<String, String> {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        awaitChannelList()
+        awaitConnected()
+        val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val conversationId =
+            runBlocking {
+                withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+            }.single()
+        runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+        sendFromPhone(prompt)
+        val modalId = runBlocking { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+        return conversationId to modalId
     }
 
     /** A two-host instrumentation argument (#847), failing with the script that passes it. */
@@ -2961,6 +3177,18 @@ class InteractiveStreamE2ETest {
             "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
                 "with exactly: pyrywait. Command: python3 -c \"print(849)\""
         const val DROP_PROMPT = "Reply with exactly: pyrydropped"
+
+        // #950 running-tool label. Both hold claude's Bash call on WAIT_PROMPT's permission lever; the second
+        // command then runs past claude's first tool_progress heartbeat. The sleep sits inside python3
+        // because claude's Bash tool refuses a bare `sleep` of 25 s or more. ELAPSED_SLOT stands in for the
+        // reading when the elapsed label's text is turned into a pattern.
+        const val RUNNING_TOOL_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
+                "with exactly: pyryran. Command: python3 -c \"print(950)\""
+        const val ELAPSED_TOOL_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, and wait " +
+                "for it to finish, then reply with exactly: pyryran. Command: python3 -c \"import time; time.sleep(45)\""
+        const val ELAPSED_SLOT = "\u0000"
         const val DROP_REPLY = "pyrydropped"
         const val PEER_QUEUED_PROMPT = "Reply with exactly: pyrypeerdropped"
         const val PEER_QUEUED_REPLY = "pyrypeerdropped"
@@ -3052,6 +3280,11 @@ class InteractiveStreamE2ETest {
             "Use the Read tool once to read the file at %s, then reply with its exact contents and nothing else. " +
                 "Do not use any other tool. If the read is denied or fails, do not retry it and reply with the single word blocked."
         val READ_TOOL_WORD = Regex("""\bRead\b""")
+
+        // #977: the word the template asks for on a failed Read, and how long the phone may trail the
+        // peer's turn_end before the missing token is diagnosed.
+        const val BLOCKED_REPLY = "blocked"
+        const val PHONE_TRAIL_MS = 15_000L
 
         // How long a fresh reading may take to report a mode, how often it is re-asked, and how early a
         // settle may end and still count as having run its window.

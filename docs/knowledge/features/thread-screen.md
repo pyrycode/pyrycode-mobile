@@ -12,7 +12,7 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Thread screen — how it works, ViewModel state](thread-screen-how-it-works-state.md) — `SavedStateHandle.get<String>("conversationId").orEmpty() (lifted to a private val)`, `combine(observeConversations, observeMessages, pendingWorkspacePicker).stateIn(WhileSubscribed) — three upstreams since #137`, `observeConversations(All).map { firstOrNull } — option (c) for displayName derivation`, `stateIn(viewModelScope, WhileSubscribed(5_000), initialValue = ThreadUiState(id, id))`, `private fun Conversation.displayName() — re-declared, not extracted`, `Display-name fallback chain`, `Free rename re-emission`, `items and queuedMessages stay two ThreadUiState fields — the join with the backlog is render-time, not VM-time (#782)`
 - [Thread screen — how it works, the list, the chip, the empty state and the status row](thread-screen-how-it-works-list-and-status-row.md) — `LazyColumn(reverseLayout = true) — established in #126, populated in #246, dimmed in #136, nested in a Column since #201, rows folded with the queued backlog since #782`, `Workspace-chip wiring (post-#137)`, `Empty-state branch (post-#138)`, `Status-row wiring (post-#145)`
 - [Thread screen — how it works, the sheets](thread-screen-how-it-works-sheets.md) — `Status Sheet hosting (post-#254)`, `ChannelInfoSheet hosting (post-#226)`, `ChannelInfoSheet Archive/Delete + pop-back nav (post-#227)`
-- [Thread screen — how it works, overlays, retry and the app bar](thread-screen-how-it-works-overlays-and-app-bar.md) — `Connection-banner wiring`, `Thinking-indicator placement (post-#407)`, `Interrupt-affordance placement (post-#459)`, `Stall-promotion-banner placement (post-#396)`, `Permission-modal overlay placement (post-#446)`, `fun retry() — non-suspend, VM owns the launch`, `connectionState: StateFlow<ConnectionState> — same lifetime as state`, `ThreadTopAppBar — Figma 16:8 chrome`, `Modifier ordering inside the body`
+- [Thread screen — how it works, overlays, retry and the app bar](thread-screen-how-it-works-overlays-and-app-bar.md) — `Connection-banner wiring`, `Thinking-indicator placement (post-#407)`, `Interrupt-affordance placement (post-#459)`, `Stall-promotion-banner placement (post-#396, retired from the screen in #883)`, `Permission-modal overlay placement (post-#446)`, `fun retry() — non-suspend, VM owns the launch`, `connectionState: StateFlow<ConnectionState> — same lifetime as state`, `ThreadTopAppBar — Figma 16:8 chrome`, `Modifier ordering inside the body`
 - [Thread screen — testing](thread-screen-testing.md) — `Testing`
 - [Thread screen — previews and edge cases](thread-screen-previews-and-edge-cases.md) — `Previews`, `Edge cases / limitations`
 
@@ -81,9 +81,12 @@ The destination collects the ViewModel's state, connection/live indicators and
 permission state with `collectAsStateWithLifecycle()`, and passes callbacks and
 error flows into the stateless `ThreadScreen`. `ThreadNavigation.PopBack` remains
 collected in `LaunchedEffect(vm)` at the route, where the `NavController` lives.
-“Show the literal screen” calls `Routes.literal(target)` with the thread entry's
-same pair. Its separate destination ViewModel uses the owning host for Request
-and Retry; snapshots are isolated per entry and never saved in the back stack.
+[#883](../../specs/architecture/883-retire-literal-screen.md) removed the
+`literal_screen/{serverId}/{conversationId}` destination this block used to reach
+from the overflow menu's "Show the literal screen" item, once the daemon dropped
+the server-side screen-snapshot render path — the destination no longer collects
+`vm.isStalled` either, since that flag's only consumer was the retired stall
+promotion banner (see [Stall state](stall-state.md)).
 
 The guard also wraps the screen in `HostWorkspaceRepository`, providing
 `LocalWorkspacePickerRepository` for the route host. This covers the nested
@@ -109,11 +112,58 @@ Unsent composer text is owned by `ComposerDraftStore` ([#789](https://github.com
 
 Both draft evictions are synchronous `MutableStateFlow.update` calls with no coroutine of their own; `ThreadViewModel.draft` picks up an eviction the same way it picks up any other emission, and a `StateFlow` dropping equal consecutive values means evicting one host's bucket cannot recompose another host's composer. No log line on either path carries draft text — a draft is private message content, and neither `ObservablePairedServerStore` nor `ComposerDraftStore` is a `data class`, so a bound `onHostRemoved` receiver can't render into a crash trace via a generated `toString()`.
 
+### Composer pending attachments
+
+Beside the text map, `ComposerDraftStore` keeps a second `(serverId, conversationId)`-keyed map of
+`PendingAttachment` entries ([#932](https://github.com/pyrycode/pyrycode-mobile/issues/932)) — a content
+URI plus display name, MIME type, size and, once uploaded, an acknowledged id. Same nesting, same
+"empty entries and buckets are absent" rule, same eviction: `clearHost` / `clearConversation` drop a
+pair's attachments together with its text (see § Composer draft ownership above).
+`ThreadViewModel.pendingAttachments` mirrors `draft`'s shape — mapped from the store, seeded
+synchronously, `Eagerly`. `addAttachment` refuses an entry over `AttachmentUploadLimit.MAX_BYTES` or one
+that would push the pair past `MessageAttachmentIds.MAX` (32), checked inside the store's own
+`update {}` so two concurrent adds can't both pass at 31.
+
+`sendMessage` snapshots the pair's attachment list at tap time. An entry that already carries an
+`attachmentId` is skipped; the rest are read through `AttachmentReader` — bytes only at send time, one
+file's at once, the store itself never holds file bytes — and uploaded via
+[`ConversationRepository.uploadAttachment`](attachment-upload.md), in order. Any read or upload failure
+stops the send: text and every entry stay, and ids already acknowledged are kept so a retry does not
+re-upload them. On success `uploadAttachment`'s ids are named to `sendMessage`, then text and the sent
+snapshot's attachments clear together — an entry added after the snapshot survives, the same
+"the message is what was tapped" guarantee the text draft's in-flight guard already gives.
+
+**Reading a content URI is a trust boundary.** `ContentResolver.openInputStream` opens `file://`,
+`android.resource://` and this app's own non-exported providers with the app's identity, so a URI handed
+back by another app's picker could otherwise make the app upload its own private files.
+`ContentResolverAttachmentReader.isForeignContentUri` refuses everything but a `content` URI whose
+provider authority is neither this app's package nor a dotted sub-authority of it, checked before the
+resolver is touched. `Uri.getAuthority()` keeps a `userId@` prefix — the form a pick from another Android
+profile carries — and the resolver strips that prefix before choosing a provider, so comparing the raw
+authority against the package name let `content://0@de.pyryco.mobile.fileprovider/…` through as
+"foreign". The guard compares `authority.substringAfterLast('@')` instead, which still accepts a
+genuinely foreign authority behind a user-id prefix.
+
+`AttachmentReader` is bound as a `Lazy<AttachmentReader>` constructor parameter on
+`ThreadDestinationFactory`, not resolved eagerly — the real reader needs `androidContext()`, and several
+test containers build the factory without one. Resolving lazily means only a container that actually
+builds a thread destination pays for it; one that does (`NotificationTapNavigationTest`,
+`LiteralScreenNavigationTest`) must bind an inert `AttachmentReader { AttachmentRead.Unreadable }`, the
+posture `RelayConnectionFactoryTest` already used for its own inert override.
+
+**The picker and the strip ([#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)).** The
+paperclip opens `rememberAttachmentPicker`'s `OpenMultipleDocuments()` launcher; a cancel calls nothing,
+otherwise `describePickedAttachment` drops any refused URI and hands the rest to `addPickedAttachments`,
+which adds each via `addAttachment` and reports `TOO_LARGE`/`TOO_MANY` refusals as one counts-only
+notice. `ComposerAttachmentStrip` renders the list as a `LazyRow` between the status area and input field
+when non-empty, thumbnailing an image or falling back to the file tile. `attachmentsSending` blocks a
+second `sendMessage` and hides remove controls while `sendWithAttachments` runs.
+
 ## Configuration
 
 - **Dependencies:** no new entries. `ConversationRepository` was already on classpath; `kotlinx.coroutines.flow.stateIn` rides in via the existing `kotlinx-coroutines-core` (catalog: `libs.coroutines.core`). No `gradle/libs.versions.toml` edits.
 - **Strings:** `R.string.cd_back` reused, `R.string.cd_more_actions` added in #139 (`<string name="cd_more_actions">More actions</string>`), `R.string.cd_thread_status_expand` added in #145 for the trailing icon on `ThreadStatusRow`, retired with that row by [#808](../codebase/808.md) and carried onto the [Status sheet opener](thread-composer-footer.md) it replaced it with. `R.string.thread_re_pair` ("Pairing error - Re-pair") added in [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) for the status area's Re-pair button. Naming follows the project's `cd_*` content-description convention.
-- **Route identity survives process recreation.** The back-stack entry restores both `serverId` and `conversationId` into `SavedStateHandle`; the factory rebinds the saved host and `stateIn` re-subscribes on collection. Thread data and literal snapshot text are fetched again, not persisted as route state.
+- **Route identity survives process recreation.** The back-stack entry restores both `serverId` and `conversationId` into `SavedStateHandle`; the factory rebinds the saved host and `stateIn` re-subscribes on collection. Thread data is fetched again, not persisted as route state.
 
 ## Related
 

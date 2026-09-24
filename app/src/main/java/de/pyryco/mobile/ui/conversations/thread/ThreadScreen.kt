@@ -47,6 +47,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -76,7 +77,6 @@ import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
-import de.pyryco.mobile.ui.conversations.components.StallPromotionBanner
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
@@ -127,7 +127,6 @@ fun ThreadScreen(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     isThinking: Boolean = false,
-    isStalled: Boolean = false,
     apiRetry: ApiRetryStatus = ApiRetryStatus.NotRetrying, // #594: claude's API-retry status, replaces the spinner
     usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report, below api-retry in the slot
     resetting: ResetStatus? = null, // #872: Reset session's phase, below usage limit and above compaction
@@ -138,7 +137,6 @@ fun ThreadScreen(
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
-    onShowLiteralScreen: () -> Unit = {},
     // #807: a published ModelMenuRow.value / effort level, forwarded verbatim — never a device enum.
     onModelSelected: (String) -> Unit = {},
     onEffortSelected: (String) -> Unit = {},
@@ -184,6 +182,14 @@ fun ThreadScreen(
     // The tap is bound by MainActivity to the code-pair route keyed by the destination's own server id.
     showRePair: Boolean = false,
     onRePair: () -> Unit = {},
+    // #933: this chat's pending attachments (ThreadViewModel.pendingAttachments) and whether a send carrying
+    // them is under way (attachmentsSending); the picker's result, a tile's remove, and the one-shot refusal
+    // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
+    attachments: List<PendingAttachment> = emptyList(),
+    attachmentsSending: Boolean = false,
+    onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
+    onRemoveAttachment: (Long) -> Unit = {},
+    attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -224,6 +230,21 @@ fun ThreadScreen(
     LaunchedEffect(sessionSettingsErrors, snackbarHostState) {
         sessionSettingsErrors.collect { snackbarHostState.showSnackbar(sessionSettingsFailedMessage) }
     }
+    // #933: a pick with refused entries names how many, per reason — counts only, never a file name.
+    val resources = LocalContext.current.resources
+    LaunchedEffect(attachmentRefusals, snackbarHostState) {
+        attachmentRefusals.collect { refusal ->
+            if (refusal.tooLarge > 0) {
+                val text = resources.getQuantityString(R.plurals.thread_attachments_too_large, refusal.tooLarge, refusal.tooLarge)
+                snackbarHostState.showSnackbar(text)
+            }
+            if (refusal.tooMany > 0) {
+                val text = resources.getQuantityString(R.plurals.thread_attachments_too_many, refusal.tooMany, refusal.tooMany)
+                snackbarHostState.showSnackbar(text)
+            }
+        }
+    }
+    val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
     // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
@@ -267,7 +288,6 @@ fun ThreadScreen(
                     overflowExpanded = overflowExpanded,
                     onOverflowDismiss = { overflowExpanded = false },
                     onOverflowEvent = onOverflowEvent,
-                    onShowLiteralScreen = onShowLiteralScreen,
                     isPromoted = state.isPromoted,
                     mutationsSupported = state.mutationsSupported,
                 )
@@ -301,6 +321,16 @@ fun ThreadScreen(
                         showRePair = showRePair,
                         onRePair = onRePair,
                     )
+                    // #933: Figma's `Attachment area`, between the status area and the input field, only when
+                    // this chat has something pending.
+                    if (attachments.isNotEmpty()) {
+                        ComposerAttachmentStrip(
+                            attachments = attachments,
+                            sending = attachmentsSending,
+                            onRemove = onRemoveAttachment,
+                            modifier = Modifier.padding(horizontal = ComposerGutter),
+                        )
+                    }
                     ThreadInputBar(
                         text = draft,
                         onTextChange = onDraftChange,
@@ -313,6 +343,8 @@ fun ThreadScreen(
                         isBusy = isBusy,
                         onInterrupt = onInterrupt,
                         onAnchorChanged = { inputAnchor = it },
+                        hasAttachments = attachments.isNotEmpty(),
+                        sending = attachmentsSending,
                     )
                     // The design puts the model/effort controls in the footer, below the input field, not
                     // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
@@ -323,6 +355,7 @@ fun ThreadScreen(
                         onStatusClick = { sheetVisible = true },
                         onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
                         modifier = Modifier.padding(horizontal = ComposerGutter),
+                        onAttach = openAttachmentPicker,
                     )
                 }
             },
@@ -336,7 +369,6 @@ fun ThreadScreen(
                 // #843: a rejected pairing reads as Offline here, and its retry cannot succeed — the status
                 // area's Re-pair action replaces it. Network loss still gets the banner and its retry.
                 if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)
-                StallPromotionBanner(isStalled = isStalled, onShowLiteralScreen = onShowLiteralScreen)
                 if (!state.isPromoted && !state.hasMessages) {
                     WorkspaceChip(
                         workspaceLabel = state.workspaceLabel,

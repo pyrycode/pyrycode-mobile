@@ -100,24 +100,27 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    repository to be published rather than firing on socket-up), with no reopen in between — each of the
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #687)**
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950)**
    runs a **curated set of twenty scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
    peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model +
    footer-context-usage + model-change + inherited-effort + chosen-effort + remembered-effort-recall +
-   operator-bypass-permission, sixteen
+   permission-held-running-tool, fifteen
    real claude turns — five pings (ping, create-workspace-folder, new-session, the peer-started turn's own
    ping, and the offline-read-reconcile scenario's own ping), the peer-queue-consistency scenario's wait
    turn and its drained ping, the offline-read-reconcile scenario's peer offline turn, the
    status-sheet-running-model scenario's own ping, the footer-context-usage scenario's own ping, the
    inherited-effort scenario's own turn, the chosen-effort scenario's own turn, the
-   remembered-effort-recall scenario's two turns (one in its fresh chat, one in its fresh channel), and the
-   operator-bypass-permission scenario's two turns (a tool-free ping, then an outside-workspace Read), plus a
+   remembered-effort-recall scenario's two turns (one in its fresh chat, one in its fresh channel), and
+   the permission-held-running-tool scenario's own turn, plus a
    possible reset wrap-up turn — delete, archive-restore,
    change-workspace, rename, save-as-channel, list-archive-entry, two-host and model-change spend none)
    against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
-   [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The ping, create-workspace-folder and
+   [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The **operator-bypass-permission**
+   scenario (#687) normally rides this same curated list, but is `@Ignore`d and excluded from it until
+   [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixes a real production bug this
+   scenario's own diagnosis named (see its paragraph below). The ping, create-workspace-folder and
    new-session scenarios in `InteractiveStreamE2ETest` require a displayed exact
    ping reply in the message list (#694), independently of disappearing queued text.
    New-session also reveals the delimiter after a potentially tall wrap-up reply. The **model and effort
@@ -218,7 +221,7 @@ production-side KDoc and its relationship to the tier tags #731 minted the same 
 [Add controls](../knowledge/features/channel-list-screen-tree-and-controls.md#add-controls-738) for `treeHostAddTestTag`'s own
 clamping rule.
 
-Rung 3 covers twenty scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers twenty-two scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -643,23 +646,28 @@ the footer before the first message and asserts claude applies exactly that leve
 `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` (**two** turns, one in its
 fresh chat and one in its fresh channel) taps an effort level on a priming chat, restarts the app
 in-process the way `interactiveTurn_twoHostsCollidingConversationId_stayPerHost` does (destroy the
-activity, `rebuildGraph`, relaunch), then opens a fresh chat and a fresh channel — each with an explicit
-saved model but no saved effort — and asserts the recalled level reaches both before their first message
-and stays the applied value after a real turn in each; a conversation with its own saved effort keeps it.
-Every fixture in this last scenario carries an explicit saved model, not the ticket's literal empty one:
-the phone matches a saved `""` model against no published row, so a chat with no model chosen offers no
-effort levels to recall into. That gap is [#972](https://github.com/pyrycode/pyrycode-mobile/issues/972);
-the acceptance criterion itself asks only for an empty saved *effort*, which these fixtures satisfy. The
-live run that closed the ticket also resolved the plan's two open questions: `createChannel` accepts a
-created chat's own scratch `cwd` directly (no `createWorkspaceFolder` fallback was needed), and the first
-fresh settings reply after a real turn's reply already carries `effective_effort`. See [Thread composer
-footer § Applied effort](knowledge/features/thread-composer-footer.md#applied-effort-889) and [Thread
-composer footer — remembered effort recall](knowledge/features/thread-composer-footer-effort-recall.md)
-for the production ranking and recall rules these methods assert against.
+activity, `rebuildGraph`, relaunch), then opens a fresh chat and a fresh channel — every fixture, including
+the priming chat, keeps saved model `""` throughout — and asserts the recalled level reaches both before
+their first message and stays the applied value after a real turn in each; a conversation with its own
+saved effort keeps it. The remembered and explicit levels come from the published `default` row (failing
+with "the published default row does not offer two effort levels" when it offers fewer than two), since
+[#972](https://github.com/pyrycode/pyrycode-mobile/issues/972) made `ThreadRunConfig.effortChoices` look up
+that row for a `""`-model reading instead of matching `""` against no published row; the priming chat's
+footer is asserted against `INHERITED_RUN_CONFIG_LABEL` ("default"), not a row display name. The live run
+that closed [#545](https://github.com/pyrycode/pyrycode-mobile/issues/545) also resolved the plan's two
+open questions: `createChannel` accepts a created chat's own scratch `cwd` directly (no
+`createWorkspaceFolder` fallback was needed), and the first fresh settings reply after a real turn's reply
+already carries `effective_effort`. See [Thread composer footer §
+Sourcing](knowledge/features/thread-composer-footer.md#sourcing) and [Thread composer footer — remembered
+effort recall](knowledge/features/thread-composer-footer-effort-recall.md) for the production ranking and
+recall rules these methods assert against.
 
 The **operator-bypass permission** scenario (#687 —
-`interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) is likewise **always-on** (not
-`@Ignore`d) but, unlike every scenario above, needs its own daemon: `scripts/e2e-emulator.sh` starts a
+`interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) is, unlike every scenario
+above, currently **`@Ignore`d** — blocked on
+[#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) — and excluded from the curated `LIVE=1`
+list (`LIVE_MINIMUM` is 20, down from 21, until #981 restores both; see [Pre-ship
+gate](#pre-ship-gate)). Un-ignoring it to re-run manually still needs its own daemon: `scripts/e2e-emulator.sh` starts a
 third, dedicated `pyry` instance under its own isolated `HOME` (§ 4a, `start_bypass_daemon`), with
 `stdio_permission_prompt: true` in its config and its children launched with
 `-- --dangerously-skip-permissions --permission-prompt-tool stdio` — the operator-bypass argv pyrycode's
@@ -693,6 +701,23 @@ matches by the file's base name or the word `Read`, scoped to the dialog holding
 button so the phone's own message bubble (which contains both) cannot match; the peer allows it once, and
 the assistant's reply must carry the token.
 
+**Step 5's diagnosis (#977).** The peer opens before the Read is sent and records every frame for the
+chat, so after `allowOnce` returns the step first waits for the peer's own `turn_end`
+(`awaitFrame(chat.id, "turn_end", REPLY_TIMEOUT_MS)`) instead of polling the phone directly. A turn that
+never ends inside that wait fails with its own message naming how long the wait was, distinct from the
+token message — it no longer masquerades as a missing reply. Once the turn has ended, the phone gets its
+own short trailing wait (`PHONE_TRAIL_MS`) for a bubble carrying the token; if none appears, the failure
+message (`readReplyDiagnosis` in `InteractiveStreamE2ETest.kt`) reports counts and booleans only — the
+number of message bubbles and each one's text length, whether any bubble reads `blocked`, whether the
+Read's recorded `tool_result` was `is_error`, the `turn_end`'s `stop_reason` / `outcome` / `is_error`, and
+whether any frame the peer recorded after the allow carried the token — never bubble text, payload text or
+the token itself. The two live runs that closed this ticket both failed with that second message: the turn
+ended normally, the Read's `tool_result` was clean, and claude's reply was exactly the token
+(`peerFramesWithToken=true`) — but no bubble on the phone ever carried it. That names a real production
+bug, not a flaky assertion or a slow turn: the phone does not render a reply the daemon actually sent. It
+is filed as [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981), which removes the `@Ignore`
+above once fixed.
+
 An unmet prerequisite — no credential, an unreadable `~/.claude.json`, a daemon revision `PYRYCODE_SRC`
 cannot show contains pyrycode `475c406a`, no `claude` on `PATH`, or a fixture failure such as a pairing
 that could not be minted — fails only this one method, naming the prerequisite; it never skips and never
@@ -701,11 +726,45 @@ sentence): `-Pandroid.testInstrumentationRunnerArguments.*` reaches the device t
 where a space in the value is not safe, so the method maps the code back to a full sentence itself
 (`BYPASS_UNMET_REASONS`) rather than trusting the script to hand it prose — the same reason every other
 instrumentation argument this suite passes (`peerToken`, `bypassServerId`, …) is a single token, never a
-sentence. `cleanup` kills the dedicated daemon and removes its isolated `HOME` (with its `~/.claude.json`
-copy) and the outside-workspace token file whatever the exit code, and never touches the operator's own
-`~/.pyry/config.json`. Two real claude turns: the tool-free ping and the outside-workspace Read. See
+sentence. On a **failed run**, `cleanup` first copies claude's session transcripts (regular `*.jsonl` files
+under `.claude/projects/`; `find -type f` skips symlinks, so a credential file could not reach the copy
+even as a planted symlink) from the bypass `HOME` into `WORK_DIR/bypass-transcripts/`, keeping their
+relative paths — a failed copy never blocks the rest of cleanup (#977). `cleanup` then kills the dedicated
+daemon and removes its isolated `HOME` (with its `~/.claude.json` copy) and the outside-workspace token
+file **whatever the exit code** — the transcript copy only ever runs first, it never changes what gets
+deleted or when — and never touches the operator's own `~/.pyry/config.json`. The transcripts are the only
+record of a failed turn once `HOME` is gone; both live runs that closed this ticket read their kept
+transcript to confirm the diagnosis above. Two real claude turns: the tool-free ping and the
+outside-workspace Read. See
 [Thread composer footer § Permission mode](knowledge/features/thread-composer-footer.md#permission-mode-650)
 for the footer's own settle-and-confirm rules this scenario exercises against a real daemon.
+
+The **permission-held running-tool** scenario (#950 —
+`interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`) is likewise **always-on** (not
+`@Ignore`d): the status area naming the tool claude is running (#897's label) is a **durable** fact for as
+long as the call stays open, so it belongs in the always-on gate alongside the settings scenarios above
+(operator-bypass, above, was always-on too until it turned `@Ignore`d — see its own paragraph). A quick
+command's tool call closes before the phone can be sure to
+observe it open, so the scenario borrows #849's lever instead of timing: `RUNNING_TOOL_PROMPT`'s
+`python3 -c "print(950)"` is never auto-allowed, so claude's `tool_use` arrives and the call waits on a
+permission prompt that only the `SecondClientPeer` paired with `--allow-remote-permissions` can answer
+(the phone stays unprivileged, as every other scenario expects). While the prompt is pending, the test
+asserts the exact `cd_thread_tool_running` description (`"Claude is running Bash"`) is displayed; the peer
+allows the command once, and once the peer's own `turn_end` frame arrives, the description is asserted
+gone. One real claude turn. The rung-4 `tool` and `tool-progress` scenarios are this scenario's
+deterministic twins, proving the same label (without and with an elapsed reading) on every scripted run.
+
+**`@Ignore`d**, and deliberately not added to the LIVE curated list: `interactiveTurn_longRunningTool_statusAreaShowsElapsed`
+holds the same permission-prompt lever with `ELAPSED_TOOL_PROMPT`'s `python3 -c "import time;
+time.sleep(45)"`, then waits for any `cd_thread_tool_running_elapsed` reading (a regex matcher built from
+the resource with the elapsed slot wild-carded, since claude's own heartbeat — not the harness — decides
+the seconds) before `turn_end` and absence. It cannot be made durable here: claude's first
+`tool_progress` heartbeat arrived at 30 s on the one committed capture (Claude Code 2.1.259), leaving only
+about 15 s to observe, and only if claude runs the command in the foreground as asked rather than
+backgrounding it — a bare `sleep` of 25 s or more is refused outright by claude's own Bash tool, which is
+why the command sleeps inside `python3` (the same constraint `WAIT_PROMPT` and #849's wait turn document).
+It costs at least 45 s per run for a window neither guaranteed nor timed by the harness. The operator
+un-ignores it to check the label's elapsed form against the current claude.
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -817,7 +876,9 @@ new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; 
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
 peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
 context usage, #946; model change, inherited effort, chosen effort and remembered-effort recall, #545;
-operator-bypass permission, #687) ride the wrapped mode.
+running-tool status label, #950) ride the wrapped mode. The operator-bypass permission method, #687, is
+`@Ignore`d and excluded until [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixes its
+missing reply (see [its paragraph above](#what-rung-3-is-made-of)).
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
 regressions after host-owned routing, since #847 that two paired hosts whose
@@ -839,20 +900,21 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** sixteen real claude turns across twenty curated methods — five pings (ping,
+**Cost:** fifteen real claude turns across twenty curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
 ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, the
 footer-context-usage scenario's own ping, #946, the inherited-effort and chosen-effort scenarios' own
-turns, and the remembered-effort-recall scenario's two turns, #545, and the operator-bypass-permission
-scenario's two turns (a tool-free ping, then an outside-workspace Read), #687 —
+turns, and the remembered-effort-recall scenario's two turns, #545, and the
+permission-held running-tool scenario's own turn, #950 —
 and a reset wrap-up turn when handoff notes are
 enabled. Delete, archive-restore, change-workspace, rename, save-as-channel,
 list-archive-entry, two-host separation and the model-change scenario spend no Claude turns. Allow a few
 minutes of wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
-tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 20 as of #687 —
+tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 20 as of #977, down from 21 while the #687
+bypass method is out of the list until #981 fixes its missing reply —
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -865,8 +927,8 @@ the then-ten-method list, specifically so raising it would not redden
 fixture stays byte-for-byte, and the gate's own test pads a copy of it with synthetic
 curated-method cases up to `LIVE_MINIMUM`. #849 raised `LIVE_MINIMUM` from 11 to 12, #850
 raised it again, from 12 to 13, #891 raised it once more, from 13 to 14, #946 raised it
-again, from 14 to 15, #545 raised it again, from 15 to 19, and #687 raised it again, from
-19 to 20, on the same mechanism. Shell cleanup preserves the original
+again, from 14 to 15, #545 raised it again, from 15 to 19, #687 raised it again, from
+19 to 20, and #950 raised it again, from 20 to 21, on the same mechanism. Shell cleanup preserves the original
 result and retains failure artifacts; a clean XML report with a failing process status is not
 a passing gate.
 
@@ -901,7 +963,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Fifteen curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Twenty curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -915,20 +977,28 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_peerStartedTurn_continuesOnPhone` (#848),
 `InteractiveStreamE2ETest#interactiveTurn_peerQueue_staysConsistentAcrossClients` (#849),
 `InteractiveStreamE2ETest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` (#850),
-`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_statusSheetShowsRunningModel` (#891), and
-`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_footerShowsContextUsage` (#946), so exactly
-**ten real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
+`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_statusSheetShowsRunningModel` (#891),
+`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_footerShowsContextUsage` (#946),
+`InteractiveStreamE2ETest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation`,
+`InteractiveStreamE2ETest#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`,
+`InteractiveStreamE2ETest#interactiveTurn_chosenEffort_appliesFromTheFirstTurn`,
+`InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` (#545), and
+`InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` (#950), so exactly
+**fifteen real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
 ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, #891's own
-ping, and #946's own ping; the delete,
+ping, #946's own ping, the inherited-effort and chosen-effort scenarios' own turns and the
+remembered-effort-recall scenario's two turns (#545), and the permission-held
+running-tool scenario's own turn (#950); the delete,
 archive-restore, change-workspace, rename,
-save-as-channel, list-archive-entry and two-host scenarios each add a method, not a turn
+save-as-channel, list-archive-entry, two-host and model-change scenarios each add a method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
 list-archive-entry is pure navigation with no daemon round-trip at all; two-host separation is pairing,
 navigation, rename and link cycling, also daemon round-trips).
 The full class also includes the
-#481 tool-use test, which
-stays excluded from LIVE (an extra turn, cost). `LIVE=1` is **mutually exclusive with `DETERMINISTIC=1`**
+\#481 tool-use test, #950's `@Ignore`d elapsed-reading twin, and the operator-bypass-permission method
+(#687, `@Ignore`d, blocked on [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)), which all
+stay excluded from LIVE. `LIVE=1` is **mutually exclusive with `DETERMINISTIC=1`**
 (real vs scripted claude); setting both fails fast.
 
 **How it differs from default rung 3.** Same instrumented suite, same Gradle Managed Device, same
@@ -961,14 +1031,16 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **ten real claude turns per run across fifteen curated methods** (ping + create-workspace-folder,
+Cost: **fifteen real claude turns per run across twenty curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
 \#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
 status-sheet-running-model scenario's own ping, #891 + the footer-context-usage scenario's own ping,
-\#946; `/clear` spends
+\#946 + the inherited-effort and chosen-effort scenarios' own turns and the remembered-effort-recall
+scenario's two turns, #545 + the
+permission-held running-tool scenario's own turn, #950; `/clear` spends
 none; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
-\#740, and two-host separation, #847, each spend none — create/rename/delete/archive/restore/
+\#740, two-host separation, #847, and model change each spend none — create/rename/delete/archive/restore/
 change-workspace/promote are daemon round-trips, list-archive-entry is pure navigation, and two-host
 separation is pairing, navigation, rename and link cycling, also daemon round-trips), a few minutes of
 wall clock, subscription-covered.
@@ -1067,6 +1139,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
+| `tool-progress` (#950) | the status area's running-tool label adds claude's elapsed reading after a `tool_progress` heartbeat, then clears once the call's `tool_result` lands while the turn stays busy | `tool-progress-open.jsonl` + `tool-progress-result.jsonl` | **two** |
 | `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
 | `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
 
@@ -1076,6 +1149,7 @@ DETERMINISTIC=1 SCENARIO=stream      PYRYCODE_SRC=~/Workspace/Projects/pyrycode 
 DETERMINISTIC=1 SCENARIO=spinner     PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # spinner
 DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool running→done
 DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool failed
+DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # running-tool label elapsed → gone
 DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
 DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
 ```
@@ -1120,6 +1194,25 @@ appears, and the tool row is still on screen (the verbatim tool name `"Bash"`). 
 identifies a running → done resolution and never keys on timing. **Correlation is load-bearing:** the
 first fragment's `tool_use` `id` must equal the second fragment's `tool_result` `tool_use_id` (same
 literal id in both files) or the fold drops the result and the row never resolves.
+
+Since #950, the same held-open window also proves the status area's running-tool label (#897): drop A
+carries no `tool_progress` heartbeat, so the label names the tool and carries no elapsed reading, and it
+is gone once drop B closes the call. The `tool-progress` scenario below proves the label's elapsed form.
+
+**`tool-progress`** (#950) — the running-tool label must add claude's elapsed reading once a
+`tool_progress` heartbeat arrives, and clear once the call's `tool_result` lands. It reuses the `tool`
+scenario's two-fragment causal release, but drop A carries a heartbeat and drop B carries **only** the
+`tool_result`, no turn end:
+
+1. **First fragment** (`tool-progress-open.jsonl`) is `tool`'s lone `tool_use` line (id `toolu_e2e`)
+   followed by one `tool_progress` line in claude's captured shape — `heartbeat: true`, a **string**
+   `parent_tool_use_id` equal to the open call's id, and `elapsed_time_seconds: 30`. A heartbeat missing
+   either key is dropped by the daemon silently, with no trace to assert against. The test asserts the
+   label reads the tool name and `"30s"`, then sends a **2nd** message.
+2. **Second fragment** (`tool-progress-result.jsonl`) is the correlated success `tool_result` **alone** —
+   no turn end. The turn stays busy, so the label's disappearance can only come from the call closing,
+   never from the turn ending. A regression that cleared the label only at turn end would stay green
+   against `tool-done.jsonl` (turn end included) and only reddens here.
 
 **`tool-failed`** — a failing tool step must render **failed**. The failed end state is stable (it does
 not auto-resolve), so it needs **no two-fragment release**: a single raw fragment (`tool-failed.jsonl`)

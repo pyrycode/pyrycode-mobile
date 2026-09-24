@@ -62,8 +62,6 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListUiState
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
-import de.pyryco.mobile.ui.conversations.thread.LiteralScreenSurface
-import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.QuestionBatchModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
@@ -452,7 +450,6 @@ internal fun PyryNavHost(
                 val state by vm.state.collectAsStateWithLifecycle()
                 val connectionState by vm.connectionState.collectAsStateWithLifecycle()
                 val isThinking by vm.isThinking.collectAsStateWithLifecycle()
-                val isStalled by vm.isStalled.collectAsStateWithLifecycle()
                 val apiRetry by vm.apiRetry.collectAsStateWithLifecycle()
                 val usageLimit by vm.usageLimit.collectAsStateWithLifecycle()
                 val resetting by vm.resetting.collectAsStateWithLifecycle()
@@ -464,6 +461,8 @@ internal fun PyryNavHost(
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
                 val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
+                val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
+                val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
@@ -479,7 +478,6 @@ internal fun PyryNavHost(
                     connectionState = connectionState,
                     onRetry = vm::retry,
                     isThinking = isThinking,
-                    isStalled = isStalled,
                     apiRetry = apiRetry,
                     usageLimit = usageLimit,
                     resetting = resetting,
@@ -501,7 +499,6 @@ internal fun PyryNavHost(
                     onAlwaysAllowChanged = vm::onAlwaysAllowChanged,
                     onDropQueued = vm::onDropQueued,
                     onOverflowEvent = vm::onOverflowEvent,
-                    onShowLiteralScreen = { navController.navigate(Routes.literal(target)) },
                     onModelSelected = vm::onModelSelected,
                     onEffortSelected = vm::onEffortSelected,
                     onPermissionModeSelected = vm::onPermissionModeSelected,
@@ -513,6 +510,12 @@ internal fun PyryNavHost(
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
+                    // #933: the composer's attachment picker and strip, over the same per-chat draft store.
+                    attachments = pendingAttachments,
+                    attachmentsSending = attachmentsSending,
+                    onAttachmentsPicked = vm::addPickedAttachments,
+                    onRemoveAttachment = vm::removeAttachment,
+                    attachmentRefusals = vm.attachmentRefusals,
                     // #843: the tree row's re-pair route (#842), keyed by this destination's own host. The
                     // thread stays on the back stack beneath it, so Cancel returns to the cached history.
                     showRePair = rePairAvailable,
@@ -521,20 +524,6 @@ internal fun PyryNavHost(
                 // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 questionModal?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent) }
-            }
-        }
-        composable(
-            route = Routes.LITERAL_SCREEN,
-            arguments = Routes.hostArguments(),
-        ) { backStackEntry ->
-            HostDestination(Routes.target(backStackEntry.arguments).serverId, destinations, navController) {
-                val vm = koinViewModel<LiteralScreenViewModel>()
-                val state by vm.state.collectAsStateWithLifecycle()
-                LiteralScreenSurface(
-                    state = state,
-                    onEvent = vm::onEvent,
-                    onBack = { navController.popBackStack() },
-                )
             }
         }
         // Deliberately not wrapped in HostDestination: that guard returns an unknown host to the
@@ -658,7 +647,7 @@ internal fun PyryNavHost(
                 )
             }
         }
-        // Wrapped in HostDestination, unlike Settings and like thread/literal (#715): returning an
+        // Wrapped in HostDestination, unlike Settings and like the thread (#715): returning an
         // unknown or newly-unpaired host to the channel list is exactly what keeps one host's
         // Archive from falling back to another's, and the guard already exists. Its check resolves
         // off the registry's saved-host map, so a merely disconnected owner keeps the screen.
@@ -764,7 +753,6 @@ internal object Routes {
     const val CHANNEL_LIST = "channel_list"
     const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"
-    const val LITERAL_SCREEN = "literal_screen/{serverId}/{conversationId}"
 
     /**
      * Owned by a server id alone, and — unlike the two routes above — by an **optional** one (#749):
@@ -782,8 +770,6 @@ internal object Routes {
     const val ABOUT = "about"
 
     fun thread(target: HostConversationTarget) = "conversation_thread/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
-
-    fun literal(target: HostConversationTarget) = "literal_screen/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
 
     /** No host to capture yields the bare route, so the argument falls to its empty default. */
     fun settings(serverId: String?) = if (serverId.isNullOrEmpty()) "settings" else "settings?serverId=${Uri.encode(serverId)}"
@@ -804,7 +790,7 @@ internal object Routes {
     fun settingsOwner(arguments: Bundle?) = arguments?.getString("serverId").orEmpty()
 
     /**
-     * Per-component encoding, as [thread] and [literal] use: a reserved character in a server id has
+     * Per-component encoding, as [thread] uses: a reserved character in a server id has
      * to stay inside its one segment rather than becoming route syntax that could match elsewhere.
      * Callers must hold a non-blank id — a blank one yields a route no destination matches.
      */
