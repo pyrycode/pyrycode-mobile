@@ -24,6 +24,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.isOn
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
@@ -48,8 +49,10 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
@@ -2283,6 +2286,361 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A permission answer from the phone reaches the conversation that asked, and only that one (#966, rung 3).
+     * The scenario runs on the dedicated answer daemon `scripts/e2e-emulator.sh` starts under its own HOME with
+     * the stdio prompt surface on, the one path that offers don't-ask-again. The phone pairs with it by code
+     * `--allow-remote-permissions`; it is the only host where the phone may answer. A peer paired the same way
+     * records every frame and allows the last prompt.
+     *  * **Only the asking thread shows it.** Chat A's command raises a prompt the phone draws in A with its
+     *    decision context, and not in chat B.
+     *  * **The phone's allow reaches A's claude.** Ticking don't-ask-again and allowing on the phone ends A's
+     *    turn, and claude's reply carries the command's output, which no prompt contains.
+     *  * **Don't-ask-again holds.** The same command in A runs again with no second prompt.
+     *  * **Resolved elsewhere closes it.** The same command in B prompts there, since B's session holds no
+     *    grant; the peer allows it and the phone's dialog closes with no tap.
+     *
+     * Claude's reply is read from the `assistant_delta` frames the peer records for the chat, not from a phone
+     * bubble: #981 tracks a reply that is not composed after an allowed prompt. An unmet prerequisite of the
+     * dedicated daemon fails here with its name, never a skip.
+     *
+     * **Three real-claude turns**: A's allowed command, its repeat, and B's command.
+     */
+    @Test
+    fun interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation() {
+        val (serverId, peer) = answerHostPeer()
+        try {
+            pairAnswerHost()
+            val (chatA, nameA) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "a-")
+            val (chatB, nameB) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "b-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 1. AC-1: A's command raises a prompt in A that carries claude's context and a don't-ask-again offer.
+            openChatRow(nameA)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            val shown =
+                runBlocking {
+                    MobileJson.decodeFromJsonElement(
+                        ModalShownPayloadDto.serializer(),
+                        peer.awaitFrame(chatA, "modal_shown", REPLY_TIMEOUT_MS).payload,
+                    )
+                }
+            assertEquals("the prompt's class", PERMISSION_CLASS, shown.modalClass)
+            awaitPromptDialog()
+            assertContextDrawn(shown)
+            assertEquals(
+                "the prompt's don't-ask-again offer",
+                "true",
+                (shown.alwaysAllow as? JsonObject)?.get("offered")?.jsonPrimitive?.contentOrNull,
+            )
+
+            // 2. AC-1: the prompt belongs to A. B's thread draws none; A's draws it again.
+            leaveThread()
+            openChatRow(nameB)
+            composeTestRule.waitForIdle()
+            SystemClock.sleep(SCOPE_SETTLE_MS)
+            composeTestRule.onAllNodes(promptDialog()).assertCountEquals(0)
+            leaveThread()
+            openChatRow(nameA)
+            awaitPromptDialog()
+
+            // 3. AC-1 / AC-2: tick don't-ask-again, then allow on the phone (a non-default option arms first).
+            val offer = hasText(string(R.string.modal_always_allow_label)) and hasClickAction()
+            composeTestRule.onNode(offer).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(offer and isOn()).fetchSemanticsNodes().isNotEmpty()
+            }
+            val allow = hasText(shown.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
+            composeTestRule.onNode(allow).performClick()
+            val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(allow).performClick()
+
+            // 4. AC-1: the daemon took the phone's answer for this prompt, A's turn ends, and claude's reply
+            //    carries the command's output. The dialog leaves the thread.
+            val dismissed = runBlocking { peer.awaitModalDismissed(shown.modalId, THREAD_TIMEOUT_MS) }
+            assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissed, "source"))
+            assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissed, "outcome"))
+            awaitTurnEnd(peer, chatA, 1, "A's allowed turn")
+            assertBashRan(peer, chatA, 0, "A's allowed turn")
+            assertTrue("A's reply does not carry the command's output", ANSWER_PERMISSION_TOKEN in assistantText(peer, chatA))
+            awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
+
+            // 5. AC-2: the same command in A runs again with no second prompt. Claude could repeat the number
+            //    from context, so the proof is a successful Bash call in this turn, not the reply alone.
+            val mark = peer.recorded(chatA).size
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            awaitTurnEnd(peer, chatA, 2, "A's repeat")
+            assertBashRan(peer, chatA, mark, "A's repeat")
+            assertEquals("prompts raised in A", 1, peer.recorded(chatA).count { it.type == "modal_shown" })
+            assertTrue("A's repeat reply does not carry the command's output", ANSWER_PERMISSION_TOKEN in assistantText(peer, chatA, mark))
+
+            // 6. AC-4: the same command prompts in B; the peer allows it and the phone's dialog closes untouched.
+            leaveThread()
+            openChatRow(nameB)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            awaitPromptDialog()
+            runBlocking {
+                val modalId = peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS)
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+            }
+            awaitNoPromptDialog("B's dialog stayed after the peer allowed it")
+            awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn")
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
+     * A clarification answer from the phone reaches the conversation that asked (#966, rung 3), on the same
+     * dedicated answer daemon as [interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation]; the
+     * daemon gates a question answer on the same `--allow-remote-permissions` bit as a permission answer.
+     *  * **The phone's choice reaches claude.** Claude asks one AskUserQuestion with two labels; the phone
+     *    picks [QUESTION_PICK] and continues, and claude's reply is that label and not the other one.
+     *  * **Resolved elsewhere closes it.** Asked again, the peer answers; the phone's modal closes with no tap.
+     *
+     * The reply is read from the peer's `assistant_delta` frames, as in the permission method.
+     *
+     * **Two real-claude turns**: the phone-answered question and the peer-answered one.
+     */
+    @Test
+    fun interactiveTurn_questionAnswer_reachesTheAskingConversation() {
+        val (serverId, peer) = answerHostPeer()
+        try {
+            pairAnswerHost()
+            val (chat, name) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "q-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+
+            // 1. AC-3: claude asks in this chat, and the phone draws the question.
+            sendFromPhone(QUESTION_PROMPT)
+            val batchId = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS) }
+            awaitQuestionModal()
+
+            // 2. AC-3: the phone picks one option and continues; the daemon takes it as this batch's answer.
+            val mark = peer.recorded(chat).size
+            composeTestRule
+                .onAllNodes(hasText(QUESTION_PICK, substring = true) and hasClickAction() and inPromptDialog())
+                .onFirst()
+                .performClick()
+            val continueButton = hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(continueButton).performClick()
+            val dismissed = runBlocking { peer.awaitQuestionDismissed(batchId, THREAD_TIMEOUT_MS) }
+            assertEquals("who resolved the question", REMOTE_SOURCE, peer.field(dismissed, "source"))
+            assertEquals("the question's outcome", ANSWERED, peer.field(dismissed, "outcome"))
+
+            // 3. AC-3: the turn ends and claude's reply names the chosen option, not the other one.
+            awaitTurnEnd(peer, chat, 1, "the phone-answered turn")
+            val reply = assistantText(peer, chat, mark)
+            assertTrue("the reply does not name the chosen option", QUESTION_PICK in reply)
+            assertTrue("the reply names the option the phone did not choose", QUESTION_OTHER !in reply)
+            awaitNoQuestionModal("the question stayed after the phone answered it")
+
+            // 4. AC-4: asked again, the peer answers, and the phone's modal closes with no tap.
+            sendFromPhone(QUESTION_PROMPT)
+            val second = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS, occurrence = 2) }
+            awaitQuestionModal()
+            runBlocking { peer.answerQuestion(second, 0, QUESTION_OTHER, THREAD_TIMEOUT_MS) }
+            awaitNoQuestionModal("the question stayed after the peer answered it")
+            awaitTurnEnd(peer, chat, 2, "the peer-answered turn")
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
+     * The answer daemon's server id and a peer for it (#966), or the failure for its unmet prerequisite. The
+     * peer is built here and opened by the test; nothing is paired yet.
+     */
+    private fun answerHostPeer(): Pair<String, SecondClientPeer> {
+        val args = InstrumentationRegistry.getArguments()
+        args.getString(ARG_ANSWER_UNMET)?.let {
+            throw AssertionError(
+                "the answer daemon (#966) did not start: " + (ANSWER_UNMET_REASONS[it] ?: "unmet prerequisite '$it'") +
+                    ". See scripts/e2e-emulator.sh § 4a' and its log.",
+            )
+        }
+        val serverId = answerArg(ARG_ANSWER_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = answerArg(ARG_ANSWER_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = answerArg(ARG_ANSWER_SERVER_STATIC_PUBLIC_KEY),
+                ),
+            )
+        return serverId to peer
+    }
+
+    /** Pair the answer daemon by code, as #687 pairs its host. This pairing is the phone's only privileged one. */
+    private fun pairAnswerHost() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        awaitChannelList()
+        awaitConnected()
+        instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+        pairHostByCode(answerArg(ARG_ANSWER_PAIR_CODE), ANSWER_HOST_NAME)
+    }
+
+    /** A new chat on [serverId] with a run-unique name starting [prefix]: its id and name. */
+    private fun answerChat(
+        serverId: String,
+        prefix: String,
+    ): Pair<String, String> {
+        val name = prefix + System.currentTimeMillis()
+        val repository = hostRepository(serverId)
+        val chat = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.rename(repository.createDiscussion().id, name) } }
+        return chat.id to name
+    }
+
+    /** An answer-daemon argument (#966), failing with the script that passes it. */
+    private fun answerArg(key: String): String =
+        requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
+            "missing instrumentation arg '$key' — scripts/e2e-emulator.sh passes it once the answer daemon (#966) is up"
+        }
+
+    /** A modal's Cancel, which every open prompt dialog draws. */
+    private fun promptDialog(): SemanticsMatcher = hasText(modalCancel) and hasClickAction()
+
+    /** A node inside the open prompt dialog, the window holding its Cancel. */
+    private fun inPromptDialog(): SemanticsMatcher = hasAnyAncestor(hasAnyDescendant(promptDialog()))
+
+    private fun awaitPromptDialog() {
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    private fun awaitNoPromptDialog(failure: String) {
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isEmpty() }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError(failure, e)
+        }
+    }
+
+    private fun awaitQuestionModal() {
+        val title = hasText(string(R.string.question_modal_title))
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(title).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    private fun awaitNoQuestionModal(failure: String) {
+        val title = hasText(string(R.string.question_modal_title))
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(title).fetchSemanticsNodes().isEmpty() }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError(failure, e)
+        }
+    }
+
+    /**
+     * The phone draws a decision-context row for the context [shown] carries (#817). A frame carrying none
+     * fails here: claude sent the prompt without the context this proof needs.
+     */
+    private fun assertContextDrawn(shown: ModalShownPayloadDto) {
+        val reason = shown.reason.toString().takeUnless { it == "\"\"" || it == "null" }
+        assertTrue(
+            "the prompt's modal_shown carried no decision context (reason, reason_type, description, blocked_path)",
+            reason != null || shown.reasonType != null || shown.description != null || shown.blockedPath != null,
+        )
+        val labels =
+            listOf(
+                string(R.string.modal_context_reason),
+                string(R.string.modal_context_reason_classifier),
+                string(R.string.modal_context_reason_rule),
+                InstrumentationRegistry
+                    .getInstrumentation()
+                    .targetContext
+                    .getString(R.string.modal_context_reason_type, "")
+                    .trim(),
+                string(R.string.modal_context_description),
+                string(R.string.modal_context_blocked_path),
+            )
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                labels.any { label ->
+                    composeTestRule.onAllNodes(hasText(label, substring = true) and inPromptDialog()).fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("the prompt dialog draws no decision-context row for the context its frame carried", e)
+        }
+    }
+
+    /** Wait for [conversationId]'s [occurrence]th `turn_end` on the peer, naming [what] on a timeout. */
+    private fun awaitTurnEnd(
+        peer: SecondClientPeer,
+        conversationId: String,
+        occurrence: Int,
+        what: String,
+    ) {
+        try {
+            runBlocking { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS, occurrence) }
+        } catch (e: TimeoutCancellationException) {
+            val prompts = peer.recorded(conversationId).count { it.type == "modal_shown" || it.type == "question_shown" }
+            throw AssertionError("$what never ended within $REPLY_TIMEOUT_MS ms (prompts raised in the chat: $prompts)", e)
+        }
+    }
+
+    /**
+     * Claude's reply text in [conversationId] as the peer recorded it, from the [from]th recorded frame on:
+     * its `assistant_delta` texts joined. Compared in the test only, never put into a message.
+     */
+    private fun assistantText(
+        peer: SecondClientPeer,
+        conversationId: String,
+        from: Int = 0,
+    ): String =
+        peer
+            .recorded(conversationId)
+            .drop(from)
+            .filter { it.type == "assistant_delta" }
+            .mapNotNull {
+                runCatching {
+                    MobileJson
+                        .decodeFromJsonElement(
+                            AssistantDeltaPayloadDto.serializer(),
+                            it.payload,
+                        ).text
+                }.getOrNull()
+            }.joinToString("")
+
+    /**
+     * Assert that claude ran a command in [conversationId]'s turn from the [from]th recorded frame on: the
+     * peer recorded a `Bash` `tool_use` there and a `tool_result` for that call with `is_error` false. The
+     * failure names counts and booleans only.
+     */
+    private fun assertBashRan(
+        peer: SecondClientPeer,
+        conversationId: String,
+        from: Int,
+        what: String,
+    ) {
+        val frames = peer.recorded(conversationId).drop(from)
+        val bashIds =
+            frames
+                .filter { it.type == "tool_use" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolUsePayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.name == TOOL_NAME }
+                .map { it.toolUseId }
+                .toSet()
+        val results =
+            frames
+                .filter { it.type == "tool_result" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolResultPayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.toolUseId in bashIds }
+        assertTrue(
+            "$what ran no successful Bash call (Bash calls: ${bashIds.size}, their results: ${results.size}, " +
+                "any error: ${results.any { it.isError }})",
+            results.any { !it.isError },
+        )
+    }
+
+    /**
      * Wait until the open thread shows a permission prompt that names this Read: a node in the prompt's
      * dialog, the one holding its Cancel, whose text carries the file's [baseName] or the tool name `Read`.
      * The phone's own message names both, so the dialog scope is what makes the match the prompt's.
@@ -3285,6 +3643,58 @@ class InteractiveStreamE2ETest {
                 "pairing" to "the phone's pairing with the dedicated daemon could not be minted",
                 "peer_pairing" to "the peer's --allow-remote-permissions pairing could not be minted",
             )
+
+        // #966 answer daemon. The arguments scripts/e2e-emulator.sh passes once it is up, or ARG_ANSWER_UNMET
+        // naming the prerequisite it lacked. The pair code and the peer token carry pairing tokens, and the
+        // phone's code is privileged: never log them.
+        const val ARG_ANSWER_UNMET = "answerUnmet"
+        const val ARG_ANSWER_SERVER_ID = "answerServerId"
+        const val ARG_ANSWER_PAIR_CODE = "answerPairCode"
+        const val ARG_ANSWER_PEER_TOKEN = "answerPeerToken"
+        const val ARG_ANSWER_SERVER_STATIC_PUBLIC_KEY = "answerServerStaticPublicKey"
+
+        // What each of the script's ANSWER_UNMET codes means.
+        val ANSWER_UNMET_REASONS =
+            mapOf(
+                "no_credential" to "no Claude credential; set CLAUDE_CODE_OAUTH_TOKEN (the live gate's route) or ANTHROPIC_API_KEY",
+                "claude_json_unreadable" to
+                    "CLAUDE_CODE_OAUTH_TOKEN is set but ~/.claude.json, copied into the isolated HOME, is unreadable",
+                "claude_missing" to "claude is not on PATH",
+                "instance_name" to "the answer daemon's instance name is not a test instance name",
+                "isolated_home" to "the isolated HOME or its config could not be written",
+                "daemon_not_ready" to "the answer daemon did not answer `pyry status` within 15 s",
+                "pairing" to "the phone's --allow-remote-permissions pairing could not be minted",
+                "peer_pairing" to "the peer's --allow-remote-permissions pairing could not be minted",
+            )
+
+        // The answer host's display name and its chats' run-unique prefix: neither contains "ping".
+        const val ANSWER_HOST_NAME = "Answer e2e host"
+        const val ANSWER_CHAT_NAME_PREFIX = "e2e966-"
+
+        // A `python3` command, so it needs permission (see WAIT_PROMPT). The token is its output, which no
+        // prompt contains; claude could still compute it, so the tests prove the run by a successful Bash
+        // tool_result (assertBashRan) and the token only shows the reply reports it.
+        const val ANSWER_PERMISSION_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
+                "with exactly the number it printed and nothing else. Command: python3 -c \"print(966 * 7)\""
+        const val ANSWER_PERMISSION_TOKEN = "6762"
+
+        // One clarification question with two labels; the phone picks QUESTION_PICK, the peer QUESTION_OTHER.
+        const val QUESTION_PICK = "pyrymagenta"
+        const val QUESTION_OTHER = "pyrycyan"
+        const val QUESTION_PROMPT =
+            "Use your AskUserQuestion tool exactly once to ask me one single-choice question with exactly two " +
+                "options, labelled $QUESTION_OTHER and $QUESTION_PICK. Do not use any other tool. After I answer, " +
+                "reply with exactly the label I chose and nothing else."
+
+        // Wire sentinels the #966 checks compare: the allow option id, and a dismissal's source and outcome.
+        const val PERMISSION_CLASS = "permission"
+        const val ALLOW_ONCE = "allow_once"
+        const val REMOTE_SOURCE = "remote"
+        const val ANSWERED = "answered"
+
+        // How long the other thread gets to draw a prompt that is not its own before the check that it did not.
+        const val SCOPE_SETTLE_MS = 3_000L
 
         // The dedicated host's display name and its chat's run-unique name: neither contains "ping" or
         // another scenario's prefix.
