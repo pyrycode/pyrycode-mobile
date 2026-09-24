@@ -6,7 +6,7 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated set of rung-3 scenarios (twenty-one methods, seventeen real claude turns — listed at the LIVE
+#     curated set of rung-3 scenarios (twenty-four methods, twenty-four real claude turns — listed at the LIVE
 #     TEST_TARGET below) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
@@ -196,6 +196,26 @@ SERVER_ID_BYPASS=""
 PAIR_CODE_BYPASS=""
 BYPASS_PEER_TOKEN=""
 BYPASS_PEER_SERVER_STATIC_PUBKEY=""
+
+# Dedicated answer daemon (#966), rung 3 / LIVE only: a fourth test daemon under its OWN isolated HOME, in
+# #687's shape but with no operator bypass, so claude's default mode asks. Its config turns on the stdio
+# permission prompt, the one path that offers don't-ask-again. The phone pairs with it by code WITH
+# --allow-remote-permissions, and with no other host: the phone's privilege exists only here, so every other
+# scenario still sees an unprivileged phone. A peer pairs --allow-remote-permissions too. An unmet
+# prerequisite becomes ANSWER_UNMET, a static code the two #966 methods fail with.
+PYRY_NAME_ANSWER="${PYRY_NAME}-answer"
+PAIR_NAME_ANSWER="${PAIR_NAME}-answer"
+PAIR_NAME_ANSWER_PEER="${PAIR_NAME}-answer-peer"
+DAEMON_ANSWER_LOG="${WORK_DIR}/daemon-answer.log"
+PAIR_ANSWER_OUT="${WORK_DIR}/pair-answer.out"
+PAIR_ANSWER_PEER_OUT="${WORK_DIR}/pair-answer-peer.out"
+ANSWER_HOME=""
+ANSWER_PID=""
+ANSWER_UNMET=""
+SERVER_ID_ANSWER=""
+PAIR_CODE_ANSWER=""
+ANSWER_PEER_TOKEN=""
+ANSWER_PEER_SERVER_STATIC_PUBKEY=""
 
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -412,6 +432,7 @@ cleanup() {
   [ -n "${DAEMON_PID}" ] && kill "${DAEMON_PID}" 2>/dev/null || true
   [ -n "${DAEMON_B_PID:-}" ] && kill "${DAEMON_B_PID}" 2>/dev/null || true
   [ -n "${BYPASS_PID:-}" ] && kill "${BYPASS_PID}" 2>/dev/null || true
+  [ -n "${ANSWER_PID:-}" ] && kill "${ANSWER_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
   wait 2>/dev/null || true
   # The operator-bypass HOME (#687) goes whatever the exit code: it holds a copy of ~/.claude.json and the
@@ -424,6 +445,10 @@ cleanup() {
     fi
     [ -z "${BYPASS_TOKEN_FILE}" ] || rm -f "${BYPASS_TOKEN_FILE}"
     rm -rf "${BYPASS_HOME}"
+  fi
+  # The answer daemon's HOME (#966) goes too, whatever the exit code: it holds a copy of ~/.claude.json.
+  if [[ "${ANSWER_HOME:-}" == /tmp/pyry-e2e-ans.* ]]; then
+    rm -rf "${ANSWER_HOME}"
   fi
   if [ "${code}" -ne 0 ]; then
     log "logs kept at ${WORK_DIR} (relay.log, daemon.log, pair.out)"
@@ -907,6 +932,74 @@ if [ -z "${DETERMINISTIC}" ]; then
   start_bypass_daemon
 fi
 
+# ---- 4a'. the dedicated answer daemon (rung 3 / LIVE only, #966) --------------------------------
+# See PYRY_NAME_ANSWER above. The shape of section 4a, with no revision gate and no operator bypass: each
+# unmet prerequisite records ONE static code in ANSWER_UNMET, and only the two #966 methods fail on it.
+answer_unmet() {
+  ANSWER_UNMET="$1"
+  [ -z "${ANSWER_PID}" ] || { kill "${ANSWER_PID}" 2>/dev/null || true; }
+  log "answer daemon (#966) not available: ${1} — ${2}"
+}
+
+start_answer_daemon() {
+  local route="" parsed="" deadline=0
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    route="oauth"
+    [ -r "${HOME}/.claude.json" ] \
+      || { answer_unmet claude_json_unreadable "CLAUDE_CODE_OAUTH_TOKEN is set but ~/.claude.json is not readable"; return 0; }
+  elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    route="api-key"
+  else
+    answer_unmet no_credential "neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set"
+    return 0
+  fi
+  command -v claude >/dev/null 2>&1 || { answer_unmet claude_missing "claude is not on PATH"; return 0; }
+  two_host_name_ok "${PYRY_NAME_ANSWER}" \
+    || { answer_unmet instance_name "${PYRY_NAME_ANSWER} is not a test instance name"; return 0; }
+  ANSWER_HOME="$(mktemp -d /tmp/pyry-e2e-ans.XXXXXX)" \
+    || { answer_unmet isolated_home "could not create the isolated HOME"; return 0; }
+  (
+    umask 077
+    mkdir -p "${ANSWER_HOME}/.pyry" "${ANSWER_HOME}/work"
+    printf '%s\n' '{"interactive_runner":"stream-json","stdio_permission_prompt":true}' >"${ANSWER_HOME}/.pyry/config.json"
+    if [ "${route}" = "oauth" ]; then cp "${HOME}/.claude.json" "${ANSWER_HOME}/.claude.json"; fi
+  ) || { answer_unmet isolated_home "could not write the isolated HOME's config or credential file"; return 0; }
+  log "answer daemon (#966): isolated HOME ${ANSWER_HOME}, credential route ${route}"
+  report_interactive_runner "${ANSWER_HOME}/.pyry/config.json"
+
+  local -a answer_env=("HOME=${ANSWER_HOME}" PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}")
+  [ -n "${LIVE}" ] || answer_env+=(PYRY_ALLOW_INSECURE_RELAY=1)
+  env "${answer_env[@]}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME_ANSWER}" -pyry-workdir="${ANSWER_HOME}/work" -pyry-idle-timeout=0 \
+    >"${DAEMON_ANSWER_LOG}" 2>&1 &
+  ANSWER_PID=$!
+  deadline=$((SECONDS + 15))
+  until env "HOME=${ANSWER_HOME}" "${PYRY_BIN}" status -pyry-name="${PYRY_NAME_ANSWER}" >/dev/null 2>&1; do
+    if ! kill -0 "${ANSWER_PID}" 2>/dev/null || [ "${SECONDS}" -ge "${deadline}" ]; then
+      answer_unmet daemon_not_ready "not ready within 15s; see private log ${DAEMON_ANSWER_LOG}"
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  # Both the phone and the peer pair --allow-remote-permissions: the phone answers here. Never log either value.
+  env "HOME=${ANSWER_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_ANSWER}" --name="${PAIR_NAME_ANSWER}" --allow-remote-permissions \
+    >"${PAIR_ANSWER_OUT}" 2>&1 \
+    && parsed="$(phone_pair_code "${PAIR_ANSWER_OUT}" "${PHONE_RELAY_URL}" ANSWER)" \
+    && eval "${parsed}" \
+    && [ -n "${SERVER_ID_ANSWER}" ] && [ -n "${PAIR_CODE_ANSWER}" ] \
+    || { answer_unmet pairing "the phone pairing could not be minted; see private log ${PAIR_ANSWER_OUT}"; return 0; }
+  env "HOME=${ANSWER_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_ANSWER}" --name="${PAIR_NAME_ANSWER_PEER}" --allow-remote-permissions \
+    >"${PAIR_ANSWER_PEER_OUT}" 2>&1 \
+    && parsed="$(pair_token "${PAIR_ANSWER_PEER_OUT}" ANSWER_PEER)" \
+    && eval "${parsed}" \
+    && [ -n "${ANSWER_PEER_TOKEN}" ] && [ -n "${ANSWER_PEER_SERVER_STATIC_PUBKEY}" ] \
+    || { answer_unmet peer_pairing "the peer pairing could not be minted; see private log ${PAIR_ANSWER_PEER_OUT}"; return 0; }
+  log "answer daemon (#966) up: serverId=${SERVER_ID_ANSWER} (the test pairs it by code)"
+}
+if [ -z "${DETERMINISTIC}" ]; then
+  start_answer_daemon
+fi
+
 # ---- 4b. release a held stream fragment after an explicit test action ---------
 # First-fragment replay belongs to fakeclaude's user-envelope handler. Only the
 # second fragment needs a host signal: enqueue #2, or a phone disconnect while
@@ -960,6 +1053,10 @@ elif [ -n "${LIVE}" ]; then
   # #981: the thread now shows the allowed Read's reply, so the #687 operator-bypass method is back on top:
   # 22 methods and 19 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild"
+  # #966: the permission-answer method (three turns) and the question-answer method (two) join on the answer
+  # daemon, so the list holds 24 methods and 24 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_questionAnswer_reachesTheAskingConversation"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
@@ -992,6 +1089,17 @@ elif [ -n "${BYPASS_PEER_TOKEN:-}" ]; then
     -Pandroid.testInstrumentationRunnerArguments.bypassServerStaticPublicKey="${BYPASS_PEER_SERVER_STATIC_PUBKEY}"
     -Pandroid.testInstrumentationRunnerArguments.bypassTokenFile="${BYPASS_TOKEN_FILE}"
     -Pandroid.testInstrumentationRunnerArguments.bypassToken="${BYPASS_WITNESS}"
+  )
+fi
+# The answer daemon (#966): its unmet prerequisite, or the privileged phone code and the peer.
+if [ -n "${ANSWER_UNMET:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.answerUnmet="${ANSWER_UNMET}")
+elif [ -n "${ANSWER_PEER_TOKEN:-}" ]; then
+  GRADLE_TEST_ARGS+=(
+    -Pandroid.testInstrumentationRunnerArguments.answerServerId="${SERVER_ID_ANSWER}"
+    -Pandroid.testInstrumentationRunnerArguments.answerPairCode="${PAIR_CODE_ANSWER}"
+    -Pandroid.testInstrumentationRunnerArguments.answerPeerToken="${ANSWER_PEER_TOKEN}"
+    -Pandroid.testInstrumentationRunnerArguments.answerServerStaticPublicKey="${ANSWER_PEER_SERVER_STATIC_PUBKEY}"
   )
 fi
 "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \

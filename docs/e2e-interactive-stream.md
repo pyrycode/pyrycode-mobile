@@ -100,12 +100,13 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    repository to be published rather than firing on socket-up), with no reopen in between — each of the
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981)**
-   runs a **curated set of twenty-two scenarios** (ping + create-workspace-folder + new-session + delete +
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981 / #966)**
+   runs a **curated set of twenty-four scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
    peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model +
    footer-context-usage + model-change + inherited-effort + chosen-effort + remembered-effort-recall +
-   permission-held-running-tool + stop-running-turn + operator-bypass-permission, nineteen
+   permission-held-running-tool + stop-running-turn + operator-bypass-permission + permission-answer +
+   question-answer, twenty-four
    real claude turns — five pings (ping, create-workspace-folder, new-session, the peer-started turn's own
    ping, and the offline-read-reconcile scenario's own ping), the peer-queue-consistency scenario's wait
    turn and its drained ping, the offline-read-reconcile scenario's peer offline turn, the
@@ -113,8 +114,11 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    inherited-effort scenario's own turn, the chosen-effort scenario's own turn, the
    remembered-effort-recall scenario's two turns (one in its fresh chat, one in its fresh channel), the
    permission-held-running-tool scenario's own turn, the stop-running-turn scenario's two turns (the
-   held-then-interrupted turn and its follow-up ping), and the operator-bypass-permission scenario's two
-   turns (the tool-free ping and the outside-workspace Read), plus a
+   held-then-interrupted turn and its follow-up ping), the operator-bypass-permission scenario's two
+   turns (the tool-free ping and the outside-workspace Read), the permission-answer scenario's three turns
+   (the allowed command, its don't-ask-again repeat, and the peer-allowed prompt in the second
+   conversation), and the question-answer scenario's two turns (the phone's answer and the peer's answer),
+   plus a
    possible reset wrap-up turn — delete, archive-restore,
    change-workspace, rename, save-as-channel, list-archive-entry, two-host and model-change spend none)
    against the **production relay** over `wss://`
@@ -123,6 +127,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    scenario (#687) rides this same curated list; [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
    fixed the production bug its own diagnosis named — the thread screen, not the repository fold, was
    losing a non-streaming reply under `reverseLayout` once the list overflowed (see its paragraph below).
+   The **permission-answer** and **question-answer** scenarios (#966) ride a fourth, dedicated daemon and
+   are covered in their own paragraph below, after the operator-bypass-permission paragraph.
    The ping, create-workspace-folder and
    new-session scenarios in `InteractiveStreamE2ETest` require a displayed exact
    ping reply in the message list (#694), independently of disappearing queued text.
@@ -141,7 +147,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
-   turn. The curated twenty-two-scenario gate does not cover cross-device Stop.
+   turn. The curated twenty-four-scenario gate does not cover cross-device Stop.
    An open thread recovering a peer's reconnect-window prompt on its own — the gap #850 found — is
    **shipped (#861)**: the still-open thread's reconnect history re-ask now waits for the repository to
    be published, so it reaches a live repository instead of a socket that is up but not yet handshaked.
@@ -703,8 +709,10 @@ recall rules these methods assert against.
 
 The **operator-bypass permission** scenario (#687 —
 `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) rides the curated `LIVE=1`
-list like every scenario above (`LIVE_MINIMUM` is 22, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
-having restored it on top of #965's stop method; see [Pre-ship gate](#pre-ship-gate)). Running it needs its
+list like every scenario above (`LIVE_MINIMUM` is 24, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
+having restored it on top of #965's stop method, and [#966](https://github.com/pyrycode/pyrycode-mobile/issues/966)
+having raised it again for the permission-answer and question-answer methods; see
+[Pre-ship gate](#pre-ship-gate)). Running it needs its
 own daemon: `scripts/e2e-emulator.sh` starts a
 third, dedicated `pyry` instance under its own isolated `HOME` (§ 4a, `start_bypass_daemon`), with
 `stdio_permission_prompt: true` in its config and its children launched with
@@ -781,6 +789,49 @@ transcript to confirm the diagnosis above. Two real claude turns: the tool-free 
 outside-workspace Read. See
 [Thread composer footer § Permission mode](knowledge/features/thread-composer-footer.md#permission-mode-650)
 for the footer's own settle-and-confirm rules this scenario exercises against a real daemon.
+
+The **permission-answer** and **question-answer** scenarios (#966 —
+`interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`,
+`interactiveTurn_questionAnswer_reachesTheAskingConversation`) prove that a permission prompt and a
+clarification question each show only in the conversation that raised them, that the phone's own answer
+reaches that conversation's claude, and that an answer another device gives closes the phone's prompt with
+no tap. They need a phone that is **allowed** to answer, which every other scenario on this list
+deliberately withholds (the running-tool and stop-running-turn scenarios above are peer-answered precisely
+so the phone stays unprivileged). Don't-ask-again is also only ever offered on the daemon's **stdio**
+permission-prompt path (`always_allow.offered`); the approval-MCP path host A uses for every scenario above
+always reports `{offered:false}`, and host A runs under the operator's own `~/.pyry/config.json`, which the
+harness will not edit. So `scripts/e2e-emulator.sh` starts a **fourth** test daemon, the **answer daemon**
+(§ 4a', `start_answer_daemon`), shaped like the operator-bypass daemon above — its own isolated `/tmp`
+HOME, `stdio_permission_prompt: true` in its config — but with **no** operator-bypass argv, so claude's
+default mode asks for permission as normal. The phone is paired `--allow-remote-permissions` with **this
+host alone**; nothing else pairs the phone with it, so every other scenario still sees an unprivileged
+phone, and both #966 methods remove the pairing from `PairedServerCollectionStore` in `finally`. A second
+`SecondClientPeer` is paired `--allow-remote-permissions` on the same host, gaining `awaitQuestion` and
+`answerQuestion` alongside its existing `awaitPermissionModal` / `allowOnce`. An unmet prerequisite (no
+credential, `claude` missing, the isolated HOME failing to build, either pairing failing to mint) sets one
+static `ANSWER_UNMET` code that fails only these two methods, naming the cause — it never skips and never
+fails the rest of the run.
+
+The permission-answer scenario opens two conversations (A, B) on the answer daemon. A prompt raised in A
+(`ANSWER_PERMISSION_PROMPT`, a `python3` command whose output token the prompt text never contains) shows
+in A's dialog with every decision-context field the frame carries and `always_allow.offered = true`;
+leaving A for B shows no dialog, and returning to A shows it again. Allowing it with don't-ask-again
+ticked closes the dialog, and claude's reply — read from the peer's recorded `assistant_delta` frames, not
+the phone's own bubble (see #981's diagnosis above) — carries the token. `assertBashRan` additionally
+requires a `Bash` `tool_use` and a non-error `tool_result` for it in the frames the peer recorded for that
+turn, so a reply claude could compute or recall (`966 * 7`) cannot pass in place of the command actually
+running. The same prompt sent again in A shows no second `modal_shown` and still passes `assertBashRan`,
+proving the grant held; the same prompt sent in B (whose session holds no grant) shows the dialog again,
+and the peer allowing it closes the dialog with no phone tap. Three real claude turns. The question-answer
+scenario opens one conversation and sends a prompt asking claude to call `AskUserQuestion` with two labels
+and then echo the chosen one back (`QUESTION_PROMPT`); the phone answers one label from the batch modal and
+claude's reply names it and not the other, then the peer answers the modal shown for a repeat of the same
+prompt, closing it with no phone tap. Two real claude turns. Both scenarios resolved open questions from
+the plan on their first live pass: claude does supply decision context and does offer don't-ask-again for a
+default-mode `python3` ask, and real claude did call `AskUserQuestion` reliably from the scripted prompt, so
+no deterministic-only fallback was needed. The protocol doc's paragraph that a `question_answer` is
+"resolved by nothing yet" was stale — it is gated by the same per-device `--allow-remote-permissions` bit a
+`modal_answer` uses.
 
 The **permission-held running-tool** scenario (#950 —
 `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`) is likewise **always-on** (not
@@ -914,12 +965,13 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the twenty-two curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the twenty-four curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
 peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
 context usage, #946; model change, inherited effort, chosen effort and remembered-effort recall, #545;
-running-tool status label, #950; stop-running-turn, #965; operator-bypass permission, #687 (fixed #981))
+running-tool status label, #950; stop-running-turn, #965; operator-bypass permission, #687 (fixed #981);
+permission-answer and question-answer, #966)
 ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
@@ -944,15 +996,18 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** nineteen real claude turns across twenty-two curated methods — five pings (ping,
+**Cost:** twenty-four real claude turns across twenty-four curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
 ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, the
 footer-context-usage scenario's own ping, #946, the inherited-effort and chosen-effort scenarios' own
 turns, and the remembered-effort-recall scenario's two turns, #545, the
 permission-held running-tool scenario's own turn, #950, the stop-running-turn scenario's two turns
-(the held-then-interrupted turn and its follow-up ping), #965, and the operator-bypass-permission
-scenario's two turns (the tool-free ping and the outside-workspace Read), #981 —
+(the held-then-interrupted turn and its follow-up ping), #965, the operator-bypass-permission
+scenario's two turns (the tool-free ping and the outside-workspace Read), #981, the permission-answer
+scenario's three turns (the allowed command, its don't-ask-again repeat, and the peer-allowed prompt in
+the second conversation), and the question-answer scenario's two turns (the phone's answer and the peer's
+answer), #966 —
 and a reset wrap-up turn for the new-session scenario's own live child. Delete, archive-restore,
 change-workspace, rename, save-as-channel,
 list-archive-entry, two-host separation and the model-change scenario spend no Claude turns. Allow a few
@@ -960,7 +1015,8 @@ minutes of wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
 tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) rose from 20 to 21 with #965's new
-stop method, then from 21 to 22 with #981 restoring the #687 bypass method to the curated list.
+stop method, then from 21 to 22 with #981 restoring the #687 bypass method to the curated list, then from
+22 to 24 with #966 adding the permission-answer and question-answer methods on the dedicated answer daemon.
 `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
@@ -977,8 +1033,9 @@ raised it again, from 12 to 13, #891 raised it once more, from 13 to 14, #946 ra
 again, from 14 to 15, #545 raised it again, from 15 to 19, #687 raised it again, from
 19 to 20, and #950 raised it again, from 20 to 21. #977 then lowered it from 21 to 20 when it excluded
 \#687's flaky method from the list, #965 raised it again, from 20 to 21, adding the stop-running-turn
-method, and #981 raised it again, from 21 to 22, restoring \#687's method once its production bug was
-fixed, on the same mechanism. Shell cleanup preserves the original
+method, #981 raised it again, from 21 to 22, restoring \#687's method once its production bug was
+fixed, and #966 raised it again, from 22 to 24, adding the permission-answer and question-answer methods
+on the dedicated answer daemon, on the same mechanism. Shell cleanup preserves the original
 result and retains failure artifacts; a clean XML report with a failing process status is not
 a passing gate.
 
@@ -989,7 +1046,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of twenty-two rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of twenty-four rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1013,7 +1070,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Twenty-two curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Twenty-four curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -1036,15 +1093,20 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` (#950), and
 `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` (#965), and
 `InteractiveStreamE2ETest#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild` (#981),
+`InteractiveStreamE2ETest#interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` (#966), and
+`InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation` (#966),
 so exactly
-**nineteen real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
+**twenty-four real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
 ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, #891's own
 ping, #946's own ping, the inherited-effort and chosen-effort scenarios' own turns and the
 remembered-effort-recall scenario's two turns (#545), the permission-held
 running-tool scenario's own turn (#950), the stop-running-turn scenario's two turns — the
-held-then-interrupted turn and its follow-up ping (#965), and the operator-bypass-permission scenario's
-two turns — the tool-free ping and the outside-workspace Read (#981); the delete,
+held-then-interrupted turn and its follow-up ping (#965), the operator-bypass-permission scenario's
+two turns — the tool-free ping and the outside-workspace Read (#981), the permission-answer scenario's
+three turns — the allowed command, its don't-ask-again repeat, and the peer-allowed prompt in the second
+conversation, and the question-answer scenario's two turns — the phone's answer and the peer's answer
+(#966); the delete,
 archive-restore, change-workspace, rename,
 save-as-channel, list-archive-entry, two-host and model-change scenarios each add a method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
@@ -1053,7 +1115,9 @@ navigation, rename and link cycling, also daemon round-trips).
 The full class also includes the
 \#481 tool-use test and #950's `@Ignore`d elapsed-reading twin, which stay excluded from LIVE — the
 operator-bypass-permission method rides LIVE now that
-[#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixed its missing reply. `LIVE=1` is
+[#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixed its missing reply, and the
+permission-answer and question-answer methods (#966) ride LIVE on the dedicated answer daemon described
+above. `LIVE=1` is
 **mutually exclusive with `DETERMINISTIC=1`**
 (real vs scripted claude); setting both fails fast.
 
@@ -1087,7 +1151,7 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **nineteen real claude turns per run across twenty-two curated methods** (ping + create-workspace-folder,
+Cost: **twenty-four real claude turns per run across twenty-four curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
 \#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
 status-sheet-running-model scenario's own ping, #891 + the footer-context-usage scenario's own ping,
@@ -1095,7 +1159,10 @@ status-sheet-running-model scenario's own ping, #891 + the footer-context-usage 
 scenario's two turns, #545 + the
 permission-held running-tool scenario's own turn, #950 + the stop-running-turn scenario's two turns — the
 held-then-interrupted turn and its follow-up ping, #965 + the operator-bypass-permission scenario's two
-turns — the tool-free ping and the outside-workspace Read, #981; `/clear` spends
+turns — the tool-free ping and the outside-workspace Read, #981 + the permission-answer scenario's three
+turns — the allowed command, its don't-ask-again repeat, and the peer-allowed prompt in the second
+conversation, and the question-answer scenario's two turns — the phone's answer and the peer's answer,
+#966; `/clear` spends
 none beyond the ping that primes the session; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
 \#740, two-host separation, #847, and model change each spend none — create/rename/delete/archive/restore/
@@ -1404,6 +1471,23 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #966 (2026-09-24):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/966` at `944a911caa` merged with
+  `origin/main` at `d291e62025` (0 commits behind before the merge), executed all twenty-four curated
+  scenarios — the curated list's first run with
+  `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` and
+  `interactiveTurn_questionAnswer_reachesTheAskingConversation` on it — with twenty-four passes, no
+  failures or skips, exit 0, wall clock 574.4s. `LIVE_MINIMUM` rose from 22 to 24 with this ticket (see
+  [Pre-ship gate](#pre-ship-gate)); twenty-four executed meets it exactly. This is the first live evidence
+  that a permission prompt and a clarification question each reach only the conversation that raised them,
+  that don't-ask-again holds across a repeat command in that conversation while a second, ungranted
+  conversation still prompts, and that a prompt or question another paired device resolves closes the
+  phone's own dialog with no tap. An earlier run on this branch (2026-09-24, commit `1723e3c6d2`) failed 23
+  of 24: every method that pairs the phone timed out with `redemption_window_elapsed` because the harness
+  mints pairing codes before the Gradle build and boot, and that phase took 28 minutes instead of its usual
+  3 while another builder's focused tests held the same managed device. That is a harness weakness, not a
+  product or design defect, filed as [#993](https://github.com/pyrycode/pyrycode-mobile/issues/993); no
+  test or design changed before the rerun that passed.
 - **LIVE verified for #981 (2026-09-24):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/981` at `3c41731fa2` merged with
   `origin/main` at `7e820f8e51` (8 commits behind before the merge), executed all twenty-two curated
@@ -1653,6 +1737,21 @@ The remaining checks here are specific to a real relay or real Claude execution:
   identity rather than `isStreaming`, now follows any new newest row — streaming or not — unless the
   reader has scrolled away (the existing `userScrolledAway` yield, unchanged). `readReplyDiagnosis` gained
   `threadHeldToken`, so a future failure at this step names its cause from the phone side alone.
+
+- **Coverage — shipped:** [#966](https://github.com/pyrycode/pyrycode-mobile/issues/966) added
+  `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` and
+  `interactiveTurn_questionAnswer_reachesTheAskingConversation`, the twenty-third and twenty-fourth
+  curated `LIVE=1` methods, on a new fourth test daemon (the answer daemon) that is the only host the
+  phone is ever paired `--allow-remote-permissions` with. They prove that a permission prompt (#815–#818)
+  and a clarification question (#661) each show only in the conversation that raised them, with the
+  permission prompt's decision context and don't-ask-again offer; that the phone's own answer reaches
+  that conversation's claude and don't-ask-again lets a repeat command run again with no new prompt; and
+  that a prompt or question another paired device resolves closes the phone's dialog with no tap on the
+  phone. `assertBashRan` additionally requires a successful `Bash` tool call in the frames the peer
+  recorded for the turn, so a reply claude could compute or recall cannot stand in for the command
+  actually running. Real claude called `AskUserQuestion` reliably from the scripted prompt on the first
+  live run, so the question scenario needed no deterministic-only fallback. See the dedicated paragraph
+  under [What rung 3 is made of](#what-rung-3-is-made-of) for the daemon shape and both scenarios' steps.
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns
