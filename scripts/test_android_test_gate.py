@@ -261,8 +261,11 @@ class AndroidGateTest(unittest.TestCase):
             home.mkdir(parents=True)
             with patch.dict(os.environ, {"ANDROID_USER_HOME": tmp}):
                 self.assertIsNone(gate.managed_avd("pixel2Api33Atd"))
+                # #955: the AVD left from the aosp-atd image has no Play services, so it is never booted.
                 (home / "dev33_aosp_atd_arm64-v8a_Pixel_2.ini").write_text("")
-                self.assertEqual(gate.managed_avd("pixel2Api33Atd"), (home, "dev33_aosp_atd_arm64-v8a_Pixel_2"))
+                self.assertIsNone(gate.managed_avd("pixel2Api33Atd"))
+                (home / "dev33_google_atd_arm64-v8a_Pixel_2.ini").write_text("")
+                self.assertEqual(gate.managed_avd("pixel2Api33Atd"), (home, "dev33_google_atd_arm64-v8a_Pixel_2"))
                 self.assertIsNone(gate.managed_avd("otherDevice"))
 
     def test_free_emulator_port_skips_a_busy_pair(self):
