@@ -274,10 +274,16 @@ the digest, the MIME type, the daemon's error code text, an exception message, o
   which throws on plain JVM with no Robolectric — the same capturing-sink requirement documented at
   [Relay diagnostic log § Testing](relay-log.md#testing) and [Attachment upload §
   Testing](attachment-upload.md#testing) applies to every test here that reaches a `RelayLog.d` call.
-- No Compose surface and no operator-facing flow of its own — the UI is #672 — so no rung-3/4 scenario.
+- No Compose surface and no operator-facing flow of its own — the UI is [#984](message-bubble.md#attachment-slot-since-984), which maps this leg's four failure members onto `AttachmentViewState` (`Retrieved → Ready`, `NotFound → NotFound`, `TooLarge`/`Invalid`/`Unavailable` → `Failed`) — so no rung-3/4 scenario here either; #674 proves the live exchange.
 
 ## Related
 
+- UI consumer: [MessageBubble § Attachment slot](message-bubble.md#attachment-slot-since-984) (#984) —
+  renders each reference in its bubble and starts a `retrieveAttachment` call when its row is first shown
+  on screen, falling back first to a still-readable original of a file this phone sent in the same app
+  session (`ComposerDraftStore.sentOriginal`, [Thread screen — composer drafts and
+  attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)). Opening or
+  saving the kept file is #985, not yet built.
 - Ticket: `docs/specs/architecture/899-attachment-retrieval.md` — design, the bound's reasoning, security
   review, revisions (the settle-wake fix and the `InertAttachmentStore` rework).
 - Sibling leg: [Attachment upload](attachment-upload.md) (#829) — the opposite correlation direction, the

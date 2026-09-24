@@ -16,6 +16,7 @@ import de.pyryco.mobile.data.model.scopedTo
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
+import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -31,6 +32,8 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.conversations.components.AttachmentSource
+import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
@@ -199,6 +202,15 @@ class ThreadViewModel(
      * only, never a name, URI or type, so the snackbar it drives shows fixed local text.
      */
     val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
+
+    private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
+
+    /**
+     * Each shown message attachment's state by id (#984). An id is absent until its row is first shown,
+     * which is what starts its load ([onAttachmentShown]); the screen draws an absent id as loading. A
+     * sibling flow for the same reason as [draft].
+     */
+    val attachmentStates: StateFlow<Map<String, AttachmentViewState>> = _attachmentStates.asStateFlow()
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -1158,11 +1170,16 @@ class ThreadViewModel(
             try {
                 val target = state.value.conversationId
                 val references = mutableListOf<MessageAttachment>()
+                val originals = mutableMapOf<String, String>()
                 for (entry in attachments) {
                     val id = entry.attachmentId ?: upload(target, entry) ?: return@launchGuardedRepoCall
                     // #983: the thread row names each file as it was uploaded.
                     references += MessageAttachment(id, entry.displayName, entry.mimeType)
+                    originals[id] = entry.uri
                 }
+                // #984: before the send, because the confirmed row can be drawn while it is suspended. A
+                // send that then fails leaves harmless entries: its retry names the same ids.
+                draftStore.recordSentOriginals(serverId, conversationId, originals)
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
                 repository.sendMessage(target, text, references)
@@ -1232,6 +1249,68 @@ class ThreadViewModel(
         }
         if (tooLarge > 0 || tooMany > 0) attachmentRefusalChannel.trySend(AttachmentRefusal(tooLarge, tooMany))
     }
+
+    /**
+     * A message attachment's row is on screen (#984): start its load unless it already has a state. The
+     * claim is a compare-and-set, so a row shown twice loads once, and a failure waits for [onRetryAttachment].
+     */
+    fun onAttachmentShown(attachmentId: String) {
+        if (claimAttachment(attachmentId) { it == null }) loadAttachment(attachmentId)
+    }
+
+    /** The retry control of a failed attachment (#984). Not found is final and has none. */
+    fun onRetryAttachment(attachmentId: String) {
+        if (claimAttachment(attachmentId) { it == AttachmentViewState.Failed }) loadAttachment(attachmentId)
+    }
+
+    /** Set [attachmentId] to loading if its state passes [claimable]; whether this call did. */
+    private fun claimAttachment(
+        attachmentId: String,
+        claimable: (AttachmentViewState?) -> Boolean,
+    ): Boolean {
+        var claimed = false
+        _attachmentStates.update { states ->
+            claimed = claimable(states[attachmentId])
+            if (claimed) states + (attachmentId to AttachmentViewState.Loading) else states
+        }
+        return claimed
+    }
+
+    /**
+     * Show the phone's own original while it can still be read, else retrieve the bytes from this
+     * thread's host (#984). Logs the id and a static outcome only: never a name, URI or path.
+     */
+    private fun loadAttachment(attachmentId: String) {
+        viewModelScope.launch {
+            val (state, outcome) =
+                try {
+                    val original = draftStore.sentOriginal(serverId, conversationId, attachmentId)
+                    if (original != null && attachmentReader.canRead(original)) {
+                        AttachmentViewState.Ready(AttachmentSource.Original(original), null, null) to "original"
+                    } else {
+                        retrieved(repository.retrieveAttachment(conversationId, attachmentId))
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A repository that keeps no files throws; its message is not read.
+                    AttachmentViewState.Failed to "failed"
+                }
+            RelayLog.d { "event=thread_attachment_load id=$attachmentId outcome=$outcome" }
+            _attachmentStates.update { it + (attachmentId to state) }
+        }
+    }
+
+    private fun retrieved(result: AttachmentRetrievalResult): Pair<AttachmentViewState, String> =
+        when (result) {
+            is AttachmentRetrievalResult.Retrieved ->
+                AttachmentViewState.Ready(AttachmentSource.Kept(result.file), result.displayName, result.mimeType) to "retrieved"
+            AttachmentRetrievalResult.NotFound -> AttachmentViewState.NotFound to "not_found"
+            AttachmentRetrievalResult.TooLarge,
+            AttachmentRetrievalResult.Invalid,
+            AttachmentRetrievalResult.Unavailable,
+            -> AttachmentViewState.Failed to "failed"
+        }
 
     /** Remove one pending attachment from this chat (#932), leaving the rest in order. */
     fun removeAttachment(key: Long) {

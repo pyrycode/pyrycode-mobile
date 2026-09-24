@@ -154,6 +154,14 @@ inside `ThreadScreen` moved, from `ThreadStatusArea` to `ThreadTopOverlay`.
   pill and the status-row signal render at once, since the reading no longer competes for the status slot.
   The rest (verbatim status, a benign `allowed` clearing it, the reset/percent edge cases) keep their prior
   assertions, found by content description rather than status-row position.
+- **`benignFrame_clearsTheArm`'s sync point** (#1010): `ScriptedThreadHarness` pumps frames on
+  `Dispatchers.IO`, off the Compose clock, so `composeRule`'s idling does not wait for a pushed frame to
+  fold. `awaitDisplayed(signal)` is only a real sync point if `signal` was **not already on screen** before
+  the frame under test — otherwise it returns immediately and an absence assertion right after it can race
+  the frame. The test pushed `turn_state thinking` *before* the benign `allowed` frame it was meant to
+  gate on, so the wait was a no-op; it moved to push `thinking` *after* that frame instead, matching the
+  shape `pastResetsAt_neverShows` already used. No production change: `UsageLimitProjection.apply` already
+  cleared on any benign reading regardless of `limit_type`.
 - **Robolectric** `ThreadTopOverlayTest` (new, #1002, `app/src/sharedTest/.../thread/`) — see [Thread top
   overlay § Testing](thread-top-overlay.md#testing) for the pill-rendering and dismissal cases, and for the
   status-row regression proof (AC #4: a running tool, the resetting wrap-up phase and "Turn interrupted"
