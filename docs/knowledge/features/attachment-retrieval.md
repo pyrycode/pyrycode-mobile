@@ -4,7 +4,8 @@ Fetches a conversation attachment's bytes from **its owning host** and keeps the
 storage, whether the assistant produced the file or the phone uploaded it (#829's id and #898's offered
 id are fetched the same way). Data layer only — no UI; [#672](https://github.com/pyrycode/pyrycode-mobile/issues/672)
 renders and opens the kept file. Split from [#671](https://github.com/pyrycode/pyrycode-mobile/issues/671);
-clearing a host's retained files on unpair is a sibling ticket. Wire contract:
+[#900](../../specs/architecture/900-clear-attachments-on-unpair.md) clears a host's retained files on
+unpair — see [§ Removal](#host-store--datacacheattachmentstorekt) below. Wire contract:
 `../pyrycode/docs/protocol-mobile.md` § Attachments (`request_attachment`, `attachment_chunk`,
 "Reassembly & integrity", "Retrieval, and its two terminal signals", "Trust and content hygiene"). That
 section still says nothing answers `request_attachment` — stale; the daemon answers it through
@@ -147,7 +148,8 @@ transferable as the Keystore-wrapped pairing that authorised fetching it, which 
 path components only **after** `isAttachmentIdShape` — lowercase hex and `-` cannot spell anything but
 themselves; an id that fails the shape check returns `NotFound` before any path is built and before
 `fetch` is called. The server id is hashed, never pasted, mirroring `FileConversationCache`'s host
-directories. One host is one directory, so a future per-host removal on unpair is one recursive delete.
+directories. One host is one directory, so unpair's per-host removal (`removeHost`, #900 below) is one
+recursive delete.
 
 **Writes:** metadata is written first, content last, each through a `.part` file and
 `Files.move(..., ATOMIC_MOVE, REPLACE_EXISTING)` — content last makes its name the commit point, so a
@@ -165,6 +167,15 @@ bytes before returning `Retrieved`. Followers `await()` the same deferred. **A c
 the deferred with `null`**, and a follower that reads `null` loops and becomes the next leader — a
 follower never inherits another caller's cancellation, and cancelling one of several concurrent callers
 never fails the others.
+
+**Removal — `removeHost(serverId): Result<Unit>` (#900):** on `ioDispatcher`, `deleteRecursively`s the
+host's whole directory. Failure is decided by the directory's continued existence afterward — the same
+rule [`FileConversationCache.removeHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost)
+uses — and a `SecurityException` is also caught as failure; an unknown host is a successful no-op. The
+failure carries a static message with no id or path, and never throws except on cancellation. The store
+itself logs nothing here; the caller,
+[`forgetRemovedHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost), logs the static
+`event=host_attachments_remove_failed` on failure and does not surface it.
 
 ## Wiring — `CachingConversationRepository` + `AppModule`
 
@@ -218,6 +229,14 @@ Two new default-throwing members, the same idiom as `requestSystemPrompt`:
 - **DI: resolving a per-host store eagerly through `get()` inside a `single { }` block needs the same
   test-container treatment as `ConversationCache`.** See [Dependency injection §
   AttachmentStore](dependency-injection.md#attachmentstore-and-context-free-thread-destination-containers-899).
+- **Don't seed an `AttachmentStore` fixture by suspending on a separate `StandardTestDispatcher` from a
+  test body running on an `UnconfinedTestDispatcher`.** `HostChannelListViewModelTest` (#900) needed one
+  `AttachmentStore` on the same queued dispatcher the production hook uses (so the test can observe the
+  unpair confirmation still open while the removal is pending) and a second store over the same root to
+  seed and read back files without disturbing that queue. Seeding through the queued store resumes the
+  test body inside that dispatcher's task, where the view model's unconfined launches never start, so
+  `openHostEditor` silently does nothing and later assertions fail far from the cause. Seed and read back
+  through the second, unconfined-dispatcher store instead.
 
 ## Logging
 
@@ -245,7 +264,9 @@ the digest, the MIME type, the daemon's error code text, an exception message, o
   `.part` left behind; a kept file is returned with no fetch call; concurrent retrievals of the same key
   produce one fetch and one shared outcome; a failure leaves no file under the attachment's id; a later
   retrieval after a failure fetches again; an invalid id shape never calls `fetch`; two hosts keep
-  separate trees.
+  separate trees. `removeHost` (#900): deleting host A's directory removes every file kept for A across
+  two conversations and leaves host B's kept file readable with no fetch; an unknown host is a successful
+  no-op; a host directory that cannot be deleted (root made read-only) reports failure without throwing.
 - `StableConversationRepositoryTest` — `fetchAttachment` with no live repository returns `Unavailable`.
 - `CachingConversationRepositoryTest` — `retrieveAttachment` goes through the store with this wrapper's
   own `serverId` and the delegate's `fetchAttachment` as the fetch function.
