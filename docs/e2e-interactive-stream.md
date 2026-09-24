@@ -882,7 +882,8 @@ list-archive-entry, two-host separation and the model-change scenario spend no C
 minutes of wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
-tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 21 as of #950 —
+tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 20 as of #977, down from 21 while the #687
+bypass method is out of the list until #981 fixes its missing reply —
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
