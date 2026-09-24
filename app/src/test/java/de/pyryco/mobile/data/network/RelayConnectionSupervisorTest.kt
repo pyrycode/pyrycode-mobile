@@ -724,6 +724,213 @@ class RelayConnectionSupervisorTest {
             other.close()
         }
 
+    // ---- #1008: a 4412 close is the app-too-old rejection and halts the redial --------------------
+
+    @Test
+    fun updateRequiredClose_4412_haltsRedialWithNoMinimum() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitUp()
+            runCurrent()
+            // A retry issued while connected is stale by the time of the drop; it must not skip the halt.
+            supervisor.retry()
+            runCurrent()
+            factory.created[0].emitDown(code = 4412, reason = "1.4.0")
+            runCurrent()
+
+            // The close reason is never read: only the sealed error supplies a minimum.
+            assertEquals(RelayLinkStatus.UpdateRequired(null), supervisor.relayStatus.value)
+            assertEquals(ConnectionState.Offline, supervisor.state())
+            assertNull(supervisor.currentConnection.value)
+
+            advanceTimeBy(10 * 60_000L)
+            runCurrent()
+            assertEquals(1, factory.created.size)
+            assertEquals(RelayLinkStatus.UpdateRequired(null), supervisor.relayStatus.value)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun updateRequired_minimumRecordedBeforeTheClose_isCarried() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitUp()
+            runCurrent()
+            supervisor.recordClientMinimum(factory.created[0], "1.4.0")
+            factory.created[0].emitDown(code = 4412)
+            runCurrent()
+
+            assertEquals(RelayLinkStatus.UpdateRequired("1.4.0"), supervisor.relayStatus.value)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun updateRequired_minimumRecordedAfterTheHalt_upgradesTheState() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitUp()
+            runCurrent()
+            factory.created[0].emitDown(code = 4412)
+            runCurrent()
+            assertEquals(RelayLinkStatus.UpdateRequired(null), supervisor.relayStatus.value)
+
+            supervisor.recordClientMinimum(factory.created[0], "2.0.10")
+            assertEquals(RelayLinkStatus.UpdateRequired("2.0.10"), supervisor.relayStatus.value)
+            assertEquals(1, factory.created.size)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun updateRequired_invalidMinimum_isTreatedAsAbsent() =
+        runTest {
+            for (invalid in listOf("1.4", "1.4.0.1", "v1.4.0", "1.4.0-beta", "1234567.0.0", " 1.4.0", "")) {
+                val (factory, supervisor) = newPairedSupervisor()
+
+                supervisor.connect()
+                runCurrent()
+                factory.created[0].emitUp()
+                runCurrent()
+                supervisor.recordClientMinimum(factory.created[0], invalid)
+                factory.created[0].emitDown(code = 4412)
+                runCurrent()
+                supervisor.recordClientMinimum(factory.created[0], invalid)
+
+                assertEquals("minimum '$invalid'", RelayLinkStatus.UpdateRequired(null), supervisor.relayStatus.value)
+
+                supervisor.close()
+            }
+        }
+
+    @Test
+    fun updateRequired_minimumFromAnEarlierDial_isIgnored() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitDown(code = 4412)
+            runCurrent()
+            supervisor.retry()
+            runCurrent()
+            assertEquals(2, factory.created.size)
+
+            // The first connection's late error must not reach the second dial.
+            supervisor.recordClientMinimum(factory.created[0], "1.4.0")
+            factory.created[1].emitDown(code = 4412)
+            runCurrent()
+            supervisor.recordClientMinimum(factory.created[0], "1.4.0")
+
+            assertEquals(RelayLinkStatus.UpdateRequired(null), supervisor.relayStatus.value)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun updateRequiredError_withoutA4412Close_keepsReconnecting() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitUp()
+            runCurrent()
+            supervisor.recordClientMinimum(factory.created[0], "1.4.0")
+            factory.created[0].emitDown(code = 1006)
+            runCurrent()
+
+            assertTrue(supervisor.relayStatus.value is RelayLinkStatus.Reconnecting)
+            advanceUntilIdle()
+            assertEquals(2, factory.created.size)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun updateRequired_explicitRetryDialsOnce_andARepeatedRejectionHaltsWithoutTheOldMinimum() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            supervisor.recordClientMinimum(factory.created[0], "1.4.0")
+            factory.created[0].emitDown(code = 4412)
+            runCurrent()
+            assertEquals(RelayLinkStatus.UpdateRequired("1.4.0"), supervisor.relayStatus.value)
+
+            supervisor.retry()
+            runCurrent()
+            assertEquals(RelayLinkStatus.Connecting, supervisor.relayStatus.value)
+            assertEquals(2, factory.created.size)
+
+            factory.created[1].emitDown(code = 4412)
+            runCurrent()
+            advanceTimeBy(10 * 60_000L)
+            runCurrent()
+            assertEquals(RelayLinkStatus.UpdateRequired(null), supervisor.relayStatus.value)
+            assertEquals(2, factory.created.size)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun updateRequired_nextForegroundConnectDialsOnce() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitDown(code = 4412)
+            runCurrent()
+            assertTrue(supervisor.relayStatus.value is RelayLinkStatus.UpdateRequired)
+
+            supervisor.close()
+            // A late minimum after close cannot resurrect the halted state over Idle.
+            supervisor.recordClientMinimum(factory.created[0], "1.4.0")
+            assertEquals(RelayLinkStatus.Idle, supervisor.relayStatus.value)
+            supervisor.connect()
+            runCurrent()
+            assertEquals(RelayLinkStatus.Connecting, supervisor.relayStatus.value)
+            assertEquals(2, factory.created.size)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun updateRequiredOnOneHost_leavesAnotherHostsSupervisorRedialling() =
+        runTest {
+            val (tooOldFactory, tooOld) = newPairedSupervisor()
+            val (otherFactory, other) = newPairedSupervisor()
+
+            tooOld.connect()
+            other.connect()
+            runCurrent()
+            tooOldFactory.created[0].emitDown(code = 4412)
+            otherFactory.created[0].emitDown(code = 1006)
+            runCurrent()
+
+            assertTrue(tooOld.relayStatus.value is RelayLinkStatus.UpdateRequired)
+            assertTrue(other.relayStatus.value is RelayLinkStatus.Reconnecting)
+            advanceTimeBy(10 * 60_000L)
+            runCurrent()
+            assertEquals(1, tooOldFactory.created.size)
+            assertTrue(otherFactory.created.size > 1)
+
+            tooOld.close()
+            other.close()
+        }
+
     // ---- #391: toConnectionState() preserves the four legacy cases; DaemonAbsent -> Offline -------
 
     @Test
@@ -734,6 +941,8 @@ class RelayConnectionSupervisorTest {
         assertEquals(ConnectionState.Offline, RelayLinkStatus.Offline.toConnectionState())
         assertEquals(ConnectionState.Offline, RelayLinkStatus.DaemonAbsent.toConnectionState())
         assertEquals(ConnectionState.Offline, RelayLinkStatus.PairingRejected.toConnectionState())
+        assertEquals(ConnectionState.Offline, RelayLinkStatus.UpdateRequired("1.4.0").toConnectionState())
+        assertEquals(ConnectionState.Offline, RelayLinkStatus.UpdateRequired(null).toConnectionState())
         // #499 AC#3: idle derives to Connected so the banner stays hidden while unpaired/idle.
         assertEquals(ConnectionState.Connected, RelayLinkStatus.Idle.toConnectionState())
     }

@@ -68,6 +68,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -304,6 +305,54 @@ class RelayConnectionFactoryTest {
                 runCurrent()
             }
             assertTrue(f.transports.all { it.collectors == 0 && it.closed })
+        }
+
+    @Test
+    fun appTooOldRejectionHaltsOnlyItsOwnHostAndCarriesTheSealedMinimum() =
+        runTest {
+            val f = Fixture(this)
+            val a = f.factory.create(f.a.record)
+            val b = f.factory.create(f.b.record)
+            try {
+                a.supervisor.connect()
+                b.supervisor.connect()
+                runCurrent()
+                val firstA = f.transports[0]
+                val firstB = f.transports[1]
+                val statusB = b.coordinator.connectionStatus.value
+                assertEquals(RelayLinkStatus.Connected, statusB.relay)
+
+                // The daemon's order: the sealed error, then the 4412 close.
+                firstA.emit(
+                    envelope(
+                        "error",
+                        """{"code":"client.update_required","message":"update","retryable":false,"min_client_version":"1.4.0"}""",
+                    ),
+                )
+                runCurrent()
+                firstA.closeWith(4412)
+                runCurrent()
+                assertEquals(RelayLinkStatus.UpdateRequired("1.4.0"), a.coordinator.connectionStatus.value.relay)
+                assertEquals(statusB, b.coordinator.connectionStatus.value)
+
+                advanceTimeBy(10 * 60_000L)
+                runCurrent()
+                assertEquals(2, f.transports.size) // host A never redialled
+                assertFalse(firstB.closed)
+
+                // An explicit retry dials once; a 4412 with no readable error halts with no minimum.
+                a.supervisor.retry()
+                runCurrent()
+                assertEquals(3, f.transports.size)
+                f.transports.last().closeWith(4412)
+                runCurrent()
+                assertEquals(RelayLinkStatus.UpdateRequired(null), a.coordinator.connectionStatus.value.relay)
+                assertEquals(statusB, b.coordinator.connectionStatus.value)
+            } finally {
+                a.close()
+                b.close()
+                runCurrent()
+            }
         }
 
     @Test
@@ -1439,8 +1488,10 @@ class RelayConnectionFactoryTest {
                 }
             }
 
-        fun reportAbsent() {
-            links.trySend(TransportEvent.Down(4404, null, null))
+        fun reportAbsent() = closeWith(4404)
+
+        fun closeWith(code: Int) {
+            links.trySend(TransportEvent.Down(code, null, null))
             links.close()
         }
 

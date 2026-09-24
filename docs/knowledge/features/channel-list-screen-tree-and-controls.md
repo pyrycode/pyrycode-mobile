@@ -177,10 +177,11 @@ methods, the ordering that keeps a failed store write from clearing the host's c
 
 `RelayLinkStatus.isDisconnected()` (`ConversationTreeRows.kt`, `internal`) classifies a host row's relay
 leg: an exhaustive `when` with no `else`, so a case added to `RelayLinkStatus` later has to be classified
-here rather than silently falling through. `Reconnecting`, `Offline`, `DaemonAbsent` and (#841)
-`PairingRejected` are disconnected; `Idle` (a deliberate background close, not an error), `Connecting`
-and `Connected` are not. The exhaustive `when` is what forced `PairingRejected` to be classified rather
-than silently falling through to "connected".
+here rather than silently falling through. `Reconnecting`, `Offline`, `DaemonAbsent`, (#841)
+`PairingRejected` and (#1008) `UpdateRequired` are disconnected; `Idle` (a deliberate background close,
+not an error), `Connecting` and `Connected` are not. The exhaustive `when` is what forced
+`PairingRejected` and `UpdateRequired` to each be classified rather than silently falling through to
+"connected".
 
 **The plug control's target diverges by state (#842).** `Reconnecting`, `Offline` and `DaemonAbsent` still
 read and route through the original path: `TreeHostReconnectTapped(serverId)` → `vm.reconnectHost(serverId)`
@@ -191,6 +192,13 @@ branches on `host.connectionStatus.relay == RelayLinkStatus.PairingRejected` and
 `navController.navigate(Routes.pairCode(serverId))`, opening the code-pair flow scoped to that host rather
 than retrying. The row's visual treatment and classification are unchanged — only the tap target differs.
 See [pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-842).
+
+**`UpdateRequired` keeps the original retry target, deliberately, for now (#1008).** Unlike
+`PairingRejected`, an `UpdateRequired` row's plug control still dispatches `TreeHostReconnectTapped` →
+`retryHost` → `retry()` — a retry that cannot succeed until the app is updated, same as before this
+ticket. The ticket's own technical notes call this out as intentional: the row-level minimum + a Play
+Store action is a separate follow-up (split from #1004) that needs its own Figma frame, and that ticket
+is what changes this control's target the way #842 changed it for `PairingRejected`.
 
 `TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
