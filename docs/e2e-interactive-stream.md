@@ -100,26 +100,33 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    repository to be published rather than firing on socket-up), with no reopen in between — each of the
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946)**
-   runs a **curated set of fifteen scenarios** (ping + create-workspace-folder + new-session + delete +
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545)**
+   runs a **curated set of nineteen scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
    peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model +
-   footer-context-usage, ten
+   footer-context-usage + model-change + inherited-effort + chosen-effort + remembered-effort-recall, fourteen
    real claude turns — five pings (ping, create-workspace-folder, new-session, the peer-started turn's own
    ping, and the offline-read-reconcile scenario's own ping), the peer-queue-consistency scenario's wait
    turn and its drained ping, the offline-read-reconcile scenario's peer offline turn, the
-   status-sheet-running-model scenario's own ping, and the footer-context-usage scenario's own ping, plus a possible reset
-   wrap-up turn — delete, archive-restore,
-   change-workspace, rename, save-as-channel, list-archive-entry and two-host spend none)
+   status-sheet-running-model scenario's own ping, the footer-context-usage scenario's own ping, the
+   inherited-effort scenario's own turn, the chosen-effort scenario's own turn, and the
+   remembered-effort-recall scenario's two turns (one in its fresh chat, one in its fresh channel), plus a
+   possible reset wrap-up turn — delete, archive-restore,
+   change-workspace, rename, save-as-channel, list-archive-entry, two-host and model-change spend none)
    against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
    [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The ping, create-workspace-folder and
    new-session scenarios in `InteractiveStreamE2ETest` require a displayed exact
    ping reply in the message list (#694), independently of disappearing queued text.
-   New-session also reveals the delimiter after a potentially tall wrap-up reply.
+   New-session also reveals the delimiter after a potentially tall wrap-up reply. The **model and effort
+   settings round trip** (#545 — `interactiveTurn_modelChange_roundTripsAndStaysPerConversation`,
+   `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`,
+   `interactiveTurn_chosenEffort_appliesFromTheFirstTurn`,
+   `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel`) is covered in its own
+   paragraph below, after the peer scenarios.
    **Pending coverage:** #679 owns cross-device Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
-   ending B while A continues. The curated fifteen-scenario gate does not cover it.
+   ending B while A continues. The curated nineteen-scenario gate does not cover it.
    An open thread recovering a peer's reconnect-window prompt on its own — the gap #850 found — is
    **shipped (#861)**: the still-open thread's reconnect history re-ask now waits for the repository to
    be published, so it reaches a live repository instead of a socket that is up but not yet handshaked.
@@ -209,7 +216,7 @@ production-side KDoc and its relationship to the tier tags #731 minted the same 
 [Add controls](../knowledge/features/channel-list-screen-tree-and-controls.md#add-controls-738) for `treeHostAddTestTag`'s own
 clamping rule.
 
-Rung 3 covers fifteen scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers nineteen scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -613,6 +620,41 @@ thread's history page had arrived, before the fixes recorded above landed. The l
 merged with `origin/main` at `148b9f7225`) re-proved the same thirteen scenarios with step 6's reopen
 dropped — see the dedicated entry below.
 
+The **model and effort settings round trip** (#545) is four **always-on** methods (none `@Ignore`d)
+proving the settings read (#590), the applied-effort footer (#889) and the remembered-effort recall
+(#686) reach a real daemon, since none of those tickets had live proof of its own. Each method prepares
+its own conversations through the paired host's own repository — `RelayConnectionRegistry.connectionFor(serverId)`
+— rather than seeding `conversations.json` as the #847 fixture does, because a seeded row has no bound
+session and cannot take a model or effort write; `create_conversation` binds one before it replies.
+Every method restores the settings it changed with `set_session_settings` on the same session and clears
+the remembered level in `finally`, so a red run cannot leave a write behind for a later method.
+`interactiveTurn_modelChange_roundTripsAndStaysPerConversation` (**zero** claude turns) picks three usable
+rows from the published model menu at run time — never a hard-coded model name — writes two conversations
+to two of them, changes one from the footer to the third, and asserts the change lands in a fresh settings
+reply, survives a reopen, and never touches the other conversation.
+`interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
+saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
+`effective_effort` (an omitted key fails the method) and that the reopened footer's label and note match
+that value exactly, with no default level assumed.
+`interactiveTurn_chosenEffort_appliesFromTheFirstTurn` (**one** turn) picks a model and effort level from
+the footer before the first message and asserts claude applies exactly that level on the first turn.
+`interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` (**two** turns, one in its
+fresh chat and one in its fresh channel) taps an effort level on a priming chat, restarts the app
+in-process the way `interactiveTurn_twoHostsCollidingConversationId_stayPerHost` does (destroy the
+activity, `rebuildGraph`, relaunch), then opens a fresh chat and a fresh channel — each with an explicit
+saved model but no saved effort — and asserts the recalled level reaches both before their first message
+and stays the applied value after a real turn in each; a conversation with its own saved effort keeps it.
+Every fixture in this last scenario carries an explicit saved model, not the ticket's literal empty one:
+the phone matches a saved `""` model against no published row, so a chat with no model chosen offers no
+effort levels to recall into. That gap is [#972](https://github.com/pyrycode/pyrycode-mobile/issues/972);
+the acceptance criterion itself asks only for an empty saved *effort*, which these fixtures satisfy. The
+live run that closed the ticket also resolved the plan's two open questions: `createChannel` accepts a
+created chat's own scratch `cwd` directly (no `createWorkspaceFolder` fallback was needed), and the first
+fresh settings reply after a real turn's reply already carries `effective_effort`. See [Thread composer
+footer § Applied effort](knowledge/features/thread-composer-footer.md#applied-effort-889) and [Thread
+composer footer — remembered effort recall](knowledge/features/thread-composer-footer-effort-recall.md)
+for the production ranking and recall rules these methods assert against.
+
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
 token, `turn_state` flips to `responding`, `isThinking` goes false, and `ThinkingIndicator` early-returns,
@@ -718,11 +760,12 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the fifteen curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the nineteen curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
 peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
-context usage, #946) ride the wrapped mode.
+context usage, #946; model change, inherited effort, chosen effort and remembered-effort recall, #545)
+ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
 regressions after host-owned routing, since #847 that two paired hosts whose
@@ -744,18 +787,19 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** ten real claude turns across fifteen curated methods — five pings (ping,
+**Cost:** fourteen real claude turns across nineteen curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
-ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, and
-the footer-context-usage scenario's own ping, #946 —
+ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, the
+footer-context-usage scenario's own ping, #946, the inherited-effort and chosen-effort scenarios' own
+turns, and the remembered-effort-recall scenario's two turns, #545 —
 and a reset wrap-up turn when handoff notes are
 enabled. Delete, archive-restore, change-workspace, rename, save-as-channel,
-list-archive-entry and two-host separation spend no Claude turns. Allow a few minutes of
-wall clock; the run is subscription-covered.
+list-archive-entry, two-host separation and the model-change scenario spend no Claude turns. Allow a few
+minutes of wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
-tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 15 as of #946 —
+tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 19 as of #545 —
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -767,8 +811,8 @@ the then-ten-method list, specifically so raising it would not redden
 § Revisions, reaffirmed for #847). #848 resolved that tension instead of extending it: the
 fixture stays byte-for-byte, and the gate's own test pads a copy of it with synthetic
 curated-method cases up to `LIVE_MINIMUM`. #849 raised `LIVE_MINIMUM` from 11 to 12, #850
-raised it again, from 12 to 13, #891 raised it once more, from 13 to 14, and #946 raised it
-again, from 14 to 15, on the same
+raised it again, from 12 to 13, #891 raised it once more, from 13 to 14, #946 raised it
+again, from 14 to 15, and #545 raised it again, from 15 to 19, on the same
 mechanism. Shell cleanup preserves the original
 result and retains failure artifacts; a clean XML report with a failing process status is not
 a passing gate.
@@ -780,7 +824,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of fifteen rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of nineteen rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1156,6 +1200,22 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #545 (2026-09-24):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/545` at `be34a72d22` merged with
+  `origin/main` at `1406e83167` (0 commits behind before the merge), executed all nineteen curated
+  scenarios — the curated list's first run with `interactiveTurn_modelChange_roundTripsAndStaysPerConversation`,
+  `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`,
+  `interactiveTurn_chosenEffort_appliesFromTheFirstTurn` and
+  `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` on it — with nineteen
+  passes, no failures or skips, exit 0, wall clock 127.7s. `LIVE_MINIMUM` rose from 15 to 19 with this
+  ticket (see [Pre-ship gate](#pre-ship-gate)); nineteen executed meets it exactly. This run resolved the
+  plan's two open questions: `createChannel` accepts a created chat's own scratch `cwd` directly, with no
+  `createWorkspaceFolder` fallback needed, and the first fresh settings reply after a real turn's reply
+  already carries `effective_effort`. This is the first live evidence that the settings read (#590), the
+  applied-effort footer (#889) and the remembered-effort recall (#686) round-trip against a real daemon;
+  the recall scenario's fresh chat and channel carry an explicit saved model rather than the criterion's
+  literal empty one, because a saved `""` model matches no published row and offers no effort levels to
+  recall into — filed as [#972](https://github.com/pyrycode/pyrycode-mobile/issues/972).
 - **LIVE verified for #946 (2026-09-24):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/946` at `a951201036` merged with
   `origin/main` at `01042d232b` (0 commits behind before the merge), the
