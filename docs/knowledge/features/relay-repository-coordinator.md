@@ -290,6 +290,19 @@ contract, its 32 MiB accumulation bound and its terminal-state guarantees.
   backoff (1/2/4/8/16/30 s); a failing relay cannot drive a tight pump-rebuild loop.
 - **Availability can change after lookup.** `liveRepository()` does not keep the
   connection alive for a later operation.
+- **A one-time snapshot of `currentRepository` goes stale on a routine redial.** The live
+  e2e `InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork`
+  took `coordinator.currentRepository.first { it != null }` once after a reconnect and read
+  from that repository for 30 s. On the live relay the reconnect's fresh connection routinely
+  drops and is redialled by `RelayConnectionSupervisor` within about a second (#1039, open —
+  why it drops is unconfirmed); the snapshotted repository was already torn down, and the
+  slash-command read never completed. Every production screen instead follows the
+  `StateFlow` itself through `StableConversationRepository`, so the same drop shows there only
+  as a one-second reconnect. Fixed by #1029 with `firstOnLive` / `callOnLive`
+  (`app/src/sharedTest/java/de/pyryco/mobile/e2e/LiveConnectionReads.kt`), generic helpers that
+  read through whichever repository is *current* rather than a point-in-time snapshot; a
+  consumer of `currentRepository` across an `await`/timeout should use one of them instead of
+  `.value` or a one-shot `first { it != null }`.
 
 ## Testing
 
