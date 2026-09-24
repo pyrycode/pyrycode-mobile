@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ContentResolver
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -7,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
@@ -40,6 +43,7 @@ data class AttachmentRefusal(
 private const val ANY_TYPE = "*/*"
 private const val FALLBACK_MIME_TYPE = "application/octet-stream"
 private const val FALLBACK_DISPLAY_NAME = "file"
+private const val IMAGE_TYPES = "image/*"
 
 /**
  * The composer's file picker (#933): returns the action that opens Android's document picker for any file
@@ -68,6 +72,63 @@ fun rememberAttachmentPicker(onPicked: (List<PickedAttachment>) -> Unit): () -> 
             }
         }
     return { launcher.launch(arrayOf(ANY_TYPE)) }
+}
+
+/**
+ * Whether a pasted clip [item] is an image to attach rather than content for the text field (#934): a
+ * URI [isForeignContentUri] accepts, in a clip [description] that declares an image type. The declared
+ * type is the pasting app's claim; [describePastedImage] checks the provider's own type afterwards. No
+ * binder call, so it is safe on the main thread inside a content receiver.
+ */
+internal fun isPastedImageItem(
+    item: ClipData.Item,
+    description: ClipDescription,
+    ownPackage: String,
+): Boolean {
+    val uri = item.uri ?: return false
+    return isForeignContentUri(uri.scheme, uri.authority, ownPackage) && description.hasMimeType(IMAGE_TYPES)
+}
+
+/**
+ * [describePickedAttachment] for a pasted [uri] (#934), kept only when the provider itself types it as an
+ * image. A provider that reports no type, or another type, adds nothing.
+ */
+internal fun describePastedImage(
+    resolver: ContentResolver,
+    uri: Uri,
+    ownPackage: String,
+): PickedAttachment? {
+    val described = describePickedAttachment(resolver, uri, ownPackage) ?: return null
+    if (!ClipDescription.compareMimeTypes(described.mimeType, IMAGE_TYPES)) {
+        RelayLog.d { "event=composer_attachment_paste outcome=refused_type" }
+        return null
+    }
+    return described
+}
+
+/**
+ * The composer's paste sink (#934): returns the action that takes the image URIs a paste or a keyboard
+ * image insert handed the field, describes them off the main thread, and passes the images to [onPicked]
+ * in clip order — the same sink a pick uses, so the size and count refusals apply unchanged. Bound to
+ * this composition, like [rememberAttachmentPicker].
+ */
+@Composable
+fun rememberPastedImageReceiver(onPicked: (List<PickedAttachment>) -> Unit): (List<Uri>) -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val currentOnPicked by rememberUpdatedState(onPicked)
+    return remember(context, scope) {
+        { uris ->
+            scope.launch {
+                val pasted =
+                    withContext(Dispatchers.IO) {
+                        uris.mapNotNull { describePastedImage(context.contentResolver, it, context.packageName) }
+                    }
+                RelayLog.d { "event=composer_attachment_paste count=${pasted.size}" }
+                if (pasted.isNotEmpty()) currentOnPicked(pasted)
+            }
+        }
+    }
 }
 
 /**
