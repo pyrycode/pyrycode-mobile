@@ -365,4 +365,11 @@
     <string name="thread_attachment_not_found">File not found</string>
     <string name="thread_attachment_failed">Couldn\'t load file</string>
     <string name="thread_attachment_retry">Retry</string>
+    <!-- #985: a ready attachment's tap and long-press labels, and the notices each outcome shows. -->
+    <string name="thread_attachment_open">Open</string>
+    <string name="thread_attachment_save">Save</string>
+    <string name="thread_attachment_no_app">No app can open this file</string>
+    <string name="thread_attachment_open_failed">Couldn\'t open file</string>
+    <string name="thread_attachment_saved">File saved</string>
+    <string name="thread_attachment_save_failed">Couldn\'t save file</string>
 </resources>
