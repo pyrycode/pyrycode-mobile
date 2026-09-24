@@ -187,8 +187,9 @@ val checkReleaseUploadSigning =
             }
         }
     }
-tasks.configureEach {
-    if (name == "packageReleaseBundle") dependsOn(checkReleaseUploadSigning)
+// tasks.named fails configuration if an AGP upgrade renames the task, so the guard cannot silently lapse.
+afterEvaluate {
+    tasks.named("packageReleaseBundle") { dependsOn(checkReleaseUploadSigning) }
 }
 
 dependencies {

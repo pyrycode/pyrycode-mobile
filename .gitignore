@@ -41,3 +41,5 @@ __pycache__/
 # Signing keystores (#1025): the upload key never enters the repository.
 *.jks
 *.keystore
+*.p12
+*.pfx
