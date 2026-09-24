@@ -2,17 +2,36 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.res.Configuration
 import android.util.Log
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
@@ -31,24 +50,39 @@ private const val CUT_TASK_TYPE = "task_type"
 private const val CUT_PATCH = "patch"
 private const val CUT_SUMMARY = "summary"
 
+// The terminal statuses the wire names (protocol-mobile.md § `background_task_updated`). An open set:
+// any other word is shown as itself in the Stopped style.
+private const val STATUS_COMPLETED = "completed"
+private const val STATUS_FAILED = "failed"
+private const val STATUS_STOPPED = "stopped"
+
+/** A description of this task type is a shell command line, drawn in monospace. */
+private const val TYPE_LOCAL_BASH = "local_bash"
+
 /** The render bound on one daemon-authored field. The daemon's own caps are byte caps below this. */
 private const val MAX_PANEL_TEXT_CHARS = 4096
 
-private val TaskRowGap = 2.dp
-private val TaskListGap = 16.dp
+private const val RUNNING_CARD_ALPHA = 0.41f
+private const val FINISHED_CARD_ALPHA = 0.22f
+
+private val TaskListGap = 10.dp
+private val TaskRowGap = 8.dp
+private val TagMaxWidth = 160.dp
 
 /**
- * The read-only background-task list (#678), after desktop's `BackgroundTaskPanelView`, in the shared
- * mobile modal shell with only a Close action. Closing sends nothing and changes nothing.
+ * The read-only background-task list (#678), redrawn to its Figma frames (#1041), in the shared mobile
+ * modal shell with only a Close action. Closing sends nothing and changes nothing.
  *
  * [roster] is branched on before its tasks are read: `null` means nothing has been reported, an empty
  * roster is the daemon saying nothing is alive, and the two read as different sentences. The partial-list
- * notice belongs to the roster, so it shows whichever way the list branches.
+ * notice belongs to the roster, so it shows whichever way the list branches. A listed roster splits into a
+ * Running and a Finished group, each in claude's order; a finished task stays listed, so the list agrees
+ * with the menu's live count, which excludes it.
  *
  * Every task field is claude-authored (a `local_bash` description and a terminal summary are literal
- * command lines). Each reaches a plain [Text], stripped of control characters and bounded, and nothing else: no link, click,
- * clipboard, parse, `key()`, test tag or log. A finished task stays listed and is labelled, so the list
- * agrees with the menu's live count, which excludes it.
+ * command lines, and the terminal status is an open-set word). Each reaches a plain [Text], stripped of
+ * control characters and bounded, and nothing else: no link, click, clipboard, parse, `key()`, test tag or
+ * log.
  */
 @Composable
 internal fun BackgroundTaskPanel(
@@ -76,88 +110,287 @@ internal fun BackgroundTaskPanel(
         onDismissRequest = onDismiss,
     ) {
         // `> 0`, so a nonsense negative count shows no notice rather than a negative one.
-        if (roster != null && roster.droppedTasks > 0) {
-            Text(
-                text = stringResource(R.string.background_tasks_partial, roster.droppedTasks),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
+        val dropped = if (roster != null && roster.droppedTasks > 0) roster.droppedTasks else 0
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(TaskListGap),
+        ) {
+            if (dropped > 0) PartialNotice(dropped)
+            when {
+                roster == null ->
+                    EmptyReading(
+                        dashedRing = true,
+                        title = stringResource(R.string.background_tasks_unreported),
+                        support = stringResource(R.string.background_tasks_unreported_support),
+                    )
+                roster.tasks.isEmpty() ->
+                    EmptyReading(
+                        dashedRing = false,
+                        title = stringResource(R.string.background_tasks_empty),
+                        support = stringResource(R.string.background_tasks_empty_support),
+                    )
+                else -> TaskGroups(roster.tasks, partial = dropped > 0)
+            }
         }
-        when {
-            roster == null -> PanelSentence(stringResource(R.string.background_tasks_unreported))
-            roster.tasks.isEmpty() -> PanelSentence(stringResource(R.string.background_tasks_empty))
-            else ->
-                Column(verticalArrangement = Arrangement.spacedBy(TaskListGap)) {
-                    roster.tasks.forEach { TaskRow(it) }
-                }
-        }
+        // The shell centres its content; a list starts at the top, so the slack goes below it. Zero once
+        // the list outgrows the viewport, since a weight only shares the space the other children leave.
+        if (roster != null && roster.tasks.isNotEmpty()) Spacer(Modifier.weight(1f))
     }
 }
 
 @Composable
-private fun PanelSentence(text: String) {
-    Text(text = text, style = MaterialTheme.typography.bodyMedium)
+private fun TaskGroups(
+    tasks: List<BackgroundTask>,
+    partial: Boolean,
+) {
+    val running = tasks.filterNot { it.isFinished }
+    val finished = tasks.filter { it.isFinished }
+    if (running.isNotEmpty()) {
+        GroupLabel(
+            if (partial) {
+                stringResource(R.string.background_tasks_group_running_shown, running.size)
+            } else {
+                stringResource(R.string.background_tasks_group_running, running.size)
+            },
+        )
+        running.forEach { TaskRow(it) }
+    }
+    if (finished.isNotEmpty()) {
+        if (running.isNotEmpty()) Spacer(Modifier.height(4.dp))
+        GroupLabel(
+            if (partial) {
+                stringResource(R.string.background_tasks_group_finished_shown, finished.size)
+            } else {
+                stringResource(R.string.background_tasks_group_finished, finished.size)
+            },
+        )
+        finished.forEach { TaskRow(it) }
+    }
+}
+
+@Composable
+private fun GroupLabel(text: String) {
+    Text(text = text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
 }
 
 /**
- * One task: its description and type, then a finished label, the latest mid-life update and the terminal
- * summary when present. Each cut marker is its own [Text] directly after the field it describes, never
- * text joined onto the field, so daemon text ending in the marker's words cannot pass for the app's claim.
- * Not clickable; merged so a screen reader reads the task as one node.
+ * One task card: its type and status tag, then its description, the terminal summary and the latest
+ * mid-life update when present. Each cut marker is its own element directly after the field it describes,
+ * never text joined onto the field, so daemon text ending in the marker's words cannot pass for the app's
+ * claim. Not clickable; merged so a screen reader reads the task as one node.
  */
 @Composable
 private fun TaskRow(task: BackgroundTask) {
+    val colors = MaterialTheme.colorScheme
+    val typography = MaterialTheme.typography
+    val cardAlpha = if (task.isFinished) FINISHED_CARD_ALPHA else RUNNING_CARD_ALPHA
     Column(
-        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(colors.onPrimary.copy(alpha = cardAlpha), MaterialTheme.shapes.small)
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .semantics(mergeDescendants = true) {},
         verticalArrangement = Arrangement.spacedBy(TaskRowGap),
     ) {
-        TaskField(task.description, wasCut(task.truncatedFields, CUT_DESCRIPTION), emphasized = false)
-        TaskField(task.taskType, wasCut(task.truncatedFields, CUT_TASK_TYPE), emphasized = true)
-        if (task.isFinished) {
+        val type = boundedText(task.taskType)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = stringResource(R.string.background_tasks_finished),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+                text = type.text,
+                modifier = Modifier.weight(1f),
+                style = typography.bodySmall.monospace(),
+                color = colors.primary,
+            )
+            TaskTag(task, Modifier.widthIn(max = TagMaxWidth))
+        }
+        if (wasCut(task.truncatedFields, CUT_TASK_TYPE) || type.cutForDisplay) CutMarker()
+        TaskField(
+            raw = task.description,
+            cutByDaemon = wasCut(task.truncatedFields, CUT_DESCRIPTION),
+            style = if (task.taskType == TYPE_LOCAL_BASH) typography.bodyMedium.monospace() else typography.bodyMedium,
+            color = if (task.isFinished) colors.onSurfaceVariant else colors.onSurface,
+        )
+        task.finish?.takeIf { it.summary.isNotEmpty() }?.let { finish ->
+            TaskField(
+                raw = finish.summary,
+                cutByDaemon = wasCut(finish.truncatedFields, CUT_SUMMARY),
+                style = typography.bodyMedium,
+                color = colors.onSurfaceVariant,
             )
         }
-        task.latestUpdate?.let { update ->
-            // An empty patch is a value, "claude reported no change", not an absence.
+        task.latestUpdate?.let { LatestUpdate(it) }
+    }
+}
+
+/** The last mid-life update in a code block. An empty patch is a value, "claude reported no change". */
+@Composable
+private fun LatestUpdate(update: BackgroundTaskUpdate) {
+    val colors = MaterialTheme.colorScheme
+    val patch = boundedText(update.patch)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = stringResource(R.string.background_tasks_latest_update),
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.outline,
+        )
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(colors.surface, MaterialTheme.shapes.small)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        ) {
             if (update.patch.isEmpty()) {
-                PanelSentence(stringResource(R.string.background_tasks_no_change))
-                if (wasCut(update.truncatedFields, CUT_PATCH)) CutMarker()
+                Text(
+                    text = stringResource(R.string.background_tasks_no_change),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontStyle = FontStyle.Italic,
+                    color = colors.outline,
+                )
             } else {
-                TaskField(update.patch, wasCut(update.truncatedFields, CUT_PATCH), emphasized = false)
+                Text(
+                    text = patch.text,
+                    style = MaterialTheme.typography.bodySmall.monospace(),
+                    color = colors.onSurfaceVariant,
+                )
             }
         }
-        task.finish?.takeIf { it.summary.isNotEmpty() }?.let { finish ->
-            TaskField(finish.summary, wasCut(finish.truncatedFields, CUT_SUMMARY), emphasized = false)
-        }
+        if (wasCut(update.truncatedFields, CUT_PATCH) || patch.cutForDisplay) CutMarker()
     }
+}
+
+/**
+ * The task's state as its tag. Only the wire's three terminal words pick a style; any other word is
+ * shown as itself, bounded, in the Stopped style. A terminal status never reads Running: a finished task
+ * without its terminal frame (after a reconnect), or whose word is blank or "running", reads Finished.
+ */
+@Composable
+private fun TaskTag(
+    task: BackgroundTask,
+    modifier: Modifier = Modifier,
+) {
+    val finish = task.finish
+    val finishedLabel = stringResource(R.string.background_tasks_finished)
+    val (style, label) =
+        when {
+            !task.isFinished -> TaskTagStyle.Running to stringResource(R.string.background_tasks_status_running)
+            finish == null -> TaskTagStyle.Stopped to finishedLabel
+            finish.status == STATUS_COMPLETED ->
+                TaskTagStyle.Completed to stringResource(R.string.background_tasks_status_completed)
+            finish.status == STATUS_FAILED -> TaskTagStyle.Failed to stringResource(R.string.background_tasks_status_failed)
+            finish.status == STATUS_STOPPED -> TaskTagStyle.Stopped to stringResource(R.string.background_tasks_status_stopped)
+            else -> {
+                val word = boundedText(finish.status).text
+                val readsRunning = word.isBlank() || word.trim().equals("running", ignoreCase = true)
+                TaskTagStyle.Stopped to if (readsRunning) finishedLabel else word
+            }
+        }
+    TaskStatusTag(style = style, label = label, modifier = modifier)
 }
 
 @Composable
 private fun TaskField(
     raw: String,
     cutByDaemon: Boolean,
-    emphasized: Boolean,
+    style: TextStyle,
+    color: Color,
 ) {
-    val printable = printableText(raw)
-    val text = printable.take(MAX_PANEL_TEXT_CHARS)
-    Text(
-        text = text,
-        style = if (emphasized) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyMedium,
-        fontWeight = if (emphasized) FontWeight.SemiBold else null,
-    )
+    val field = boundedText(raw)
+    Text(text = field.text, style = style, color = color)
     // A field this client cut for display is marked as well: it was cut, whoever cut it.
-    if (cutByDaemon || text.length < printable.length) CutMarker()
+    if (cutByDaemon || field.cutForDisplay) CutMarker()
+}
+
+/** The app's own claim that a field was cut: a dashed chip, its own element, never joined to the field. */
+@Composable
+private fun CutMarker() {
+    val color = MaterialTheme.colorScheme.tertiary
+    val shape = MaterialTheme.shapes.extraSmall
+    Box(
+        Modifier
+            .drawBehind {
+                val width = 1.dp.toPx()
+                val dash = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 2.dp.toPx()))
+                drawOutline(shape.createOutline(size, layoutDirection, this), color, style = Stroke(width, pathEffect = dash))
+            }.padding(horizontal = 6.dp, vertical = 1.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.background_tasks_truncated),
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+        )
+    }
 }
 
 @Composable
-private fun CutMarker() {
-    Text(
-        text = stringResource(R.string.background_tasks_truncated),
-        style = MaterialTheme.typography.labelSmall,
-    )
+private fun PartialNotice(count: Int) {
+    val content = MaterialTheme.colorScheme.onSecondaryContainer
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.shapes.small)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(8.dp).background(content, CircleShape))
+        Text(
+            text = stringResource(R.string.background_tasks_partial, count),
+            style = MaterialTheme.typography.labelLarge,
+            color = content,
+        )
+    }
+}
+
+/** One of the two empty readings: a drawn ring (dashed while nothing has been reported), title and support. */
+@Composable
+private fun EmptyReading(
+    dashedRing: Boolean,
+    title: String,
+    support: String,
+) {
+    val ringColor = MaterialTheme.colorScheme.outline
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Canvas(Modifier.size(32.dp)) {
+            val width = 1.5.dp.toPx()
+            val dash = if (dashedRing) PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())) else null
+            drawCircle(ringColor, radius = (size.minDimension - width) / 2, style = Stroke(width, pathEffect = dash))
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = support,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+private fun TextStyle.monospace(): TextStyle = copy(fontFamily = FontFamily.Monospace)
+
+/** A daemon field as displayed: printable and bounded, and whether the bound cut it. */
+private class BoundedText(
+    val text: String,
+    val cutForDisplay: Boolean,
+)
+
+private fun boundedText(raw: String): BoundedText {
+    val printable = printableText(raw)
+    val text = printable.take(MAX_PANEL_TEXT_CHARS)
+    return BoundedText(text, cutForDisplay = text.length < printable.length)
 }
 
 /** Whether the daemon reports cutting [wireName]. An open vocabulary: an unknown name marks nothing. */
@@ -169,40 +402,97 @@ private fun wasCut(
 /** One daemon field without control characters, keeping line breaks and tabs. Bounded by the caller. */
 private fun printableText(raw: String): String = raw.filterNot { it.isISOControl() && it != '\n' && it != '\t' }
 
-@Preview(name = "Background tasks — Dark", widthDp = 412, heightDp = 892, uiMode = Configuration.UI_MODE_NIGHT_YES)
-@Preview(name = "Background tasks — Light", widthDp = 412, heightDp = 892)
+private val previewRoster =
+    BackgroundTaskRoster(
+        tasks =
+            listOf(
+                BackgroundTask(
+                    taskId = "t1",
+                    toolCallId = "toolu_1",
+                    taskType = "local_bash",
+                    description = "go test ./internal/relay/... -run TestReconnect -count=20 -race",
+                    truncatedFields = null,
+                    latestUpdate = BackgroundTaskUpdate("""{"output_tail":"--- PASS: TestReconnect (0.84s)"}""", "", "", null),
+                    finish = null,
+                    isFinished = false,
+                ),
+                BackgroundTask(
+                    taskId = "t2",
+                    toolCallId = "toolu_2",
+                    taskType = "local_agent",
+                    description = "Summarise the open tickets that mention the relay",
+                    truncatedFields = null,
+                    latestUpdate = BackgroundTaskUpdate("", "", "", listOf("patch")),
+                    finish = null,
+                    isFinished = false,
+                ),
+                BackgroundTask(
+                    taskId = "t3",
+                    toolCallId = "toolu_3",
+                    taskType = "local_bash",
+                    description = "npm run build",
+                    truncatedFields = null,
+                    latestUpdate = null,
+                    finish = BackgroundTaskUpdate("", "completed", "Build finished in 38s with no warnings.", null),
+                    isFinished = true,
+                ),
+                BackgroundTask(
+                    taskId = "t4",
+                    toolCallId = "toolu_4",
+                    taskType = "local_bash",
+                    description = "docker compose up relay",
+                    truncatedFields = listOf("description"),
+                    latestUpdate = null,
+                    finish = BackgroundTaskUpdate("", "failed", "Exited with code 1: port 8443 is already in use.", null),
+                    isFinished = true,
+                ),
+                BackgroundTask(
+                    taskId = "t5",
+                    toolCallId = null,
+                    taskType = "remote_agent",
+                    description = "Reconnected mid-run",
+                    truncatedFields = null,
+                    latestUpdate = null,
+                    finish = null,
+                    isFinished = true,
+                ),
+                BackgroundTask(
+                    taskId = "t6",
+                    toolCallId = "toolu_6",
+                    taskType = "local_bash",
+                    description = "sleep 300",
+                    truncatedFields = null,
+                    latestUpdate = null,
+                    finish = BackgroundTaskUpdate("", "cancelled", "", null),
+                    isFinished = true,
+                ),
+            ),
+        droppedTasks = 3,
+    )
+
+@Preview(name = "Background tasks — Dark", widthDp = 412, heightDp = 1400, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Preview(name = "Background tasks — Light", widthDp = 412, heightDp = 1400)
 @Composable
 private fun BackgroundTaskPanelPreview() {
     PyrycodeMobileTheme {
-        BackgroundTaskPanel(
-            roster =
-                BackgroundTaskRoster(
-                    tasks =
-                        listOf(
-                            BackgroundTask(
-                                taskId = "t1",
-                                toolCallId = "toolu_1",
-                                taskType = "local_bash",
-                                description = "npm run dev",
-                                truncatedFields = null,
-                                latestUpdate = BackgroundTaskUpdate("""{"is_backgrounded":true}""", "", "", null),
-                                finish = null,
-                                isFinished = false,
-                            ),
-                            BackgroundTask(
-                                taskId = "t2",
-                                toolCallId = "toolu_2",
-                                taskType = "local_bash",
-                                description = "sleep 300",
-                                truncatedFields = null,
-                                latestUpdate = null,
-                                finish = BackgroundTaskUpdate("", "completed", "sleep 300", listOf("summary")),
-                                isFinished = true,
-                            ),
-                        ),
-                    droppedTasks = 1,
-                ),
-            onDismiss = {},
-        )
+        BackgroundTaskPanel(roster = previewRoster, onDismiss = {})
+    }
+}
+
+@Preview(name = "Background tasks empty — Dark", widthDp = 412, heightDp = 892, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Preview(name = "Background tasks empty — Light", widthDp = 412, heightDp = 892)
+@Composable
+private fun BackgroundTaskPanelEmptyPreview() {
+    PyrycodeMobileTheme {
+        BackgroundTaskPanel(roster = BackgroundTaskRoster(emptyList(), droppedTasks = 0), onDismiss = {})
+    }
+}
+
+@Preview(name = "Background tasks unreported — Dark", widthDp = 412, heightDp = 892, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Preview(name = "Background tasks unreported — Light", widthDp = 412, heightDp = 892)
+@Composable
+private fun BackgroundTaskPanelUnreportedPreview() {
+    PyrycodeMobileTheme {
+        BackgroundTaskPanel(roster = null, onDismiss = {})
     }
 }

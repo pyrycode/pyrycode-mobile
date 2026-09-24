@@ -112,3 +112,7 @@ The ticket has no Documentation handoff section. Pending for the documentation s
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-25
+
+## Revisions
+
+- **2026-09-25, during implementation.** `MobileModalShell` centres its content vertically, so a short task list would float mid-panel instead of starting under the header as the Populated frame draws it. The populated branch now follows its list with a `Spacer(Modifier.weight(1f))` in the shell's `ColumnScope`. A weight only shares the space the other children leave, so the spacer is zero once the list outgrows the viewport and scrolling is unaffected. The two empty readings keep the shell's centring. Resolves the open question: at Robolectric's width the header's `weight(1f)` type and the 160 dp tag cap keep a 4096-char status word on one line (`overLongUnknownStatus_isBoundedToOneLine`).
