@@ -100,14 +100,15 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    repository to be published rather than firing on socket-up), with no reopen in between — each of the
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891)**
-   runs a **curated set of fourteen scenarios** (ping + create-workspace-folder + new-session + delete +
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946)**
+   runs a **curated set of fifteen scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
-   peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model, nine
+   peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model +
+   footer-context-usage, ten
    real claude turns — five pings (ping, create-workspace-folder, new-session, the peer-started turn's own
    ping, and the offline-read-reconcile scenario's own ping), the peer-queue-consistency scenario's wait
-   turn and its drained ping, the offline-read-reconcile scenario's peer offline turn, and the
-   status-sheet-running-model scenario's own ping, plus a possible reset
+   turn and its drained ping, the offline-read-reconcile scenario's peer offline turn, the
+   status-sheet-running-model scenario's own ping, and the footer-context-usage scenario's own ping, plus a possible reset
    wrap-up turn — delete, archive-restore,
    change-workspace, rename, save-as-channel, list-archive-entry and two-host spend none)
    against the **production relay** over `wss://`
@@ -118,7 +119,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    New-session also reveals the delimiter after a potentially tall wrap-up reply.
    **Pending coverage:** #679 owns cross-device Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
-   ending B while A continues. The curated fourteen-scenario gate does not cover it.
+   ending B while A continues. The curated fifteen-scenario gate does not cover it.
    An open thread recovering a peer's reconnect-window prompt on its own — the gap #850 found — is
    **shipped (#861)**: the still-open thread's reconnect history re-ask now waits for the repository to
    be published, so it reaches a live repository instead of a socket that is up but not yet handshaked.
@@ -279,7 +280,14 @@ from another client continues on the phone; **one** claude turn — the peer's p
 **status-sheet-running-model** scenario (#891 — `interactiveTurn_pingPrompt_statusSheetShowsRunningModel`:
 after the ping turn, open the Status sheet from the footer's status icon and assert the running-model row
 shows a non-empty value that is not the unavailable note, with no model name hard-coded — proving the #890
-`model_announced` reading reaches the sheet; **one** claude turn — the scenario's own ping). The tool-use
+`model_announced` reading reaches the sheet; **one** claude turn — the scenario's own ping); and a
+**footer-context-usage** scenario (#946 — `interactiveTurn_pingPrompt_footerShowsContextUsage`: after the
+ping turn, wait until the composer footer's `CONTEXT_USAGE_TEST_TAG` node's text matches `Cxt: \d+%`, with
+no percentage hard-coded — proving the daemon's post-turn `context_usage` push reaches
+`ThreadRunConfig.contextPercent` and renders in the footer; **one** claude turn — the scenario's own ping;
+no reconnect or subscription-time ask is exercised, since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946)'s
+Rework 1 removed the phone's `request_context_usage` send outright — see [Thread composer footer § Context
+usage segment](knowledge/features/thread-composer-footer.md#context-usage-segment-946)). The tool-use
 test asserts the **durable** terminal signal — the tool name in the resolved row —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
@@ -710,11 +718,11 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the fourteen curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the fifteen curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
-peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891) ride the
-wrapped mode.
+peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
+context usage, #946) ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
 regressions after host-owned routing, since #847 that two paired hosts whose
@@ -736,17 +744,18 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** nine real claude turns across fourteen curated methods — five pings (ping,
+**Cost:** ten real claude turns across fifteen curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
-ping, #850's peer offline turn, and the status-sheet-running-model scenario's own ping, #891 —
+ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, and
+the footer-context-usage scenario's own ping, #946 —
 and a reset wrap-up turn when handoff notes are
 enabled. Delete, archive-restore, change-workspace, rename, save-as-channel,
 list-archive-entry and two-host separation spend no Claude turns. Allow a few minutes of
 wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
-tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 14 as of #891 —
+tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 15 as of #946 —
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -758,7 +767,8 @@ the then-ten-method list, specifically so raising it would not redden
 § Revisions, reaffirmed for #847). #848 resolved that tension instead of extending it: the
 fixture stays byte-for-byte, and the gate's own test pads a copy of it with synthetic
 curated-method cases up to `LIVE_MINIMUM`. #849 raised `LIVE_MINIMUM` from 11 to 12, #850
-raised it again, from 12 to 13, and #891 raised it once more, from 13 to 14, on the same
+raised it again, from 12 to 13, #891 raised it once more, from 13 to 14, and #946 raised it
+again, from 14 to 15, on the same
 mechanism. Shell cleanup preserves the original
 result and retains failure artifacts; a clean XML report with a failing process status is not
 a passing gate.
@@ -770,7 +780,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of fourteen rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of fifteen rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -794,7 +804,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Fourteen curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Fifteen curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -807,12 +817,13 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847),
 `InteractiveStreamE2ETest#interactiveTurn_peerStartedTurn_continuesOnPhone` (#848),
 `InteractiveStreamE2ETest#interactiveTurn_peerQueue_staysConsistentAcrossClients` (#849),
-`InteractiveStreamE2ETest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` (#850), and
-`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_statusSheetShowsRunningModel` (#891), so exactly
-**nine real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
+`InteractiveStreamE2ETest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` (#850),
+`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_statusSheetShowsRunningModel` (#891), and
+`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_footerShowsContextUsage` (#946), so exactly
+**ten real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
-ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, and #891's own
-ping; the delete,
+ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, #891's own
+ping, and #946's own ping; the delete,
 archive-restore, change-workspace, rename,
 save-as-channel, list-archive-entry and two-host scenarios each add a method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
@@ -853,10 +864,11 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **nine real claude turns per run across fourteen curated methods** (ping + create-workspace-folder,
+Cost: **ten real claude turns per run across fifteen curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
 \#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
-status-sheet-running-model scenario's own ping, #891; `/clear` spends
+status-sheet-running-model scenario's own ping, #891 + the footer-context-usage scenario's own ping,
+\#946; `/clear` spends
 none; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
 \#740, and two-host separation, #847, each spend none — create/rename/delete/archive/restore/
@@ -1144,6 +1156,18 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #946 (2026-09-24):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/946` at `a951201036` merged with
+  `origin/main` at `01042d232b` (0 commits behind before the merge), the
+  [recorded run](https://github.com/pyrycode/pyrycode-mobile/issues/946#issuecomment-5805808838)
+  executed all fifteen curated scenarios — the curated list's first run with
+  `interactiveTurn_pingPrompt_footerShowsContextUsage` on it — with fifteen passes, no failures or
+  skips, exit 0, wall clock 103.5s. `LIVE_MINIMUM` rose from 14 to 15 with this ticket (see
+  [Pre-ship gate](#pre-ship-gate)); fifteen executed meets it exactly. This is the first live evidence
+  that the composer footer's `Cxt:` segment renders the percentage Claude reported, sourced from the
+  daemon's post-turn `context_usage` push alone — this PR's Rework 1 removed the phone's
+  on-subscription `request_context_usage` ask, which had deadlocked the scripted `reconnect` scenario
+  on the prior verifier pass.
 - **LIVE verified for #891 (2026-09-23):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/891` at `21fc690f4b` merged with
   `origin/main` at `3c771c7440` (6 commits behind before the merge), the
@@ -1491,7 +1515,23 @@ The remaining checks here are specific to a real relay or real Claude execution:
   independently diagnosable (plan `docs/specs/architecture/891-status-sheet-running-model.md` §
   Revisions). The live run that closed the ticket
   (`python3 scripts/android-test-gate.py live`, 2026-09-23, branch `feature/891` at `21fc690f4b` merged
-  with `origin/main` at `3c771c7440`) executed all fourteen with no failures or skips; API-retry status
+  with `origin/main` at `3c771c7440`) executed all fourteen with no failures or skips; Layer-3 (real
+  claude) footer context usage — **shipped (#946)**, proving that after one real turn the composer
+  footer's `Cxt:` segment shows the percentage Claude reported (`context_usage`, published after every
+  completed turn): the scenario sends the ping prompt, awaits the reply, and waits for the
+  `CONTEXT_USAGE_TEST_TAG` node's text to match `Cxt: \d+%`, with no percentage hard-coded. Always-on (a
+  reported percentage is a durable post-turn fact, not a transient spinner) and folded into the pre-ship
+  `LIVE=1` gate as the 15th curated method, taking the gate from fourteen curated methods to fifteen, the
+  floor from `LIVE_MINIMUM = 14` to `15` on the same `test_live_floor_matches_the_curated_list`
+  mechanism, and the run's real-claude cost from nine turns to ten (the scenario's own ping, alongside
+  the existing nine) — the same one-ping-per-scenario choice #891 made, so each scenario stays
+  independently diagnosable (plan `docs/specs/architecture/946-context-usage-footer.md` § Revisions,
+  which also records that the phone stopped sending `request_context_usage` on subscription: after the
+  verifier's first pass found that a mid-turn ask deadlocked the scripted `reconnect` scenario, Rework 1
+  removed the ask outright, so the reading now comes from the daemon's post-turn push alone and this
+  scenario needed no change for it). The live run that closed the ticket
+  (`python3 scripts/android-test-gate.py live`, 2026-09-24, branch `feature/946` at `a951201036` merged
+  with `origin/main` at `01042d232b`) executed all fifteen with no failures or skips; API-retry status
   (attempt N/M) — **rung 2 shipped (#594)**, the
   `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
   into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including

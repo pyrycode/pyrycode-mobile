@@ -183,15 +183,12 @@ and `TYPE_SESSION_FACTS = "session_facts"` each get their own `onInbound` arm, g
   running" is a separate, not-yet-shipped ticket. See [`AnnouncedModel`/`SessionFacts`](conversation-repository.md#shape)
   for the domain types and their untrusted-text KDoc.
 
-## `context_usage` — the context-usage reading and its on-demand ask (#945)
+## `context_usage` — the context-usage reading (#945)
 
 A per-conversation reading of how full claude's context window is, held in its own file
 `data/repository/ContextUsageProjection.kt` — the [status-projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
-shape, but the first of the family that also **sends** something: a `request_context_usage` ask that keeps a
-watched reading fresh. `TYPE_CONTEXT_USAGE = "context_usage"` decodes the daemon's push (after every completed
-turn) and its correlated reply to the ask alike — one shape serves both, so the projection never reads
-`in_reply_to`, only the payload's own `conversation_id`. Wire SSOT: pyrycode `docs/protocol-mobile.md` §
-`context_usage` and § "Asking for a context usage reading on demand".
+shape. `TYPE_CONTEXT_USAGE = "context_usage"` decodes the daemon's push, sent after every completed turn.
+Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`.
 
 - **Decode-or-drop, the sibling idiom, plus one value reject.** `ContextUsageProjection`'s private decoder wraps
   `ContextUsagePayloadDto` decoding in the usual `try`/`catch (IllegalArgumentException) { null }`, discarding the
@@ -203,43 +200,48 @@ turn) and its correlated reply to the ask alike — one shape serves both, so th
   three inventories (`categories`, `mcp_tools`, `memory_files`) are not declared on the DTO at all, so
   [`MobileJson`](mobile-protocol-v2-wire-layer.md)'s `ignoreUnknownKeys` discards them at the boundary — this
   slice holds numbers only, and the desktop breakdown popover they feed has no mobile consumer yet.
-- **Latest always wins**, push or reply alike — `apply` does the same plain `readingByConversation.update { it +
-  (id to reading) }` the #890 pair uses. Routing is the payload's own daemon-authored `conversation_id`, **never**
-  `in_reply_to` — a reply naming another conversation would otherwise be able to cross-route into it, the one
-  place this seam departs from a request/reply shape despite looking like one; a dedicated test proves a frame
-  for one conversation never touches another's reading.
-- **The ask is fire-and-forget, the `ModelMenuProjection` shape, not a second correlation ledger.** A private
-  `ask(conversationId)` builds a `request_context_usage` envelope through the same `nextRequestId` lambda
-  [`RemoteConversationRepository`](remote-conversation-repository.md) hands `modelMenuProjection`, sends it
-  through the injected `send`, and swallows a `false` return or a thrown send — no ledger, no retry. A reject
-  (`context_usage.unavailable` or `conversation.not_found`) needs **no code here**: it arrives on the repository's
-  existing `TYPE_ERROR` arm with an `in_reply_to` that matches no `RelayRequests` waiter and no model-list ask, so
-  both lookups are silent no-ops. Nothing writes the reading, which stays absent, and nothing re-sends — the next
-  turn-end push fills it in. This is why `ContextUsageProjection` has no reject-handling branch at all.
-- **"Observed" is an atomic count, not a boolean latch — the reason a session transition can re-ask correctly.**
-  `observerCounts: ConcurrentHashMap<String, Int>` tracks how many collectors currently watch each conversation's
-  reading; `observe(conversationId)`'s `onStart` increments it and asks only on the 0→1 edge (a second concurrent
-  collector sends nothing), and `onCompletion` decrements it, removing the key at zero. `onSessionTransition`
-  **clears the reading first, then** asks again if and only if the count is still above zero — the old figure
-  described a session that is now gone, and clearing before the new ask keeps a stale number from sitting beside
-  the outstanding request. An unobserved conversation's transition asks nothing. A read racing a subscription can
-  at worst send one ask more or fewer at the same instant; the daemon collapses near-simultaneous asks per
-  conversation, and there is no timer and no retry loop for a hostile or slow daemon to exploit.
-- **The reconnect ask comes for free from the facade's `flatMapLatest`, not from a dedicated reconnect hook.**
+- **Latest always wins** — `apply` does the same plain `readingByConversation.update { it +
+  (id to reading) }` the #890 pair uses. Routing is the payload's own daemon-authored `conversation_id` — a
+  frame for one conversation never touches another's reading, pinned by a dedicated test.
+- **The phone sends no ask, since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946) Rework 1.**
+  `ContextUsageProjection` originally sent a fire-and-forget `request_context_usage` on a conversation's 0→1
+  subscriber edge (the `ModelMenuProjection` shape) and again after a `session_transition`, tracked by an
+  `observerCounts: ConcurrentHashMap<String, Int>`. [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946)
+  was that ask's first production subscriber (`ThreadViewModel.runConfigFlow`), and its scripted `reconnect`
+  scenario found that the daemon's `handleRequestContextUsage` answers a mid-turn ask only after the turn ends,
+  blocking every later frame on that connection's serial frame worker behind it — a reconnect mid-turn then
+  deadlocked, because the queued `send_message` that would end the turn was itself stuck behind the ask. The
+  phone cannot tell whether a turn is open when it subscribes (a fresh connection has seen no `turn_state`), so
+  asking only when believed-idle would still race the next queued turn. `ask`, `observerCounts`,
+  `negotiatedCapabilities`, `nextRequestId` and the constructor's `send` parameter were removed outright rather
+  than gated — `ContextUsageProjection` now takes no constructor arguments. `RequestContextUsagePayloadDto` and
+  `TYPE_REQUEST_CONTEXT_USAGE` stay as wire documentation, marked unsent. The daemon-side fix is
+  [pyrycode/pyrycode#2563](https://github.com/pyrycode/pyrycode/issues/2563) (open); once it lands, a future
+  mobile ticket can restore the ask from git history — none exists yet.
+- **`onSessionTransition` only clears, it no longer re-asks.** The conversation's old reading described a
+  session that is now gone, so it is dropped (`readingByConversation.update { it - conversationId }`) with no
+  follow-up request. A conversation therefore shows "unavailable" from a transition until its **next completed
+  turn** on the current connection pushes a fresh reading — the same is true of a brand-new idle conversation,
+  which the removed ask used to fill in immediately.
+- **The reconnect case needs no dedicated hook, only for a different reason than before.**
   [`StableConversationRepository.observeContextUsage`](stable-conversation-repository.md) is
   `switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }`, the `observeAnnouncedModel`
-  shape: a fresh connection publishes a fresh `RemoteConversationRepository`, `flatMapLatest` cancels the old
-  subscription (running its `onCompletion`, decrementing the old projection's count to zero) and subscribes the
-  new one, whose `onStart` is what sends the new connection's ask. State is connection-scoped by construction —
-  one `ContextUsageProjection` instance per repository, and a reconnect or host switch starts from an empty map
-  with nothing to carry over.
+  shape: a fresh connection publishes a fresh `RemoteConversationRepository`, and `flatMapLatest` cancels the old
+  subscription and subscribes the new one. State is connection-scoped by construction — one
+  `ContextUsageProjection` instance per repository, and a reconnect or host switch starts from an empty map with
+  nothing to carry over. Previously this 0→1 edge was also what sent a fresh connection's ask; now it sends
+  nothing, and the reading simply stays absent until the next turn-end push on that connection.
 - **Never writes `SessionSettings`, and is never derived from it.** `SessionSettings.usedTokens`/`.windowTokens`
   are transcript-derived numbers on an unrelated read; `percentage` here is claude's own arithmetic, held
   verbatim, and the two are never cross-checked or substituted for each other.
-- **Renders nothing yet.** The footer display that surfaces this reading is a separate ticket split from
-  [#591](https://github.com/pyrycode/pyrycode-mobile/issues/591); no Compose consumer exists, and no rung-3
-  scenario was added for this data-layer-only slice. See [`ContextUsage`](conversation-repository.md#shape) for
-  the domain type and its untrusted-text KDoc (there is none to carry — every string on the frame is left
+- **Rendered since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946), split from
+  [#591](https://github.com/pyrycode/pyrycode-mobile/issues/591).** The composer footer's `Cxt:` segment and the
+  Status sheet's Context-window section both read the identical value off `ThreadRunConfig.contextPercent` — see
+  [Thread composer footer § Context usage segment](thread-composer-footer.md#context-usage-segment-946) and
+  [StatusSheet — running model and context window readings § `ContextWindowSection`](status-sheet-readings.md#contextwindowsection).
+  A rung-3 scenario, `interactiveTurn_pingPrompt_footerShowsContextUsage`, proves one live reading after a real
+  turn — see [e2e coverage](../../e2e-interactive-stream.md). See [`ContextUsage`](conversation-repository.md#shape)
+  for the domain type and its untrusted-text KDoc (there is none to carry — every string on the frame is left
   undecoded).
 
 `security-sensitive`, the same posture as the sibling arms above: decode runs behind the authenticated Noise
