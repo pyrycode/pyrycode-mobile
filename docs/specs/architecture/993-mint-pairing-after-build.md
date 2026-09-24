@@ -75,3 +75,7 @@ Focused proof: `python3 scripts/android-test-gate.py scripted ping` — pairing 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- 2026-09-24, open question resolved, no design change: `--rerun` applies only to the device test task. In `python3 scripts/android-test-gate.py scripted ping` (`PYRY_FORCE_TEST_RUN=1`), the test invocation reported every `compile*`, `dexBuilder*`, `mergeProjectDex*`, `packageDebug` and `packageDebugAndroidTest` task `UP-TO-DATE`; only `pixel2Api33AtdSetup`, the test task and its result-proto merge ran. The ordering test counts eight `pyry pair` sites, since host A has an isolated-HOME branch and a real-HOME branch.
