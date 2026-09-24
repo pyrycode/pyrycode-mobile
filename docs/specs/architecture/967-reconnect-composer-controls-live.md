@@ -142,3 +142,10 @@ an empty published menu, a blank `task_type`) fails with its own message, never 
 
 Pending for the documentation stage: `docs/e2e-interactive-stream.md` § Live mode — add the three methods to the
 curated list and update the method count (27) and the real-claude turn count (29).
+
+## Revisions
+
+- **2026-09-24, during Phase B.** The background command is `python3 -c "import time; time.sleep(40)"`, not
+  `sleep 40`. The harness's `WAIT_PROMPT` records that claude's Bash tool refuses a bare `sleep` of 25 s or more,
+  and a `python3` command is never auto-allowed on the main daemon, so the permission path in
+  `allowPromptsUntil` is the one the run exercises. The assertions are unchanged.
