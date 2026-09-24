@@ -291,6 +291,8 @@ class LiteralScreenNavigationTest {
                     // for why these containers override it rather than supply the Context.
                     single<ConversationCache> { InertConversationCache }
                     single { InertAttachmentStore }
+                    // The real reader needs androidContext() for its ContentResolver (#932).
+                    single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                 },
             )
         return StateRestorationTester(compose).also { tester ->
