@@ -29,6 +29,7 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
+import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationConnection
@@ -2067,6 +2068,187 @@ class HostChannelListViewModelTest {
         }
 
     /**
+     * Both hosts hold a channel at the same exact `cwd` (#958), so a create sent to the wrong host cannot
+     * pass. Host A also holds a chat-only path, which has no Channels-section row to open from.
+     */
+    private fun Fixture.seedCollidingChannels() {
+        a.repo.rows.value = listOf(row("a-channel", promoted = true), row("a-chat", cwd = "/chat-only"))
+        b.repo.rows.value = listOf(row("b-channel", promoted = true))
+    }
+
+    private fun Fixture.channelCreates() = a.repo.channelCreates + b.repo.channelCreates
+
+    private fun Fixture.promptWrites() = a.repo.promptWrites + b.repo.promptWrites
+
+    @Test
+    fun createChannelOpensOnlyOnTheRowsOwnHostAndAChannelCwd() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannels()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            runCurrent()
+
+            f.vm.openCreateChannel("Host", sharedCwd)
+            runCurrent()
+            assertEquals(CreateChannelState("Host", sharedCwd), f.vm.hostState.value.createChannel)
+
+            f.vm.openCreateChannel("host", sharedCwd)
+            runCurrent()
+            assertEquals(CreateChannelState("host", sharedCwd), f.vm.hostState.value.createChannel)
+
+            // A chat-only path, an inexact path or a host the list does not hold opens nothing.
+            f.vm.dismissCreateChannel()
+            for ((serverId, cwd) in listOf("Host" to "/chat-only", "Host" to "/same/../Path", "gone" to sharedCwd)) {
+                f.vm.openCreateChannel(serverId, cwd)
+                runCurrent()
+                assertNull(f.vm.hostState.value.createChannel)
+            }
+
+            assertNull(f.vm.hostState.value.selected)
+            assertTrue(f.nav.isEmpty())
+            assertTrue(f.channelCreates().isEmpty())
+        }
+
+    @Test
+    fun createChannelCreatesOnlyOnTheModalsHostAtItsCwdWritesAPromptToTheCreatedOneAndOpensIt() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannels()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            // The selected adapter points at the other host: nothing below may follow it.
+            f.selected.value = f.a.repo
+            runCurrent()
+
+            // A blank or whitespace-only prompt sends no write.
+            f.vm.openCreateChannel("host", sharedCwd)
+            f.vm.submitCreateChannel("  New channel  ", "  \n\t ")
+            runCurrent()
+            assertEquals(listOf("New channel" to sharedCwd), f.b.repo.channelCreates)
+            assertTrue(
+                f.a.repo.channelCreates
+                    .isEmpty(),
+            )
+            assertTrue(f.promptWrites().isEmpty())
+            assertNull(f.vm.hostState.value.createChannel)
+            assertEquals(listOf(HostConversationTarget("host", "host-created-1")), f.nav)
+            assertEquals(HostConversationTarget("host", "host-created-1"), f.vm.hostState.value.selected)
+
+            // Other text is written verbatim, after the create, to the created conversation on the same host.
+            f.vm.openCreateChannel("Host", sharedCwd)
+            f.vm.submitCreateChannel("Other", "  Keep my spaces  ")
+            runCurrent()
+            assertEquals(listOf("Other" to sharedCwd), f.a.repo.channelCreates)
+            assertEquals(listOf<Pair<String, String?>>("Host-created-1" to "  Keep my spaces  "), f.a.repo.promptWrites)
+            assertEquals(listOf("create", "prompt"), f.a.repo.channelCalls)
+            assertTrue(
+                f.b.repo.promptWrites
+                    .isEmpty(),
+            )
+            assertNull(f.vm.hostState.value.createChannel)
+            assertEquals(HostConversationTarget("Host", "Host-created-1"), f.nav.last())
+        }
+
+    @Test
+    fun createChannelFailuresStayOpenAndAPromptRetryNeverCreatesTwice() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannels()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.vm.openCreateChannel("Host", sharedCwd)
+            runCurrent()
+
+            // A failed create keeps the modal with a static flag, and OK creates again.
+            f.a.repo.createChannelFailures = 1
+            f.vm.submitCreateChannel("Named", "Prompt text")
+            runCurrent()
+            assertEquals(CreateChannelState("Host", sharedCwd, createFailed = true), f.vm.hostState.value.createChannel)
+            assertTrue(f.channelCreates().isEmpty())
+            assertTrue(f.promptWrites().isEmpty())
+
+            // A failed prompt write after a confirmed create keeps the modal, holding the created id.
+            f.a.repo.promptFailures = 1
+            f.vm.submitCreateChannel("Named", "Prompt text")
+            runCurrent()
+            assertEquals(
+                CreateChannelState("Host", sharedCwd, createdConversationId = "Host-created-1", promptFailed = true),
+                f.vm.hostState.value.createChannel,
+            )
+            assertEquals(listOf("Named" to sharedCwd), f.a.repo.channelCreates)
+            assertTrue(f.nav.isEmpty())
+
+            // OK retries only the prompt write, to the created conversation — never a second create.
+            f.vm.submitCreateChannel("Changed", "Prompt again")
+            runCurrent()
+            assertEquals(listOf("Named" to sharedCwd), f.channelCreates())
+            assertEquals(listOf<Pair<String, String?>>("Host-created-1" to "Prompt again"), f.promptWrites())
+            assertNull(f.vm.hostState.value.createChannel)
+            assertEquals(listOf(HostConversationTarget("Host", "Host-created-1")), f.nav)
+
+            assertTrue(logs.any { "create_channel_failed" in it } && logs.any { "create_channel_prompt_failed" in it })
+            assertTrue(
+                "no name, path, prompt, id or server message may reach a log line: $logs",
+                logs.none {
+                    "secret" in it || "Named" in it || "Prompt" in it || "Path" in it || "Host" in it || "created-1" in it
+                },
+            )
+        }
+
+    @Test
+    fun createChannelSendsNothingWhenUnavailableInvalidInFlightOrDismissed() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannels()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+
+            // No open modal: nothing to create.
+            f.vm.submitCreateChannel("Orphan", "")
+            runCurrent()
+
+            // Cancel, Close and Back before OK send nothing.
+            f.vm.openCreateChannel("Host", sharedCwd)
+            f.vm.dismissCreateChannel()
+            runCurrent()
+            assertNull(f.vm.hostState.value.createChannel)
+
+            // Lost between the last status and the press: a static flag, nothing sent.
+            f.vm.openCreateChannel("Host", sharedCwd)
+            f.a.available = false
+            f.vm.submitCreateChannel("Named", "")
+            runCurrent()
+            assertEquals(CreateChannelState("Host", sharedCwd, createFailed = true), f.vm.hostState.value.createChannel)
+            f.a.available = true
+
+            // A blank name or a prompt over the byte limit is ignored outright.
+            val open = f.vm.hostState.value.createChannel
+            f.vm.submitCreateChannel("   ", "")
+            f.vm.submitCreateChannel("Named", "é".repeat(SystemPromptLimit.MAX_BYTES / 2 + 1))
+            runCurrent()
+            assertEquals(open, f.vm.hostState.value.createChannel)
+            assertTrue(f.channelCreates().isEmpty())
+
+            // A second OK mid-write is ignored, and a result landing after a dismissal cannot reopen or navigate.
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.channelGate = gate
+            f.vm.submitCreateChannel("Late", "Late prompt")
+            f.vm.submitCreateChannel("Twice", "")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.createChannel).saving)
+            f.vm.dismissCreateChannel()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.createChannel)
+            assertEquals(listOf("Late" to sharedCwd), f.channelCreates())
+            // The operator pressed OK before dismissing, so the chain still finishes its prompt write.
+            assertEquals(listOf<Pair<String, String?>>("Host-created-1" to "Late prompt"), f.promptWrites())
+            assertTrue(f.nav.isEmpty())
+            assertNull(f.vm.hostState.value.selected)
+        }
+
+    /**
      * Reads the supplied snapshot until something writes, then the written value.
      *
      * The unpair path clears the removed host's cached workspace through `DataStore.edit`, which the
@@ -2349,6 +2531,43 @@ class HostChannelListViewModelTest {
         val workspaceRenames = mutableListOf<Pair<String, String?>>()
         val workspaceArchives = mutableListOf<String>()
         var workspaceGate: CompletableDeferred<Unit>? = null
+
+        // #958: records every channel create and prompt write, in call order; a create adds a promoted row
+        // at its cwd and returns an id naming this host, so a write to the wrong host's id cannot pass.
+        override suspend fun createChannel(
+            name: String,
+            workspace: String,
+        ): Conversation {
+            channelGate?.await()
+            if (createChannelFailures > 0) {
+                createChannelFailures--
+                throw IllegalStateException("create secret")
+            }
+            channelCreates += name to workspace
+            channelCalls += "create"
+            val created = row("$hostId-created-${channelCreates.size}", promoted = true, cwd = workspace).copy(name = name)
+            rows.value = rows.value.orEmpty() + created
+            return created
+        }
+
+        override suspend fun setSystemPrompt(
+            conversationId: String,
+            systemPrompt: String?,
+        ) {
+            if (promptFailures > 0) {
+                promptFailures--
+                throw IllegalStateException("prompt secret")
+            }
+            promptWrites += conversationId to systemPrompt
+            channelCalls += "prompt"
+        }
+
+        val channelCreates = mutableListOf<Pair<String, String>>()
+        val promptWrites = mutableListOf<Pair<String, String?>>()
+        val channelCalls = mutableListOf<String>()
+        var createChannelFailures = 0
+        var promptFailures = 0
+        var channelGate: CompletableDeferred<Unit>? = null
     }
 
     companion object {
