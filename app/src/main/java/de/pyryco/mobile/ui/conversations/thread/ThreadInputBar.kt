@@ -16,7 +16,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.TextFieldLineLimits
-import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowCircleUp
@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -42,6 +43,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -110,14 +112,21 @@ fun ThreadInputBar(
     // the field keeps its own value. #934 moved this onto a TextFieldState, the only text field that can
     // receive pasted content: user edits reach the draft through the input transformation, which a
     // programmatic set never runs, so an outside change cannot echo back as an edit.
-    val fieldState = rememberTextFieldState(text)
+    // Plain `remember`, never `rememberTextFieldState`: that one is saveable, and its saver writes the text and
+    // the whole undo history into the saved-state Bundle. The draft is heap-only (#789).
+    val fieldState = remember { TextFieldState(text, TextRange(text.length)) }
     var textAtLastEdit by remember { mutableStateOf<String?>(null) }
+    // The text either path last put in the field: a user edit reported through the transformation, or an
+    // outside change set here. A field text that is neither came from undo or redo, which bypass input
+    // transformations, and still has to reach the draft.
+    var accountedText by remember { mutableStateOf(text) }
     val currentText by rememberUpdatedState(text)
     val currentOnTextChange by rememberUpdatedState(onTextChange)
     val reportEdits =
         remember {
             InputTransformation {
                 val edited = toString()
+                accountedText = edited
                 if (edited != currentText) {
                     textAtLastEdit = currentText
                     currentOnTextChange(edited)
@@ -131,7 +140,17 @@ fun ThreadInputBar(
             // is an outside change like any other.
             textAtLastEdit = null
         } else if (text != textAtLastEdit) {
+            accountedText = text
             fieldState.setTextAndPlaceCursorAtEnd(text)
+        }
+    }
+    LaunchedEffect(fieldState) {
+        snapshotFlow { fieldState.text.toString() }.collect { shown ->
+            if (shown != accountedText) {
+                accountedText = shown
+                textAtLastEdit = currentText
+                currentOnTextChange(shown)
+            }
         }
     }
     val ownPackage = LocalContext.current.packageName
