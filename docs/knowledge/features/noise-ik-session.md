@@ -153,10 +153,11 @@ another connection. `createCompatibility(store)` remains a factory helper but is
 no longer used by app DI. See [registry configuration](relay-repository-coordinator.md#configuration)
 and [lifecycle guarantees](lifecycle-connection-driver.md#guarantees-delegated-not-re-implemented).
 
-The fake/relay repository selector remains unchanged. `Build.MODEL` and
-`BuildConfig.VERSION_NAME` enter as plain `NoiseClientInfo` strings from `AppModule`,
-keeping the session and factory portable. Setup error categories, key-buffer
-wiping and single-connection algorithms are unchanged.
+The fake/relay repository selector remains unchanged. `Build.MODEL` and the
+`pyrycode-mobile/`-prefixed `clientVersion` (`AppModule.mobileClientVersion()`,
+[#1007](about-screen.md#versioning)) enter as plain `NoiseClientInfo` strings from
+`AppModule`, keeping the session and factory portable. Setup error categories,
+key-buffer wiping and single-connection algorithms are unchanged.
 
 ## Threading & key hygiene
 
