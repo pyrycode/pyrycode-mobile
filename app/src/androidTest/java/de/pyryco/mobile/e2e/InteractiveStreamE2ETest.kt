@@ -2574,12 +2574,16 @@ class InteractiveStreamE2ETest {
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
         cycleHostLink(serverId)
 
-        // 2. AC-2: `/` lists the published commands; picking the first completes it into the composer.
+        // 2. AC-2: `/` lists the published commands; picking the first completes it into the composer. The
+        //    menu is read off the host's live connection: the reconnect's fresh connection can drop and be
+        //    redialled within a second (#1029, #1039), and the app follows the redial, so the read does too.
         val published =
             try {
+                val live =
+                    checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
-                        hostRepository(serverId).observeSlashCommandMenu(chatId).filterNotNull().first { it.rows.isNotEmpty() }
+                        live.coordinator.currentRepository.firstOnLive({ it.observeSlashCommandMenu(chatId) }) { it.rows.isNotEmpty() }
                     }
                 }
             } catch (e: TimeoutCancellationException) {
@@ -3589,14 +3593,23 @@ class InteractiveStreamE2ETest {
         pairHostByCode(answerArg(ARG_ANSWER_PAIR_CODE), ANSWER_HOST_NAME)
     }
 
-    /** A new chat on [serverId] with a run-unique name starting [prefix]: its id and name. */
+    /**
+     * A new chat on [serverId] with a run-unique name starting [prefix]: its id and name. A connection that
+     * drops mid-request is retried on the host's redial (#1029); that can leave one unnamed stray chat, which
+     * no scenario finds, because each finds its chat by this name.
+     */
     private fun answerChat(
         serverId: String,
         prefix: String,
     ): Pair<String, String> {
         val name = prefix + System.currentTimeMillis()
-        val repository = hostRepository(serverId)
-        val chat = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.rename(repository.createDiscussion().id, name) } }
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        val chat =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    bundle.coordinator.currentRepository.callOnLive(REDIAL_WAIT_MS) { it.rename(it.createDiscussion().id, name) }
+                }
+            }
         return chat.id to name
     }
 
@@ -4895,6 +4908,10 @@ class InteractiveStreamE2ETest {
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
+
+        // How long a failed one-shot waits for the host's redial (#1029): the supervisor's first three
+        // backoffs are at most 1.2 + 2.4 + 4.8 s, plus a dial.
+        const val REDIAL_WAIT_MS = 10_000L
 
         // How often the #850 cut re-reads the thread cache while it waits for the settled reply.
         const val CACHE_POLL_MS = 200L
