@@ -5,9 +5,11 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.BuildConfig
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
@@ -36,6 +38,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
+import de.pyryco.mobile.notifications.AttentionNotifier
 import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
@@ -85,14 +88,17 @@ val appModule =
         // excluded from both paths by definition, keeping the cache exactly as transferable as the
         // credentials it belongs to. ConversationCacheBindingInstrumentedTest holds this.
         single<ConversationCache> { FileConversationCache(File(androidContext().noBackupFilesDir, "conversations")) }
+        // #899: retrieved attachments, kept per host under noBackupFilesDir for the reason above. A `single`
+        // because its one-fetch-per-file bookkeeping is per instance.
+        single { AttachmentStore(File(androidContext().noBackupFilesDir, "attachments")) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
         // #790: a removed pairing takes its host's unsent composer text with it, and (#798) its cached
-        // conversation content. Bound here rather than in the unpair controller so neither screen that
+        // conversation content, and (#900) its retained attachment files. Bound here rather than in the unpair controller so neither screen that
         // opens the Edit host modal carries a draft-store or cache dependency it does not otherwise use,
         // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
         // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
         single {
-            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }))
+            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }, lazy { get() }))
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
         single {
@@ -131,6 +137,23 @@ val appModule =
                 controller = get<RelayConnectionController>(),
                 lifecycle = ProcessLifecycleOwner.get().lifecycle,
             ).also { it.start() }
+        } onClose { it?.dispose() }
+        // #685: alerts. Eager for the driver's reason — a push can start the process with no activity,
+        // and the publisher must already be subscribed when the wake's hosts connect. The ledger sits
+        // in noBackupFilesDir beside the conversation cache: it holds digests only, and never travels.
+        single(createdAtStart = true) {
+            AttentionNotifier(
+                context = androidContext(),
+                alerts = get<HostConversationSource>().alerts,
+                notificationsEnabled = get<AppPreferences>().notificationsEnabled,
+                isForeground = {
+                    ProcessLifecycleOwner
+                        .get()
+                        .lifecycle.currentState
+                        .isAtLeast(Lifecycle.State.STARTED)
+                },
+                ledgerFile = File(androidContext().noBackupFilesDir, "attention_alerts"),
+            )
         } onClose { it?.dispose() }
         // #361: the FCM service's token writes outlive the service instance that received them.
         single { PushTokenSink(get()) } onClose { it?.dispose() }
@@ -199,7 +222,17 @@ fun hostConversationModule(
 ): Module =
     module {
         // #797: the demo branch resolves no cache, as HostConversationSource's does below.
-        single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository, cache = if (useRelay) get() else null) }
+        single {
+            ThreadDestinationFactory(
+                useRelay,
+                get(),
+                get(),
+                get(),
+                decorateRepository,
+                cache = if (useRelay) get() else null,
+                attachments = if (useRelay) get() else null,
+            )
+        }
         // #877: one viewing tracker per app, shared by the thread destinations and the host source.
         single { ConversationViewing() }
         single {
@@ -237,6 +270,7 @@ internal class ThreadDestinationFactory(
     private val store: PairedServerCollectionStore,
     private val decorateRepository: (ConversationRepository) -> ConversationRepository,
     private val cache: ConversationCache? = null,
+    private val attachments: AttachmentStore? = null,
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -269,7 +303,7 @@ internal class ThreadDestinationFactory(
             // (E2eTestApplication's TappingConversationRepository) observes the restored thread too. A
             // blank owner gets no cache, so no rows are ever filed under the empty id.
             decorateRepository(
-                if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId) else stable,
+                if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId, attachments) else stable,
             )
         }
 
@@ -312,6 +346,9 @@ internal class ThreadDestinationFactory(
             questionBatch = { id -> bundle?.coordinator?.observeQuestionBatch(id) ?: flowOf(null) },
             answerQuestionBatch = { batch, answers -> checkNotNull(bundle).coordinator.answerQuestionBatch(batch, answers) },
             refuseQuestionBatch = { batch -> checkNotNull(bundle).coordinator.refuseQuestionBatch(batch) },
+            // #678: the open host's roster and live count; the demo early-return above keeps the defaults.
+            backgroundTasks = { id -> bundle?.coordinator?.observeBackgroundTasks(id) ?: flowOf(null) },
+            backgroundTaskCount = { id -> bundle?.coordinator?.observeLiveBackgroundTaskCount(id) ?: flowOf(0) },
             // #861: the walk restart waits for the published repository, not the socket — the supervisor's
             // Connected precedes the handshake that publishes it.
             repositoryAvailable = bundle?.coordinator?.currentRepository?.map { it != null } ?: flowOf(false),

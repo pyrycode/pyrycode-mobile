@@ -4,6 +4,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- #685: attention alerts. Asked from the Settings switch and once on the channel list. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Camera is not required: the "paste the pairing code instead" fallback completes onboarding
          without it, so the app stays installable on camera-less devices. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />

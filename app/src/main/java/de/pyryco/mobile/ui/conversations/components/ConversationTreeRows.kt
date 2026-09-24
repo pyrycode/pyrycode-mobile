@@ -273,11 +273,14 @@ private fun boundedTagId(serverId: String): String =
 private const val MAX_TEST_TAG_ID_CHARS = 256
 
 /**
- * One workspace under a host: an open-folder glyph, the workspace's name and a fold control.
+ * One workspace under a host: an open-folder glyph, the workspace's name, a fold control and, when
+ * [onEditTapped] is supplied, the pencil that opens Edit workspace for it (#905).
  *
  * [workspaceName] is #729's already-resolved `HostWorkspaceGroup.displayName` — display text only,
- * never the `cwd`. This row draws **no** add control: adding a workspace is #663's control and #664's
- * content, deliberately not the host row's plus that #738 landed one tier above.
+ * never the `cwd`. The row resolves nothing: the caller binds [onEditTapped] to the group's own host and
+ * `cwd`. The pencil is drawn permanently, as the host and chat rows' are, since the phone has no hover;
+ * it is a [TreeRowControl], so a tap on it edits the workspace without folding the row. The row adds no
+ * workspace: that is the host row's plus, held (#904).
  */
 @Composable
 fun TreeWorkspaceRow(
@@ -285,16 +288,27 @@ fun TreeWorkspaceRow(
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
     modifier: Modifier = Modifier,
+    onEditTapped: (() -> Unit)? = null,
 ) {
+    // Clamped once and reused for the name and the pencil's label, as the host row does.
+    val bounded = boundedRowText(workspaceName)
     FoldableTreeRow(
         glyph = Icons.Filled.FolderOpen,
-        name = boundedRowText(workspaceName),
+        name = bounded,
         nameStyle = MaterialTheme.typography.titleSmall,
         startIndent = WorkspaceRowIndent,
         expanded = expanded,
         onToggleExpanded = onToggleExpanded,
         modifier = modifier,
-    )
+    ) {
+        if (onEditTapped != null) {
+            TreeRowControl(
+                icon = Icons.Filled.Edit,
+                contentDescription = stringResource(R.string.cd_tree_workspace_edit, bounded),
+                onClick = onEditTapped,
+            )
+        }
+    }
 }
 
 /**
@@ -430,7 +444,8 @@ private fun FoldableTreeRow(
 
 /**
  * The trailing row control: the section header's and the host row's plus (#738), the host row's
- * pencil (#744), a disconnected host's plug (#840) and a chat row's pencil (#827). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
+ * pencil (#744), a disconnected host's plug (#840), a chat row's pencil (#827) and a workspace row's pencil
+ * (#905). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
  * differs between them.
  *
  * [contentDescription] is the whole accessible name, because the controls repeat down the screen and two
@@ -539,7 +554,7 @@ private fun TreeRowsPreviewMatrix() {
                 onAddTapped = {},
                 onAddLongPressed = {},
             )
-            TreeWorkspaceRow(workspaceName = "Second Brain", expanded = true, onToggleExpanded = {})
+            TreeWorkspaceRow(workspaceName = "Second Brain", expanded = true, onToggleExpanded = {}, onEditTapped = {})
             TreeConversationRow(conversationName = "kitchenclaw refactor", selected = false, onClick = {})
             TreeConversationRow(
                 conversationName = "pyrycode discord integration",

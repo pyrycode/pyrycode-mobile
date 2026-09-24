@@ -16,6 +16,9 @@ import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.host.HostEditorController
 import de.pyryco.mobile.ui.host.HostEditorState
+import de.pyryco.mobile.ui.workspace.isWorkspaceLabelTooLong
+import de.pyryco.mobile.ui.workspace.workspaceDisplayName
+import de.pyryco.mobile.ui.workspace.workspaceLabelFor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -73,6 +76,8 @@ data class HostChannelListState(
     val hostEditor: HostEditorState? = null,
     /** The chat whose Edit chat modal is open, or null when none is (#827). */
     val chatEditor: ChatEditorState? = null,
+    /** The workspace whose Edit workspace modal is open, or null when none is (#905). */
+    val workspaceEditor: WorkspaceEditorState? = null,
 ) {
     /**
      * Whether [serverId]'s own session is up, read from the same snapshot its rows are drawn from (#827).
@@ -102,6 +107,26 @@ data class ChatEditorState(
     val serverId: String,
     val conversationId: String,
     val initialName: String,
+    val saving: Boolean = false,
+    val failed: Boolean = false,
+    val archiveFailed: Boolean = false,
+)
+
+/**
+ * The Edit workspace modal's target and flags (#905), shaped like [ChatEditorState].
+ *
+ * The target is the ([serverId], [cwd]) pair a workspace row is keyed on — never its shown name, which a
+ * second workspace can share. [initialName] is the name the row showed at open time, daemon-authored and
+ * carried unclamped: `EditWorkspaceModal` clamps it at its own boundary. [confirmingArchive] swaps the
+ * modal's content for the archive prompt in place, as `HostEditorState.confirmingUnpair` does. [saving]
+ * covers either write in flight; [failed] is the rename's failure and [archiveFailed] the archive's, and
+ * both are flags so the string resolves on screen and no daemon message reaches the shell's live region.
+ */
+data class WorkspaceEditorState(
+    val serverId: String,
+    val cwd: String,
+    val initialName: String,
+    val confirmingArchive: Boolean = false,
     val saving: Boolean = false,
     val failed: Boolean = false,
     val archiveFailed: Boolean = false,
@@ -206,6 +231,7 @@ class ChannelListViewModel(
     private val lastOpenedTarget = MutableStateFlow<HostConversationTarget?>(null)
     private val hostEditor = HostEditorController(viewModelScope, pairedServers, appPreferences)
     private val chatEditor = MutableStateFlow<ChatEditorState?>(null)
+    private val workspaceEditor = MutableStateFlow<WorkspaceEditorState?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val hostState: StateFlow<HostChannelListState> =
@@ -223,9 +249,9 @@ class ChannelListViewModel(
             combine(addWorkspace, addWorkspaceRecent, ::Pair),
             collapsedKeys,
             lastOpenedTarget,
-            // Paired first: five flows is the typed `combine`'s limit.
-            combine(hostEditor.state, chatEditor, ::Pair),
-        ) { hosts, (adding, recent), collapsed, selected, (editor, chat) ->
+            // Grouped first: five flows is the typed `combine`'s limit.
+            combine(hostEditor.state, chatEditor, workspaceEditor, ::Triple),
+        ) { hosts, (adding, recent), collapsed, selected, (editor, chat, workspace) ->
             HostChannelListState(
                 hosts = hosts,
                 addWorkspace = adding,
@@ -235,6 +261,7 @@ class ChannelListViewModel(
                 selected = selected,
                 hostEditor = editor,
                 chatEditor = chat,
+                workspaceEditor = workspace,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
 
@@ -544,6 +571,127 @@ class ChannelListViewModel(
     fun dismissChatEditor() {
         chatEditor.value = null
         RelayLog.d { "event=chat_editor_dismissed" }
+    }
+
+    /**
+     * Opens the Edit workspace modal on a workspace row's own host and exact `cwd` (#905), in either section.
+     *
+     * The shown name is read from that host's own snapshot — the first channel or chat at [cwd], through
+     * the same display rule the row used — never from row text or another host. A host the list does not
+     * hold, or a path that host holds no active row at, opens nothing. Selection and navigation are left
+     * alone: the pencil edits the row, it does not open anything.
+     */
+    fun openWorkspaceEditor(
+        serverId: String,
+        cwd: String,
+    ) {
+        val row =
+            hostSource.snapshots.value
+                .firstOrNull { it.serverId == serverId }
+                ?.let { host -> (host.channels + host.chats).firstOrNull { it.cwd == cwd } }
+        if (row == null) {
+            RelayLog.d { "event=workspace_editor_open_rejected code=unknown_workspace" }
+            return
+        }
+        workspaceEditor.value = WorkspaceEditorState(serverId, cwd, workspaceDisplayName(cwd, row.workspaceLabel))
+        RelayLog.d { "event=workspace_editor_opened" }
+    }
+
+    /**
+     * Sets or clears the open editor's workspace label on the editor's own host, then closes the modal.
+     *
+     * The label rule is applied here, so it holds for any caller: [workspaceLabelFor] against the folder's
+     * own name, and a label the daemon would refuse for its size is not sent at all. The repository is
+     * resolved from the editor's `serverId` at the press and the terminal transitions are `compareAndSet`,
+     * exactly as [submitChatName]; a failure publishes a flag, never the exception's message.
+     */
+    fun submitWorkspaceName(name: String) {
+        val target = workspaceEditor.value ?: return
+        if (target.saving || target.confirmingArchive) return
+        val label = workspaceLabelFor(name, folderName = workspaceDisplayName(target.cwd, label = null))
+        if (isWorkspaceLabelTooLong(label)) {
+            RelayLog.d { "event=workspace_rename_rejected code=too_long" }
+            return
+        }
+        val live = hostSource.repositoryFor(target.serverId)
+        if (live == null) {
+            RelayLog.d { "event=workspace_rename_rejected code=unavailable" }
+            workspaceEditor.value = target.copy(failed = true, archiveFailed = false)
+            return
+        }
+        val pending = target.copy(saving = true, failed = false, archiveFailed = false)
+        workspaceEditor.value = pending
+        viewModelScope.launch {
+            RelayLog.d { "event=workspace_rename_started cleared=${label == null}" }
+            try {
+                live.renameWorkspace(target.cwd, label)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                // Never log the label, the path, the id or the server's message; the UI gets one static string.
+                RelayLog.d { "event=workspace_rename_failed" }
+                workspaceEditor.compareAndSet(pending, pending.copy(saving = false, failed = true))
+                return@launch
+            }
+            // The rows pick the label up from the host's own conversation stream; nothing is patched here.
+            workspaceEditor.compareAndSet(pending, null)
+            RelayLog.d { "event=workspace_renamed" }
+        }
+    }
+
+    /** The modal's Archive workspace: swap to the confirmation in place, sending nothing. */
+    fun requestWorkspaceArchive() {
+        val target = workspaceEditor.value ?: return
+        if (target.saving) return
+        workspaceEditor.value = target.copy(confirmingArchive = true, failed = false, archiveFailed = false)
+        RelayLog.d { "event=workspace_archive_requested" }
+    }
+
+    /** Backs out of the confirmation to the editor without writing — never closing it. */
+    fun declineWorkspaceArchive() {
+        val target = workspaceEditor.value ?: return
+        // A Cancel tap mid-archive must not defeat that archive's own close.
+        if (target.saving) return
+        workspaceEditor.value = target.copy(confirmingArchive = false, archiveFailed = false)
+        RelayLog.d { "event=workspace_archive_declined" }
+    }
+
+    /**
+     * Archives every active row at the editor's exact `cwd` on the editor's own host, then closes (#905).
+     *
+     * Only from the confirmation. Host resolution and the terminal transitions follow [submitWorkspaceName].
+     * A failure keeps the confirmation up with its flag, so OK retries; `archiveWorkspace` leaves the rows
+     * it did confirm archived, so a retry archives only those still active.
+     */
+    fun confirmWorkspaceArchive() {
+        val target = workspaceEditor.value ?: return
+        if (target.saving || !target.confirmingArchive) return
+        val live = hostSource.repositoryFor(target.serverId)
+        if (live == null) {
+            RelayLog.d { "event=workspace_archive_rejected code=unavailable" }
+            workspaceEditor.value = target.copy(failed = false, archiveFailed = true)
+            return
+        }
+        val pending = target.copy(saving = true, failed = false, archiveFailed = false)
+        workspaceEditor.value = pending
+        viewModelScope.launch {
+            RelayLog.d { "event=workspace_archive_started" }
+            try {
+                live.archiveWorkspace(target.cwd)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                RelayLog.d { "event=workspace_archive_failed" }
+                workspaceEditor.compareAndSet(pending, pending.copy(saving = false, archiveFailed = true))
+                return@launch
+            }
+            workspaceEditor.compareAndSet(pending, null)
+            RelayLog.d { "event=workspace_archived" }
+        }
+    }
+
+    /** Cancel, Close and Back from the editor: close the Edit workspace modal and send nothing. */
+    fun dismissWorkspaceEditor() {
+        workspaceEditor.value = null
+        RelayLog.d { "event=workspace_editor_dismissed" }
     }
 
     private suspend fun sendHostDiscussion(

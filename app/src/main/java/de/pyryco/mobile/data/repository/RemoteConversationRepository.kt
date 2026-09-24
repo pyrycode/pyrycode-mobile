@@ -222,6 +222,17 @@ class RemoteConversationRepository(
         )
 
     /**
+     * The attachment retrievals of this connection (#899): one `request_attachment` at a time, answered by chunks
+     * or an `error` naming it. [onInbound] offers each frame to it after the upload, and the [init] collector's
+     * `finally` ends it beside the upload.
+     */
+    private val attachmentRetrievals =
+        AttachmentRetrievals(
+            nextRequestId = { relayRequests.nextRequestId() },
+            send = pump::send,
+        )
+
+    /**
      * The session settings and system prompt commands (#916): the settings read, its refresh trigger and
      * the per-conversation revision map behind it, the settings write, and the system prompt read and
      * write. [onInbound]'s `session_transition` arm bumps its revision; each public command below hands
@@ -336,6 +347,7 @@ class RemoteConversationRepository(
             } finally {
                 endDebugBundle()
                 messageCommands.endAttachmentUploads()
+                attachmentRetrievals.end()
                 relayRequests.failAllPending()
             }
         }
@@ -344,6 +356,7 @@ class RemoteConversationRepository(
     private fun onInbound(envelope: Envelope) {
         if (messageCommands.routeDebugBundle(envelope)) return
         if (messageCommands.routeAttachmentUpload(envelope)) return
+        if (attachmentRetrievals.route(envelope)) return
         recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS ->
@@ -1078,6 +1091,12 @@ class RemoteConversationRepository(
         filename: String,
         mimeType: String,
     ): AttachmentUploadResult = messageCommands.uploadAttachment(conversationId, bytes, filename, mimeType)
+
+    /** Fetch one stored file over `request_attachment` (#899); see [AttachmentRetrievals.fetch]. */
+    override suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult = attachmentRetrievals.fetch(conversationId, attachmentId)
 
     /** Request the rendered claude screen (#375); see [MessageCommands.requestScreenSnapshot]. */
     override suspend fun requestScreenSnapshot(conversationId: String): String = messageCommands.requestScreenSnapshot(conversationId)

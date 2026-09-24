@@ -26,19 +26,39 @@ class CachingConversationRepository(
     private val delegate: ConversationRepository,
     private val cache: ConversationCache,
     private val serverId: String,
+    private val attachments: AttachmentStore? = null,
 ) : ConversationRepository by delegate {
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
     override suspend fun delete(conversationId: String)
+    override suspend fun retrieveAttachment(conversationId: String, attachmentId: String): AttachmentRetrievalResult
 }
 ```
 
-Kotlin class delegation (`by delegate`) means every member except `observeMessages` and `delete`
-(#798) is plain pass-through — stall, queue, API retry, compaction, thinking, usage limit, modals,
-archive, unarchive and every other one-shot keep their live-only behaviour unchanged. Nothing
-restored can reopen a permission prompt or restart an indicator, because nothing outside those two
-overrides is touched at all. Archive and unarchive deliberately stay delegation: they are not
-removals, so neither can reach a cache-clearing path (see [Conversation cache § Removal on
-unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the wording this mirrors).
+Kotlin class delegation (`by delegate`) means every member except `observeMessages`, `delete`
+(#798) and `retrieveAttachment` (#899) is plain pass-through — stall, queue, API retry, compaction,
+thinking, usage limit, modals, archive, unarchive and every other one-shot keep their live-only
+behaviour unchanged. Nothing restored can reopen a permission prompt or restart an indicator,
+because nothing outside those three overrides is touched at all. Archive and unarchive deliberately
+stay delegation: they are not removals, so neither can reach a cache-clearing path (see [Conversation
+cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the
+wording this mirrors).
+
+## Retrieving an attachment for this host (#899)
+
+```kotlin
+override suspend fun retrieveAttachment(conversationId: String, attachmentId: String): AttachmentRetrievalResult =
+    attachments?.retrieve(serverId, conversationId, attachmentId) { delegate.fetchAttachment(conversationId, attachmentId) }
+        ?: delegate.retrieveAttachment(conversationId, attachmentId)
+```
+
+This wrapper is the natural home for `retrieveAttachment` for the same reason it already holds the
+thread-row cache: it is the one place that knows both `serverId` and a live delegate to fetch through.
+[`AttachmentStore`](attachment-retrieval.md) does the actual work — single-flighting concurrent
+retrievals of the same file, checking for a kept file first, and writing verified bytes temp-then-rename
+— this wrapper only supplies the host identity and the fetch function. With no store (`attachments ==
+null`) the call is plain delegation, the same fallback every other member of this class not listed above
+already has by construction. See [Attachment retrieval](attachment-retrieval.md) for the store's layout,
+bound, single-flight and failure handling; this file only covers the wiring.
 
 ## How the restore merges with live rows
 
@@ -195,9 +215,12 @@ result to the `decorateRepository` hook:
 
 ```kotlin
 decorateRepository(
-    if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId) else stable,
+    if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId, attachments) else stable,
 )
 ```
+
+`attachments` (#899) follows `cache` through the same conditional — a blank `serverId` gets neither, so
+retrieved files, like restored rows, are never filed under the empty id's namespace.
 
 `E2eTestApplication` replaces `decorateRepository` with `::TappingConversationRepository` for its
 instrumented harness. Because the cache sits *underneath* that hook rather than inside it, the
@@ -213,6 +236,15 @@ null` into `ThreadDestinationFactory`'s constructor — the same `useRelay` gate
 [`HostConversationSource.relay(get(), cache = get())`](dependency-injection-host-conversation-source.md#restore-from-the-on-disk-cache-796)
 already follows for the host-list restore. No new Koin binding was added for this ticket; both
 consumers resolve the single `ConversationCache` #796 bound.
+
+`ThreadDestinationFactory` gained the matching `attachments: AttachmentStore? = null` constructor
+param (#899), gated `if (useRelay) get() else null` the same way as `cache`, resolving the app's single
+`AttachmentStore` bound in `AppModule` over `File(androidContext().noBackupFilesDir, "attachments")`.
+Because that `get()` runs inside the `single { ThreadDestinationFactory(...) }` block, any Koin
+container that resolves a `ThreadDestinationFactory` under `useRelay = true` now needs an
+`AttachmentStore` binding too — see [Dependency injection §
+AttachmentStore](dependency-injection.md#attachmentstore-and-context-free-thread-destination-containers-899)
+for the four test containers that needed the same `InertConversationCache`-shaped override.
 
 Three `RelayConnectionFactoryTest` containers build a thread destination under `useRelay = true`
 with no `androidContext()`. Resolving the cache in `ThreadDestinationFactory` meant those
@@ -249,6 +281,11 @@ back after its conversation is deleted (the `deleted` set); and a cache whose `r
 fails still lets `delete` return, logs the one static event, and leaks no server or conversation id
 into a captured log line.
 
+One further case (#899): `retrieveAttachment` goes through a fake `AttachmentStore`-shaped fetch with
+this wrapper's own `serverId` and the delegate's `fetchAttachment` as the fetch function — a wiring
+regression guard, not a proof of the store's own behaviour (that lives in
+[`AttachmentStoreTest`](attachment-retrieval.md#testing)).
+
 No Compose UI test: restored rows draw through the same composables a live row does, below the
 existing [`ConnectionBanner`](connection-banner.md) in its offline state. Live continuity across
 a real reconnect — a loaded conversation staying readable while its host link is cut and
@@ -269,7 +306,9 @@ per the dispatcher gate on PR #837's re-review.
   paging](remote-conversation-repository-reads-and-thread-store-history-paging.md) —
   `mergeHistoryRows`, the one dedup this restore reuses from the other side
 - [Dependency injection](dependency-injection.md) — `ThreadDestinationFactory.repository` wiring,
-  `decorateRepository`, and the `useRelay` cache gate
+  `decorateRepository`, and the `useRelay` cache/attachments gates
+- [Attachment retrieval](attachment-retrieval.md) (#899) — `AttachmentStore`, the host-keyed store this
+  wrapper's `retrieveAttachment` delegates to: its layout, single-flight, bound and failure handling
 - [Paired server store § Wiring & usage](paired-server-store.md#wiring--usage) and [Conversation
   cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) — the
   sibling removal path, `forgetRemovedHost`, that this wrapper's `delete` does not go through

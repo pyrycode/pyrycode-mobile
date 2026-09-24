@@ -11,7 +11,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.preferencesOf
 import androidx.lifecycle.ViewModel
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
@@ -30,6 +32,7 @@ import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.InertAttachmentStore
 import de.pyryco.mobile.di.InertConversationCache
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.RelayConnectionFactory
@@ -287,7 +290,9 @@ class LiteralScreenNavigationTest {
         val preferences =
             AppPreferences(
                 object : DataStore<Preferences> {
-                    override val data = flowOf(emptyPreferences())
+                    // Already asked: on a device the channel list would otherwise raise the one-time
+                    // notification prompt (#685) over the test activity.
+                    override val data = flowOf(preferencesOf(booleanPreferencesKey("notification_permission_asked") to true))
 
                     override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
                 },
@@ -304,6 +309,7 @@ class LiteralScreenNavigationTest {
                     // ConversationCache (#796) whose real binding needs one. See InertConversationCache
                     // for why these containers override it rather than supply the Context.
                     single<ConversationCache> { InertConversationCache }
+                    single { InertAttachmentStore }
                 },
             )
         return StateRestorationTester(compose).also { tester ->

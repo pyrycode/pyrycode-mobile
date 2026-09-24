@@ -85,6 +85,20 @@ sealed interface ChannelListEvent {
     data object AddWorkspaceSubmitted : ChannelListEvent
     /** The Add workspace modal's Cancel, Close and Back. */
     data object AddWorkspaceDismissed : ChannelListEvent
+    /** A workspace row's edit control, in either section: open the Edit workspace modal for **that**
+     *  row's own host and exact `cwd` (#905). Never the shown name, which two workspaces can share. */
+    data class TreeWorkspaceEditTapped(val serverId: String, val cwd: String) : ChannelListEvent
+    /** The open Edit workspace modal's OK, already trimmed. No ids, for the reason
+     *  [HostEditNameSubmitted] carries none: the target is the open editor's. */
+    data class WorkspaceEditNameSubmitted(val name: String) : ChannelListEvent
+    /** The Edit workspace modal's Cancel, Close and Back from the editor. */
+    data object WorkspaceEditDismissed : ChannelListEvent
+    /** The modal's Archive workspace: ask for a confirmation in place rather than archiving. */
+    data object WorkspaceArchiveRequested : ChannelListEvent
+    /** The archive confirmation accepted, through the shell's own OK. */
+    data object WorkspaceArchiveConfirmed : ChannelListEvent
+    /** The archive confirmation backed out of, returning to the editor rather than closing it. */
+    data object WorkspaceArchiveDeclined : ChannelListEvent
 }
 
 @Composable
@@ -111,11 +125,13 @@ opt-in now, local to `ConversationTreeRows.kt`.
 nothing can emit is dead code. `CreateDiscussionTapped` and `LongPressFab` are gone too (#738), replaced by
 the host-qualified `TreeHostAddTapped` / `TreeHostAddLongPressed` pair, and `PairHostTapped` is new.
 `ChannelListEvent` still lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`: the screen remains
-the producer for every variant except the twelve the VM's destination wiring consumes directly
+the producer for every variant except the eighteen the VM's destination wiring consumes directly
 (`TreeHostAddTapped`, `TreeHostAddLongPressed`, `TreeHostEditTapped`, `HostEditNameSubmitted`,
 `HostEditDismissed` (#744), `TreeChatEditTapped`, `ChatEditNameSubmitted`, `ChatEditDismissed` (#827),
 `AddWorkspaceSelected`, `AddWorkspaceFolderCreateRequested`, `AddWorkspaceSubmitted`,
-`AddWorkspaceDismissed` (#904, replacing `WorkspacePicked` / `WorkspacePickerDismissed`));
+`AddWorkspaceDismissed` (#904, replacing `WorkspacePicked` / `WorkspacePickerDismissed`),
+`TreeWorkspaceEditTapped`, `WorkspaceEditNameSubmitted`, `WorkspaceEditDismissed`,
+`WorkspaceArchiveRequested`, `WorkspaceArchiveConfirmed`, `WorkspaceArchiveDeclined` (#905));
 `TreeRowTapped` / `TreeFoldToggled` / `SettingsTapped` / `ArchiveTapped` / `PairHostTapped` route through the
 destination's `when (event)` instead (see [Wiring](channel-list-screen-how-it-works.md#wiring)).
 
@@ -283,21 +299,25 @@ distinction from the tree's own blank at all — see the next section.
   `docs/specs/architecture/744-host-row-edit-and-rename.md`,
   `docs/specs/architecture/745-unpair-host-from-edit-modal.md`,
   `docs/specs/architecture/827-rename-chat-from-tree-row.md`,
-  `docs/specs/architecture/904-add-workspace-modal.md`
+  `docs/specs/architecture/904-add-workspace-modal.md`,
+  `docs/specs/architecture/905-edit-and-archive-workspace.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
   `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, since #904 `openAddWorkspace`,
   `selectAddWorkspaceFolder`, `createAddWorkspaceFolder`, `submitAddWorkspace`, `dismissAddWorkspace`
   (replacing `openHostWorkspacePicker`, `pickHostWorkspace`, `dismissHostWorkspacePicker`), since #744
   `openHostEditor`, `submitHostName`, `dismissHostEditor`, and since #745 `requestHostUnpair`,
   `confirmHostUnpair`, `declineHostUnpair`, and since #827 `openChatEditor`, `submitChatName`,
-  `dismissChatEditor`, `isHostConnected`; the compatibility `state` producer, `onEvent`
+  `dismissChatEditor`, `isHostConnected`, and since #905 `openWorkspaceEditor`, `submitWorkspaceName`,
+  `requestWorkspaceArchive`, `confirmWorkspaceArchive`, `declineWorkspaceArchive`,
+  `dismissWorkspaceEditor`; the compatibility `state` producer, `onEvent`
   reducer and `navigationEvents` this screen once also consumed retired with the button in #738), [Tree
   rows](channel-list-screen-how-it-works.md#tree-rows-730) (`TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow` / `TreeConversationRow`,
   #730; `TreeRowControl` since #738, renamed from `TreeAddControl` in #744), [`EditHostModal`](mobile-modal.md#callers)
   (#743's shell content, driven by this screen since #744), [`EditChatModal`](mobile-modal.md#callers)
   (#826's shell content, driven by this screen since #827), [`AddWorkspaceModal`](mobile-modal.md#callers)
   (#904's shell content, replacing this screen's own use of [WorkspacePicker](./workspace-picker.md#consumers)),
-  [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
+  [`EditWorkspaceModal`](mobile-modal.md#callers) (#905's shell content, driven by every workspace row's own
+  pencil in both sections), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
   (#729's workspace projection this screen iterates), [ConversationAvatar](./conversation-avatar.md),
   [Navigation](./navigation.md), [Dependency injection](./dependency-injection.md)
 - Downstream: #737 (done — draws the list's own settings + archive bar in the `topBar` slot this section
@@ -309,12 +329,14 @@ distinction from the tree's own blank at all — see the next section.
   the rename path this section describes), #745 (done, split from #642 — wires `Unpair host` behind a
   confirmation, this section's own [Host row edit control](channel-list-screen-tree-and-controls.md#host-row-edit-control-744)), #904 (done, split
   from #664 — moves the host row's long-press from the `WorkspacePicker` sheet into
-  [`AddWorkspaceModal`](mobile-modal.md#callers), this section's own [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)), #676 (the live
-  emulator scenario for #744's rename flow, #745's removal and #715's two-host archive/restore case,
-  blocked by all three and still open), #668
+  [`AddWorkspaceModal`](mobile-modal.md#callers), this section's own [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)), #905 (done, split
+  from #664 — every workspace row's own pencil, opening [`EditWorkspaceModal`](mobile-modal.md#callers) on
+  that row's own host and exact `cwd` to call the `renameWorkspace` / `archiveWorkspace` repository methods
+  #663 added; #664's other half, adding a workspace, already landed as #904's host-row long-press, above),
+  #676 (the live
+  emulator scenario for #744's rename flow, #745's removal, #715's two-host archive/restore case and
+  #905's rename/archive flow, blocked by all four and still open), #668
   (indicator-pair live accuracy, conversation-row unread/activity state), #665 (conversation-row edit
-  pencil), #664 (the workspace row's own add control and its modal content, beyond #738's reuse of
-  the existing pairing scanner for the section header and beyond #904's host-row slice; calls the
-  `renameWorkspace` / `archiveWorkspace` repository methods #663 added with no UI of its own), #675 (disconnected-host
+  pencil), #675 (disconnected-host
   repair control), #154 / Phase 3 Settings / Phase 4 items predating #731 remain as recorded in
   [`../codebase/`](../codebase/) history.

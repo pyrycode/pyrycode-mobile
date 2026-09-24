@@ -46,6 +46,7 @@ import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
+import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
@@ -97,6 +98,10 @@ import org.koin.core.context.GlobalContext
  */
 @RunWith(AndroidJUnit4::class)
 class InteractiveStreamE2ETest {
+    init {
+        grantNotificationPermission()
+    }
+
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 

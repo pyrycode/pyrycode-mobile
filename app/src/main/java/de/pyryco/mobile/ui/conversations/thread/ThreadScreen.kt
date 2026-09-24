@@ -4,10 +4,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -114,7 +117,7 @@ private val RePairButtonVerticalPadding = 8.dp
 // at most one of them is ever emitted.
 private const val HISTORY_TAIL_KEY = "history-tail"
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ThreadScreen(
     state: ThreadUiState,
@@ -226,17 +229,29 @@ fun ThreadScreen(
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
     // closes when the control stops offering anything (a write goes pending, a reading drops the menu).
     var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
+    // #678: the read-only background-task panel the Actions menu opens. Local and keyed like [openControl]:
+    // closing it only flips this flag, so nothing is sent and no conversation or task changes.
+    var backgroundTasksOpen by remember(state.conversationId) { mutableStateOf(false) }
     val footerAnchors = remember { mutableStateMapOf<FooterControl, Rect>() }
     var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     val openMenu =
         openControl
             ?.takeIf { footerControlEnabled(it, state.runConfig) }
             ?.let { control ->
-                footerMenu(control, state.runConfig, state.mutationsSupported, state.absentActions)?.let { control to it }
+                footerMenu(
+                    control,
+                    state.runConfig,
+                    state.mutationsSupported,
+                    state.absentActions,
+                    state.backgroundTaskCount,
+                )?.let { control to it }
             }
     LaunchedEffect(openControl, openMenu == null) {
         if (openMenu == null) openControl = null
     }
+    // #885: the input field's text-aligned window bounds, where the slash-command suggestions anchor.
+    var inputAnchor by remember { mutableStateOf<Rect?>(null) }
+    val imeVisible = WindowInsets.isImeVisible
     Box(
         modifier = modifier.onGloballyPositioned { layerOrigin = it.positionInWindow() },
     ) {
@@ -297,6 +312,7 @@ fun ThreadScreen(
                         modifier = Modifier.padding(horizontal = ComposerGutter),
                         isBusy = isBusy,
                         onInterrupt = onInterrupt,
+                        onAnchorChanged = { inputAnchor = it },
                     )
                     // The design puts the model/effort controls in the footer, below the input field, not
                     // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
@@ -512,6 +528,7 @@ fun ThreadScreen(
                                 when (val action = ComposerAction.fromValue(value)) {
                                     null -> Unit
                                     ComposerAction.ResetSession -> onOverflowEvent(ThreadEvent.NewSession)
+                                    ComposerAction.BackgroundTasks -> backgroundTasksOpen = true
                                     else -> onComposerCommand(action)
                                 }
                         }
@@ -522,6 +539,19 @@ fun ThreadScreen(
                 )
             }
         }
+        // #885: the slash-command suggestions share the footer overlay's layer. They stand down while a
+        // footer menu is open, so two overlays never stack. A pick completes the draft and sends nothing.
+        SlashCommandTypeAhead(
+            text = draft,
+            commands = state.slashCommands,
+            anchor = inputAnchor?.takeIf { openMenu == null }?.translate(-layerOrigin),
+            imeVisible = imeVisible,
+            onComplete = onDraftChange,
+            resetKey = state.conversationId,
+        )
+    }
+    if (backgroundTasksOpen) {
+        BackgroundTaskPanel(roster = state.backgroundTasks, onDismiss = { backgroundTasksOpen = false })
     }
     WorkspacePicker(
         visible = state.workspacePickerVisible,
