@@ -128,3 +128,8 @@ A missing precondition fails with a message naming it: fewer than three usable m
 
 - Can `createChannel` take the scratch `cwd` of a created chat? If the daemon refuses it, use `createWorkspaceFolder` with a run-unique name instead, as #566 does. Record the choice under Revisions.
 - Is `effective_effort` present on the **first** fresh reply after the ping reply renders? The criterion says "the next fresh reply". The scenario keeps that literally, and any flake goes in the PR's Lessons.
+
+## Revisions
+
+- **2026-09-24, Phase B.** The `""`-model gap is filed as [#972](https://github.com/pyrycode/pyrycode-mobile/issues/972) (Inbox), and the recall scenario's KDoc links it. No design change.
+- **Open questions, status.** Both need a live run and stay open for the post-verifier live gate. The first is whether `createChannel` accepts a created chat's scratch `cwd`. The second is whether the first fresh reply after the ping carries `effective_effort`. Builders cannot run real Claude.
