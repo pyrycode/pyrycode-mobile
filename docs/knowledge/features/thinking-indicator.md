@@ -209,18 +209,20 @@ why; it only ever sees the next `ToolCall?` value.
 ## Placement in the thread
 
 **Moved in [#643](../codebase/643.md).** [`ThreadScreen`](thread-screen.md) arbitrates this status slot
-— a three-way `when` at #597 (extended from #594's two-way `if`), now a **six-way `when`** after
+— a three-way `when` at #597 (extended from #594's two-way `if`), widened to six arms as
 [#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) (usage limit), #872 (resetting) and #805
-(turn outcome) each inserted an arm above this one — inside a private `ThreadStatusArea` composable
-(`ThreadScreen.kt`), the first child of the composer's `bottomBar` column — through #642 the same `when`
-lived at the foot of the content `Column`, above the composer rather than inside it:
+(turn outcome) each inserted an arm above this one, then narrowed back to a **five-way `when`** when
+[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed the usage-limit arm — that reading
+now draws as a pill in [`ThreadTopOverlay`](thread-top-overlay.md), pinned over the message area, because a
+live `allowed_warning` reading was masking every arm below it including this one — inside a private
+`ThreadStatusArea` composable (`ThreadScreen.kt`), the first child of the composer's `bottomBar` column —
+through #642 the same `when` lived at the foot of the content `Column`, above the composer rather than
+inside it:
 
 ```kotlin
 when {
     apiRetry != ApiRetryStatus.NotRetrying ->
         ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
-    usageLimit != null ->
-        UsageLimitIndicator(reading = usageLimit, modifier = Modifier.fillMaxWidth())
     resetting != null ->
         ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth())
     isCompacting ->
@@ -238,11 +240,13 @@ when {
 ```
 
 **Exactly one affordance renders; the arms never stack.** api-retry keeps the top arm ("something is
-going wrong" over lower-urgency signals), then the usage-limit report, then resetting, then compaction,
-then the turn outcome, then this arm — see
-[Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) and
-[Usage-limit indicator § Placement](usage-limit-indicator.md#placement-in-the-thread) for the full
-precedence rationale. `#803`'s progress reading and `#897`'s running-tool label both ride this arm's own
+going wrong" over lower-urgency signals), then resetting, then compaction, then the turn outcome, then this
+arm — see [Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the full
+precedence rationale. Claude's usage-limit report shared this ladder, directly below api-retry, from #804
+to [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002); see [Usage-limit indicator §
+Placement](usage-limit-indicator.md#placement--the-top-overlay-not-the-status-ladder-post-1002) for why it
+now draws in [Thread top overlay](thread-top-overlay.md) instead. `#803`'s progress reading and `#897`'s
+running-tool label both ride this arm's own
 `else` branch, so neither adds **a new arm**: every arm above still pre-empts them for free, and mutual
 exclusion holds structurally rather than by an added check. `runningTool` is the one input to this arm
 that is not itself an arm-selector value — `ThreadScreen` passes it only while `isBusy`, so it can be
@@ -433,9 +437,12 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   sibling parameters, derives (#897) `runningTool` locally via `openToolCall`, and arbitrates the status
   slot (the composer's `ThreadStatusArea` since [#643](../codebase/643.md); the foot of the content
   `Column` before it) across this component, [`ApiRetryIndicator`](api-retry-indicator.md),
-  [`UsageLimitIndicator`](usage-limit-indicator.md) ([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804)),
   [`ResettingIndicator`](resetting-indicator.md) (#872), [`CompactingIndicator`](compacting-indicator.md),
   and [`TurnOutcomeIndicator`](turn-outcome-indicator.md) ([#805](https://github.com/pyrycode/pyrycode-mobile/issues/805)).
+  [`UsageLimitIndicator`](usage-limit-indicator.md) ([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804))
+  shared this slot from #804 to #1002; its reading now draws as a pill in [Thread top
+  overlay](thread-top-overlay.md), pinned over the message area rather than sharing the status slot, so it
+  never again masks this arm.
 - Foot-of-list sibling (shipped): [Interrupt affordance](interrupt-affordance.md)
   ([#459](../codebase/459.md)) — the "Stop the running turn" control, since #643 the send button's stop
   variant in `ThreadInputBar` just below the status area, gated on the broader

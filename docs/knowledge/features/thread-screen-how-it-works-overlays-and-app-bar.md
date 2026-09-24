@@ -23,7 +23,7 @@ Three design points pinned in #201:
 
 `onRetry` binds to `vm::retry` at the destination — method reference, not a fresh lambda, so the binding is stable across recompositions (the lambda allocation only happens once per VM lifecycle, not per recomposition).
 
-**Withheld under a rejected pairing (#843).** `ConnectionBanner` is not drawn while `showRePair` holds: `if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)`. A rejected pairing still derives to the legacy `ConnectionState.Offline` (see [Reconnect supervision § derivation table](relay-reconnect-supervisor.md#derivation-and-visual-tables)), so without this gate the banner would offer a retry that cannot succeed — the relay leg halts redial on a rejection and only a fresh pairing clears it. The [status area's Re-pair action](#thinking-indicator-placement-post-407-moved-in-643) replaces it in that state. Network loss (`Reconnecting`, `DaemonAbsent`, the 30s-cap `Offline`) is unaffected — `showRePair` is `false` for all of those, so the banner and its retry render exactly as before.
+**Withheld under a rejected pairing (#843).** `ConnectionBanner` is not drawn while `showRePair` holds: `if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)`. A rejected pairing still derives to the legacy `ConnectionState.Offline` (see [Reconnect supervision § derivation table](relay-reconnect-supervisor.md#derivation-and-visual-tables)), so without this gate the banner would offer a retry that cannot succeed — the relay leg halts redial on a rejection and only a fresh pairing clears it. The pairing pill in [`ThreadTopOverlay`](thread-top-overlay.md#the-pairing-pill) replaces it in that state — a status-area **Re-pair** button until [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) moved it into the Top overlay alongside the usage-limit notice; see [Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) below for what stayed behind. Network loss (`Reconnecting`, `DaemonAbsent`, the 30s-cap `Offline`) is unaffected — `showRePair` is `false` for all of those, so the banner and its retry render exactly as before.
 
 ### Thinking-indicator placement (post-#407, moved in #643)
 
@@ -32,7 +32,7 @@ Three design points pinned in #201:
 ```kotlin
 bottomBar = {
     Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, usageLimit = usageLimit, resetting = resetting, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, showRePair = showRePair, onRePair = onRePair)
+        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null)
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
     }
@@ -41,57 +41,94 @@ bottomBar = {
 @Composable
 private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
-    usageLimit: UsageLimitReading?, // #804
     resetting: ResetStatus?, // #872
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?, // #805
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?, // #803
     runningTool: ToolCall?, // #897
-    showRePair: Boolean = false, // #843
-    onRePair: () -> Unit = {}, // #843
 ) {
-    val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter) // 20dp gutter − the indicators' own 16dp
-    val signal: @Composable (Modifier) -> Unit = { slot ->
-        when {
-            apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
-            usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
-            resetting != null -> ResettingIndicator(status = resetting, modifier = slot)
-            isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
-            turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-            else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress, runningTool = runningTool)
-        }
-    }
-    if (!showRePair) {
-        signal(gutter)
-        return
-    }
-    // Figma 111:3525: the signal leading, the action trailing on the same row.
-    Row(modifier = gutter, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(modifier = Modifier.weight(1f)) { signal(Modifier.fillMaxWidth()) }
-        RePairButton(onClick = onRePair)
+    val slot = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter) // 20dp gutter − the indicators' own 16dp
+    when {
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
+        resetting != null -> ResettingIndicator(status = resetting, modifier = slot)
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
+        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
+        else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress, runningTool = runningTool)
     }
 }
 ```
 
-**`resetting: ResetStatus?` (#872) was already a `when` arm here**, inserted between usage limit and
-compaction — folded into the snippet above for accuracy; it predates #897 and is otherwise untouched by it.
+**[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed `usageLimit`, `showRePair` and
+`onRePair` from this composable, and deleted the private `RePairButton` it used to hold.** From #804 to
+\#1002 `ThreadStatusArea` took a `usageLimit: UsageLimitReading?` parameter and raised an arm for it between
+api-retry and resetting; from #843 to #1002 it also took `showRePair` / `onRePair` and, while `showRePair`
+held, wrapped the signal in a `Row` beside a private `RePairButton` (Figma `354:7093`, a 6dp-radius
+`Surface` at 16dp/8dp padding) so the row split leading (signal) / trailing (button). Both moved out because
+claude has attached an `allowed_warning` usage report to every turn since 2026-09-24, and the reading
+outranked resetting, compaction, the turn outcome and thinking/running tool — none of them rendered while
+it was live. `ThreadScreen` now draws both notices as pills in [`ThreadTopOverlay`](thread-top-overlay.md),
+pinned over the top of the message area instead of sharing this slot; see that document for the pill
+shapes, including the exact Figma deviation the old `RePairButton` recorded (the theme's
+`errorContainer`/`onErrorContainer` pair rather than Figma's literal `on-error`/`error`, carried forward
+unchanged by [`NoticePill`](notice-pill.md)) and for `showRePair`'s sourcing, which #1002 left untouched.
+`ThreadStatusArea` is now turn status only, and always a single signal with no trailing slot.
 
 The `bottomBar` column's third band was `ThreadStatusRow(model = …, effort = …, onExpandClick = { sheetVisible = true }, …)` through [#807](../codebase/807.md); [#808](../codebase/808.md) replaced it with [`ThreadComposerFooter`](thread-composer-footer.md), shown above, and wrapped the surrounding `Scaffold` in a `Box` so an [`OptionsOverlay`](options-overlay.md) can draw above it on selection — see [Thread composer footer](thread-composer-footer.md) for the full wiring. `ThreadStatusArea` itself (below) is unaffected by that change.
 
-- **The trailing contextual-action slot (#843).** The KDoc above `ThreadStatusArea` had reserved this slot since #643 ("stays empty until #675 fills it"); [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) fills it with a **Re-pair** button (Figma `354:7093`, a 6dp-radius `Surface` at 16dp/8dp padding, `bodySmall` + `FontWeight.Medium`) while `showRePair` holds — a private `RePairButton` composable beside the existing signal, which shrinks into a `weight(1f)` box so the row splits leading/trailing rather than stacking. `showRePair` comes from `ThreadViewModel.rePairAvailable`, `true` exactly when this thread's own host is in the rejected-pairing state (see below); `onRePair` is bound at `MainActivity` to `navController.navigate(Routes.pairCode(target.serverId))`. **Deliberate deviation from Figma:** the frame paints the button `on-error`/`error`; the shipped button uses the theme's `errorContainer`/`onErrorContainer` pair instead — the same family [`ConnectionBanner`](connection-banner.md)'s `Offline` arm and [`HistoryRetryRow`](thread-screen-how-it-works-list-and-status-row.md) already use for an error-plus-action affordance, per the ticket's Figma notes. The label is the local string resource `R.string.thread_re_pair` ("Pairing error - Re-pair"), never daemon-authored text.
-- **Sourced by `serverId` through the registry, not the captured connection bundle.** `ThreadDestinationFactory.thread` (`di/AppModule.kt`) builds `showRePair`'s upstream from a new top-level `pairingRejected(connections: Flow<List<HostConversationConnection>>, serverId: String): Flow<Boolean>` that finds the matching entry in `RelayConnectionRegistry.hostConnections` and `flatMapLatest`s onto *its* `status` — not off the `HostConversationConnection` bundle the factory captured when the destination opened. This is load-bearing: a successful re-pair changes the saved record, and `RelayConnectionRegistry.reconcile` closes the old bundle and publishes a **new** entry with its own `status` flow for the same `serverId`. Reading through the registry means the `flatMapLatest` picks up the replacement and the button clears; reading off the captured bundle would have kept observing the closed connection's now-frozen status and the action could never go away after a successful re-pair. `ThreadViewModel` exposes the result as a sibling `StateFlow<Boolean>` (`rePairAvailable`, `WhileSubscribed(5_000)`, defaulted to `flowOf(false)` so the demo destination is unaffected), matching the `connectionState` precedent rather than widening `ThreadUiState` — the `state` combine is already at its five-arity ceiling.
+- **The pairing pill (#843, moved to the Top overlay by #1002).** The KDoc above `ThreadStatusArea` had
+  reserved a trailing contextual-action slot since #643 ("stays empty until #675 fills it");
+  [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) filled it with a **Re-pair** button while
+  `showRePair` held, and #1002 replaced that button with the pairing [`NoticePill`](notice-pill.md) in
+  [`ThreadTopOverlay`](thread-top-overlay.md#the-pairing-pill) — same trigger (`showRePair`), same target
+  (`onRePair`), same colours, different surface. `showRePair` comes from `ThreadViewModel.rePairAvailable`,
+  `true` exactly when this thread's own host is in the rejected-pairing state (see below); `onRePair` is
+  bound at `MainActivity` to `navController.navigate(Routes.pairCode(target.serverId))`. The label is the
+  local string resource `R.string.thread_re_pair` ("Pairing error - Re-pair"), never daemon-authored text.
+- **Sourced by `serverId` through the registry, not the captured connection bundle.** `ThreadDestinationFactory.thread` (`di/AppModule.kt`) builds `showRePair`'s upstream from a new top-level `pairingRejected(connections: Flow<List<HostConversationConnection>>, serverId: String): Flow<Boolean>` that finds the matching entry in `RelayConnectionRegistry.hostConnections` and `flatMapLatest`s onto *its* `status` — not off the `HostConversationConnection` bundle the factory captured when the destination opened. This is load-bearing: a successful re-pair changes the saved record, and `RelayConnectionRegistry.reconcile` closes the old bundle and publishes a **new** entry with its own `status` flow for the same `serverId`. Reading through the registry means the `flatMapLatest` picks up the replacement and the pill clears; reading off the captured bundle would have kept observing the closed connection's now-frozen status and the action could never go away after a successful re-pair. `ThreadViewModel` exposes the result as a sibling `StateFlow<Boolean>` (`rePairAvailable`, `WhileSubscribed(5_000)`, defaulted to `flowOf(false)` so the demo destination is unaffected), matching the `connectionState` precedent rather than widening `ThreadUiState` — the `state` combine is already at its five-arity ceiling. Untouched by #1002.
 
 - **Moved, not rewritten.** The three original arms, their flags and their precedence (api-retry first, then compaction, then thinking — see [API-retry indicator](api-retry-indicator.md#placement-in-the-thread)) are byte-identical to the pre-#643 `when`; only the mount point and the horizontal inset changed at #643. `ThinkingIndicator.kt`, `ApiRetryIndicator.kt` and `CompactingIndicator.kt` were not touched by that move.
 - **[#803](thinking-indicator.md) adds a sixth flat sibling, `thinkingProgress: ThinkingProgress?`, and no new arm.** It decorates the thinking arm's own `else` branch, so it rides the precedence above rather than adding to it — retry and compaction still pre-empt a live reading for free. Visibility stays `isThinking`'s alone; see [Thinking indicator § What it does](thinking-indicator.md#what-it-does).
-- **[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) adds a seventh flat sibling, `usageLimit: UsageLimitReading?`, and one new `when` arm** — inserted between api-retry and compaction, since claude's usage-limit report is informational but must not be masked by compaction's benign progress. See [Usage-limit indicator](usage-limit-indicator.md#placement-in-the-thread) for the full component.
-- **[#805](https://github.com/pyrycode/pyrycode-mobile/issues/805) adds an eighth flat sibling, `turnOutcome: TurnOutcomeReport?`, and one new `when` arm** — inserted between compaction and thinking, the bottom of the ladder at the time: `api-retry → usage limit → compaction → turn outcome → thinking`. Compaction is mid-turn progress and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed. The arm is raised by a `turnOutcomeReport(event)` classification held in `ThreadViewModel.turnOutcome`, and it clears itself the moment the next turn's `thinking`/`responding` phase arrives — never on `idle`, which may arrive on either side of the `turn_end` it accompanies. See [Turn-outcome indicator](turn-outcome-indicator.md#placement-in-the-thread) for the full component.
-- **#872 adds a ninth flat sibling, `resetting: ResetStatus?`, and one new `when` arm** — inserted between usage limit and compaction (Reset session's phase belongs below the usage-limit report and above compaction's benign progress). See [Resetting indicator](resetting-indicator.md#placement-in-the-thread) for the full component. The ladder is now `api-retry → usage limit → resetting → compaction → turn outcome → thinking`.
-- **[#897](thinking-indicator.md#the-running-tool-897) adds a tenth flat sibling, `runningTool: ToolCall?`, and no new arm.** Like `thinkingProgress`, it decorates the thinking arm's own `else` branch, so every arm above still pre-empts it for free. It is also the one sibling here that is not sourced from a `ThreadViewModel` flow: `ThreadScreen` derives it locally as `if (isBusy) openToolCall(state.items) else null`, `openToolCall` being a pure top-level function beside the screen (`internal fun openToolCall(items: List<ThreadItem>): ToolCall?` — the latest `Running`-status tool row, or `null`). See [Thinking indicator § The running tool](thinking-indicator.md#the-running-tool-897) for the selector and label detail.
+- **[#805](https://github.com/pyrycode/pyrycode-mobile/issues/805) adds a flat sibling, `turnOutcome: TurnOutcomeReport?`, and one new `when` arm** — inserted between compaction and thinking, the bottom of the ladder at the time. Compaction is mid-turn progress and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed. The arm is raised by a `turnOutcomeReport(event)` classification held in `ThreadViewModel.turnOutcome`, and it clears itself the moment the next turn's `thinking`/`responding` phase arrives — never on `idle`, which may arrive on either side of the `turn_end` it accompanies. See [Turn-outcome indicator](turn-outcome-indicator.md#placement-in-the-thread) for the full component.
+- **#872 adds a flat sibling, `resetting: ResetStatus?`, and one new `when` arm** — inserted directly above compaction (Reset session's phase belongs below the "something may be wrong" signal(s) above it and above compaction's benign progress). See [Resetting indicator](resetting-indicator.md#placement-in-the-thread) for the full component.
+- **[#897](thinking-indicator.md#the-running-tool-897) adds a flat sibling, `runningTool: ToolCall?`, and no new arm.** Like `thinkingProgress`, it decorates the thinking arm's own `else` branch, so every arm above still pre-empts it for free. It is also the one sibling here that is not sourced from a `ThreadViewModel` flow: `ThreadScreen` derives it locally as `if (isBusy) openToolCall(state.items) else null`, `openToolCall` being a pure top-level function beside the screen (`internal fun openToolCall(items: List<ThreadItem>): ToolCall?` — the latest `Running`-status tool row, or `null`). See [Thinking indicator § The running tool](thinking-indicator.md#the-running-tool-897) for the selector and label detail.
+- **[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) had added a flat sibling, `usageLimit: UsageLimitReading?`, and one `when` arm between api-retry and resetting; [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed both.** See the callout above the code block for the full account. The ladder is now turn status only: `api-retry → resetting → compaction → turn outcome → thinking/running tool`.
 - **`ComposerStatusGutter = 20dp − 16dp = 4dp`.** The three indicator files each already carry their own 16dp horizontal padding (sized for their old full-bleed foot-of-list mount), so reaching the design's 20dp content gutter needs only the 4dp remainder here, not the full 20dp — passing the full gutter would double the inset and land the indicators' content at 36dp, a fidelity miss that reads as a design error rather than a padding sum.
 - **The band collapses when nothing is live.** Every arm still early-returns when its flag is false, so an idle status area emits no node and the composer column's `Arrangement.spacedBy(8.dp)` gap simply doesn't open above the input field.
 - **The 12dp gap above the whole `Input area`** (`ComposerTopGap`, the composer column's own top padding) is what used to be the space between the list and the foot-of-list `Column`; it now holds regardless of whether a status arm is showing.
 - No longer gated on `hasMessages` in any special way — moving out of the content `Column` entirely means the empty-thread and populated cases share the same composer, so the old "outside the branch" reasoning is moot.
+
+### Thread top overlay placement (post-#1002)
+
+[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) draws
+[`ThreadTopOverlay`](thread-top-overlay.md) — the usage-limit and pairing-error pills this section's
+callouts describe leaving `ThreadStatusArea` for — as an **overlap**, not a `Column` child, inside the
+message-area `Box` in the content `Column` (not the `bottomBar` column `ThreadStatusArea` lives in):
+
+```kotlin
+Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+    if (!state.hasMessages && state.queuedMessages.isEmpty()) {
+        EmptyThreadState(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp))
+    } else {
+        LazyColumn(modifier = Modifier.fillMaxSize().nestedScroll(autoScrollNestedScroll), reverseLayout = true) { … }
+    }
+    ThreadTopOverlay(
+        usageLimit = usageLimit,
+        usageLimitDismissed = usageLimit?.dismissalKey() in dismissedUsageLimits,
+        onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
+        showRePair = showRePair,
+        onRePair = onRePair,
+        modifier = Modifier.align(Alignment.TopEnd).padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
+    )
+}
+```
+
+Wrapping both branches of the empty/populated `if` in one `Box` is what lets one `ThreadTopOverlay` call
+cover both — the pre-#1002 code had no shared parent at this level, since the empty and populated branches
+each took the `weight(1f)` slot directly. The overlay draws *after* (so *over*) whichever branch rendered,
+and `Alignment.TopEnd` plus the overlay's own early-return-to-nothing keeps it from taking layout space —
+the list never reflows as a pill appears or clears. See [Thread top overlay](thread-top-overlay.md) for the
+composable itself, the dismissal holder `UsageLimitDismissals`, and why this replaced the status-row arms.
 
 ### Interrupt-affordance placement (post-#459, retired from the screen in #643)
 
