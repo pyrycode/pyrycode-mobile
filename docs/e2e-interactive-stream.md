@@ -100,13 +100,14 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    repository to be published rather than firing on socket-up), with no reopen in between — each of the
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981 / #966 / #967)**
-   runs a **curated set of twenty-seven scenarios** (ping + create-workspace-folder + new-session + delete +
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981 / #966 / #967 / #1016)**
+   runs a **curated set of twenty-nine scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
    peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model +
    footer-context-usage + model-change + inherited-effort + chosen-effort + remembered-effort-recall +
    permission-held-running-tool + stop-running-turn + operator-bypass-permission + permission-answer +
-   question-answer + reconnect-footer + reconnect-commands + background-task, twenty-nine
+   question-answer + reconnect-footer + reconnect-commands + background-task + attachments-from-phone +
+   claude-offered-file, thirty-one
    real claude turns — five pings (ping, create-workspace-folder, new-session, the peer-started turn's own
    ping, and the offline-read-reconcile scenario's own ping), the peer-queue-consistency scenario's wait
    turn and its drained ping, the offline-read-reconcile scenario's peer offline turn, the
@@ -119,8 +120,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    (the allowed command, its don't-ask-again repeat, and the peer-allowed prompt in the second
    conversation), and the question-answer scenario's two turns (the phone's answer and the peer's answer),
    the reconnect-footer scenario's two turns (the ping before the cut-and-restore and the ping after it),
-   the reconnect-commands scenario's two turns (the ping and the compaction), and the background-task
-   scenario's one turn (the prompt that starts the task), plus a
+   the reconnect-commands scenario's two turns (the ping and the compaction), the background-task
+   scenario's one turn (the prompt that starts the task), the attachments-from-phone scenario's own turn
+   (the phone's attached message), and the claude-offered-file scenario's own turn (the phone's message
+   that runs `printf` and calls `send_file`), plus a
    possible reset wrap-up turn — delete, archive-restore,
    change-workspace, rename, save-as-channel, list-archive-entry, two-host and model-change spend none)
    against the **production relay** over `wss://`
@@ -151,7 +154,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
-   turn. The curated twenty-seven-scenario gate does not cover cross-device Stop.
+   turn. The curated twenty-nine-scenario gate does not cover cross-device Stop.
    An open thread recovering a peer's reconnect-window prompt on its own — the gap #850 found — is
    **shipped (#861)**: the still-open thread's reconnect history re-ask now waits for the repository to
    be published, so it reaches a live repository instead of a socket that is up but not yet handshaked.
@@ -713,11 +716,12 @@ recall rules these methods assert against.
 
 The **operator-bypass permission** scenario (#687 —
 `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) rides the curated `LIVE=1`
-list like every scenario above (`LIVE_MINIMUM` is 27, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
+list like every scenario above (`LIVE_MINIMUM` is 29, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
 having restored it on top of #965's stop method, [#966](https://github.com/pyrycode/pyrycode-mobile/issues/966)
-having raised it again for the permission-answer and question-answer methods, and
+having raised it again for the permission-answer and question-answer methods,
 [#967](https://github.com/pyrycode/pyrycode-mobile/issues/967) having raised it again for the reconnect and
-background-task methods; see
+background-task methods, and [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016) having raised
+it again for the attachments-from-phone and claude-offered-file methods; see
 [Pre-ship gate](#pre-ship-gate)). Running it needs its
 own daemon: `scripts/e2e-emulator.sh` starts a
 third, dedicated `pyry` instance under its own isolated `HOME` (§ 4a, `start_bypass_daemon`), with
@@ -910,6 +914,56 @@ why the command sleeps inside `python3` (the same constraint `WAIT_PROMPT` and #
 It costs at least 45 s per run for a window neither guaranteed nor timed by the harness. The operator
 un-ignores it to check the label's elapsed form against the current claude.
 
+The **attachments-from-phone** and **claude-offered-file** scenarios (#1016 —
+`interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`,
+`interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart`) are likewise **always-on** (not `@Ignore`d):
+that another client sees the phone's own attachments with their exact bytes, and that a file claude hands
+over survives a restart, are **durable** post-conditions, so they join the always-on gate alongside the
+reconnect and background-task scenarios above. Both ride the #848 `SecondClientPeer`, extended with
+`uploadAttachment`, `retrieveAttachment` and `history`, standing in for the desktop client the attachment
+slices (#983–#985) had only been proved against fakes. A new `ActivityIntentStub`, a no-arg
+`Instrumentation.ActivityMonitor`, answers the composer's document picker, the system file viewer and the
+save picker with `MediaStore` fixtures — the app refuses any content authority of its own, the test APK's
+included, so a fixture has to come from outside the app.
+
+`interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` picks a 4 × 4 PNG and a ~100 KB text
+document (three 45000-byte chunks, so the phone's own chunking and the daemon's reassembly both run)
+through the composer's **Attach files** action and sends them into a fresh chat X. Once the peer sees
+X's `turn_end`, the peer's `request_attachment` for each of the two ids the phone named returns bytes whose
+SHA-256 matches a fixture, and a second chat Y on the same host gains no user message. The ids are read
+from the phone's own cached sent row, not from the peer's history: the daemon logs the operator's turn in
+history as a plain `message`/`user` entry with text only, and drops `attachment_ids` entirely — a fact the
+ticket's plan did not anticipate and had to rework around (see [Verification status](#verification-status)).
+That daemon gap is filed as [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020) and is the
+reason a third method, `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` — another client's
+upload, named on a message, read back after `E2eTestApplication.rebuildGraph` with the thread cache cleared
+so the row can only come from history replay — ships `@Ignore`d and out of the LIVE list: with no id in
+replay, no row can appear. It rejoins the curated list once #1020 lands.
+
+`interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` keeps the phone attached to a fresh chat X
+while a prompt has claude write a short file with `printf` and hand it over with the daemon's `send_file`
+tool (`pyry_files`), which accepts only a path inside the conversation's workspace. `attachment_offered` is
+**live-only, with no daemon-side registry and no replay** — unlike a message's attachment ids, an offered
+file is never in history at all, so this is a **different** limit from #1020's, not the same one under
+another name. The phone draws the row and its thread cache holds it as an assistant-side message; after
+`rebuildGraph` (cache kept, unlike the other method's cleared cache) the row is still there exactly once,
+and both `ACTION_VIEW` (open) and `ACTION_CREATE_DOCUMENT` (save) yield the fixture's digest. A fresh
+device, or a cleared cache, would not show the file — by design, and not asserted here.
+
+**The LIVE list only filters; it does not set the order.** JUnit's default `MethodSorters.DEFAULT` runs a
+class's methods by name hash, not by the list's own sequence, so a method's place in
+`scripts/e2e-emulator.sh`'s `TEST_TARGET` string says nothing about when it runs. This ticket's own name
+came from that lesson: an earlier live run had two unrelated peers (this scenario's and #848's) go dead —
+handshake accepted, then no frames — and the fix was not a code change but a rename, moving both methods to
+a part of the hash order where every peer opened nearby had stayed alive across runs (see
+[Verification status](#verification-status) for the run-by-run evidence). Both methods also now open by
+requiring one `request_history` round trip from their peer (`assertPeerAnswers`) before any attachment
+step, so a dead peer fails fast, named as a relay or daemon fault, instead of timing out 240 s into a
+`send_file` wait. Daemon revision: the live daemon needs pyrycode #2166 (`attachment_offered`'s producer)
+and #2169 (`pyry_files` registered on the interactive spawn). No rung-4 twin: the scripted `fakeclaude`
+backend can neither call `send_file` nor serve `attachment_chunk` / `request_attachment`, and nothing here
+is a transient signal that would need one.
+
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
 token, `turn_state` flips to `responding`, `isThinking` goes false, and `ThinkingIndicator` early-returns,
@@ -1027,13 +1081,14 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the twenty-seven curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the twenty-nine curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
 peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
 context usage, #946; model change, inherited effort, chosen effort and remembered-effort recall, #545;
 running-tool status label, #950; stop-running-turn, #965; operator-bypass permission, #687 (fixed #981);
-permission-answer and question-answer, #966; reconnect-footer, reconnect-commands and background-task, #967)
+permission-answer and question-answer, #966; reconnect-footer, reconnect-commands and background-task, #967;
+attachments-from-phone and claude-offered-file, #1016)
 ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
@@ -1042,10 +1097,12 @@ conversations share an id stay separate through pairing, rename, link-cycling an
 restart, since #848 that a turn started from another paired device continues on the
 phone, since #849 that phone replies, queued sends and drops stay consistent with
 that same device's view of the backlog, since #850 that a loaded conversation stays
-readable while its host link is cut and reconciles a peer's turn once the link is restored, and since
+readable while its host link is cut and reconciles a peer's turn once the link is restored, since
 \#965 that the composer's Stop control ends a still-running turn with the Interrupted outcome and the
 conversation keeps taking real replies afterward, and that Reset session's wrapping-up phase is causally
-held, not raced on timing. They do not prove **cross-device** Stop, which belongs to
+held, not raced on timing, and since \#1016 that another client sees the phone's own attached files with
+their exact bytes and that a file claude hands over with `send_file` survives a restart in the phone's own
+thread cache. They do not prove **cross-device** Stop, which belongs to
 [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679). The gap #850 found — an open thread
 recovering a peer's reconnect-window prompt on its own, without being reopened — is closed by
 [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861): #850's scenario proves it directly, with
@@ -1058,7 +1115,7 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** twenty-nine real claude turns across twenty-seven curated methods — five pings (ping,
+**Cost:** thirty-one real claude turns across twenty-nine curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
 ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, the
@@ -1071,7 +1128,9 @@ scenario's three turns (the allowed command, its don't-ask-again repeat, and the
 the second conversation), and the question-answer scenario's two turns (the phone's answer and the peer's
 answer), #966, the reconnect-footer scenario's two turns (the ping before the cut-and-restore and the ping
 after it), the reconnect-commands scenario's two turns (the ping and the compaction), and the
-background-task scenario's one turn (the prompt that starts the task), #967 —
+background-task scenario's one turn (the prompt that starts the task), #967, the attachments-from-phone
+scenario's own turn (the phone's attached message), and the claude-offered-file scenario's own turn (the
+phone's message that runs `printf` and calls `send_file`), #1016 —
 and a reset wrap-up turn for the new-session scenario's own live child. Delete, archive-restore,
 change-workspace, rename, save-as-channel,
 list-archive-entry, two-host separation and the model-change scenario spend no Claude turns. Allow a few
@@ -1081,7 +1140,9 @@ The command must exit successfully and report at least `LIVE_MINIMUM` executed p
 tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) rose from 20 to 21 with #965's new
 stop method, then from 21 to 22 with #981 restoring the #687 bypass method to the curated list, then from
 22 to 24 with #966 adding the permission-answer and question-answer methods on the dedicated answer daemon,
-then from 24 to 27 with #967 adding the two reconnect methods and the background-task method.
+then from 24 to 27 with #967 adding the two reconnect methods and the background-task method, then from
+27 to 29 with #1016 adding the attachments-from-phone and claude-offered-file methods (its third method,
+the history-reload one, stays `@Ignore`d and out of the list until #1020).
 `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
@@ -1101,8 +1162,9 @@ again, from 14 to 15, #545 raised it again, from 15 to 19, #687 raised it again,
 method, #981 raised it again, from 21 to 22, restoring \#687's method once its production bug was
 fixed, and #966 raised it again, from 22 to 24, adding the permission-answer and question-answer methods
 on the dedicated answer daemon, and #967 raised it again, from 24 to 27, adding the reconnect-footer,
-reconnect-commands and background-task methods, on the same mechanism. Shell cleanup preserves the original
-result and retains failure artifacts; a clean XML report with a failing process status is not
+reconnect-commands and background-task methods, on the same mechanism, and #1016 raised it again, from
+27 to 29, adding the attachments-from-phone and claude-offered-file methods. Shell cleanup preserves the
+original result and retains failure artifacts; a clean XML report with a failing process status is not
 a passing gate.
 
 `--tests` runs a chosen subset in place of the curated list, as a comma-separated
@@ -1125,7 +1187,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of twenty-seven rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of twenty-nine rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1149,7 +1211,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Twenty-seven curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Twenty-nine curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -1177,8 +1239,10 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` (#967),
 `InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork` (#967), and
 `InteractiveStreamE2ETest#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` (#967),
+`InteractiveStreamE2ETest#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` (#1016), and
+`InteractiveStreamE2ETest#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` (#1016),
 so exactly
-**twenty-nine real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
+**thirty-one real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
 ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, #891's own
 ping, #946's own ping, the inherited-effort and chosen-effort scenarios' own turns and the
@@ -1190,14 +1254,19 @@ three turns — the allowed command, its don't-ask-again repeat, and the peer-al
 conversation, and the question-answer scenario's two turns — the phone's answer and the peer's answer
 (#966); the reconnect-footer scenario's two turns — the ping before the cut-and-restore and the ping after
 it, the reconnect-commands scenario's two turns — the ping and the compaction, and the background-task
-scenario's one turn — the prompt that starts the task (#967); the delete,
+scenario's one turn — the prompt that starts the task (#967); the attachments-from-phone scenario's own
+turn — the phone's attached message, and the claude-offered-file scenario's own turn — the phone's message
+that runs `printf` and calls `send_file` (#1016); the delete,
 archive-restore, change-workspace, rename,
 save-as-channel, list-archive-entry, two-host and model-change scenarios each add a method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
 list-archive-entry is pure navigation with no daemon round-trip at all; two-host separation is pairing,
 navigation, rename and link cycling, also daemon round-trips).
 The full class also includes the
-\#481 tool-use test and #950's `@Ignore`d elapsed-reading twin, which stay excluded from LIVE — the
+\#481 tool-use test, #950's `@Ignore`d elapsed-reading twin, and #1016's `@Ignore`d
+`interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` (blocked on
+[#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020) — the daemon drops a message's
+attachment ids from history, so replay can never name the file), which stay excluded from LIVE — the
 operator-bypass-permission method rides LIVE now that
 [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixed its missing reply, and the
 permission-answer and question-answer methods (#966) ride LIVE on the dedicated answer daemon described
@@ -1235,7 +1304,7 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **twenty-nine real claude turns per run across twenty-seven curated methods** (ping + create-workspace-folder,
+Cost: **thirty-one real claude turns per run across twenty-nine curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
 \#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
 status-sheet-running-model scenario's own ping, #891 + the footer-context-usage scenario's own ping,
@@ -1248,7 +1317,9 @@ turns — the allowed command, its don't-ask-again repeat, and the peer-allowed 
 conversation, and the question-answer scenario's two turns — the phone's answer and the peer's answer,
 #966 + the reconnect-footer scenario's two turns — the ping before the cut-and-restore and the ping after
 it, the reconnect-commands scenario's two turns — the ping and the compaction, and the background-task
-scenario's one turn — the prompt that starts the task, #967; `/clear` spends
+scenario's one turn — the prompt that starts the task, #967; the attachments-from-phone scenario's own
+turn — the phone's attached message, and the claude-offered-file scenario's own turn — the phone's message
+that runs `printf` and calls `send_file`, #1016; `/clear` spends
 none beyond the ping that primes the session; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
 \#740, two-host separation, #847, and model change each spend none — create/rename/delete/archive/restore/
@@ -1557,6 +1628,37 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #1016 (2026-09-24):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/1016` at `c51aea6481` merged with
+  `origin/main` at `31234eccda` (0 commits behind before the merge), against a daemon carrying
+  `../pyrycode` main's #2166 (`attachment_offered`'s producer) and #2169 (`pyry_files` registered on the
+  interactive spawn) — the audit baseline for both repos was mobile `d290cbc3` / daemon `61cb33c4`,
+  2026-09-24. It executed all twenty-nine curated scenarios — the curated list's first run with
+  `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` and
+  `interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` on it — 29 executed, 26 passed outright,
+  and 3 failed once then passed on an immediate re-run of the same merged tree (nondeterministic, not
+  attributed to this branch): `interactiveTurn_saveAsChannel_promotesToChannelTier`,
+  `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` and this ticket's own
+  `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`, exit 0 on the re-run, wall clock
+  492.0s. `LIVE_MINIMUM` rose from 27 to 29 with this ticket (see [Pre-ship gate](#pre-ship-gate)); 29
+  executed meets it exactly. This is the first live evidence that another client — the `SecondClientPeer`
+  standing in for the desktop — sees the phone's own attached files with their exact SHA-256 bytes, and
+  that a file claude hands over with `send_file` survives a restart in the phone's own thread cache with
+  the same bytes on open and save. It is also the first live evidence of a daemon fact the plan did not
+  anticipate: the operator's turn is logged in history as a plain `message`/`user` entry with text only,
+  dropping `attachment_ids` — filed as [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020),
+  which is why `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` ships `@Ignore`d and out of
+  the curated list rather than as this ticket's third method. Three earlier runs on this branch found and
+  worked through unrelated problems before this one: the first (5 of 30 failed) found the #1020 daemon
+  fact itself and a 90 s poll for a `send_message` history entry that never arrives; the second (2 of 29
+  failed) found two peers on the first test daemon going dead — handshake accepted, then no frames — which
+  a rename moving both new methods to a different point in JUnit's name-hash run order, plus a
+  `request_history` liveness probe (`assertPeerAnswers`), addressed without ever confirming a cause; the
+  third (1 of 29 failed) found `interactiveTurn_reconnect_slashCommandsAndCompactStillWork` failing for a
+  reason this branch does not touch, filed as
+  [#1029](https://github.com/pyrycode/pyrycode-mobile/issues/1029) and not this ticket's to fix. See the
+  attachments-from-phone / claude-offered-file paragraph under
+  [What rung 3 is made of](#what-rung-3-is-made-of) for the daemon-fact and ordering lessons in full.
 - **LIVE verified for #967 (2026-09-24):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/967` at `d33b3593d9` merged with
   `origin/main` at `653c6fb65f` (0 commits behind before the merge), executed all twenty-seven curated
@@ -1881,6 +1983,26 @@ The remaining checks here are specific to a real relay or real Claude execution:
   panel. See the dedicated paragraph under [What rung 3 is made of](#what-rung-3-is-made-of). Banner
   notices (`BannerNoticeRowTest`) and model refusals (`ModelRefusalRowTest`) remain this family's
   deterministic-only cases — real claude does not raise either on demand.
+
+- **Coverage — shipped:** [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016) added
+  `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` and
+  `interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart`, the twenty-eighth and twenty-ninth curated
+  `LIVE=1` methods, proving that the phone's own attached files (#983–#985) reach another client — the
+  `SecondClientPeer` desktop stand-in, extended with `uploadAttachment` / `retrieveAttachment` / `history`
+  — with their exact bytes, and that a file claude hands over with `send_file` survives a restart in the
+  phone's own thread cache. The live run found that the daemon drops a message's `attachment_ids` from
+  history entirely, filed as [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020); the
+  ticket's third method, `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` (another client's
+  upload, named on a message, read back after a history reload with the thread cache cleared), ships
+  `@Ignore`d and out of the curated list until #1020 lands. See the dedicated paragraph under
+  [What rung 3 is made of](#what-rung-3-is-made-of) for the daemon-fact and JUnit-ordering lessons, and
+  [Verification status](#verification-status) for the run-by-run evidence.
+
+- **Coverage — pending:** [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020) owns the daemon
+  fix that lets a message's `attachment_ids` survive into history, which
+  `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` needs to leave `@Ignore` and rejoin the
+  curated `LIVE=1` list as its thirtieth method. The method itself already exists, unchanged, on
+  `InteractiveStreamE2ETest`.
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns
