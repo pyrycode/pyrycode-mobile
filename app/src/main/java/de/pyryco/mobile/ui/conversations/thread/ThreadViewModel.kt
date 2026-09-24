@@ -867,6 +867,9 @@ class ThreadViewModel(
     // #1027: the open in flight, so a double tap cannot buffer a second navigation that fires on return.
     private var markdownOpenJob: Job? = null
 
+    // #1050: the linked note just read live, held in memory only until the operator is back on the thread.
+    private var linkedMarkdownDocument: MarkdownDocument? = null
+
     private val changeWorkspaceErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
 
     /**
@@ -1344,6 +1347,37 @@ class ThreadViewModel(
                     markdownOpenFailureChannel.send(Unit)
                 }
             }
+    }
+
+    /**
+     * A markdown link in an assistant reply was tapped (#1050): read [path] live from this conversation's
+     * workspace, one request per open, and open the reader only on a note it can show; anything else leaves
+     * the operator here with the open-failed notice. Ignored while any open is still reading, so a second tap
+     * sends nothing. The note is held for the reader's destination ([linkedMarkdown]), never saved. Logs a
+     * static outcome only: never the path, the name or the text.
+     */
+    fun onOpenMarkdownLink(path: String) {
+        if (markdownOpenJob?.isActive == true) return
+        linkedMarkdownDocument = null
+        markdownOpenJob =
+            viewModelScope.launch {
+                val document = readLinkedMarkdown(repository, conversationId, path)
+                RelayLog.d { "event=thread_markdown_link_open outcome=${if (document != null) "reader" else "failed"}" }
+                if (document != null) {
+                    linkedMarkdownDocument = document
+                    navigationChannel.send(ThreadNavigation.OpenLinkedMarkdown)
+                } else {
+                    markdownOpenFailureChannel.send(Unit)
+                }
+            }
+    }
+
+    /** The note [onOpenMarkdownLink] last read, for the reader it opens (#1050); `null` once released. */
+    fun linkedMarkdown(): MarkdownDocument? = linkedMarkdownDocument
+
+    /** Drop the held note (#1050): the operator is back on the thread, so its reader has closed. */
+    fun releaseLinkedMarkdown() {
+        linkedMarkdownDocument = null
     }
 
     /** Remove one pending attachment from this chat (#932), leaving the rest in order. */
