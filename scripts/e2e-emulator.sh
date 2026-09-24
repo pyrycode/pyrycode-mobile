@@ -1111,6 +1111,9 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_slashCommandsAndCompactStillWork"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel"
+  # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
+  # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
+  if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
