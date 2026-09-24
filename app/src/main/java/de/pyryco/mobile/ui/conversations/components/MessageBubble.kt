@@ -61,16 +61,31 @@ private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
 /**
  * [toolNestingDepth] (#896) is read only by a tool row: how many `Agent`/`Task` calls deep a subagent's
  * call sits. Each level indents the row's leading edge one [ToolNestingIndent] past the gutter.
+ *
+ * [attachmentStates], [onAttachmentShown] and [onRetryAttachment] (#984) are read only by the two bubble
+ * roles, for the message's attachments: each attachment's state by id, the report that one is on screen,
+ * and its retry control.
  */
 @Composable
 fun MessageBubble(
     message: Message,
     modifier: Modifier = Modifier,
     toolNestingDepth: Int = 0,
+    attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
+    onAttachmentShown: (String) -> Unit = {},
+    onRetryAttachment: (String) -> Unit = {},
 ) {
+    val attachments: @Composable () -> Unit = {
+        MessageAttachments(
+            attachments = message.attachments,
+            states = attachmentStates,
+            onShown = onAttachmentShown,
+            onRetry = onRetryAttachment,
+        )
+    }
     when (message.role) {
-        Role.User -> UserMessageBubble(message, modifier)
-        Role.Assistant -> AssistantMessage(message, modifier)
+        Role.User -> UserMessageBubble(message, attachments, modifier)
+        Role.Assistant -> AssistantMessage(message, attachments, modifier)
         // The gutter is applied here rather than inside ToolCallRow: moving it into the components left
         // the tool row as the one list kind still bleeding to the screen edge, which reads as a ragged
         // left edge next to the bubbles. The row's own layout belongs to #658, and this arm reaches it
@@ -99,6 +114,7 @@ fun MessageBubble(
 @Composable
 private fun UserMessageBubble(
     message: Message,
+    attachments: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -106,8 +122,10 @@ private fun UserMessageBubble(
         alignment = Alignment.End,
         bubbleColor = MaterialTheme.colorScheme.primaryContainer,
         bubbleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        attachments = attachments,
         modifier = modifier,
     ) {
+        if (message.hasNoBody()) return@MessageContainer
         Text(
             text = message.content,
             style = MaterialTheme.typography.bodyMedium,
@@ -131,6 +149,7 @@ private fun UserMessageBubble(
 @Composable
 private fun AssistantMessage(
     message: Message,
+    attachments: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -138,6 +157,7 @@ private fun AssistantMessage(
         alignment = Alignment.Start,
         bubbleColor = MaterialTheme.colorScheme.secondaryContainer,
         bubbleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        attachments = attachments,
         modifier = modifier,
     ) {
         if (message.isStreaming) {
@@ -150,7 +170,7 @@ private fun AssistantMessage(
                 content = message.content,
                 modifier = Modifier.fillMaxWidth(),
             )
-        } else {
+        } else if (!message.hasNoBody()) {
             // No `fillMaxWidth()`. It sets minWidth = maxWidth, which pinned every finalized assistant
             // bubble to the full lane and made 272dp a fixed width rather than the maximum the design
             // specifies — the frame's short assistant instance (`I533:1956;132:4539`) is 205dp. Without
@@ -170,6 +190,9 @@ private fun AssistantMessage(
  *
  * The meta row is handed [Message.content] directly, never anything read back out of [body], so an
  * assistant bubble copies its markdown source rather than the parsed render.
+ *
+ * [attachments] fills the design's `Slot` between the body and the meta row (#984), and only when the
+ * message has any: a text-only bubble lays out exactly as before.
  */
 @Composable
 private fun MessageContainer(
@@ -178,6 +201,7 @@ private fun MessageContainer(
     bubbleColor: Color,
     bubbleContentColor: Color,
     modifier: Modifier = Modifier,
+    attachments: @Composable () -> Unit = {},
     body: @Composable () -> Unit,
 ) {
     val isUserSide = alignment == Alignment.End
@@ -213,6 +237,7 @@ private fun MessageContainer(
                 horizontalAlignment = Alignment.Start,
             ) {
                 body()
+                if (message.attachments.isNotEmpty()) attachments()
                 MessageMetaRow(
                     timestamp = message.timestamp,
                     copyText = message.content,
@@ -222,6 +247,12 @@ private fun MessageContainer(
         }
     }
 }
+
+/**
+ * A message that carries attachments and no text has no body (#984): drawing an empty text block would
+ * leave a blank line above the attachments. A text-only message always keeps its body.
+ */
+private fun Message.hasNoBody(): Boolean = attachments.isNotEmpty() && content.isBlank()
 
 @Composable
 private fun StreamingAssistantBody(

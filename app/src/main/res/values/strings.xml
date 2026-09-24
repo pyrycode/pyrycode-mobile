@@ -359,4 +359,10 @@
         <item quantity="one">%1$d file was not added: a message holds at most 32 files</item>
         <item quantity="other">%1$d files were not added: a message holds at most 32 files</item>
     </plurals>
+    <!-- #984: a thread message's attachments. The file's own name is shown beside these, never inside them. -->
+    <string name="thread_attachment_unnamed">Attachment</string>
+    <string name="thread_attachment_loading">Loading…</string>
+    <string name="thread_attachment_not_found">File not found</string>
+    <string name="thread_attachment_failed">Couldn\'t load file</string>
+    <string name="thread_attachment_retry">Retry</string>
 </resources>

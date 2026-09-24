@@ -35,6 +35,11 @@ import java.util.concurrent.atomic.AtomicLong
  * the same rules: exact-pair isolation, in memory only, empty entries and buckets absent, every write a
  * compare-and-set [update]. They hold URIs and metadata ([PendingAttachment]), never file bytes, and
  * [clearHost] / [clearConversation] drop them together with the text.
+ *
+ * **Sent originals (#984)** remember which picked URI each sent attachment id came from, under the same
+ * pair key, so the thread can show the phone's own file instead of retrieving it while the picker's
+ * grant still lets it read that file. Same rules again: in memory only, never logged, dropped with the
+ * pair or the host. A grant ends with the process at the latest, and so does this map.
  */
 class ComposerDraftStore {
     private val _drafts = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
@@ -42,6 +47,10 @@ class ComposerDraftStore {
     private val _attachments = MutableStateFlow<Map<String, Map<String, List<PendingAttachment>>>>(emptyMap())
 
     private val nextAttachmentKey = AtomicLong()
+
+    // Host to conversation to attachment id to the content URI it was uploaded from. Not exposed as a
+    // flow: nothing renders it, and the thread reads it once per attachment it shows.
+    private val sentOriginals = MutableStateFlow<Map<String, Map<String, Map<String, String>>>>(emptyMap())
 
     /** Every live pair's pending attachments, host to conversation to entries in the order added. */
     val attachments: StateFlow<Map<String, Map<String, List<PendingAttachment>>>> = _attachments.asStateFlow()
@@ -99,6 +108,7 @@ class ComposerDraftStore {
     fun clearHost(serverId: String) {
         _drafts.update { it - serverId }
         _attachments.update { it - serverId }
+        sentOriginals.update { it - serverId }
     }
 
     /**
@@ -114,6 +124,10 @@ class ComposerDraftStore {
     ) {
         setDraft(serverId, conversationId, "")
         editAttachments(serverId, conversationId) { emptyList() }
+        sentOriginals.update { hosts ->
+            val conversations = hosts[serverId]?.minus(conversationId) ?: return@update hosts
+            if (conversations.isEmpty()) hosts - serverId else hosts + (serverId to conversations)
+        }
     }
 
     /** This pair's pending attachments in the order added, or empty when it has none (#932). */
@@ -196,6 +210,30 @@ class ComposerDraftStore {
             current.map { if (it.key == key) it.copy(attachmentId = attachmentId) else it }
         }
     }
+
+    /**
+     * Remember that each attachment id in [originals] was uploaded from its content URI (#984), for this
+     * pair. Recorded when the send names them, so the thread can show the phone's own file.
+     */
+    fun recordSentOriginals(
+        serverId: String,
+        conversationId: String,
+        originals: Map<String, String>,
+    ) {
+        if (originals.isEmpty()) return
+        sentOriginals.update { hosts ->
+            val conversations = hosts[serverId].orEmpty()
+            val merged = conversations[conversationId].orEmpty() + originals
+            hosts + (serverId to conversations + (conversationId to merged))
+        }
+    }
+
+    /** The content URI this pair's [attachmentId] was sent from in this app session, or `null` (#984). */
+    fun sentOriginal(
+        serverId: String,
+        conversationId: String,
+        attachmentId: String,
+    ): String? = sentOriginals.value[serverId]?.get(conversationId)?.get(attachmentId)
 
     /** Rewrite one pair's list through [update], dropping the entry and host bucket once they are empty. */
     private fun editAttachments(
