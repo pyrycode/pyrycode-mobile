@@ -951,9 +951,9 @@ if [ -n "${PEER_TOKEN:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.peerToken="${PEER_TOKEN}")
 fi
 # The operator-bypass daemon (#687): its unmet prerequisite, or the pairing, the peer and the witness.
-if [ -n "${BYPASS_UNMET}" ]; then
+if [ -n "${BYPASS_UNMET:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.bypassUnmet="${BYPASS_UNMET}")
-elif [ -n "${BYPASS_PEER_TOKEN}" ]; then
+elif [ -n "${BYPASS_PEER_TOKEN:-}" ]; then
   GRADLE_TEST_ARGS+=(
     -Pandroid.testInstrumentationRunnerArguments.bypassServerId="${SERVER_ID_BYPASS}"
     -Pandroid.testInstrumentationRunnerArguments.bypassPairCode="${PAIR_CODE_BYPASS}"
