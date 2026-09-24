@@ -1,30 +1,10 @@
 package de.pyryco.mobile.ui.conversations.components
 
-import android.content.res.Configuration
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.repository.UsageLimitReading
-import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -35,12 +15,7 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private val IndicatorHorizontalPadding = 16.dp
-private val IndicatorVerticalPadding = 8.dp
-private val IconSize = 16.dp
-private val IconLabelGap = 8.dp
-
-/** The most characters of claude's `status` this row shows; the daemon's own cap is not a layout bound. */
+/** The most characters of claude's `status` the label shows; the daemon's own cap is not a layout bound. */
 private const val MAX_STATUS_CHARS = 40
 
 /**
@@ -50,75 +25,51 @@ private const val MAX_STATUS_CHARS = 40
  */
 private const val MAX_RESET_HORIZON_SECONDS = 31L * 24 * 60 * 60
 
+/** The one status besides upstream's benign `allowed` that anything names: a warning the operator may hide. */
+private const val WARNING_STATUS = "allowed_warning"
+
 /** The daemon's `truncated_fields` name for the status field. */
 private const val STATUS_FIELD = "status"
 
 private const val ELLIPSIS = "…"
 
 /**
- * Status-area arm for claude's usage-limit report (#802's `rate_limited` projection, hoisted as
- * [de.pyryco.mobile.ui.conversations.thread.ThreadViewModel.usageLimit]), so a turn waiting on a usage
- * limit says why rather than leaving the user watching a spinner (#804).
+ * The Top overlay's label for claude's usage-limit report (#802's `rate_limited` projection, hoisted as
+ * [de.pyryco.mobile.ui.conversations.thread.ThreadViewModel.usageLimit]). #804 drew it as a status-area
+ * arm; #1002 moved it to a pill in the thread's Top overlay so it never hides live turn status.
  *
  * **The copy is attributed reportage and never a verdict.** A `rate_limited` frame is not proof that a
  * turn was blocked — the one measured non-benign status rode an account whose turns all ran normally — so
  * the lead says what claude reported and nothing here says "limited", "reached" or "lifted". claude's
- * `status` is rendered as an opaque label inside that lead and no branch reads its value; `limitType` is
- * not rendered at all. Every untrusted field goes through a render-or-decline helper below, so the worst
- * a hostile reading costs is one row of inert text with no date and no percent.
- *
- * Stateless and total: it emits nothing for `null`, the sibling early-return idiom. An info glyph rather
- * than the siblings' spinner, because a usage-limit report is not progress. The merged content
- * description is the visible label itself, so the wording has one source.
+ * `status` is rendered as an opaque label inside that lead and no branch of the label reads its value;
+ * `limitType` is not rendered at all. Every untrusted field goes through a render-or-decline helper below,
+ * so the worst a hostile reading costs is one pill of inert text with no date and no percent.
  */
 @Composable
-fun UsageLimitIndicator(
-    reading: UsageLimitReading?,
-    modifier: Modifier = Modifier,
-) {
-    if (reading == null) return
+internal fun usageLimitLabel(reading: UsageLimitReading): String {
     val now = remember(reading) { Clock.System.now() }
     val status = usageLimitStatusLabel(reading.status, reading.truncatedFields)
     val spent = usageLimitSpentPercent(reading.utilization)
     val resets = formatUsageLimitReset(reading.resetsAt, now, TimeZone.currentSystemDefault(), Locale.getDefault())
-    val label =
-        buildString {
-            append(
-                if (status != null) {
-                    stringResource(R.string.thread_usage_limit_label, status)
-                } else {
-                    stringResource(R.string.thread_usage_limit_label_no_status)
-                },
-            )
-            if (spent != null) append(stringResource(R.string.thread_usage_limit_spent, spent))
-            if (resets != null) append(stringResource(R.string.thread_usage_limit_resets, resets))
-        }
-    Row(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .padding(
-                    horizontal = IndicatorHorizontalPadding,
-                    vertical = IndicatorVerticalPadding,
-                ).semantics(mergeDescendants = true) { contentDescription = label },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(IconLabelGap),
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.Info,
-            contentDescription = null,
-            modifier = Modifier.size(IconSize),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+    return buildString {
+        append(
+            if (status != null) {
+                stringResource(R.string.thread_usage_limit_label, status)
+            } else {
+                stringResource(R.string.thread_usage_limit_label_no_status)
+            },
         )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (spent != null) append(stringResource(R.string.thread_usage_limit_spent, spent))
+        if (resets != null) append(stringResource(R.string.thread_usage_limit_resets, resets))
     }
 }
+
+/**
+ * Whether [reading] is the warning the Top overlay lets the operator hide (#1002). Exact equality and
+ * nothing else: any other status, recognised or not, is an Error pill with no X, so nothing unknown can
+ * be hidden. This picks the pill's variant only; the label never branches on the status.
+ */
+internal fun usageLimitIsWarning(reading: UsageLimitReading): Boolean = reading.status == WARNING_STATUS
 
 /**
  * claude's `status` as an inert display label, or `null` when nothing printable is left.
@@ -127,7 +78,7 @@ fun UsageLimitIndicator(
  * which could otherwise visually reorder the client-owned clauses that follow the label. The result is
  * cut to [MAX_STATUS_CHARS], and an ellipsis marks a cut made here **or** one the daemon reported in
  * [truncatedFields], so claude's cut text is never presented as complete. No comparison against any
- * status value happens here or anywhere on the render path.
+ * status value happens here or in the label; only [usageLimitIsWarning] names one, to pick the pill.
  */
 internal fun usageLimitStatusLabel(
     status: String,
@@ -179,47 +130,4 @@ internal fun formatUsageLimitReset(
             DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
         }
     return formatter.withLocale(locale).format(at.toJavaLocalDateTime())
-}
-
-@Preview(name = "UsageLimitIndicator — Light", showBackground = true, widthDp = 412)
-@Composable
-private fun UsageLimitIndicatorLightPreview() {
-    PyrycodeMobileTheme(darkTheme = false) {
-        Surface {
-            UsageLimitIndicator(
-                reading =
-                    UsageLimitReading(
-                        status = "allowed_warning",
-                        limitType = "seven_day",
-                        resetsAt = 0L,
-                        utilization = 0.94,
-                        truncatedFields = null,
-                    ),
-            )
-        }
-    }
-}
-
-@Preview(
-    name = "UsageLimitIndicator — Dark",
-    showBackground = true,
-    widthDp = 412,
-    uiMode = Configuration.UI_MODE_NIGHT_YES,
-)
-@Composable
-private fun UsageLimitIndicatorDarkPreview() {
-    PyrycodeMobileTheme(darkTheme = true) {
-        Surface {
-            UsageLimitIndicator(
-                reading =
-                    UsageLimitReading(
-                        status = "allowed_warning",
-                        limitType = "seven_day",
-                        resetsAt = 0L,
-                        utilization = null,
-                        truncatedFields = null,
-                    ),
-            )
-        }
-    }
 }

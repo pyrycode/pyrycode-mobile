@@ -145,3 +145,7 @@ Pending for the documentation stage: update the status ladder described in `docs
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- **2026-09-24, Phase B — Open question resolved, no design change.** The overlay keeps the 8dp top inset (`TopOverlayTopGap`). A dark-theme Robolectric render at 412dp matched Figma 533:1956: pills right-aligned, the long usage label wrapping right-aligned beside its X, the pairing pill below it. The X draws `Icons.Filled.Close` at 14dp, whose glyph is Figma's 8dp X.
