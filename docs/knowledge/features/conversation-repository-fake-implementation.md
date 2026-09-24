@@ -31,6 +31,13 @@ build mode. See [build commands](../../../README.md#build) and
   `setSessionSettingsCalls` holds the verbatim request). The call always succeeds — there is no unknown-id
   throw, unlike every other mutator — because the fake has no notion of "unhosted session" to reject
   against. See [`../codebase/543.md`](../codebase/543.md).
+- **`setMuted(conversationId, muted)`** (#1000) is a single-map flip, the same scaffold `archive`/
+  `unarchive` use: `state.update { records -> val record = records[id] ?: throw unknown(id); records +
+  (id to record.copy(conversation = record.conversation.copy(muted = muted))) }`. Unknown id throws inside
+  the `update` lambda before any write, so a refused call leaves the map untouched — matching the remote's
+  "nothing folds on a refusal" contract (#1001 tests against this shape). No precondition on the current
+  `muted` value, no `lastUsedAt` bump, no `bumpWorkspace` — same non-effects as `archive`/`unarchive`, since
+  mute is a flag flip, not a usage or workspace event.
 - **DI binding:** `appModule` registers the fake and the [`StableConversationRepository`](stable-conversation-repository.md) facade by concrete type. `conversationRepositoryModule(useRelay = BuildConfig.USE_RELAY_REPOSITORY)` alone binds the interface, resolving one of those existing singletons. Since #631 the generated flag defaults to `true` (facade); demo builds explicitly set `useRelayRepository=false`. Constructor-inject the interface so consumers stay unchanged across the selection. See [Dependency injection](dependency-injection.md).
 
 - **`requestSystemPrompt(conversationId)` / `setSystemPrompt(conversationId, systemPrompt)`** (#823) hold

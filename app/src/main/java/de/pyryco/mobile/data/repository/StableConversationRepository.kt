@@ -204,6 +204,11 @@ class StableConversationRepository(
 
     override suspend fun unarchive(conversationId: String): Unit = live.unarchive(conversationId)
 
+    override suspend fun setMuted(
+        conversationId: String,
+        muted: Boolean,
+    ): Unit = live.setMuted(conversationId, muted)
+
     override suspend fun delete(conversationId: String): Unit = live.delete(conversationId)
 
     override suspend fun rename(

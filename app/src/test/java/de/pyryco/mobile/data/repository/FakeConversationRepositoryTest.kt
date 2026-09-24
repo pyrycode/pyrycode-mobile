@@ -422,6 +422,43 @@ class FakeConversationRepositoryTest {
     }
 
     @Test
+    fun setMuted_setsAndClearsTheFlagOnTheRow() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val created = repo.createDiscussion()
+
+            repo.setMuted(created.id, true)
+            assertTrue(
+                repo
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single { it.id == created.id }
+                    .muted,
+            )
+
+            repo.setMuted(created.id, false)
+            assertFalse(
+                repo
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single { it.id == created.id }
+                    .muted,
+            )
+        }
+
+    @Test
+    fun setMuted_onUnknownId_throwsAndChangesNothing() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val before = repo.observeConversations(ConversationFilter.All).first()
+
+            val thrown = runCatching { repo.setMuted("nope", true) }.exceptionOrNull()
+
+            assertTrue(thrown is IllegalArgumentException)
+            assertEquals(before, repo.observeConversations(ConversationFilter.All).first())
+        }
+
+    @Test
     fun archive_isIdempotent() =
         runBlocking {
             val repo = FakeConversationRepository()

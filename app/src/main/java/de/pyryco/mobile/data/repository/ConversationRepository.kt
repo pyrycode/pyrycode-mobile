@@ -255,6 +255,22 @@ interface ConversationRepository {
     suspend fun unarchive(conversationId: String)
 
     /**
+     * Set ([muted] `true`) or clear ([muted] `false`) [conversationId]'s mute-notifications flag (#1000),
+     * one `set_conversation_muted` per call. On success [observeConversations] shows the confirmed
+     * [Conversation.muted] value with no re-list.
+     *
+     * Throws [IllegalArgumentException] for an unknown conversation, like [archive], and
+     * [de.pyryco.mobile.data.network.RelayErrorException] for any other refusal; neither changes the list.
+     *
+     * Default throws — implementations without the verb (inline test doubles) inherit it, the same
+     * cascade-avoidance as [createChannel].
+     */
+    suspend fun setMuted(
+        conversationId: String,
+        muted: Boolean,
+    ): Unit = error("setMuted is not implemented for this ConversationRepository")
+
+    /**
      * Permanently removes the conversation from the store. Tolerant of unknown
      * ids: calling `delete` on an id that is not present is a silent no-op.
      *
