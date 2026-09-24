@@ -140,10 +140,11 @@ deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTre
 header's own band grows from the design's bare 20dp text line to 48dp for the same reason — it carries a
 control now, not just a label.
 
-**Not in this slice.** `TreeWorkspaceRow` draws no add control — adding a workspace, both the control and
-its modal content, is #664's, deliberately a tier above the host row's plus. #663 (the same phase) adds
-`renameWorkspace` / `archiveWorkspace` to the host-owned repository that #664's Edit workspace modal calls,
-but draws no UI itself. This slice supplies only the section-header and host-row controls and their target.
+**Still no add control (#905 added the pencil, not a plus).** `TreeWorkspaceRow` draws no add control of
+its own — adding a workspace is the host row's plus, a tier above, replaced by
+[`AddWorkspaceModal`](mobile-modal.md#callers) in #904. #663 (the same phase) added `renameWorkspace` /
+`archiveWorkspace` to the host-owned repository with no UI caller; #905 is that caller — see
+[Workspace row edit and archive control (#905)](#workspace-row-edit-and-archive-control-905) below.
 
 ## Host row edit control (#744)
 
@@ -243,3 +244,34 @@ modal itself is [`EditChatModal`](mobile-modal.md#callers), unchanged by this ti
 its first caller. Archive chat was wired in #828, the same placeholder-then-wire shape the host row's
 Unpair action carried between #744 and #745 — but unlike Unpair, Archive takes no confirmation step,
 since the host's own Archive screen restores the chat.
+
+## Workspace row edit and archive control (#905)
+
+`TreeWorkspaceRow` gained a fourth parameter, `onEditTapped: (() -> Unit)? = null`, and — same shape as
+the host and chat rows' pencils — a non-null value draws a permanent `TreeRowControl(Icons.Filled.Edit,
+…)` in `FoldableTreeRow`'s trailing slot rather than only on hover, since the phone has no hover. The
+workspace name is clamped once through `boundedRowText` and reused for both the row's `Text` and the
+pencil's `R.string.cd_tree_workspace_edit` content description, the same one-clamp-two-uses shape every
+other row control uses. `TreeRowControl` keeps its own merging-semantics node inside `FoldableTreeRow`'s
+own `clickable`, so a tap on the pencil edits the workspace without folding the row.
+
+`treeSection` binds `onEditTapped` on every workspace row in both sections to
+`{ onEvent(TreeWorkspaceEditTapped(group.serverId, group.cwd)) }` — `HostWorkspaceGroup`'s own `serverId`
+and `cwd`, never `displayName`, the same targeting discipline every other row control in this file uses.
+Two workspaces on different hosts can show the same folder name, so the shown name is display text only
+and never the write target.
+
+Opening [`EditWorkspaceModal`](mobile-modal.md#callers) from that target, applying the label rule and
+resolving which host writes are its `ChannelListViewModel` job — see
+[ChannelListViewModel](channel-list-viewmodel.md#wiring). `openWorkspaceEditor(serverId, cwd)` reads the
+shown name from that host's own snapshot rather than from the row: it looks up the first channel or chat
+whose `cwd` matches exactly (a `HostWorkspaceGroup` carries no label of its own to reopen with), and opens
+nothing for a host or `cwd` the snapshot does not hold. OK sends one `renameWorkspace` through
+`workspaceLabelFor` (`ui/workspace/WorkspaceDisplayName.kt`): the trimmed input, `null` to clear when it
+is blank or matches the folder's own name (including a clamped cut of an overlong folder name, but only
+when the clamp actually cut it — an uncut folder name is compared exactly, untrimmed). Archive workspace
+swaps the modal's content for a confirmation in place, the same shape `EditHostModal`'s unpair step uses;
+confirming calls `archiveWorkspace` for that host and `cwd` only, and a partial failure keeps the
+confirmation open so a retry archives only the rows still active — see the operation's own contract in
+`ConversationRepository.kt`. See [Mobile modal § Callers](mobile-modal.md#callers) for the modal's own
+field, its label-rule edge case and a Compose semantics trap in its test.

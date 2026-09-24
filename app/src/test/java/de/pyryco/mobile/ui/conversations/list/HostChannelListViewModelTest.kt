@@ -1779,6 +1779,294 @@ class HostChannelListViewModelTest {
         }
 
     /**
+     * Both hosts hold rows at the same exact `cwd` (#905), labelled differently, so a workspace write sent
+     * to the wrong host — or keyed on the shown name — cannot pass. A second path on host A proves the
+     * write is path-exact too.
+     */
+    private fun Fixture.seedCollidingWorkspaces() {
+        a.repo.rows.value =
+            listOf(
+                row("a-chat", label = "Shared"),
+                row("a-channel", promoted = true, label = "Shared"),
+                row("a-other", cwd = "/elsewhere"),
+            )
+        b.repo.rows.value = listOf(row("b-chat", label = "B label"))
+    }
+
+    private val sharedCwd = " /same/../Path "
+
+    private fun Fixture.workspaceWrites() = a.repo.workspaceRenames + b.repo.workspaceRenames
+
+    @Test
+    fun workspaceEditorOpensOnTheRowsOwnHostAndCwdSeededWithItsShownName() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            runCurrent()
+
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            runCurrent()
+            assertEquals(WorkspaceEditorState("Host", sharedCwd, "Shared"), f.vm.hostState.value.workspaceEditor)
+
+            f.vm.openWorkspaceEditor("host", sharedCwd)
+            runCurrent()
+            assertEquals(WorkspaceEditorState("host", sharedCwd, "B label"), f.vm.hostState.value.workspaceEditor)
+
+            // An unlabelled workspace opens on its folder's own name, as its row shows it.
+            f.vm.openWorkspaceEditor("Host", "/elsewhere")
+            runCurrent()
+            assertEquals(
+                "elsewhere",
+                f.vm.hostState.value.workspaceEditor
+                    ?.initialName,
+            )
+
+            // A path the host holds no row at, or a host the list does not hold, opens nothing.
+            f.vm.dismissWorkspaceEditor()
+            for ((serverId, cwd) in listOf("host" to "/elsewhere", "Host" to "/same/../Path", "gone" to sharedCwd)) {
+                f.vm.openWorkspaceEditor(serverId, cwd)
+                runCurrent()
+                assertNull(f.vm.hostState.value.workspaceEditor)
+            }
+
+            assertNull(f.vm.hostState.value.selected)
+            assertTrue(f.nav.isEmpty())
+            assertTrue(f.workspaceWrites().isEmpty())
+        }
+
+    @Test
+    fun workspaceSubmitRenamesOnlyTheEditorsHostAndCwdByTheLabelRuleAndCloses() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            // No open editor: nothing to rename.
+            f.vm.submitWorkspaceName("orphan")
+            runCurrent()
+            assertTrue(f.workspaceWrites().isEmpty())
+
+            f.vm.openWorkspaceEditor("host", sharedCwd)
+            runCurrent()
+            f.vm.submitWorkspaceName("  Renamed  ")
+            runCurrent()
+            assertEquals(listOf(sharedCwd to "Renamed"), f.b.repo.workspaceRenames)
+            // The other host holding the same cwd is never addressed.
+            assertTrue(
+                f.a.repo.workspaceRenames
+                    .isEmpty(),
+            )
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            val renamed =
+                f.vm.hostState.value.hosts
+                    .single { it.host.serverId == "host" }
+            assertEquals("Renamed", renamed.chatGroups.single().displayName)
+            assertEquals(
+                "Shared",
+                f.vm.hostState.value.hosts
+                    .single { it.host.serverId == "Host" }
+                    .chatGroups
+                    .first()
+                    .displayName,
+            )
+
+            // A blank name and the folder's own name both clear the label.
+            for ((cwd, clearing) in listOf(sharedCwd to "   ", "/elsewhere" to " elsewhere ")) {
+                f.vm.openWorkspaceEditor("Host", cwd)
+                runCurrent()
+                f.vm.submitWorkspaceName(clearing)
+                runCurrent()
+                assertNull(f.vm.hostState.value.workspaceEditor)
+            }
+            // The folder's own name is compared exactly: this path's is "Path " with its trailing space.
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            runCurrent()
+            f.vm.submitWorkspaceName("Path")
+            runCurrent()
+            assertEquals(listOf(sharedCwd to null, "/elsewhere" to null, sharedCwd to "Path"), f.a.repo.workspaceRenames)
+
+            // Over the daemon's byte bound: nothing is sent and the modal stays as it was.
+            f.vm.openWorkspaceEditor("Host", "/elsewhere")
+            runCurrent()
+            val open = f.vm.hostState.value.workspaceEditor
+            f.vm.submitWorkspaceName("ö".repeat(65))
+            runCurrent()
+            assertEquals(open, f.vm.hostState.value.workspaceEditor)
+            assertEquals(3, f.a.repo.workspaceRenames.size)
+        }
+
+    @Test
+    fun failedOrUnavailableWorkspaceRenameStaysOpenQuietlyAndALateCompletionCannotReopen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            runCurrent()
+
+            // Lost between the last status and the press: nothing is sent.
+            f.a.available = false
+            f.vm.submitWorkspaceName("Typed")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).failed)
+            assertTrue(f.workspaceWrites().isEmpty())
+            f.a.available = true
+
+            for (error in listOf(
+                RelayErrorException("protocol.malformed", false, "server-secret"),
+                IllegalStateException("not connected secret"),
+            )) {
+                f.a.repo.failure = error
+                f.vm.submitWorkspaceName("Typed")
+                runCurrent()
+                val failed = requireNotNull(f.vm.hostState.value.workspaceEditor)
+                assertTrue(failed.failed)
+                assertFalse(failed.saving)
+                assertFalse(failed.archiveFailed)
+            }
+            assertTrue(logs.any { "workspace_rename_failed" in it })
+            assertTrue(
+                "no label, path, id or server message may reach a log line: $logs",
+                logs.none { "secret" in it || "Typed" in it || "Shared" in it || "Path" in it || "Host" in it },
+            )
+
+            // A write landing after a dismissal must not resurrect the modal, and a second OK mid-write is ignored.
+            f.a.repo.failure = null
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.workspaceGate = gate
+            f.vm.submitWorkspaceName("Later")
+            f.vm.submitWorkspaceName("Twice")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).saving)
+            f.vm.dismissWorkspaceEditor()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            assertEquals(listOf(sharedCwd to "Later"), f.a.repo.workspaceRenames)
+        }
+
+    @Test
+    fun workspaceArchiveAsksFirstAndArchivesOnlyTheEditorsHostAndCwd() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            runCurrent()
+
+            // Confirming with no request pending sends nothing.
+            f.vm.confirmWorkspaceArchive()
+            runCurrent()
+            assertTrue(
+                f.a.repo.workspaceArchives
+                    .isEmpty(),
+            )
+
+            f.vm.requestWorkspaceArchive()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).confirmingArchive)
+            assertTrue(
+                f.a.repo.workspaceArchives
+                    .isEmpty(),
+            )
+
+            // Declining returns to the editor and sends nothing.
+            f.vm.declineWorkspaceArchive()
+            runCurrent()
+            assertEquals(WorkspaceEditorState("Host", sharedCwd, "Shared"), f.vm.hostState.value.workspaceEditor)
+            assertTrue(
+                f.a.repo.workspaceArchives
+                    .isEmpty(),
+            )
+
+            f.vm.requestWorkspaceArchive()
+            f.vm.confirmWorkspaceArchive()
+            runCurrent()
+            assertEquals(listOf(sharedCwd), f.a.repo.workspaceArchives)
+            // The other host holding the same cwd is never addressed, and no rename rides along.
+            assertTrue(
+                f.b.repo.workspaceArchives
+                    .isEmpty(),
+            )
+            assertTrue(f.workspaceWrites().isEmpty())
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            val (hostA, hostB) = f.vm.hostState.value.hosts
+            assertEquals(listOf("a-other"), hostA.host.chats.map { it.id })
+            assertTrue(hostA.host.channels.isEmpty())
+            assertEquals(listOf("b-chat"), hostB.host.chats.map { it.id })
+            assertTrue(logs.any { "workspace_archived" in it })
+
+            // Cancel, Close and Back send nothing.
+            f.vm.openWorkspaceEditor("host", sharedCwd)
+            runCurrent()
+            f.vm.requestWorkspaceArchive()
+            f.vm.dismissWorkspaceEditor()
+            runCurrent()
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            assertTrue(
+                f.b.repo.workspaceArchives
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun failedWorkspaceArchiveStaysConfirmingQuietlyAndALateCompletionCannotReopen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            f.vm.requestWorkspaceArchive()
+            runCurrent()
+
+            f.a.available = false
+            f.vm.confirmWorkspaceArchive()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).archiveFailed)
+            assertTrue(
+                f.a.repo.workspaceArchives
+                    .isEmpty(),
+            )
+            f.a.available = true
+
+            f.a.repo.failure = RelayErrorException("server.error", false, "server-secret")
+            f.vm.confirmWorkspaceArchive()
+            runCurrent()
+            val failed = requireNotNull(f.vm.hostState.value.workspaceEditor)
+            assertTrue(failed.archiveFailed)
+            assertTrue(failed.confirmingArchive)
+            assertFalse(failed.failed)
+            assertFalse(failed.saving)
+            assertTrue(logs.any { "workspace_archive_failed" in it })
+            assertTrue(logs.none { "secret" in it || "Shared" in it || "Path" in it || "Host" in it })
+
+            // Declining clears the archive's failure and returns to the editor.
+            f.vm.declineWorkspaceArchive()
+            runCurrent()
+            assertEquals(WorkspaceEditorState("Host", sharedCwd, "Shared"), f.vm.hostState.value.workspaceEditor)
+
+            // Mid-write, a decline, a second confirm and a rename are all ignored; a late result cannot reopen.
+            f.a.repo.failure = null
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.workspaceGate = gate
+            f.vm.requestWorkspaceArchive()
+            f.vm.confirmWorkspaceArchive()
+            f.vm.declineWorkspaceArchive()
+            f.vm.confirmWorkspaceArchive()
+            f.vm.submitWorkspaceName("Twice")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).saving)
+            f.vm.dismissWorkspaceEditor()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            assertEquals(listOf(sharedCwd), f.a.repo.workspaceArchives)
+            assertTrue(f.workspaceWrites().isEmpty())
+        }
+
+    /**
      * Reads the supplied snapshot until something writes, then the written value.
      *
      * The unpair path clears the removed host's cached workspace through `DataStore.edit`, which the
@@ -2039,6 +2327,28 @@ class HostChannelListViewModelTest {
         val archives = mutableListOf<String>()
         val others = mutableListOf<String>()
         var archiveGate: CompletableDeferred<Unit>? = null
+
+        // #905: records every workspace write by exact path; a rename relabels this repo's own rows at it.
+        override suspend fun renameWorkspace(
+            path: String,
+            label: String?,
+        ) {
+            workspaceGate?.await()
+            failure?.let { throw it }
+            workspaceRenames += path to label
+            rows.value = rows.value?.map { if (it.cwd == path) it.copy(workspaceLabel = label) else it }
+        }
+
+        override suspend fun archiveWorkspace(path: String) {
+            workspaceGate?.await()
+            failure?.let { throw it }
+            workspaceArchives += path
+            rows.value = rows.value?.map { if (it.cwd == path) it.copy(archived = true) else it }
+        }
+
+        val workspaceRenames = mutableListOf<Pair<String, String?>>()
+        val workspaceArchives = mutableListOf<String>()
+        var workspaceGate: CompletableDeferred<Unit>? = null
     }
 
     companion object {
