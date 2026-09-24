@@ -58,12 +58,13 @@ class StableConversationRepository(
 It overrides **all** interface members — the stream-shaped reads (`observeConversations`,
 `observeMessages`, `observeLastMessage`, `observeStall` (#395), `observeQueue` (#460),
 `observeApiRetry` (#593), `observeCompacting` (#596), `observeThinkingProgress` (#801),
-`observeUsageLimit` (#802), **and** `recentWorkspaces`), the 15
+`observeUsageLimit` (#802), **and** `recentWorkspaces`), the 16
 suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
 `startNewSession`, `changeWorkspace`, `sendMessage` (both overloads — the plain send and the
 attachment-naming one, #830 — follow the identical snapshot-or-throw shape below), `createWorkspaceFolder`, `requestScreenSnapshot`,
 `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
-deliberately deferred), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823), **and**
+deliberately deferred), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823),
+`setMuted` (#1000), **and**
 `uploadAttachment` (#829, the one one-shot that does **not** follow the snapshot-or-throw shape below —
 see [Uploads — snapshot-or-result](#uploads--snapshot-or-result-829))), **and** the one capability property
 `mutationsSupported` (#507) — including every member that ships a default body on the interface
@@ -71,14 +72,15 @@ see [Uploads — snapshot-or-result](#uploads--snapshot-or-result-829))), **and*
 `observeStall` (#395), `observeQueue` (#460), `observeApiRetry` (#593), `observeCompacting` (#596),
 `observeThinkingProgress` (#801), `observeUsageLimit` (#802),
 `setSessionSettings` (#543), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823),
-**and** `mutationsSupported` (#507)), so
-delegation is faithful and nothing silently falls back to a default. `setSessionSettings`, `requestHistory`
-and `requestSystemPrompt`/`setSystemPrompt` all follow the
+`setMuted` (#1000), **and** `mutationsSupported` (#507)), so
+delegation is faithful and nothing silently falls back to a default. `setSessionSettings`, `requestHistory`,
+`requestSystemPrompt`/`setSystemPrompt` and `setMuted` all follow the
 plain one-shot snapshot-or-throw shape below, like every other mutator — neither introduces a new
 delegation posture; `requestHistory` forwards its `cursor`/`limit` verbatim, the same pass-through the
-shape already gives every other multi-arg one-shot, and `setSystemPrompt` forwards its `systemPrompt`
+shape already gives every other multi-arg one-shot, `setSystemPrompt` forwards its `systemPrompt`
 verbatim including a `null` clear — the facade neither pre-checks the 8192-byte limit nor short-circuits
-an over-limit value; that stays the live repository's `require(...)`.
+an over-limit value; that stays the live repository's `require(...)` — and `setMuted` forwards its
+`Boolean` verbatim, `true` and `false` alike, the same one-line hand-off `createChannel` uses.
 
 ## How it works
 
@@ -374,4 +376,8 @@ pass-through. The eight tests map to the ACs, the key one being
   case is `AttachmentRetrievalResult.Unavailable`. `retrieveAttachment` has no override on this facade —
   screens read through the host-bound `CachingConversationRepository` instead. See [Attachment
   retrieval](attachment-retrieval.md).
+- Delegated one-shot: `setMuted` ([#1000](https://github.com/pyrycode/pyrycode-mobile/issues/1000)) — the
+  mute-flag write, forwarded verbatim with the plain snapshot-or-throw shape; no new delegation posture.
+  See [Remote conversation repository — session settings, archive, delete and workspace
+  change](remote-conversation-repository-conversation-writes.md#setmutedconversationid-muted--the-mute-flag-write-1000).
 - DI: [Dependency injection](dependency-injection.md).
