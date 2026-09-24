@@ -234,11 +234,14 @@ and the pencil's `R.string.cd_tree_chat_edit` content description — the same o
 host row's controls use, and for the same reason: two identical accessible names on the same screen would
 be indistinguishable to TalkBack.
 
-**Only Chats rows draw it.** `treeSection` in [ChannelListScreen](channel-list-screen.md) passes
-`onEditTapped` from an exhaustive `when (section)` — `null` for `ConversationTreeSection.Channels`,
-`{ onEvent(TreeChatEditTapped(target)) }` for `Chats` — rather than a parameter on the section itself, so
-a channel's own editor (#667) can be added later without touching this row. `target` is the row's own
-`HostConversationTarget`, resolved the same way `TreeRowTapped`'s already is, never the selected host.
+**Both sections draw it, each to its own modal (#827, then #667).** `treeSection` in
+[ChannelListScreen](channel-list-screen.md) passes `onEditTapped` from an exhaustive `when (section)` —
+originally `null` for `ConversationTreeSection.Channels` and `{ onEvent(TreeChatEditTapped(target)) }`
+for `Chats` — rather than a parameter on the section itself, which is exactly what let
+[Edit channel](#channels-row-edit-control-667) (#667) add the `Channels` arm later, binding
+`TreeChannelEditTapped(target)` and its own `editDescription`, without touching this row's shape at all.
+`target` is the row's own `HostConversationTarget`, resolved the same way `TreeRowTapped`'s already is,
+never the selected host.
 
 Opening the modal from that target, resolving which host renames it, and following that host's connection
 live are the view model's job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring) — and the
@@ -246,6 +249,31 @@ modal itself is [`EditChatModal`](mobile-modal.md#callers), unchanged by this ti
 its first caller. Archive chat was wired in #828, the same placeholder-then-wire shape the host row's
 Unpair action carried between #744 and #745 — but unlike Unpair, Archive takes no confirmation step,
 since the host's own Archive screen restores the chat.
+
+## Channels row edit control (#667)
+
+`TreeConversationRow` gained a fifth parameter, `@StringRes editDescription: Int =
+R.string.cd_tree_chat_edit`, generalising the pencil's content description that #827 hard-wired to the
+chat string: `treeSection`'s exhaustive `when (section)` now passes `cd_tree_chat_edit` for `Chats` (as
+before) and `cd_tree_channel_edit` for `Channels`, alongside `{ onEvent(TreeChannelEditTapped(target)) }`
+in place of the `null` every Channels row passed until this ticket — the pencil itself, its permanent
+(non-hover) drawing and its own merging-semantics node inside `FoldableTreeRow`'s `clickable` are
+unchanged from #827's chat-row shape, since both tiers share one row composable. `target` is the row's
+own `HostConversationTarget`, the same targeting discipline every row control in this file uses.
+
+Opening [`EditChannelModal`](mobile-modal.md#callers) from that target, reading the channel's stored
+prompt once the row's host has a live repository, and resolving which host renames, writes the prompt or
+archives are `ChannelListViewModel`'s job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring).
+Unlike every other row control here, the modal cannot fill its second field synchronously at open: the
+name comes from the row's own host snapshot the way `EditChatModal`'s and `EditWorkspaceModal`'s seeds
+do, but the system prompt is a separate daemon round trip, so the field opens **disabled** with a static
+reading line until that read lands. `ChannelFormFields` gained the two parameters this needs —
+`promptEnabled: Boolean = true` and `promptNote: String? = null`, the note drawn as `supportingText` in
+the same slot the over-limit message already used, so a caller that never passes a note is unaffected —
+rather than teaching the shared form to run its own read, keeping `ChannelFormFields` itself as inert as
+`EditChatModal`'s field always was. See [Mobile modal § Callers](mobile-modal.md#callers) for the full
+caller contract: the target-tagged prompt reading, the `null`-until-shown prompt draft that keeps an
+unread prompt from ever being overwritten, and the outlined Archive action with no confirmation step.
 
 ## Workspace row edit and archive control (#905)
 
