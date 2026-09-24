@@ -1,7 +1,11 @@
 package de.pyryco.mobile.e2e
 
 import android.Manifest
+import android.util.Log
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
@@ -39,9 +43,16 @@ import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.ModelMenu
+import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
@@ -56,23 +67,28 @@ import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.CONTEXT_USAGE_TEST_TAG
+import de.pyryco.mobile.ui.conversations.thread.EFFORT_PLACEHOLDER_LABEL
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
+import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
+import androidx.compose.ui.semantics.Role as SemanticsRole
 
 /**
  * Happy-path end-to-end test for the mobile interactive event stream (#642 rung 3, ADR 025): the
@@ -144,6 +160,15 @@ class InteractiveStreamE2ETest {
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_status_expand)
     private val runningModelUnavailable: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.status_sheet_running_model_unavailable)
+
+    // #545: the footer's model and effort controls, found by their click labels, and the state description a
+    // control carries while its write is outstanding, all from resources.
+    private val changeModelLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_model)
+    private val changeEffortLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_effort)
+    private val footerPending: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_pending)
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
@@ -1668,6 +1693,447 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A model change made on the phone reaches only its own conversation and survives a reopen (#545).
+     * Two chats are prepared through the host's own repository: `create_conversation` binds a session, so
+     * a chat nobody has messaged can take a write. X gets a model with effort levels, Y another model and a
+     * different effort. Every model comes from the menu the host publishes for X at run time, and none is
+     * named here. Neither chat has run claude, so no model change restarts one.
+     *
+     * The "fresh reply" is a new `request_session_settings`, sent by [freshSettings] on every call.
+     *
+     * **Zero real-claude turns.**
+     */
+    @Test
+    fun interactiveTurn_modelChange_roundTripsAndStaysPerConversation() {
+        val originals = mutableMapOf<String, SessionSettings>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            clearRememberedEffort()
+            val stamp = System.currentTimeMillis()
+            val nameX = MODEL_X_NAME_PREFIX + stamp
+            val chatX = prepareChat(nameX, originals)
+            val chatY = prepareChat(MODEL_Y_NAME_PREFIX + stamp, originals)
+            val rows = usableRows(publishedMenu(chatX.id))
+            val rowA = checkNotNull(rows.firstOrNull { it.effortLevels.isNotEmpty() }) { "no published model offers effort levels" }
+            val rowB = checkNotNull(rows.firstOrNull { it.value != rowA.value }) { "the menu publishes fewer than two usable models" }
+            val target =
+                checkNotNull(rows.firstOrNull { it.value != rowA.value && it.value != rowB.value }) {
+                    "the menu publishes fewer than three usable models"
+                }
+            val effortX = rowA.effortLevels.first()
+            val effortY = rowB.effortLevels.firstOrNull { it != effortX }.orEmpty()
+            writeSettings(chatX.id, model = rowA.value, effort = effortX)
+            writeSettings(chatY.id, model = rowB.value, effort = effortY)
+            assertSaved(chatX.id, rowA.value, effortX)
+            assertSaved(chatY.id, rowB.value, effortY)
+
+            // The phone changes X's model from the footer. The label settles when the refreshed reading lands.
+            openChatRow(nameX)
+            awaitFooter(changeModelLabel, rowA.displayName.inert())
+            pickFooterOption(changeModelLabel, target.displayName.inert())
+            awaitFooter(changeModelLabel, target.displayName.inert())
+
+            assertEquals("X's saved model after the change", target.value, freshSettings(chatX.id).model)
+            assertSaved(chatY.id, rowB.value, effortY)
+
+            leaveThread()
+            openChatRow(nameX)
+            awaitFooter(changeModelLabel, target.displayName.inert())
+        } finally {
+            restoreSettings(originals)
+        }
+    }
+
+    /**
+     * Claude's applied effort reaches the footer after a real turn, starting from nothing saved and nothing
+     * remembered (#545, #889). The reply to the first fresh read after the turn must carry
+     * `effective_effort`, and an omitted key fails. The expectation is built from that reply, so no default
+     * level is assumed.
+     *
+     * The open thread re-reads its settings only on subscription, a session transition or a settled write,
+     * not at the end of a turn. The settled footer is therefore read after leaving and reopening the
+     * thread, which subscribes again.
+     *
+     * **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn() {
+        val originals = mutableMapOf<String, SessionSettings>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            clearRememberedEffort()
+            assertNull("a remembered level survived the clear", rememberedEffort())
+            val name = INHERITED_EFFORT_NAME_PREFIX + System.currentTimeMillis()
+            val chat = prepareChat(name, originals)
+            assertEquals("the fresh chat already has a saved effort", "", freshSettings(chat.id).effort)
+
+            openChatRow(name)
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            val applied = freshSettings(chat.id).effectiveEffort
+            val (label, note) =
+                when (applied) {
+                    EffectiveEffort.Unavailable -> throw AssertionError("the reply after a real turn omitted effective_effort")
+                    EffectiveEffort.NotReported -> EFFORT_PLACEHOLDER_LABEL to string(R.string.thread_effort_note_not_reported)
+                    is EffectiveEffort.Applied ->
+                        if (applied.value.isEmpty()) {
+                            EFFORT_PLACEHOLDER_LABEL to string(R.string.thread_effort_note_default_unavailable)
+                        } else {
+                            applied.value.inert() to null
+                        }
+                }
+
+            leaveThread()
+            openChatRow(name)
+            awaitFooter(changeEffortLabel, label) { it == note }
+        } finally {
+            restoreSettings(originals)
+        }
+    }
+
+    /**
+     * An effort chosen before the first message is the one claude runs with (#545, #889). The phone picks,
+     * from the footer, a published model that offers effort levels and then one of those levels. It waits
+     * for the write to settle. Until a turn runs, the footer shows the choice and the reply reports no
+     * applied string. After the first turn, the applied value is exactly the choice, and the reopened
+     * footer shows it with no note. The note appears only when the saved value stands in for the applied one.
+     *
+     * **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_chosenEffort_appliesFromTheFirstTurn() {
+        val originals = mutableMapOf<String, SessionSettings>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            clearRememberedEffort()
+            val name = CHOSEN_EFFORT_NAME_PREFIX + System.currentTimeMillis()
+            val chat = prepareChat(name, originals)
+            val current = originals.getValue(chat.id).model
+            val row =
+                checkNotNull(usableRows(publishedMenu(chat.id)).firstOrNull { it.effortLevels.isNotEmpty() && it.value != current }) {
+                    "no other published model offers effort levels"
+                }
+            val level = row.effortLevels.first()
+
+            openChatRow(name)
+            pickFooterOption(changeModelLabel, row.displayName.inert())
+            awaitFooter(changeModelLabel, row.displayName.inert())
+            pickFooterOption(changeEffortLabel, level.inert())
+            awaitFooter(changeEffortLabel, level.inert())
+
+            val chosen = freshSettings(chat.id)
+            assertEquals("saved effort after the tap", level, chosen.effort)
+            assertTrue("claude reports an applied effort before any turn", chosen.effectiveEffort !is EffectiveEffort.Applied)
+            awaitFooter(changeEffortLabel, level.inert())
+
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            assertEquals(EffectiveEffort.Applied(level), freshSettings(chat.id).effectiveEffort)
+
+            leaveThread()
+            openChatRow(name)
+            awaitFooter(changeEffortLabel, level.inert()) { it == null }
+        } finally {
+            restoreSettings(originals)
+        }
+    }
+
+    /**
+     * The remembered effort level survives an app restart and is applied to a fresh chat and a fresh
+     * channel (#545, #686):
+     *  * A tap on a priming chat's effort control is acknowledged, and its level becomes the remembered one.
+     *  * The app restarts as it does in [interactiveTurn_twoHostsCollidingConversationId_stayPerHost]: the
+     *    object graph is rebuilt over the same on-device state.
+     *  * A fresh chat and a fresh channel, never messaged and with no saved effort, then get the
+     *    remembered level through the recall before their first message. The reply confirms it, and the
+     *    footer shows it. After one real turn in each, claude applies exactly that level.
+     *  * A conversation with its own saved effort keeps it.
+     *
+     * Every fixture carries an explicit saved model. The phone matches a saved `""` model against no
+     * published row, so a chat with no model chosen offers no levels and nothing can be recalled into it.
+     * That gap is #972. This scenario covers what the recall does once a model is chosen.
+     *
+     * **Two real-claude turns**: one in the fresh chat and one in the fresh channel.
+     */
+    @Test
+    fun interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val originals = mutableMapOf<String, SessionSettings>()
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            awaitChannelList()
+            awaitConnected()
+            clearRememberedEffort()
+            val stamp = System.currentTimeMillis()
+
+            // 1. A tapped level on the priming chat becomes the remembered level once the daemon acks it.
+            val primingName = RECALL_PRIMING_NAME_PREFIX + stamp
+            val priming = prepareChat(primingName, originals)
+            val row =
+                checkNotNull(usableRows(publishedMenu(priming.id)).firstOrNull { it.effortLevels.distinct().size >= 2 }) {
+                    "no published model offers two effort levels"
+                }
+            val remembered = row.effortLevels.first()
+            val explicit = row.effortLevels.last { it != remembered }
+            writeSettings(priming.id, model = row.value)
+            openChatRow(primingName)
+            awaitFooter(changeModelLabel, row.displayName.inert())
+            pickFooterOption(changeEffortLabel, remembered.inert())
+            awaitFooter(changeEffortLabel, remembered.inert())
+            assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
+            leaveThread()
+
+            // 2. The fixtures: a fresh chat and a fresh channel with no saved effort, and a chat with its own.
+            val chatName = RECALL_CHAT_NAME_PREFIX + stamp
+            val chat = prepareChat(chatName, originals)
+            val channelName = RECALL_CHANNEL_NAME_PREFIX + stamp
+            val channel = prepareChannel(channelName, chat.cwd, originals)
+            val explicitName = RECALL_EXPLICIT_NAME_PREFIX + stamp
+            val explicitChat = prepareChat(explicitName, originals)
+            writeSettings(chat.id, model = row.value)
+            writeSettings(channel.id, model = row.value)
+            writeSettings(explicitChat.id, model = row.value, effort = explicit)
+            assertSaved(chat.id, row.value, "")
+            assertSaved(channel.id, row.value, "")
+            assertSaved(explicitChat.id, row.value, explicit)
+
+            // 3. Restart. No activity may outlive the graph it resolved, so the rule's activity goes first.
+            composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+            instrumentation.runOnMainSync {
+                (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+            }
+            relaunched = ActivityScenario.launch(MainActivity::class.java)
+            awaitChannelList()
+            awaitConnected()
+            assertEquals("the remembered level after the restart", remembered, rememberedEffort())
+
+            // 4. The fresh chat, then the fresh channel: recalled before the first message, applied after it.
+            openChatRow(chatName)
+            assertRecalledThenApplied(chat.id, remembered)
+            leaveThread()
+            openRow(channelName)
+            assertRecalledThenApplied(channel.id, remembered)
+            leaveThread()
+
+            // 5. A saved effort of its own is kept: settled on it, confirmed by the reply, and still settled.
+            openChatRow(explicitName)
+            awaitFooter(changeEffortLabel, explicit.inert())
+            assertEquals("the explicit saved effort was overwritten", explicit, freshSettings(explicitChat.id).effort)
+            composeTestRule.waitForIdle()
+            awaitFooter(changeEffortLabel, explicit.inert())
+        } finally {
+            restoreSettings(originals)
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * In the open thread of [conversationId]: the recall settles the footer on [level], a fresh reply's saved
+     * effort is [level], and after one real turn claude applies exactly [level].
+     */
+    private fun assertRecalledThenApplied(
+        conversationId: String,
+        level: String,
+    ) {
+        awaitFooter(changeEffortLabel, level.inert())
+        assertEquals("the recalled saved effort before the first message", level, freshSettings(conversationId).effort)
+        sendFromPhone(PING_PROMPT)
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        assertEquals(EffectiveEffort.Applied(level), freshSettings(conversationId).effectiveEffort)
+    }
+
+    /** The paired host's current repository, read from the current graph so it survives a restart. */
+    private fun hostRepository(): ConversationRepository {
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        return runBlocking { withTimeout(CONNECT_TIMEOUT_MS) { checkNotNull(bundle.coordinator.currentRepository.first { it != null }) } }
+    }
+
+    /** A new `request_session_settings` for [conversationId] and its reply: each collection sends its own read. */
+    private fun freshSettings(conversationId: String): SessionSettings {
+        val repository = hostRepository()
+        return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeSessionSettings(conversationId).filterNotNull().first() } }
+    }
+
+    /** The model menu the host publishes for [conversationId]; the first collection asks for it. */
+    private fun publishedMenu(conversationId: String): ModelMenu {
+        val repository = hostRepository()
+        return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeModelMenu(conversationId).filterNotNull().first() } }
+    }
+
+    /**
+     * The rows the footer can offer and the daemon will accept: nothing the scenario reads was cut, and the
+     * label names one row only, so tapping it cannot pick another.
+     */
+    private fun usableRows(menu: ModelMenu): List<ModelMenuRow> =
+        menu.rows.filter { row ->
+            row.truncatedFields.orEmpty().none { it in CUT_FIELDS_IN_USE } &&
+                row.displayName.inert().isNotBlank() &&
+                menu.rows.count { it.displayName.inert() == row.displayName.inert() } == 1
+        }
+
+    /**
+     * Create a chat on the host, named [name] so its row can be found, and record its first reading in
+     * [originals] for [restoreSettings].
+     */
+    private fun prepareChat(
+        name: String,
+        originals: MutableMap<String, SessionSettings>,
+    ): Conversation {
+        val repository = hostRepository()
+        val created =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    val id = repository.createDiscussion().id
+                    repository.rename(id, name)
+                }
+            }
+        originals[created.id] = freshSettings(created.id)
+        return created
+    }
+
+    /** Create a channel named [name] in [workspace] on the host and record its first reading in [originals]. */
+    private fun prepareChannel(
+        name: String,
+        workspace: String,
+        originals: MutableMap<String, SessionSettings>,
+    ): Conversation {
+        val repository = hostRepository()
+        val created = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.createChannel(name, workspace) } }
+        originals[created.id] = freshSettings(created.id)
+        return created
+    }
+
+    /** Write [model] and [effort] (`null` leaves one unchanged) to the session a fresh reply names. */
+    private fun writeSettings(
+        conversationId: String,
+        model: String? = null,
+        effort: String? = null,
+    ) {
+        val sessionId = freshSettings(conversationId).sessionId
+        check(sessionId.isNotEmpty()) { "the conversation has no session to write to" }
+        val repository = hostRepository()
+        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.setSessionSettings(sessionId, model = model, effort = effort) } }
+    }
+
+    /** A fresh reply for [conversationId] carries exactly [model] and [effort] as the saved choices. */
+    private fun assertSaved(
+        conversationId: String,
+        model: String,
+        effort: String,
+    ) {
+        val saved = freshSettings(conversationId)
+        assertEquals("saved model", model, saved.model)
+        assertEquals("saved effort", effort, saved.effort)
+    }
+
+    /**
+     * Write each changed conversation's first reading back to it and clear the remembered level, so the
+     * scenario leaves nothing for a later one. A later new chat would otherwise send a recall write. A
+     * failed restore is logged and does not replace the scenario's own failure.
+     */
+    private fun restoreSettings(originals: Map<String, SessionSettings>) {
+        originals.forEach { (conversationId, original) ->
+            runCatching {
+                val now = freshSettings(conversationId)
+                val model = original.model.takeIf { it != now.model }
+                val effort = original.effort.takeIf { it != now.effort }
+                if (model != null || effort != null) {
+                    val repository = hostRepository()
+                    runBlocking {
+                        withTimeout(
+                            THREAD_TIMEOUT_MS,
+                        ) { repository.setSessionSettings(now.sessionId, model = model, effort = effort) }
+                    }
+                }
+            }.onFailure { Log.w("E2E", "settings restore failed: ${it::class.simpleName}") }
+        }
+        runCatching { clearRememberedEffort() }.onFailure { Log.w("E2E", "remembered effort clear failed: ${it::class.simpleName}") }
+    }
+
+    private fun clearRememberedEffort() {
+        runBlocking {
+            GlobalContext
+                .get()
+                .get<AppPreferences>()
+                .clearRememberedEffort()
+                .getOrThrow()
+        }
+    }
+
+    private fun rememberedEffort(): String? =
+        runBlocking {
+            GlobalContext
+                .get()
+                .get<AppPreferences>()
+                .rememberedEffort
+                .first()
+        }
+
+    private fun string(id: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
+
+    /** A footer control, found by the click label its merged node announces (#808). */
+    private fun footerControl(clickLabel: String): SemanticsMatcher =
+        SemanticsMatcher("footer control '$clickLabel'") { it.config.getOrNull(SemanticsActions.OnClick)?.label == clickLabel }
+
+    /**
+     * Wait until the footer control [clickLabel] shows exactly [label] and its state description passes
+     * [state]. By default that means no write is pending. The failure names what the control showed.
+     */
+    private fun awaitFooter(
+        clickLabel: String,
+        label: String,
+        state: (String?) -> Boolean = { it != footerPending },
+    ) {
+        fun shown(): List<Pair<String, String?>> =
+            composeTestRule.onAllNodes(footerControl(clickLabel)).fetchSemanticsNodes().map { node ->
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    .orEmpty()
+                    .joinToString("") { it.text } to
+                    node.config.getOrNull(SemanticsProperties.StateDescription)
+            }
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { shown().any { (text, description) -> text == label && state(description) } }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("footer '$clickLabel' never settled on '$label'; it shows ${shown()}", e)
+        }
+    }
+
+    /** Open the footer control [clickLabel] once it is enabled, and tap the overlay's [optionLabel] choice. */
+    private fun pickFooterOption(
+        clickLabel: String,
+        optionLabel: String,
+    ) {
+        val control = footerControl(clickLabel) and isEnabled()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(control).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(control).onFirst().performClick()
+        val option = hasText(optionLabel) and SemanticsMatcher.expectValue(SemanticsProperties.Role, SemanticsRole.RadioButton)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(option).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(option).onFirst().performClick()
+    }
+
+    /** Tap the Chats row whose name contains [name] and wait for its thread, as [openRow] does for channels. */
+    private fun openChatRow(name: String) {
+        val row = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(row) }.isSuccess }
+        composeTestRule.onAllNodes(row).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** Leave the open thread for the channel list. */
+    private fun leaveThread() {
+        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+        awaitChannelList()
+    }
+
+    /**
      * Wait until the phone's thread cache for [conversationId] holds an assistant reply. The cache only
      * ever holds settled rows, and the open thread's collector writes them after drawing them, so this is
      * the phone's own proof that the reply settled — not another device's copy of `turn_end`.
@@ -2214,6 +2680,21 @@ class InteractiveStreamE2ETest {
 
         // Runtime-unique rename target for host A's seeded conversation, distinct from #537's prefix.
         const val RENAMED_NAME_PREFIX = "e2e847-renamed-"
+
+        // #545 settings scenarios. Run-unique names for the chats and channel each method prepares on the host,
+        // none containing "ping" or another scenario's prefix.
+        const val MODEL_X_NAME_PREFIX = "e2e545-model-x-"
+        const val MODEL_Y_NAME_PREFIX = "e2e545-model-y-"
+        const val INHERITED_EFFORT_NAME_PREFIX = "e2e545-inherited-"
+        const val CHOSEN_EFFORT_NAME_PREFIX = "e2e545-chosen-"
+        const val RECALL_PRIMING_NAME_PREFIX = "e2e545-priming-"
+        const val RECALL_CHAT_NAME_PREFIX = "e2e545-recall-chat-"
+        const val RECALL_CHANNEL_NAME_PREFIX = "e2e545-recall-channel-"
+        const val RECALL_EXPLICIT_NAME_PREFIX = "e2e545-explicit-"
+
+        // A model row whose `truncated_fields` names any of these cannot be used: its value would not be
+        // accepted, its levels would be incomplete, or its label would be cut.
+        val CUT_FIELDS_IN_USE = setOf("value", "effort_levels", "display_name")
 
         // The pair-code screen waits up to 30 s for the new host to connect before it returns to the list.
         const val PAIR_TIMEOUT_MS = 60_000L

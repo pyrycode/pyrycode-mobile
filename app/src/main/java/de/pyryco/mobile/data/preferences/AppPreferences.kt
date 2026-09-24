@@ -71,6 +71,20 @@ class AppPreferences(
             Result.failure(error)
         }
 
+    /**
+     * Forgets the remembered level (#545), so the next opening recalls nothing. The live e2e scenarios call it
+     * to leave no level behind for later runs. [defaultEffort] is untouched. Logs by static code only.
+     */
+    suspend fun clearRememberedEffort(): Result<Unit> =
+        try {
+            dataStore.edit { prefs -> prefs.remove(REMEMBERED_EFFORT) }
+            RelayLog.d { "event=remembered_effort_cleared outcome=success" }
+            Result.success(Unit)
+        } catch (error: IOException) {
+            RelayLog.w { "event=remembered_effort_cleared outcome=io_failure" }
+            Result.failure(error)
+        }
+
     val defaultYolo: Flow<Boolean> =
         dataStore.data.map { prefs -> prefs[DEFAULT_YOLO] ?: false }
 
