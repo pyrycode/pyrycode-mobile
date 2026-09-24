@@ -51,14 +51,18 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    and assert the new title appears durably on **two** surfaces — the thread top bar (in-thread, immediately
    after submit) and the conversation list (after popping back) — exercising the #530 rename wire against a
    real daemon; no claude turn — rename is a conversation-scoped daemon round-trip with no session transition;
-   and a **save-as-channel (promote)** scenario (#581): create a scratch discussion, drive the real thread
-   overflow "Save as channel…" → `SaveAsChannelDialog` to a runtime-unique channel name **keeping it in
-   scratch**, submit, and assert the promote round-trip lands on **three** durable surfaces — the thread top bar
-   re-labels in place (no pop-back), the `WorkspaceChip` unmounts (the `isPromoted` tier flip), and after
-   backing out the name presents on a channel-tagged row and on no chat-tagged row of the assembled
-   conversation tree (the promoted tier, read via tag since #731 retired the Discussions drilldown this
-   scenario used to tap into) — exercising the #348 promote wire against a real daemon; no claude turn — promote is a
-   conversation-scoped daemon round-trip (a pure registry op) with no session transition. This is the
+   and a **save-as-channel (promote)** scenario (#581, driven through the #957 `MobileModal` form since
+   pyrycode-mobile#957): create a scratch discussion, drive the real thread overflow "Save as channel…" →
+   `SaveAsChannelDialog` to a runtime-unique channel name and a short system prompt, tap OK, and assert the
+   promote round-trip lands on **three** durable surfaces — the thread top bar re-labels in place (no
+   pop-back), the `WorkspaceChip` unmounts (the `isPromoted` tier flip), and after backing out the name
+   presents on a channel-tagged row and on no chat-tagged row of the assembled conversation tree (the
+   promoted tier, read via tag since #731 retired the Discussions drilldown this scenario used to tap into)
+   — exercising the #348 promote wire against a real daemon. The chat is promoted **in its own `cwd`** (no
+   location choice since #957 withdrew it, matching pyrycode-desktop#1436), so the scenario creates no
+   folder on the operator's machine; the prompt exercises the modal's second write, `set_system_prompt`, on
+   the same run. No claude turn — promote and the prompt write are conversation-scoped daemon round-trips
+   with no session transition. This is the
    **backfill** of the one operator-facing flow that shipped before the real-stack definition-of-done rule
    (pyrycode-mobile-agents#9), and is **red on any daemon older than pyrycode/pyrycode#949**, which registered
    the handler the verb had been answering `unsupported` without; and a **list-archive-entry** scenario
@@ -245,15 +249,18 @@ thread top bar (in-thread, immediately after submit; there is **no** PopBack, so
 `state.displayName` re-labels in place) and the conversation list (after popping back) — proving the #530
 rename wire against a real daemon; **zero** claude turns — create/rename are conversation-scoped daemon
 round-trips with no session transition); and a **save-as-channel (promote)** scenario (#581 —
-`interactiveTurn_saveAsChannel_promotesToChannelTier`: create a scratch discussion, drive the real thread
-overflow "Save as channel…" → `SaveAsChannelDialog` to a runtime-unique channel name **keeping it in scratch**,
-submit, and assert the promote round-trip lands on **three** durable surfaces — the thread top bar re-labels
-**in place** (there is **no** PopBack), the `WorkspaceChip` **unmounts** (the `isPromoted` tier flip, in-thread),
-and after backing out the name is **present on a channel-tagged row** and **absent from every chat-tagged
-row** of the assembled conversation tree (i.e. presented in the promoted channel tier, not among the chats —
-since #731 replaced the flat list's Discussions drilldown with a tag read on the single assembled list) —
-proving the #348 promote wire against a real daemon; **zero** claude turns — create/promote are conversation-scoped daemon round-trips,
-promote being a pure registry op daemon-side); a **list-archive-entry** scenario (#740 —
+`interactiveTurn_saveAsChannel_promotesToChannelTier`, driven through the #957 `MobileModal` form: create a
+scratch discussion, drive the real thread overflow "Save as channel…" → `SaveAsChannelDialog` to a
+runtime-unique channel name and a short system prompt, tap OK, and assert the promote round-trip lands on
+**three** durable surfaces — the thread top bar re-labels **in place** (there is **no** PopBack), the
+`WorkspaceChip` **unmounts** (the `isPromoted` tier flip, in-thread), and after backing out the name is
+**present on a channel-tagged row** and **absent from every chat-tagged row** of the assembled conversation
+tree (i.e. presented in the promoted channel tier, not among the chats — since #731 replaced the flat list's
+Discussions drilldown with a tag read on the single assembled list) — proving the #348 promote wire against
+a real daemon. Since #957 there is **no location choice**: the chat promotes in its own `cwd`, so the
+scenario creates no folder, and the typed prompt exercises the modal's post-promote `set_system_prompt`
+write on the same run; **zero** claude turns — create/promote/prompt-write are conversation-scoped daemon
+round-trips, promote being a pure registry op daemon-side); a **list-archive-entry** scenario (#740 —
 `interactiveTurn_listArchiveEntry_opensArchived`: tap the list's own archive entry and assert the
 Archived screen appears, proving the entry #737 put on the list's bar reaches Archived independently of
 the Settings route; **zero** claude turns, no daemon round-trip at all — the bar is drawn on every state
@@ -294,8 +301,8 @@ The **delete-conversation** scenario (#554) is likewise **always-on** (not `@Ign
 are **durable** structural facts — a conversation is in the channel list or not, and the thread has popped
 back or not — so, like #541's delimiter and #481's tool-name row, it belongs in the always-on gate. The
 seeded discussion is given a **runtime-unique** name (`"e2e554-" + System.currentTimeMillis()`) via
-**Rename** (not "Save as channel", which would leave a dedicated-workspace folder accumulating on the
-operator's real `~/pyry-workspace` across runs), so its presence is observed on the list *before* the delete
+**Rename** (not "Save as channel", which promotes the conversation rather than merely naming it — the wrong
+tier for a scenario that wants to delete a discussion), so its presence is observed on the list *before* the delete
 and its `assertCountEquals(0)` after is a genuine present→absent inversion on the same surface — never a
 match-everything, never a delta count or timing (the #481 / #566 token discipline, here applied to an
 **absence**). The one gotcha: the Channel Info sheet's Delete `ActionCell` and the confirm dialog's button
@@ -372,26 +379,31 @@ green against a fake daemon that answers anything. pyrycode/pyrycode#949 landed 
 parallel is pyrycode-desktop#430); this scenario is the mobile client half, and is **red on any older daemon
 binary — that is the regression it exists to catch**. Via the real thread overflow "Save as channel…" — gated
 on the conversation being **unpromoted**, **not** on `mutationsSupported` (unlike "Rename" / "Change
-workspace…"), so reachable on a fresh discussion regardless of the capability flag — it types a runtime-unique
-name (`"e2e581-" + System.currentTimeMillis()`) whose **absence is asserted before** the submit, and asserts
-**three** surfaces, all reading the same `observeConversations(All)` projection a single confirmed upsert
-re-emits: the **thread top bar** (in-thread — `SaveAsChannelSubmit` performs **no** PopBack, so the thread stays
-open and `state.displayName` re-labels in place), the **`WorkspaceChip` unmount** (the `isPromoted` tier flip —
-the chip is gated `!isPromoted && !hasMessages` and no message is sent, so its disappearance is attributable
+workspace…"), so reachable on a fresh discussion regardless of the capability flag — it opens the #957
+`MobileModal` form, replaces the focused, pre-filled name field with a runtime-unique name
+(`"e2e581-" + System.currentTimeMillis()`) whose **absence is asserted before** the submit, types a short
+system prompt into the form's second field, and taps OK. It asserts **three** surfaces, all reading the same
+`observeConversations(All)` projection a single confirmed upsert re-emits: the **thread top bar** (in-thread
+— the modal closes with **no** PopBack once both writes are confirmed, so the thread stays open and
+`state.displayName` re-labels in place), the **`WorkspaceChip` unmount** (the `isPromoted` tier flip — the
+chip is gated `!isPromoted && !hasMessages` and no message is sent, so its disappearance is attributable
 solely to the promote; the #562 gating fact read in the opposite direction), and, on the assembled
 conversation tree (#731), **presence on a channel-tagged row ∧ absence from every chat-tagged row**. Because
 `promote` is **conversation-scoped** with **no** session
 transition, the assertion is the recorded name and flag, never a session id (the #545 lesson); and the reply is
 a **bare conversation object folded by a confirmed upsert**, **not** a `conversation_updated` broadcast (that is
 *rename's* shape, from #530), which is why every assertion is on rendered UI rather than a named wire message.
-Three gotchas: (1) the dialog's workspace radios default to **dedicated folder**, which would create a real
-directory under the operator's `~/pyry-workspace` on every gate run, so the scenario **taps "Keep in scratch"**
-before Save (`SCRATCH` resolves the request's workspace to `null`, keeping the existing scratch `cwd`; the
-dedicated branch is already covered by #566); (2) the dialog opens **over** the thread, so its field is
-disambiguated from the composer by auto-focus (`hasSetTextAction() and isFocused()` + `performTextReplacement`
-on the pre-filled+selected `"New channel"` — the #537 selector verbatim); and (3) the menu item
-`"Save as channel…"` (U+2026) is matched **exactly**, because the dialog title is the same literal without the
-ellipsis. Total real-claude cost: **zero** turns — create/promote are daemon round-trips, so no ping is sent.
+Three gotchas, current since #957: (1) the modal promotes **in place** — there is no location choice any
+more (desktop withdrew it, pyrycode-desktop#1436), so `promote(..., workspace = null)` keeps the existing
+`cwd` and the scenario creates no directory under the operator's `~/pyry-workspace`; (2) the modal opens
+**over** the thread and holds a second field of its own (the prompt), so the name field is disambiguated by
+auto-focus (`hasSetTextAction() and isFocused()` + `performTextReplacement` on the pre-filled+selected chat
+name — the #537 selector, still verbatim) and the prompt field is reached by its own test tag; and (3) the
+menu item `"Save as channel…"` (U+2026) and the modal's exact title `"Save as channel"` are both matched
+**exactly**, and step 6 waits for that exact title to leave composition before reading the unique name — the
+modal now stays open, holding the name, until both writes are confirmed, so this wait is the proof they
+landed and prevents the modal's own field from matching as the top bar. Total real-claude cost: **zero**
+turns — create/promote/prompt-write are daemon round-trips, so no ping is sent.
 
 The **list-archive-entry** scenario (#740 — `interactiveTurn_listArchiveEntry_opensArchived`) is likewise
 **always-on** (not `@Ignore`d): the bar #737 drew on the channel list's `topBar` slot is a **durable** fact
