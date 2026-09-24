@@ -104,3 +104,8 @@ The adversary is another app: whatever put the clip on the clipboard, or whichev
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- 2026-09-24, during implementation. The open question is resolved: `SemanticsActions.PasteText` on the `TextFieldState` field goes through `contentReceiver` both under Robolectric and on the device. `ComposerPasteTest` and `ComposerImagePasteDeviceTest` both drive the paste that way.
+- 2026-09-24, during implementation. The `TextFieldState` field exposes a `ScrollBy` semantics action, which the legacy field did not. Four list-scroll call sites in `ThreadScreenHistoryTest` and `SessionBoundaryVisibilityTest` matched "the" scrollable node with `hasScrollAction()` and now found two. They now match `hasScrollToIndexAction()`, which only the message list has. This is a test-only change and production behaviour is unchanged. The e2e suites already select with `hasScrollToNodeAction().onFirst()`.
