@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
@@ -32,6 +33,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
@@ -244,49 +246,52 @@ fun ThreadComposerFooter(
     modifier: Modifier = Modifier,
     onAttach: () -> Unit = {},
 ) {
+    // #1032: the text controls share one weighted slot, measured after the paperclip and the Status opener,
+    // so a footer full of long labels shrinks the labels and never squeezes out the two icons.
     Row(
         modifier = modifier.fillMaxWidth().padding(horizontal = FooterHorizontalPadding),
         horizontalArrangement = Arrangement.spacedBy(FooterButtonGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FooterButton(
-            label = stringResource(R.string.thread_footer_actions),
-            clickLabel = stringResource(R.string.thread_footer_open_actions),
-            enabled = true,
-            pending = false,
-            onClick = { onOpen(FooterControl.Actions) },
-            onBounds = { onAnchorChanged(FooterControl.Actions, it) },
-        )
-        permissionModeLabel(runConfig)?.let { label ->
+        // The buttons in order, then the `Cxt:` segment, which [FooterTextRow] gives the leftover width.
+        FooterTextRow(modifier = Modifier.weight(1f)) {
             FooterButton(
-                label = label,
-                clickLabel = stringResource(R.string.thread_footer_change_permission),
-                enabled = footerControlEnabled(FooterControl.Permission, runConfig),
-                pending = runConfig.pendingPermission != null,
-                onClick = { onOpen(FooterControl.Permission) },
-                onBounds = { onAnchorChanged(FooterControl.Permission, it) },
+                label = stringResource(R.string.thread_footer_actions),
+                clickLabel = stringResource(R.string.thread_footer_open_actions),
+                enabled = true,
+                pending = false,
+                onClick = { onOpen(FooterControl.Actions) },
+                onBounds = { onAnchorChanged(FooterControl.Actions, it) },
             )
+            permissionModeLabel(runConfig)?.let { label ->
+                FooterButton(
+                    label = label,
+                    clickLabel = stringResource(R.string.thread_footer_change_permission),
+                    enabled = footerControlEnabled(FooterControl.Permission, runConfig),
+                    pending = runConfig.pendingPermission != null,
+                    onClick = { onOpen(FooterControl.Permission) },
+                    onBounds = { onAnchorChanged(FooterControl.Permission, it) },
+                )
+            }
+            FooterButton(
+                label = runConfig.modelLabel,
+                clickLabel = stringResource(R.string.thread_footer_change_model),
+                enabled = footerControlEnabled(FooterControl.Model, runConfig),
+                pending = runConfig.pendingModel != null,
+                onClick = { onOpen(FooterControl.Model) },
+                onBounds = { onAnchorChanged(FooterControl.Model, it) },
+            )
+            FooterButton(
+                label = runConfig.effortLabel,
+                clickLabel = stringResource(R.string.thread_footer_change_effort),
+                enabled = footerControlEnabled(FooterControl.Effort, runConfig),
+                pending = runConfig.pendingEffort != null,
+                note = runConfig.effortNote?.let { stringResource(it.textRes()) },
+                onClick = { onOpen(FooterControl.Effort) },
+                onBounds = { onAnchorChanged(FooterControl.Effort, it) },
+            )
+            ContextSegment(percent = runConfig.contextPercent)
         }
-        FooterButton(
-            label = runConfig.modelLabel,
-            clickLabel = stringResource(R.string.thread_footer_change_model),
-            enabled = footerControlEnabled(FooterControl.Model, runConfig),
-            pending = runConfig.pendingModel != null,
-            onClick = { onOpen(FooterControl.Model) },
-            onBounds = { onAnchorChanged(FooterControl.Model, it) },
-        )
-        FooterButton(
-            label = runConfig.effortLabel,
-            clickLabel = stringResource(R.string.thread_footer_change_effort),
-            enabled = footerControlEnabled(FooterControl.Effort, runConfig),
-            pending = runConfig.pendingEffort != null,
-            note = runConfig.effortNote?.let { stringResource(it.textRes()) },
-            onClick = { onOpen(FooterControl.Effort) },
-            onBounds = { onAnchorChanged(FooterControl.Effort, it) },
-        )
-        // The segment takes the row's leftover width in place of a spacer, so the Status opener keeps the end.
-        // As a weighted child it is measured last: on a narrow row it ellipsizes rather than squeeze the opener.
-        ContextSegment(percent = runConfig.contextPercent, modifier = Modifier.weight(1f))
         // Figma's `Attachment` (115:3654): the paperclip at the footer's trailing end, before the Status opener
         // the design does not have.
         Box(
@@ -318,6 +323,58 @@ fun ThreadComposerFooter(
             )
         }
     }
+}
+
+/**
+ * The footer's text controls in a row at [FooterButtonGap] (#1032). Every child but the last is a button,
+ * held to its natural width until the buttons overflow, then to [footerShrinkCap]'s shared cap. The last
+ * child, the `Cxt:` segment, gets whatever width the buttons leave, possibly none.
+ */
+@Composable
+private fun FooterTextRow(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val gap = FooterButtonGap.roundToPx()
+        val buttons = measurables.dropLast(1)
+        val available = (constraints.maxWidth - gap * (measurables.size - 1)).coerceAtLeast(0)
+        val natural = buttons.map { it.maxIntrinsicWidth(constraints.maxHeight) }
+        val cap = footerShrinkCap(natural, available)
+        val placed =
+            buttons.zip(natural) { button, width ->
+                button.measure(Constraints(maxWidth = minOf(width, cap), maxHeight = constraints.maxHeight))
+            }
+        val leftover = (available - placed.sumOf { it.width }).coerceAtLeast(0)
+        val all = placed + measurables.last().measure(Constraints(maxWidth = leftover, maxHeight = constraints.maxHeight))
+        val height = all.maxOf { it.height }
+        layout(constraints.maxWidth, height) {
+            var x = 0
+            all.forEach {
+                it.placeRelative(x, (height - it.height) / 2)
+                x += it.width + gap
+            }
+        }
+    }
+}
+
+/**
+ * The widest a footer button may be so that [widths] fit in [available] (#1032), or [Int.MAX_VALUE] when
+ * they already fit. Only the widest labels give up space, and no button is squeezed out while another
+ * keeps its full label.
+ */
+internal fun footerShrinkCap(
+    widths: List<Int>,
+    available: Int,
+): Int {
+    if (widths.sum() <= available) return Int.MAX_VALUE
+    var left = available
+    widths.sorted().forEachIndexed { i, width ->
+        val share = left / (widths.size - i)
+        if (width > share) return share
+        left -= width
+    }
+    return left
 }
 
 /**
@@ -385,7 +442,8 @@ private fun FooterButton(
             color = color,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = FooterLabelMaxWidth),
+            // Weighted so a capped button (#1032) ellipsizes its label and keeps its chevron.
+            modifier = Modifier.weight(1f, fill = false).widthIn(max = FooterLabelMaxWidth),
         )
         if (enabled || pending) {
             Icon(

@@ -60,3 +60,8 @@ This is not an operator-facing flow change, so it needs no rung-3 scenario. The 
 ## Documentation handoff
 
 None requested by the ticket. The documentation stage may note in `docs/knowledge/features/thread-composer-footer.md` that the text controls now shrink before the trailing icons do (pending).
+
+## Revisions
+
+- **2026-09-24 (build).** The open question is resolved. The screen test is its own class, `ThreadComposerFooterWidthTest`, annotated `@GraphicsMode(NATIVE)` at class level like `EditHostModalTest`. This leaves the existing 320dp `ThreadComposerFooterTest` measuring as before. Before the fix, it failed with the paperclip squeezed to 24.5dp.
+- **2026-09-24 (build).** The buttons and the `Cxt:` segment are written inline in `FooterTextRow`'s content lambda. They are not a separate composable. Android Lint's `MultipleEmitters` rejects a helper that emits several top-level nodes. The contract is unchanged.
