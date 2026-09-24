@@ -867,7 +867,14 @@ its slash-command menu), cuts and restores the link, then types `/` and asserts 
 completion match `slashCommandTypeAheadRows` / `slashCommandOptions` / `completeSlashCommand` on the
 reconnected menu — not restated here. Actions → Compact session then shows the `cd_thread_compacting`
 indicator, then the session-boundary divider for a manual compaction ("Conversation compacted … by you"),
-and the indicator clears. Two real claude turns: the ping and the compaction.
+and the indicator clears. Two real claude turns: the ping and the compaction. On the live relay the
+reconnect's fresh connection can itself drop and be redialled within about a second (#1039, open); before
+#1029 the scenario held the pre-redial connection's repository and the slash-command read timed out after
+30 s. It now reads through `firstOnLive` (`LiveConnectionReads.kt`, `app/src/sharedTest`), which follows
+the host's current connection, and the assertion still requires the rows to come from a connection that is
+live when they arrive. See [Relay repository coordinator § Edge cases /
+limitations](knowledge/features/relay-repository-coordinator.md#edge-cases--limitations) for the underlying
+contract.
 
 `interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` asks claude, through the main daemon's
 `--allow-remote-permissions` peer (the #950 path), to run a command in the background
@@ -1997,6 +2004,22 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `@Ignore`d and out of the curated list until #1020 lands. See the dedicated paragraph under
   [What rung 3 is made of](#what-rung-3-is-made-of) for the daemon-fact and JUnit-ordering lessons, and
   [Verification status](#verification-status) for the run-by-run evidence.
+
+- **Coverage — hardened:** [#1029](https://github.com/pyrycode/pyrycode-mobile/issues/1029) fixed a flake in
+  `interactiveTurn_reconnect_slashCommandsAndCompactStillWork` (#967). On the live relay the connection the
+  reconnect step opens can drop and be redialled by `RelayConnectionSupervisor` within about a second — why it
+  drops is unconfirmed and filed as [#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039), open —
+  and the scenario held a one-time snapshot of the pre-redial connection's repository through
+  `hostRepository`, so its slash-command read timed out on a connection already torn down. Two generic
+  helpers, `firstOnLive` and `callOnLive` in
+  `app/src/sharedTest/java/de/pyryco/mobile/e2e/LiveConnectionReads.kt`, read through the host's *current*
+  connection instead of a one-time snapshot; the menu read and `answerChat`'s create/rename now use them. The
+  assertion is unchanged: it still requires the commands to arrive on the connection that is live when they
+  arrive, never any connection. Other one-shot readers in `InteractiveStreamE2ETest` (`freshSettings`,
+  `publishedMenu`, the archive/restore step) still hold a single-connection snapshot and are exposed to the
+  same drop; reuse these helpers there if they flake. See [Relay repository coordinator § Edge cases /
+  limitations](knowledge/features/relay-repository-coordinator.md#edge-cases--limitations) for the underlying
+  contract.
 
 - **Coverage — pending:** [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020) owns the daemon
   fix that lets a message's `attachment_ids` survive into history, which
