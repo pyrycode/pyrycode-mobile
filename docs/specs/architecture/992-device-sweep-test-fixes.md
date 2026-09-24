@@ -22,3 +22,7 @@ N/A — test-only change, no UI.
 ## Testing strategy
 
 The change is the tests themselves. Proof: both classes green under Robolectric (`testDebugUnitTest --tests`), and both classes run on the managed API 33 device, with executed and skipped counts read from the fresh XML: 5 newest-row tests pass, 2 paste tests pass and the image test is skipped.
+
+## Revisions
+
+- 2026-09-24, during build: `ThreadScreenNewestRowTest` has 4 tests, not 5, so the device run expects 4 newest-row passes. No design change.
