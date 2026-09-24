@@ -181,8 +181,9 @@ private class CreateAttachmentDocument : ActivityResultContract<CreateAttachment
 /**
  * Open and save for the thread's message attachments (#985), bound to this composition.
  *
- * Only a [AttachmentViewState.Ready] attachment acts; anything else is ignored. Open hands a content URI to
- * the viewer the user picks. Save launches the system's create-document picker and copies the bytes into
+ * Only a [AttachmentViewState.Ready] attachment acts; anything else is ignored. Open hands a markdown file
+ * (by name, [isMarkdownAttachmentName]) to [onOpenMarkdown] for the in-app reader (#1027), and anything else
+ * as a content URI to the viewer the user picks. Save launches the system's create-document picker and copies the bytes into
  * the document it returns. The pending save keeps only the attachment id across the picker round trip, and
  * resolves its source against the live [states] when the result arrives, so no path or URI enters the
  * saved-state bundle. A cancelled picker writes nothing and says nothing.
@@ -190,12 +191,14 @@ private class CreateAttachmentDocument : ActivityResultContract<CreateAttachment
 @Composable
 internal fun rememberAttachmentActions(
     states: Map<String, AttachmentViewState>,
+    onOpenMarkdown: (attachmentId: String) -> Unit,
     onNotice: (AttachmentNotice) -> Unit,
 ): AttachmentActions {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val currentStates by rememberUpdatedState(states)
     val currentOnNotice by rememberUpdatedState(onNotice)
+    val currentOnOpenMarkdown by rememberUpdatedState(onOpenMarkdown)
     val unnamed = stringResource(R.string.thread_attachment_unnamed)
     var pendingSaveId by rememberSaveable { mutableStateOf<String?>(null) }
     val launcher =
@@ -234,7 +237,10 @@ internal fun rememberAttachmentActions(
         AttachmentActions(
             open = { target ->
                 val source = (currentStates[target.attachmentId] as? AttachmentViewState.Ready)?.source
-                if (source != null) {
+                if (source != null && isMarkdownAttachmentName(target.displayName)) {
+                    // #1027: read in-app from the host's store, whichever source the row shows.
+                    currentOnOpenMarkdown(target.attachmentId)
+                } else if (source != null) {
                     val notice = openAttachment(context, source, target.mimeType)
                     val outcome =
                         when (notice) {

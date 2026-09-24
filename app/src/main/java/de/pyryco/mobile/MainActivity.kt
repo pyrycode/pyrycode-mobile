@@ -62,6 +62,7 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListUiState
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
+import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.QuestionBatchModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
@@ -472,6 +473,8 @@ internal fun PyryNavHost(
                     vm.navigationEvents.collect { event ->
                         when (event) {
                             ThreadNavigation.PopBack -> navController.popBackStack()
+                            is ThreadNavigation.OpenMarkdown ->
+                                navController.navigate(Routes.markdownReader(target, event.attachmentId))
                         }
                     }
                 }
@@ -531,10 +534,31 @@ internal fun PyryNavHost(
                     // #1002: app-scoped, so a usage reading hidden here stays hidden in every thread.
                     dismissedUsageLimits = dismissedUsageLimits,
                     onDismissUsageLimit = usageLimitDismissals::dismiss,
+                    // #1027: a markdown attachment opens in the in-app reader, or says it could not be read.
+                    onOpenMarkdownAttachment = vm::onOpenMarkdownAttachment,
+                    markdownOpenFailures = vm.markdownOpenFailures,
                 )
                 // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 questionModal?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent) }
+            }
+        }
+        // #1027: one markdown attachment of a thread, read in-app. The route carries ids only; the file is
+        // resolved through the host's own repository, from the store the thread just read it from.
+        composable(
+            route = Routes.MARKDOWN_READER,
+            arguments = Routes.markdownReaderArguments(),
+        ) { backStackEntry ->
+            val target = Routes.target(backStackEntry.arguments)
+            val attachmentId = Routes.attachmentId(backStackEntry.arguments)
+            HostDestination(target.serverId, destinations, navController) {
+                val repository = remember(target.serverId) { destinations.repository(target.serverId) }
+                MarkdownReaderDestination(
+                    repository = repository,
+                    conversationId = target.conversationId,
+                    attachmentId = attachmentId,
+                    onBack = { navController.popBackStack() },
+                )
             }
         }
         // Deliberately not wrapped in HostDestination: that guard returns an unknown host to the
@@ -765,6 +789,9 @@ internal object Routes {
     const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"
 
+    /** A thread's markdown attachment in the reader (#1027): the thread's two ids plus the attachment's. */
+    const val MARKDOWN_READER = "markdown_reader/{serverId}/{conversationId}/{attachmentId}"
+
     /**
      * Owned by a server id alone, and — unlike the two routes above — by an **optional** one (#749):
      * a path segment cannot carry the absent owner an unpaired phone opens Settings with, and this
@@ -781,6 +808,16 @@ internal object Routes {
     const val ABOUT = "about"
 
     fun thread(target: HostConversationTarget) = "conversation_thread/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
+
+    /** Per-component encoding, as [thread] uses. Ids only: never a file name, path or URI. */
+    fun markdownReader(
+        target: HostConversationTarget,
+        attachmentId: String,
+    ) = "markdown_reader/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}/${Uri.encode(attachmentId)}"
+
+    fun markdownReaderArguments() = hostArguments() + navArgument("attachmentId") { type = NavType.StringType }
+
+    fun attachmentId(arguments: Bundle?) = arguments?.getString("attachmentId").orEmpty()
 
     /** No host to capture yields the bare route, so the argument falls to its empty default. */
     fun settings(serverId: String?) = if (serverId.isNullOrEmpty()) "settings" else "settings?serverId=${Uri.encode(serverId)}"
