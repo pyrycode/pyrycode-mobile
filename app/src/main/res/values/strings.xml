@@ -145,8 +145,10 @@
     <string name="thread_history_retry_label">Couldn\'t load earlier messages</string>
     <string name="thread_history_retry_action">Try again</string>
     <string name="cd_thread_history_retry">Couldn\'t load earlier messages. Try again.</string>
-    <!-- #843: Figma 354:7093, the status area's action while the thread's host rejects the pairing. -->
+    <!-- #843, #1002: Figma 541:2499, the Top overlay's Error pill while the thread's host rejects the pairing. -->
     <string name="thread_re_pair">Pairing error - Re-pair</string>
+    <!-- #1002: the X on a dismissible Top overlay pill. -->
+    <string name="thread_notice_dismiss">Dismiss notice</string>
     <string name="thread_history_dead_end_label">Earlier messages are unavailable</string>
     <string name="cd_thread_history_dead_end">Earlier messages in this conversation are unavailable</string>
     <string name="thread_interrupt_label">Stop</string>

@@ -64,11 +64,14 @@ a connected status → `false`, own host moving rejected → connected → `fals
 `rePairAvailable == false`; follows an injected `pairingRejected` flow true → false). The second file is
 **deliberately not folded into `ThreadViewModelTest.kt`** above — #816 was in flight against that same
 file when this ticket was built, and a new file sidesteps the merge entirely rather than relying on the
-two tickets' insertion points staying disjoint. The Compose coverage is a third new file,
-`app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreenRePairTest.kt`: with
-`showRePair` and `Offline`, the Re-pair button is displayed and the "Offline — tap to retry" banner text
-does not exist; tapping it invokes `onRePair`; without `showRePair`, the banner shows and the button does
-not exist.
+two tickets' insertion points staying disjoint. The Compose coverage is a third file,
+`app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreenRePairTest.kt`
+(moved from `androidTest` by the 2026-09-23 shared-test migration): with `showRePair` and `Offline`, the
+pairing notice is displayed and the "Offline — tap to retry" banner text does not exist; tapping it invokes
+`onRePair`; without `showRePair`, the banner shows and the notice does not exist. Assertions find the
+notice **by its `R.string.thread_re_pair` text**, not by composable identity, so
+[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) moving that notice from a status-row
+button to a [Top overlay pill](thread-top-overlay.md#the-pairing-pill) needed no change to this file.
 
 Sibling test file added in [#136](../codebase/136.md): `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreenCutoffTest.kt` — six JUnit 4 tests against the `internal` top-level helper `mostRecentSessionBoundaryIndex(items: List<ThreadItem>): Int`: `emptyList → -1`, `messagesOnly → -1`, `singleBoundary → its index`, `multipleBoundaries → latest index`, `boundaryAtFirstPosition → 0`, `boundaryAtLastPosition → lastIndex`. No `runTest`, no `Dispatchers.setMain`, no coroutines — the helper is pure and synchronous. File-private `msg(id, sessionId, role, timestamp)` and `boundary(previousSessionId, newSessionId, occurredAt)` constructors keep the body terse; `BoundaryReason.Clear` is fine for every fixture (the helper doesn't discriminate on reason). The Compose-side correctness of the per-row `Box(Modifier.alpha(...))` wrap is verified visually by the two new `@Preview`s; no `ComposeTestRule` in this ticket because there's no interactive behaviour to assert.
 

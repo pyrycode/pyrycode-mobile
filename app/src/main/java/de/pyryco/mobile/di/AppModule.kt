@@ -46,6 +46,7 @@ import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
 import de.pyryco.mobile.ui.conversations.thread.asRememberedEffortStore
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
@@ -167,6 +168,9 @@ val appModule =
         // typed it. Holds no connection and no disk handle, so it is unaffected by reconnects and by
         // the lifecycle driver's background close.
         single { ComposerDraftStore() }
+        // #1002: the usage readings hidden from the thread's Top overlay, one set for the app process so a
+        // reading hidden in one thread stays hidden in every thread. Heap only; a restart shows it again.
+        single { UsageLimitDismissals() }
         // #932: reads a pending attachment's bytes through its content URI when the thread sends it.
         single<AttachmentReader> { ContentResolverAttachmentReader(androidContext().contentResolver, androidContext().packageName) }
         viewModel { ScannerViewModel() }

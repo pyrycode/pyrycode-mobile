@@ -60,31 +60,37 @@ Pure function of `status`: no `ViewModel` reference, no flow collection, no `rem
 ## Placement in the thread
 
 Joins [`ThreadScreen`](thread-screen.md)'s single mutually-exclusive status slot (`ThreadStatusArea`,
-`ThreadScreen.kt`), ranked **between** usage limit and compaction — the full ladder, top wins:
+`ThreadScreen.kt`), ranked **between** api-retry and compaction — the full ladder, top wins:
 
 ```kotlin
 when {
     apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
-    usageLimit != null                     -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
     resetting != null                      -> ResettingIndicator(status = resetting, modifier = slot)
     isCompacting                           -> CompactingIndicator(isCompacting = true, modifier = slot)
     turnOutcome != null                    -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-    else                                   -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
+    else                                   -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress, runningTool = runningTool)
 }
 ```
 
-Two things about where it sits, both from the ticket and pinned by
+**[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed the usage-limit arm that used to
+sit directly above this one.** From #872 to #1002 the ladder read api-retry → usage limit → resetting →
+compaction → turn outcome → thinking; claude's usage-limit report and the pairing-error notice now draw as
+pills in [`ThreadTopOverlay`](thread-top-overlay.md), pinned over the message area instead of sharing this
+slot, because a live `allowed_warning` reading was masking every arm below it (see [Thread top overlay §
+Why this moved](thread-top-overlay.md#why-this-moved-1002)). This ladder is turn status only now:
+api-retry → resetting → compaction → turn outcome → thinking/running tool.
+
+Two things about where this arm sits, both from the original #872 ticket and pinned by
 `resetting_winsOverThinkingAndCompaction` / `apiRetry_winsOverResetting`:
 
-- **Below the two "something may be wrong" signals** (api-retry, usage limit), so a running reset never
-  hides either.
+- **Below api-retry**, the one remaining "something may be wrong" signal, so a running reset never hides
+  it.
 - **Above compaction, turn outcome and thinking** — the wrap-up is itself a claude turn. Without this
   ordering, the reset the user started would read as generic thinking, or (since a wrap-up turn can
   legitimately trigger auto-compaction) as a compaction happening inside it. It also outranks a turn
   outcome left over from the turn immediately before the reset.
 
-See [Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) and
-[Usage-limit indicator § Placement](usage-limit-indicator.md#placement-in-the-thread) for the rest of the
+See [Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the rest of the
 ladder's history and rationale, and [Resetting state § Edge cases](resetting-state.md#edge-cases--limitations)
 for why the arm is deliberately undefended against a daemon that raises but never lowers it: a
 `session_transition` or reconnect always clears the upstream reading, and the arm blocks no input —
@@ -201,5 +207,6 @@ one rendered case.
 - Idioms cloned: [Compacting indicator](compacting-indicator.md) (the direct clone — `Row` shape,
   early-return, sibling-`StateFlow` hoist, defaulted-hoisted-parameter, merged `semantics`, design-owed M3
   default, light/dark previews); [Usage-limit indicator](usage-limit-indicator.md) (the merged
-  `contentDescription`-equals-label idiom, and the arm immediately above this one in the ladder).
+  `contentDescription`-equals-label idiom — its own arm sat immediately above this one in the ladder from
+  #872 to #1002, when it moved to [Thread top overlay](thread-top-overlay.md)).
 - Server SSOT: pyrycode#2478, `docs/protocol-mobile.md § resetting`.
