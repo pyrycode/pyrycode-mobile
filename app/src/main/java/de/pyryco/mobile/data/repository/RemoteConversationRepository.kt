@@ -1083,6 +1083,12 @@ class RemoteConversationRepository(
     /** Create an unpromoted discussion (#347); see [ConversationCommands.createDiscussion]. */
     override suspend fun createDiscussion(workspace: String?): Conversation = conversationCommands.createDiscussion(workspace)
 
+    /** Create a named, promoted channel (#956); see [ConversationCommands.createChannel]. */
+    override suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = conversationCommands.createChannel(name, workspace)
+
     /** Promote a conversation into a named channel (#348); see [ConversationCommands.promote]. */
     override suspend fun promote(
         conversationId: String,
