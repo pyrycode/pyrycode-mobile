@@ -6,7 +6,7 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated set of rung-3 scenarios (twenty-four methods, twenty-four real claude turns — listed at the LIVE
+#     curated set of rung-3 scenarios (thirty methods, thirty-two real claude turns — listed at the LIVE
 #     TEST_TARGET below) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
@@ -1111,6 +1111,11 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_slashCommandsAndCompactStillWork"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel"
+  # #1016: the attachment exchange joins, one turn per method: phone to peer, the peer's file after a history
+  # reload, and claude's offered file after a restart. The list holds 30 methods and 32 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_reachPeerWithTheirBytes"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_offeredAttachment_opensAndSavesAfterRestart"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi

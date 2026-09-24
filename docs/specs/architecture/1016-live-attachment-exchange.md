@@ -91,3 +91,7 @@ The deliverable is itself rung-3 tests; they run only under `scripts/e2e-emulato
 ## Documentation handoff
 
 Pending for the documentation stage: add the attachment-exchange scenario to `docs/e2e-interactive-stream.md` — its three curated-list entries, three real-claude turns, the offered-file-is-cache-only limit, and the mobile and daemon revisions plus the result of its first live run (the ticket's "record the test revisions and results").
+
+## Revisions
+
+- 2026-09-24, during implementation: helper names settled as `readyAttachmentRow` / `awaitReadyAttachmentRow` (the file-row tag, the name and a click action — a row only merges its name and takes clicks once ready), `assertOpensAndSaves`, `awaitPeerHistory`, `sentMessages`, `awaitCachedOffer` and `deleteFixtures`. `sentMessages` reads `attachment_ids` straight from each `send_message` entry's JSON rather than decoding the whole stored payload, so a stored field this client does not model cannot fail the count. Chats are created with the existing `answerChat` helper on the first test daemon. No contract changed.
