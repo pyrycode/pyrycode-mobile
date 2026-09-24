@@ -107,8 +107,8 @@ for the gutter arithmetic):
 when {
     apiRetry != ApiRetryStatus.NotRetrying ->
         ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
-    usageLimit != null ->
-        UsageLimitIndicator(reading = usageLimit, modifier = Modifier.fillMaxWidth())
+    resetting != null ->
+        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth())
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
     turnOutcome != null ->
@@ -118,18 +118,22 @@ when {
 }
 ```
 
-**One status slot; retry wins whenever active, then the usage-limit report, then compaction.** The
+(Shown here at its current, post-[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) shape —
+`resetting` landed between api-retry and compaction in #872; the ladder also carried a `usageLimit` arm
+directly below api-retry from #804 until #1002 moved that reading into [Thread top
+overlay](thread-top-overlay.md#why-this-moved-1002) instead. See [Resetting indicator §
+Placement](resetting-indicator.md#placement-in-the-thread) for the ladder's full history.)
+
+**One status slot; retry wins whenever active, then the rest of the ladder.** The
 `api_retry` signal is conversation-level and outlives the `thinking` turn phase, so it must show
 *regardless of what `turn_state` says* — including while `turn_state` is `idle` — and no two arms may ever
 render stacked (AC #1). The precedence decision lives here, in the screen, deliberately **not** in the
 ViewModel: `isThinking` stays defined purely as the `turn_state` phase (other tests assert it directly), so
 suppressing it at its source would make the `ThreadViewModel` contract lie. api-retry keeps the top arm
-over the usage-limit arm and compaction because it is the "something is going wrong" signal while the
-other two are lower-urgency (a usage-limit report is informational, compaction is benign progress) — the
-benign affordance must never mask the alarming one (the arms have never been observed overlapping, so no
-AC is spent on the combination). See [Usage-limit indicator](usage-limit-indicator.md#placement-in-the-thread)
-([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804)) for why that arm sits between this one and
-compaction. The interrupt control — mounted directly below
+because it is the "something is going wrong" signal while the arms below it are lower-urgency (a running
+reset is a claude turn in progress, compaction is benign progress) — the benign affordance must never mask
+the alarming one (the arms have never been observed overlapping, so no AC is spent on the combination). The
+interrupt control — mounted directly below
 this slot until [#643](../codebase/643.md), now the send button's stop variant in `ThreadInputBar`
 just below the status area (see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) —
 is untouched by this arm: an in-flight turn stays interruptible while retrying or compacting.
@@ -229,8 +233,10 @@ both rendered branches are covered.
 - Host: [Thread screen](thread-screen.md) — threads `apiRetry` as another flat sibling parameter and
   arbitrates the status slot (the composer's `ThreadStatusArea` since [#643](../codebase/643.md);
   the foot of the content `Column` before it), a five-way `when` across it,
-  [`UsageLimitIndicator`](usage-limit-indicator.md), [`CompactingIndicator`](compacting-indicator.md),
-  [`TurnOutcomeIndicator`](turn-outcome-indicator.md), and `ThinkingIndicator`.
+  [`ResettingIndicator`](resetting-indicator.md), [`CompactingIndicator`](compacting-indicator.md),
+  [`TurnOutcomeIndicator`](turn-outcome-indicator.md), and `ThinkingIndicator`. [`Usage-limit
+  indicator`](usage-limit-indicator.md) shared this slot from #804 to #1002; its reading now draws as a
+  pill in [Thread top overlay](thread-top-overlay.md) instead.
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
   light/dark previews, file-private spacing `val`s intentionally **not** shared/refactored across the
