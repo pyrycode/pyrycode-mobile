@@ -90,3 +90,9 @@ Pending for the documentation stage: fold the mute checkbox and the rename → m
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+### 2026-09-24 — rung-3 scenario (verifier finding on PR #1024)
+
+The Testing strategy left the real-claude scenario to the verifier, who ruled it required: the reopened modal's checked state depends on the daemon storing the flag and echoing it in `conversation_updated`, which only a real daemon proves. Added `InteractiveStreamE2ETest.interactiveTurn_muteChannel_roundTripsThroughTheHost`: a channel set up on the host (discussion promoted in place), Edit channel opened from the row's pen, Mute checked and saved, the host's own row read as muted, the reopened modal shown checked, then unchecked and saved with the clear read back the same way; the channel is deleted in `finally`. Zero real-claude turns. It joins the LIVE list in `scripts/e2e-emulator.sh`, and `LIVE_MINIMUM` in `scripts/android-test-gate.py` rises by one. The ticket gains `needs-real-claude`. No rung-4 twin: there is no turn for a scripted claude to hold. Production code unchanged.

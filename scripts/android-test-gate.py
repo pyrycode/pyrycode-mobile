@@ -30,6 +30,8 @@ LIVE_MINIMUM = 22
 LIVE_MINIMUM += 2
 # #967 adds the two reconnect methods and the background-task method.
 LIVE_MINIMUM += 3
+# #1021 adds the Edit channel mute round trip.
+LIVE_MINIMUM += 1
 
 
 def claude_authenticated(env):

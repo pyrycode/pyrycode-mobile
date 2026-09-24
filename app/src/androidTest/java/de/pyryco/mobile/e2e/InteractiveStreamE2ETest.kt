@@ -24,7 +24,9 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.isOff
 import androidx.compose.ui.test.isOn
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
@@ -1452,6 +1454,87 @@ class InteractiveStreamE2ETest {
         composeTestRule
             .onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(uniqueName, substring = true))
             .assertCountEquals(0)
+    }
+
+    /**
+     * Mute notifications in Edit channel round-trips through the host (#1021, rung 3). The checkbox writes
+     * `set_conversation_muted` and nothing is patched locally, so the only way the modal can reopen checked is
+     * the daemon storing the flag and echoing it back in `conversation_updated`. The unit and screen tests
+     * prove the write against a fake that patches its own rows; this proves the real daemon keeps it.
+     *
+     * The channel is set up on the host directly (a discussion promoted in its own cwd, so no folder is
+     * created) and deleted in `finally`, which also leaves no muted channel behind. The drive is the list's own:
+     * the row's pen opens Edit channel, OK closes it only once every write is confirmed, and the reopened
+     * modal reads the flag from the host's row. It is checked on the host's own record too, and unchecking
+     * proves the clear goes the same way.
+     *
+     * **Zero real-claude turns**: create, promote, mute and delete are daemon round-trips.
+     */
+    @Test
+    fun interactiveTurn_muteChannel_roundTripsThroughTheHost() {
+        awaitChannelList()
+        awaitConnected()
+        val repository = hostRepository()
+        val name = MUTE_NAME_PREFIX + System.currentTimeMillis()
+        val channel =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) { repository.promote(repository.createDiscussion().id, name) }
+            }
+        try {
+            // Opens unchecked: a new channel is not muted. Check it and save.
+            setMuteInEditChannel(name, from = false, to = true)
+            assertHostMuted(repository, channel.id, true)
+
+            // Reopens checked, read from the host's echoed row. Uncheck it and save: the clear round-trips too.
+            setMuteInEditChannel(name, from = true, to = false)
+            assertHostMuted(repository, channel.id, false)
+        } finally {
+            runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.delete(channel.id) } } }
+                .onFailure { Log.w("E2E", "mute channel cleanup failed: ${it::class.simpleName}") }
+        }
+    }
+
+    /**
+     * Open Edit channel from [name]'s pen, check the Mute notifications row opens at [from], set it to [to]
+     * and press OK, then wait for the modal to close — it closes only once the host confirmed the write.
+     */
+    private fun setMuteInEditChannel(
+        name: String,
+        from: Boolean,
+        to: Boolean,
+    ) {
+        val pen = hasContentDescription(string(R.string.cd_tree_channel_edit).format(name))
+        val title = string(R.string.edit_channel_title)
+        val mute = hasText(string(R.string.edit_channel_mute)) and isToggleable()
+        awaitChannelRow(name)
+        composeTestRule.onNode(pen).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(mute and if (from) isOn() else isOff()).fetchSemanticsNodes().isNotEmpty()
+        }
+        if (from != to) composeTestRule.onNode(mute).performScrollTo().performClick()
+        composeTestRule.onNode(mute and if (to) isOn() else isOff()).assertExists()
+        composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(title).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** [conversationId]'s own row on the host reports [muted]. */
+    private fun assertHostMuted(
+        repository: ConversationRepository,
+        conversationId: String,
+        muted: Boolean,
+    ) {
+        runBlocking {
+            withTimeout(LIST_TIMEOUT_MS) {
+                repository
+                    .observeConversations(ConversationFilter.All)
+                    .first { rows -> rows.any { it.id == conversationId && it.muted == muted } }
+            }
+        }
     }
 
     /**
@@ -3906,6 +3989,10 @@ class InteractiveStreamE2ETest {
         // gate runs green (no collision with channels left by prior runs) and does not collide as a substring
         // with top-bar / list chrome the assertions also match.
         const val PROMOTE_NAME_PREFIX = "e2e581-"
+
+        // #1021 mute scenario: a run-unique channel name, and Edit channel's OK button.
+        const val MUTE_NAME_PREFIX = "e2e1021-"
+        const val EDIT_CHANNEL_OK = "OK"
 
         // #847 two-host scenario. The five arguments scripts/e2e-emulator.sh passes on rung 3 and LIVE
         // (host A's own four stay E2eTestApplication's). PAIR_CODE_B carries a pairing token: never log it.

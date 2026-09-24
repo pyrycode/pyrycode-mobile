@@ -1111,6 +1111,8 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_slashCommandsAndCompactStillWork"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel"
+  # #1021: the Edit channel mute round trip joins at no turn cost, so the list holds 28 methods and 29 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_muteChannel_roundTripsThroughTheHost"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
