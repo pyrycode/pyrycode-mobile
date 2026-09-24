@@ -113,3 +113,7 @@ Pending for the documentation stage: the ticket names no documentation section. 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- 2026-09-24 (implementation): `MarkdownReaderScreen` draws on a `Surface` rather than a `Column` with a background, so `MarkdownText` gets `onSurface` as its content colour. `MarkdownReaderDestination` takes a `modifier` (the `ComposeModifierMissing` lint error). The tap routing in `rememberAttachmentActions` got its own shared screen test (`MarkdownReaderScreenTest`) instead of relying on the name test alone: a markdown name opens the reader from both `Kept` and `Original` sources, a non-markdown name still goes through `openAttachment`, and a non-ready row does nothing. No contract changed.
