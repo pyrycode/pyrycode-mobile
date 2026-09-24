@@ -100,28 +100,30 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    repository to be published rather than firing on socket-up), with no reopen in between — each of the
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965)**
-   runs a **curated set of twenty-one scenarios** (ping + create-workspace-folder + new-session + delete +
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981)**
+   runs a **curated set of twenty-two scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
    peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model +
    footer-context-usage + model-change + inherited-effort + chosen-effort + remembered-effort-recall +
-   permission-held-running-tool + stop-running-turn, seventeen
+   permission-held-running-tool + stop-running-turn + operator-bypass-permission, nineteen
    real claude turns — five pings (ping, create-workspace-folder, new-session, the peer-started turn's own
    ping, and the offline-read-reconcile scenario's own ping), the peer-queue-consistency scenario's wait
    turn and its drained ping, the offline-read-reconcile scenario's peer offline turn, the
    status-sheet-running-model scenario's own ping, the footer-context-usage scenario's own ping, the
    inherited-effort scenario's own turn, the chosen-effort scenario's own turn, the
    remembered-effort-recall scenario's two turns (one in its fresh chat, one in its fresh channel), the
-   permission-held-running-tool scenario's own turn, and the stop-running-turn scenario's two turns (the
-   held-then-interrupted turn and its follow-up ping), plus a
+   permission-held-running-tool scenario's own turn, the stop-running-turn scenario's two turns (the
+   held-then-interrupted turn and its follow-up ping), and the operator-bypass-permission scenario's two
+   turns (the tool-free ping and the outside-workspace Read), plus a
    possible reset wrap-up turn — delete, archive-restore,
    change-workspace, rename, save-as-channel, list-archive-entry, two-host and model-change spend none)
    against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
    [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The **operator-bypass-permission**
-   scenario (#687) normally rides this same curated list, but is `@Ignore`d and excluded from it until
-   [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixes a real production bug this
-   scenario's own diagnosis named (see its paragraph below). The ping, create-workspace-folder and
+   scenario (#687) rides this same curated list; [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
+   fixed the production bug its own diagnosis named — the thread screen, not the repository fold, was
+   losing a non-streaming reply under `reverseLayout` once the list overflowed (see its paragraph below).
+   The ping, create-workspace-folder and
    new-session scenarios in `InteractiveStreamE2ETest` require a displayed exact
    ping reply in the message list (#694), independently of disappearing queued text.
    New-session also reveals the delimiter after a potentially tall wrap-up reply, and (#965) now waits for
@@ -139,7 +141,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
-   turn. The curated twenty-one-scenario gate does not cover cross-device Stop.
+   turn. The curated twenty-two-scenario gate does not cover cross-device Stop.
    An open thread recovering a peer's reconnect-window prompt on its own — the gap #850 found — is
    **shipped (#861)**: the still-open thread's reconnect history re-ask now waits for the repository to
    be published, so it reaches a live repository instead of a socket that is up but not yet handshaked.
@@ -700,11 +702,10 @@ effort recall](knowledge/features/thread-composer-footer-effort-recall.md) for t
 recall rules these methods assert against.
 
 The **operator-bypass permission** scenario (#687 —
-`interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) is, unlike every scenario
-above, currently **`@Ignore`d** — blocked on
-[#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) — and excluded from the curated `LIVE=1`
-list (`LIVE_MINIMUM` is 21 as of #965's stop method; it will rise to 22 once #981 restores #687; see
-[Pre-ship gate](#pre-ship-gate)). Un-ignoring it to re-run manually still needs its own daemon: `scripts/e2e-emulator.sh` starts a
+`interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) rides the curated `LIVE=1`
+list like every scenario above (`LIVE_MINIMUM` is 22, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
+having restored it on top of #965's stop method; see [Pre-ship gate](#pre-ship-gate)). Running it needs its
+own daemon: `scripts/e2e-emulator.sh` starts a
 third, dedicated `pyry` instance under its own isolated `HOME` (§ 4a, `start_bypass_daemon`), with
 `stdio_permission_prompt: true` in its config and its children launched with
 `-- --dangerously-skip-permissions --permission-prompt-tool stdio` — the operator-bypass argv pyrycode's
@@ -750,10 +751,15 @@ Read's recorded `tool_result` was `is_error`, the `turn_end`'s `stop_reason` / `
 whether any frame the peer recorded after the allow carried the token — never bubble text, payload text or
 the token itself. The two live runs that closed this ticket both failed with that second message: the turn
 ended normally, the Read's `tool_result` was clean, and claude's reply was exactly the token
-(`peerFramesWithToken=true`) — but no bubble on the phone ever carried it. That names a real production
-bug, not a flaky assertion or a slow turn: the phone does not render a reply the daemon actually sent. It
-is filed as [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981), which removes the `@Ignore`
-above once fixed.
+(`peerFramesWithToken=true`) — but no bubble on the phone ever carried it. That named a real production
+bug, not a flaky assertion or a slow turn: the phone did not render a reply the daemon actually sent.
+[#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) found the cause on the phone side — the
+thread screen, not the repository fold, was losing a non-streaming reply under `reverseLayout = true` once
+the list overflowed (see `knowledge/features/thread-screen-how-it-works-list-and-status-row.md`, "The
+newest-row pin (#981)") — and removed the `@Ignore` above. `readReplyDiagnosis` now also reports
+`threadHeldToken` (`threadHoldsReply` in `InteractiveStreamE2ETest.kt`): whether the phone's own repository
+held an assistant row carrying the token, a boolean (or `unread` on a read failure), never the token or the
+row text, so a future failure at this step names its cause from the phone side alone.
 
 An unmet prerequisite — no credential, an unreadable `~/.claude.json`, a daemon revision `PYRYCODE_SRC`
 cannot show contains pyrycode `475c406a`, no `claude` on `PATH`, or a fixture failure such as a pairing
@@ -908,15 +914,13 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the twenty-one curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the twenty-two curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
 peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
 context usage, #946; model change, inherited effort, chosen effort and remembered-effort recall, #545;
-running-tool status label, #950; stop-running-turn, #965) ride the wrapped mode. The operator-bypass
-permission method, #687, is `@Ignore`d and excluded until
-[#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixes its missing reply (see
-[its paragraph above](#what-rung-3-is-made-of)).
+running-tool status label, #950; stop-running-turn, #965; operator-bypass permission, #687 (fixed #981))
+ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
 regressions after host-owned routing, since #847 that two paired hosts whose
@@ -940,14 +944,15 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** seventeen real claude turns across twenty-one curated methods — five pings (ping,
+**Cost:** nineteen real claude turns across twenty-two curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
 ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, the
 footer-context-usage scenario's own ping, #946, the inherited-effort and chosen-effort scenarios' own
 turns, and the remembered-effort-recall scenario's two turns, #545, the
-permission-held running-tool scenario's own turn, #950, and the stop-running-turn scenario's two turns
-(the held-then-interrupted turn and its follow-up ping), #965 —
+permission-held running-tool scenario's own turn, #950, the stop-running-turn scenario's two turns
+(the held-then-interrupted turn and its follow-up ping), #965, and the operator-bypass-permission
+scenario's two turns (the tool-free ping and the outside-workspace Read), #981 —
 and a reset wrap-up turn for the new-session scenario's own live child. Delete, archive-restore,
 change-workspace, rename, save-as-channel,
 list-archive-entry, two-host separation and the model-change scenario spend no Claude turns. Allow a few
@@ -955,8 +960,8 @@ minutes of wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
 tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) rose from 20 to 21 with #965's new
-stop method. The #687 bypass method stays excluded until #981 fixes its missing reply; restoring it will
-raise the floor to 22. `LIVE_MINIMUM` is
+stop method, then from 21 to 22 with #981 restoring the #687 bypass method to the curated list.
+`LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -971,8 +976,9 @@ curated-method cases up to `LIVE_MINIMUM`. #849 raised `LIVE_MINIMUM` from 11 to
 raised it again, from 12 to 13, #891 raised it once more, from 13 to 14, #946 raised it
 again, from 14 to 15, #545 raised it again, from 15 to 19, #687 raised it again, from
 19 to 20, and #950 raised it again, from 20 to 21. #977 then lowered it from 21 to 20 when it excluded
-\#687's flaky method from the list, and #965 raised it again, from 20 to 21, adding the stop-running-turn
-method, on the same mechanism. Shell cleanup preserves the original
+\#687's flaky method from the list, #965 raised it again, from 20 to 21, adding the stop-running-turn
+method, and #981 raised it again, from 21 to 22, restoring \#687's method once its production bug was
+fixed, on the same mechanism. Shell cleanup preserves the original
 result and retains failure artifacts; a clean XML report with a failing process status is not
 a passing gate.
 
@@ -983,7 +989,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of twenty-one rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of twenty-two rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1007,7 +1013,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Twenty-one curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Twenty-two curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -1028,23 +1034,27 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_chosenEffort_appliesFromTheFirstTurn`,
 `InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` (#545),
 `InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` (#950), and
-`InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` (#965), so exactly
-**seventeen real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
+`InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` (#965), and
+`InteractiveStreamE2ETest#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild` (#981),
+so exactly
+**nineteen real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
 ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, #891's own
 ping, #946's own ping, the inherited-effort and chosen-effort scenarios' own turns and the
 remembered-effort-recall scenario's two turns (#545), the permission-held
-running-tool scenario's own turn (#950), and the stop-running-turn scenario's two turns — the
-held-then-interrupted turn and its follow-up ping (#965); the delete,
+running-tool scenario's own turn (#950), the stop-running-turn scenario's two turns — the
+held-then-interrupted turn and its follow-up ping (#965), and the operator-bypass-permission scenario's
+two turns — the tool-free ping and the outside-workspace Read (#981); the delete,
 archive-restore, change-workspace, rename,
 save-as-channel, list-archive-entry, two-host and model-change scenarios each add a method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
 list-archive-entry is pure navigation with no daemon round-trip at all; two-host separation is pairing,
 navigation, rename and link cycling, also daemon round-trips).
 The full class also includes the
-\#481 tool-use test, #950's `@Ignore`d elapsed-reading twin, and the operator-bypass-permission method
-(#687, `@Ignore`d, blocked on [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)), which all
-stay excluded from LIVE. `LIVE=1` is **mutually exclusive with `DETERMINISTIC=1`**
+\#481 tool-use test and #950's `@Ignore`d elapsed-reading twin, which stay excluded from LIVE — the
+operator-bypass-permission method rides LIVE now that
+[#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixed its missing reply. `LIVE=1` is
+**mutually exclusive with `DETERMINISTIC=1`**
 (real vs scripted claude); setting both fails fast.
 
 **How it differs from default rung 3.** Same instrumented suite, same Gradle Managed Device, same
@@ -1077,14 +1087,15 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **seventeen real claude turns per run across twenty-one curated methods** (ping + create-workspace-folder,
+Cost: **nineteen real claude turns per run across twenty-two curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
 \#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
 status-sheet-running-model scenario's own ping, #891 + the footer-context-usage scenario's own ping,
 \#946 + the inherited-effort and chosen-effort scenarios' own turns and the remembered-effort-recall
 scenario's two turns, #545 + the
 permission-held running-tool scenario's own turn, #950 + the stop-running-turn scenario's two turns — the
-held-then-interrupted turn and its follow-up ping, #965; `/clear` spends
+held-then-interrupted turn and its follow-up ping, #965 + the operator-bypass-permission scenario's two
+turns — the tool-free ping and the outside-workspace Read, #981; `/clear` spends
 none beyond the ping that primes the session; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
 \#740, two-host separation, #847, and model change each spend none — create/rename/delete/archive/restore/
@@ -1393,6 +1404,17 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #981 (2026-09-24):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/981` at `3c41731fa2` merged with
+  `origin/main` at `7e820f8e51` (8 commits behind before the merge), executed all twenty-two curated
+  scenarios — the curated list's first run with
+  `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild` back on it since #977 excluded
+  it — with twenty-two passes, no failures or skips, exit 0, wall clock 175.2s. `LIVE_MINIMUM` rose from 21
+  to 22 with this ticket (see [Pre-ship gate](#pre-ship-gate)); twenty-two executed meets it exactly. This
+  is the first live pass of the #687 scenario since the two runs that closed #977 both failed at its step
+  5: the thread screen, not the repository fold, was losing a non-streaming reply once the list overflowed
+  under `reverseLayout`; see [Thread screen — list and status row](knowledge/features/thread-screen-how-it-works-list-and-status-row.md)
+  for the fix.
 - **LIVE verified for #965 (2026-09-24):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/965` at `131f674c25` merged with
   `origin/main` at `8f661f1507` (0 commits behind before the merge), executed all twenty-one curated
@@ -1620,6 +1642,17 @@ The remaining checks here are specific to a real relay or real Claude execution:
   Reset session status area's wrapping-up phase live, causally held by the daemon's own real-claude
   wrap-up turn; the restarting phase has no live hold and stays proven only by `ScriptedResettingTest`.
   This is **single-device** Stop only.
+
+- **Coverage — shipped:** [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) restored
+  `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`, the twenty-second curated
+  `LIVE=1` method, after [#977](https://github.com/pyrycode/pyrycode-mobile/issues/977) had excluded it.
+  The allowed Read's reply reached the phone's repository — a new unit test rules out the fold as the
+  cause — but the thread screen never scrolled a non-streaming newest row into view once the list
+  overflowed, because `LazyListState` keeps its first visible row anchored by key under
+  `reverseLayout = true`. A second composition-scoped effect in `ThreadScreen`, keyed on the newest row's
+  identity rather than `isStreaming`, now follows any new newest row — streaming or not — unless the
+  reader has scrolled away (the existing `userScrolledAway` yield, unchanged). `readReplyDiagnosis` gained
+  `threadHeldToken`, so a future failure at this step names its cause from the phone side alone.
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns
