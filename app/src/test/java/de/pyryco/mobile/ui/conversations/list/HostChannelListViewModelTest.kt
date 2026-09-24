@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.preferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
@@ -22,6 +23,8 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.AttachmentContent
+import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
@@ -1240,6 +1243,83 @@ class HostChannelListViewModelTest {
         }
 
     @Test
+    fun confirmingUnpairRemovesThatHostsAttachmentFilesBeforeTheConfirmationCloses() =
+        runTest(dispatcher) {
+            // #900, driven from the gesture through the production removal hook.
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            // "Host" and "host" differ only in case and keep an attachment of the same ids.
+            for (id in listOf("Host", "host")) keepAttachment(f, id)
+
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+            f.vm.confirmHostUnpair()
+
+            // The pairing is gone but the store's removal is still queued: the confirmation stays open.
+            assertNull(f.store.loadById("Host"))
+            assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).confirmingUnpair)
+            assertEquals(2, f.attachmentsRoot.listFiles()?.size)
+
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+            assertEquals(1, f.attachmentsRoot.listFiles()?.size)
+            var fetches = 0
+            f.seeding.retrieve("Host", ATTACHMENT_CONVERSATION, ATTACHMENT) {
+                fetches++
+                attachmentBytes()
+            }
+            assertEquals("the removed host's file is gone, so it is fetched again", 1, fetches)
+            // Every other paired host keeps its files.
+            f.seeding.retrieve("host", ATTACHMENT_CONVERSATION, ATTACHMENT) { error("must not fetch") }
+            assertTrue(
+                "no server id or attachment id may reach a log line: $logs",
+                logs.none { "Host" in it || ATTACHMENT in it },
+            )
+        }
+
+    @Test
+    fun aFailedAttachmentRemovalIsLoggedWithoutAnIdAndTheUnpairStillSucceeds() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            keepAttachment(f, "Host")
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+
+            // A read-only root cannot lose the host's directory.
+            f.attachmentsRoot.setWritable(false)
+            try {
+                f.vm.confirmHostUnpair()
+                runCurrent()
+            } finally {
+                f.attachmentsRoot.setWritable(true)
+            }
+
+            assertNull(f.store.loadById("Host"))
+            assertNull(f.vm.hostState.value.hostEditor)
+            assertTrue(logs.contains("event=host_attachments_remove_failed"))
+            assertTrue(logs.none { it.contains("host_unpair_failed") })
+            assertTrue(
+                "no server id or attachment id may reach a log line: $logs",
+                logs.none { "Host" in it || ATTACHMENT in it },
+            )
+        }
+
+    private suspend fun keepAttachment(
+        f: Fixture,
+        serverId: String,
+    ) {
+        f.seeding.retrieve(serverId, ATTACHMENT_CONVERSATION, ATTACHMENT) { attachmentBytes() }
+    }
+
+    private fun attachmentBytes() =
+        AttachmentFetchResult.Fetched(AttachmentContent(listOf(byteArrayOf(1, 2, 3))), "notes.txt", "text/plain")
+
+    @Test
     fun aFailedUnpairStaysOnTheConfirmationAndChangesNothing() =
         runTest(dispatcher) {
             val f = fixture()
@@ -2075,6 +2155,15 @@ class HostChannelListViewModelTest {
         // #798: the real file cache, so a test can seed conversation content and read back which host's
         // content survived an unpair. Bound through the production hook below, not a restatement of it.
         val cache = FileConversationCache(tmp.newFolder(), dispatcher)
+
+        // #900: the real attachment store, on a queued dispatcher over the test's scheduler so a test can
+        // observe the unpair confirmation still open while the host's files are being removed.
+        val attachmentsRoot = tmp.newFolder()
+        val attachments = AttachmentStore(attachmentsRoot, StandardTestDispatcher(dispatcher.scheduler))
+
+        // Seeds and reads back over the same root without leaving the test's unconfined dispatcher: a test
+        // body resumed from the queued one runs inside its task, where the view model's launches never start.
+        val seeding = AttachmentStore(attachmentsRoot, dispatcher)
         val app =
             KoinApplication.init().modules(
                 appModule,
@@ -2086,7 +2175,12 @@ class HostChannelListViewModelTest {
                     // this fixture previously bypassed — the removal-driven draft eviction lives on it.
                     // Transparent to every other case here: delegation forwards the reads, and the
                     // revision it bumps has no observer in this file.
-                    single<PairedServerCollectionStore> { ObservablePairedServerStore(store, forgetRemovedHost(drafts, lazyOf(cache))) }
+                    single<PairedServerCollectionStore> {
+                        ObservablePairedServerStore(
+                            store,
+                            forgetRemovedHost(drafts, lazyOf(cache), lazyOf(attachments)),
+                        )
+                    }
                 },
             )
         val vm = app.koin.get<ChannelListViewModel>()
@@ -2258,6 +2352,9 @@ class HostChannelListViewModelTest {
     }
 
     companion object {
+        private const val ATTACHMENT_CONVERSATION = "9d4e7a21-8c05-4f3b-b6e2-1a7c9e30d5f4"
+        private const val ATTACHMENT = "7c1d5e92-4a30-4b8f-9e21-6d4c3b0a8f55"
+
         private fun row(
             id: String,
             promoted: Boolean = false,
