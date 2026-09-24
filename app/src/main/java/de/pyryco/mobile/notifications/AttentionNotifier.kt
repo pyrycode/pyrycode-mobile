@@ -14,6 +14,7 @@ import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.di.AttentionAlert
+import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -39,8 +40,9 @@ internal const val MAX_LEDGER_ENTRIES = 512
  * Posts one Android notification per new [AttentionAlert] (#685) while the app is in the background.
  *
  * Each alert is deduplicated **before** the gates: an alert already in the ledger is dropped, and a new
- * one is recorded even when the foreground, the switch or a missing permission then suppresses it. So an
- * alert spent in the foreground, or while alerts were off, never posts later. The ledger persists, which
+ * one is recorded even when the foreground, the switch, a mute or a missing permission then suppresses it.
+ * So an alert spent in the foreground, while alerts were off or while its conversation was muted, never
+ * posts later. The ledger persists, which
  * is what holds "at most once" across a reconnect's replay, a new wake window and process death.
  *
  * The notification carries fixed app copy only. The alert's ids are identities: they pick the
@@ -50,6 +52,8 @@ class AttentionNotifier(
     private val context: Context,
     alerts: Flow<AttentionAlert>,
     private val notificationsEnabled: Flow<Boolean>,
+    /** Whether the host [AttentionAlert.serverId] reports its conversation muted (#1022); unknown is not muted. */
+    private val isMuted: (serverId: String, conversationId: String) -> Boolean,
     private val isForeground: () -> Boolean,
     ledgerFile: File,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -68,6 +72,7 @@ class AttentionNotifier(
                 !ledger.add(digest(alert.serverId, alert.conversationId, alert.kind.name, alert.key)) -> "duplicate"
                 isForeground() -> "foreground"
                 !notificationsEnabled.first() -> "disabled"
+                isMuted(alert.serverId, alert.conversationId) -> "muted"
                 !permitted() -> "no_permission"
                 else -> post(alert)
             }
@@ -152,6 +157,19 @@ object NotificationTap {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
+}
+
+/**
+ * Whether host [serverId]'s last known rows hold [conversationId] muted (#1022). Keyed by host first, since
+ * two hosts can hold the same conversation id. A host with no list yet, or a conversation missing from it,
+ * is not muted: failing open is the safe side for an alert.
+ */
+internal fun List<HostConversationSnapshot>.isMuted(
+    serverId: String,
+    conversationId: String,
+): Boolean {
+    val host = firstOrNull { it.serverId == serverId } ?: return false
+    return (host.channels + host.chats).any { it.id == conversationId && it.muted }
 }
 
 /** SHA-256 over length-prefixed fields, so no two field tuples share a digest by concatenation. */

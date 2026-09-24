@@ -136,17 +136,34 @@ the live end-to-end proof, stays blocked. This package's own tests (`AttentionNo
 `HostConversationSourceAttentionTest`) prove the pipeline with fakes instead.
 
 **Dedupe runs before the gates, not after.** `AttentionNotifier.handle` records an alert's digest in
-`AlertLedger` first; only a digest new to the ledger is even considered for the foreground, switch and
-permission checks below. So an alert that arrives while the app is foregrounded, or while alerts are
-off, is spent — it can never post later once background/enabled/permission line up. The ledger holds
+`AlertLedger` first; only a digest new to the ledger is even considered for the foreground, switch, mute
+and permission checks below. So an alert that arrives while the app is foregrounded, while alerts are
+off, or while its conversation is muted, is spent — it can never post later once
+background/enabled/unmuted/permission line up. The ledger holds
 `SHA-256` digests over length-prefixed `(serverId, conversationId, kind, key)`, one per line in
 `noBackupFilesDir/attention_alerts`, capped at the newest 512, written temp-then-rename. This is what
 holds "at most once" across a reconnect's replay, a repeated `modal_shown` frame, a new wake window and
 process death — the same digests survive a process restart because the file does.
 
 **The gates, checked in this order, each read fresh (none is cached):** not foregrounded
-(`ProcessLifecycleOwner`'s state `< STARTED`) → `AppPreferences.notificationsEnabled` → `POST_NOTIFICATIONS`
-granted.
+(`ProcessLifecycleOwner`'s state `< STARTED`) → `AppPreferences.notificationsEnabled` → muted (below,
+\#1022) → `POST_NOTIFICATIONS` granted.
+
+### The muted gate (#1022)
+
+`isMuted: (serverId, conversationId) -> Boolean` is a constructor parameter, injected because alerts
+arrive from every saved host, not only the selected one — the lookup must read the alert's own host's
+rows. `AppModule` wires it to a top-level `internal fun List<HostConversationSnapshot>.isMuted(serverId,
+conversationId): Boolean` (`AttentionNotifier.kt`) over `HostConversationSource.snapshots.value`: true
+only when the snapshot whose `serverId` matches holds a row — in `channels` or `chats` — with that id and
+`muted == true`. Keying by host first means the same conversation id muted on one host never silences
+that id on another. A host with no snapshot yet, or a conversation missing from its host's last known
+rows, is **not** muted — failing open, since posting an unwanted alert is the safer wrong answer than
+staying silent. One consequence: [`HostConversationSource.snapshots` excludes archived
+rows](dependency-injection-host-conversation-source.md#host-identity-and-snapshots), so an archived muted
+conversation reads as missing here and still alerts; accepted because archived conversations are not
+expected to produce turns. Because this gate sits after the ledger dedup like the others, a muted alert
+is recorded and spent — unmuting afterward never replays it.
 
 **The notification itself** is fixed `strings.xml` copy only (`notification_turn_completed` /
 `notification_prompt`, title = app name) — no conversation name, no daemon text, no push-message field
@@ -184,10 +201,12 @@ Wiring (`di/AppModule.kt`, next to the lifecycle driver):
 
 ```kotlin
 single(createdAtStart = true) {
+    val source = get<HostConversationSource>()
     AttentionNotifier(
         context = androidContext(),
-        alerts = get<HostConversationSource>().alerts,
+        alerts = source.alerts,
         notificationsEnabled = get<AppPreferences>().notificationsEnabled,
+        isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
         isForeground = { ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) },
         ledgerFile = File(androidContext().noBackupFilesDir, "attention_alerts"),
     )
@@ -204,7 +223,7 @@ requires the runtime prompt above regardless of the manifest entry).
 
 ### Logging (#685)
 
-`event=attention_alert outcome=posted|duplicate|foreground|disabled|no_permission kind=turn|prompt`,
+`event=attention_alert outcome=posted|duplicate|foreground|disabled|muted|no_permission kind=turn|prompt`,
 `event=notification_tap_accepted`, `event=notification_tap_rejected code=unknown_host`,
 `event=notification_permission_answered granted=…`, `event=attention_alert_ledger outcome=read_failed|write_failed`.
 No id, digest or notification text appears in any of these lines.
@@ -216,7 +235,12 @@ No id, digest or notification text appears in any of these lines.
   once per counted turn, once per prompt key, two hosts sharing a conversation id alerting twice.
 - `AttentionNotifierTest` (`app/src/test`, Robolectric) proves the notifier end to end against a real
   `NotificationManager` shadow: fixed copy, the dedupe-before-gates order, a fresh notifier over the same
-  ledger file dropping a replayed alert (process death), and the posted `contentIntent`'s parsed target.
+  ledger file dropping a replayed alert (process death), the posted `contentIntent`'s parsed target, and
+  (#1022) the muted gate — a muted conversation's turn and prompt both post nothing, unmuting after the
+  alert was already spent by the ledger does not replay it, and the same conversation id muted on one
+  host still alerts on another. `List<HostConversationSnapshot>.isMuted`'s own table (muted in `channels`,
+  muted in `chats`, unmuted row, id missing from the host's rows, host with no snapshot) is a plain unit
+  test beside it, not Robolectric.
 - `NotificationTapNavigationTest` (`app/src/sharedTest`) drives `PyryNavHost` on the production Koin
   graph, per the `SettingsNavigationTest` pattern: a saved host's target opens the thread above
   `CHANNEL_LIST`; an unsaved host's target stays on `CHANNEL_LIST`.
@@ -254,6 +278,10 @@ No id, digest or notification text appears in any of these lines.
   prompt piggybacks on; no new row was added.
 - Spec: `docs/specs/architecture/685-mobile-attention-alerts.md` (§ Design, § Security review — verdict
   PASS, § Revisions for the blank-conversation-prompt fix and the two rework rounds' device-test fixes).
+- Spec: `docs/specs/architecture/1022-attention-notifier-muted-gate.md` — the muted gate's design and its
+  fail-open rationale.
+- [Data model § `Conversation`](data-model.md#conversation) — the `muted` field (#999) this gate reads,
+  and the Edit channel checkbox (#1021) that writes it.
 - Spec: `docs/specs/architecture/361-fcm-push-wake.md` (§ Design, § Security review — verdict PASS,
   § Revisions for the two open questions above).
 - README `### Firebase` — where `app/google-services.json` and the conditional plugin are recorded.
