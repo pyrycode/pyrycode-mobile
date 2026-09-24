@@ -26,3 +26,4 @@ The change is the tests themselves. Proof: both classes green under Robolectric 
 ## Revisions
 
 - 2026-09-24, during build: `ThreadScreenNewestRowTest` has 4 tests, not 5, so the device run expects 4 newest-row passes. No design change.
+- 2026-09-24, rework (verifier asked for device proof): with the selector fixed, `a_scroll_refused_under_a_resting_finger_does_not_stop_later_rows_being_followed` hung on the device. A thread dump put the test thread in the `waitForIdle` after the drag back past the newest edge while the finger is still down. The finger holds the stretch overscroll there, and the effect keeps drawing frames, so Espresso never goes idle. Robolectric draws no such frames. `ThreadScreenNewestRowTest`'s `setScreen` now provides `LocalOverscrollFactory provides null`. Overscroll is visual only; the drags still reach the list as `UserInput` through the nested-scroll chain, so the yield flag behaves as before. Still test-only.

@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.LocalOverscrollFactory
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -118,16 +120,22 @@ class ThreadScreenNewestRowTest {
         composeRule.onNodeWithText("Row 30.").assertDoesNotExist()
     }
 
+    /**
+     * Overscroll is off: on a device a finger resting past the newest edge holds the stretch effect, which
+     * keeps drawing frames, so `waitForIdle` never returns. Robolectric draws no such frames.
+     */
     private fun setScreen(state: () -> ThreadUiState) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
-                ThreadScreen(
-                    state = state(),
-                    onBack = {},
-                    onSendMessage = {},
-                    connectionState = ConnectionState.Connected,
-                    onRetry = {},
-                )
+            CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
             }
         }
     }
