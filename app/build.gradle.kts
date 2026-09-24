@@ -54,7 +54,7 @@ android {
         minSdk = 33
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
 
         val gitSha = providers.of(GitShaValueSource::class.java) {}
         buildConfigField("String", "GIT_SHA", "\"${gitSha.get()}\"")

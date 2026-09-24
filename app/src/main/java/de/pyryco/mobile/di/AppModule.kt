@@ -102,7 +102,7 @@ val appModule =
         single {
             ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }, lazy { get() }))
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
-        single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
+        single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = mobileClientVersion()) }
         single {
             RelayConnectionFactory(
                 get(),
@@ -270,6 +270,14 @@ internal fun pairingRejected(
         .distinctUntilChanged()
         .flatMapLatest { host -> host?.status?.map { it.relay == RelayLinkStatus.PairingRejected } ?: flowOf(false) }
         .distinctUntilChanged()
+
+/**
+ * The `hello`'s `client_version` (#1007), also the relay socket's `User-Agent`: `pyrycode-mobile/`
+ * followed by [versionName], which must be `MAJOR.MINOR.PATCH` per the "`client_version` format
+ * (#2576)" rules in pyrycode's `docs/protocol-mobile.md`. A daemon with a configured minimum rejects
+ * a version it cannot parse. The About screen shows the bare `versionName`.
+ */
+internal fun mobileClientVersion(versionName: String = BuildConfig.VERSION_NAME): String = "pyrycode-mobile/$versionName"
 
 /** Destination ownership is captured once; compatibility selection is only a flat-list adapter. */
 internal class ThreadDestinationFactory(
