@@ -86,8 +86,11 @@ import de.pyryco.mobile.ui.conversations.components.UsageLimitIndicator
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -245,6 +248,8 @@ fun ThreadScreen(
         }
     }
     val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
+    // #934: a pasted image joins the chat's strip through the same sink as a picked one.
+    val onImagesPasted = rememberPastedImageReceiver(onAttachmentsPicked)
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
     // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
@@ -345,6 +350,7 @@ fun ThreadScreen(
                         onAnchorChanged = { inputAnchor = it },
                         hasAttachments = attachments.isNotEmpty(),
                         sending = attachmentsSending,
+                        onImagesReceived = onImagesPasted,
                     )
                     // The design puts the model/effort controls in the footer, below the input field, not
                     // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
@@ -470,6 +476,30 @@ fun ThreadScreen(
                             .collect {
                                 if (!userScrolledAway) {
                                     listState.scrollToItem(0)
+                                }
+                            }
+                    }
+                    // #981: the list keeps its first visible row anchored by key, so under reverseLayout a new
+                    // newest row lands at index 0 below the viewport. The streaming pin above only covers a
+                    // row that is still streaming when it collects; a reply that arrives whole, a tool row or
+                    // the operator's own echo needs this one. A streaming row that grows keeps its key and is
+                    // left to the pin. drop(1) skips the first value, because userScrolledAway is not saved
+                    // and a recreation must not pull a reader who had scrolled away back to the newest end.
+                    val newestRowKey by rememberUpdatedState(rows.lastOrNull()?.listKey(rows.lastIndex))
+                    LaunchedEffect(listState) {
+                        snapshotFlow { newestRowKey }
+                            .drop(1)
+                            .collect {
+                                if (!userScrolledAway) {
+                                    // A finger resting at the newest end holds the list at UserInput priority,
+                                    // which refuses this scroll with a CancellationException. Unlike the
+                                    // streaming pin, this effect never relaunches, so the refusal costs this one
+                                    // scroll only; a real cancellation of the effect still ends it.
+                                    try {
+                                        listState.scrollToItem(0)
+                                    } catch (e: CancellationException) {
+                                        ensureActive()
+                                    }
                                 }
                             }
                     }

@@ -42,6 +42,14 @@ plugin applies only when the file is present, so builds without it (CI, fresh wo
 still succeed, with push disabled — the `firebase-messaging` SDK dependency is unconditional,
 but without the file no `FirebaseApp` exists, so no token or message is ever delivered.
 
+The Android API key in that file is restricted in Google Cloud console, under
+APIs & Services → Credentials: to Android apps with package `de.pyryco.mobile` and
+the SHA-1 of each signing certificate, and to the Firebase Cloud Messaging and
+Firebase Installations APIs. A new signing key — another machine's debug keystore,
+or a Play app-signing key — needs its SHA-1 added to that key first; until then,
+builds signed with it cannot get a push token. `./gradlew signingReport` prints the
+SHA-1.
+
 Push is enabled only when the file is present. A received message must be a **data** message: while
 the app is backgrounded, a notification message goes to the system tray instead and never reaches
 the app's code. No daemon or relay push sender exists yet — the phone half (token capture, rotation

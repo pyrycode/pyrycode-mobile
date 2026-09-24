@@ -5,7 +5,7 @@ Uploads a file's bytes, name and declared MIME type to a conversation on **its o
 [#932](https://github.com/pyrycode/pyrycode-mobile/issues/932) wires this call and the three-argument
 `sendMessage` into the composer draft's send path (data only — see § Consumer below);
 [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) is the picker and the strip that let a user
-actually fill that path — see [Thread screen § Composer pending attachments](thread-screen.md#composer-pending-attachments);
+actually fill that path — see [Thread screen § Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments);
 [#830](https://github.com/pyrycode/pyrycode-mobile/issues/830) sends a
 message naming the uploaded ids; [#671](https://github.com/pyrycode/pyrycode-mobile/issues/671) reuses
 the chunk payload shape for retrieval; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)
@@ -130,7 +130,7 @@ that never answers is ended by the connection's own liveness teardown, the same 
 three-argument `sendMessage`. It reads `ComposerDraftStore`'s per-pair pending-attachment list, uploads
 whichever entries have no acknowledged id yet in send order, and names each id along with the pending
 entry's own `displayName`/`mimeType` as a `MessageAttachment` (#983) — see [Thread screen § Composer
-pending attachments](thread-screen.md#composer-pending-attachments) for the store shape, the
+pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) for the store shape, the
 retry-keeps-earlier-ids behavior and the content-URI trust boundary
 (`ContentResolverAttachmentReader.isForeignContentUri`), and [data model §
 `Message`](data-model.md#message) for what the confirmed row does with those references.

@@ -211,6 +211,52 @@ the rendered text being removed. This covers production, JVM tests and
 `androidTest` call sites in one pass. Record the graph gap when it affects the
 blast-radius decision.
 
+A `BasicTextField(state: TextFieldState, ...)` field (Compose foundation 1.10.4,
+found migrating [`ThreadInputBar`](thread-input-bar.md#draft-binding--cursor-at-end-undo-and-redo-885-934)
+for #934) is not a drop-in replacement for the `value`/`onValueChange` overload in
+tests, in three ways:
+
+- It exposes a `ScrollBy` semantics action the legacy field never did. A selector
+  that finds "the" scrollable node with `hasScrollAction()` then matches two nodes
+  once such a field and a scrollable list share a screen. Match the list with a
+  more specific action instead, e.g. `hasScrollToIndexAction()` or
+  `hasScrollToNodeAction()`, if only the list should carry it.
+- Undo and redo bypass `InputTransformation` — they write the field's buffer
+  directly and never call `commitEditAsUser`. A binding that reports edits only
+  through the transformation misses them; see the linked section for the
+  `snapshotFlow`/`accountedText` fix this required.
+- `SemanticsActions.PasteText`, unlike undo/redo, **does** route through
+  `Modifier.contentReceiver` the same way a real user Paste does — both under
+  Robolectric and on the device — so a paste test needs no text-toolbar
+  workaround.
+
+Robolectric's `KeyCharacterMap` ignores the Ctrl meta state, so a test that sends
+a hardware Ctrl+Z to a Compose field there actually types a plain "z" and can pass
+green without exercising undo at all. A test that must prove undo or redo — as
+opposed to typing or pasting — needs a device.
+
+A device's `ClipboardManager` throws `SecurityException` when a test puts a
+`content://` URI on the clip that the calling app cannot read; Robolectric's
+clipboard does not model this permission check, so the same test passes there and
+fails only on the device sweep (#992). Production code must keep refusing the
+app's own content URIs (`AttachmentReader.isForeignContentUri`), so granting the
+test app read access is not an option. Guard the device run instead —
+`assumeTrue("<reason>", Build.FINGERPRINT == "robolectric")` on the affected
+method — and name the device-only harness that still proves the real path in the
+skip reason and a KDoc line, e.g. `ComposerImagePasteDeviceTest`, which inserts a
+real `MediaStore` image, pastes it and removes it afterward.
+
+On a device, a real drag that ends with the finger still down past a scroll edge
+can hold the stretch overscroll effect, which keeps drawing frames — `waitForIdle`
+then never returns, because the instrumentation idle check treats those redraws as
+ongoing activity. Robolectric draws no such frames, so the same test passes there
+while hanging the managed device (`ThreadScreenNewestRowTest`, #992; a thread dump
+located the hang inside `waitForIdle`). The fix is
+`CompositionLocalProvider(LocalOverscrollFactory provides null)` around the test's
+`setContent`, which drops only the visual stretch: drags still reach the list as
+`NestedScrollSource.UserInput` through the nested-scroll chain, so a test
+asserting scroll-yield or auto-follow behavior is unaffected.
+
 ## Test scheduling and harnesses
 
 The routine UI gate excludes `de.pyryco.mobile.e2e` through the instrumentation
@@ -306,6 +352,24 @@ incoming status, uses explicit optional branches, and returns that status.
 `test_e2e_emulator_cleanup.py` exercises success and failure with and without an
 isolated home, including retention of failure artifacts. Check both the process
 status and executed XML results; neither overrides a disagreement with the other.
+
+A post-test diagnostic step needs its own status capture, distinct from that
+teardown. Appending `|| STATUS=$?` to the Gradle test invocation (`STATUS=0` set
+just before it) captures the test task's exit code before `set -euo pipefail` can
+exit the script, so a following diagnostic step still runs; the step's own
+explicit `exit "${STATUS}"` then keeps the run non-zero. A helper called from that
+step must be written with `if` statements, never a trailing `cond && grep` chain —
+`set -e` kills the run at the call site when such a chain's last command finds
+nothing, which for a log scan is the common, successful case
+(`report_stale_pairing_codes` in `e2e-emulator.sh`, #993).
+
+Splitting a Gradle build step ahead of the device test task, to keep build time out
+of a time-limited window elsewhere in the harness (#993 moved e2e pairing-code
+minting after `assembleDebug assembleDebugAndroidTest`, so a slow build no longer
+burns the daemon's 15-minute redemption window), is not defeated by the test
+task's own `--rerun` (`PYRY_FORCE_TEST_RUN=1`): that flag reruns only the test task
+itself, not its dependencies, so the compile and package tasks the split build
+already ran still report `UP-TO-DATE` in the test task's `--console=plain` output.
 
 The Android gate must search only the report path selected by `DEVICE`:
 `connected/debug` for `connected`, otherwise `managedDevice/debug/<DEVICE>`, under

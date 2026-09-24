@@ -411,32 +411,30 @@ class RemoteConversationRepository(
                 threadProjection.appendMessages(rows)
             }
             TYPE_CONVERSATION_UPDATED -> {
-                // TWO kinds of producer, and the protocol requires a client to accept both (#721).
-                // A *correlated* reply (promote / rename / archive / unarchive / change_workspace /
-                // set_system_prompt) goes to its waiter verbatim, exactly as the shared arm below does
-                // — the awaiting mutation decodes and upserts its own typed return, so folding here too
-                // would be a redundant second write to the same row.
-                // An *unsolicited push* (`pyry channel new` on the host, or the one-shot auto-naming of
-                // a never-named conversation) carries no `in_reply_to` at all — and a duplicate reply
-                // arriving after its waiter deregistered matches no pending entry — so correlating on
-                // the type alone would drop it. Both fold by the payload's own `id`, which is what
-                // makes a rename made on another client reach this phone's live list (and, since #720,
-                // carries that row's `workspace_label` with it) instead of waiting for the next
-                // snapshot. Decode-or-drop precedes the fold, so a malformed push mutates nothing and
-                // the single inbound consumer survives; drop silently — the record carries the
-                // conversation's name and cwd, so nothing here logs the payload.
-                val waiter = relayRequests.waiter(envelope.inReplyTo)
-                if (waiter != null) {
-                    waiter.complete(envelope.payload)
-                } else {
-                    val conversation =
-                        try {
-                            MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload).toConversation()
-                        } catch (e: IllegalArgumentException) {
-                            return
-                        }
-                    conversationListProjection.upsertConversation(conversation)
-                }
+                // TWO kinds of producer, and the protocol requires a client to accept both (#721): a
+                // *correlated* reply (promote / rename / archive / unarchive / change_workspace /
+                // set_system_prompt), and an *unsolicited push* (`pyry channel new` on the host, or the
+                // one-shot auto-naming of a never-named conversation) that carries no `in_reply_to`.
+                // Both fold here by the payload's own `id`, which is what makes a rename made on another
+                // client reach this phone's live list (and, since #720, carries that row's
+                // `workspace_label` with it) instead of waiting for the next snapshot.
+                // A correlated reply folds here too, before its waiter completes (#996). The waiter's
+                // own upsert runs on the caller's scope, and a thread popped straight after Save
+                // cancels that scope between this completion and the caller's resumption, so the
+                // reply had no other writer and the list kept the old name. The caller's later upsert
+                // writes the same row again, which the projection's conflation absorbs.
+                // Decode-or-drop guards the fold only: a malformed payload mutates nothing, still reaches
+                // its waiter verbatim (whose own decode then throws), and the single inbound consumer
+                // survives. Drop silently — the record carries the conversation's name and cwd, so
+                // nothing here logs the payload.
+                val conversation =
+                    try {
+                        MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload).toConversation()
+                    } catch (e: IllegalArgumentException) {
+                        null
+                    }
+                conversation?.let(conversationListProjection::upsertConversation)
+                relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
             }
             TYPE_WORKSPACE_UPDATED -> {
                 // A workspace-label notification (#721). Like `conversation_updated` it has two kinds of

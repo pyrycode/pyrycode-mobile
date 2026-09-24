@@ -1537,6 +1537,32 @@ class RemoteConversationRepositoryTest {
             assertEquals("Renamed Channel", all.last().single { it.id == "chan" }.name)
         }
 
+    // #996: the caller's scope (the thread's viewModelScope, cleared by a Back pop) is cancelled after the
+    // reply reached the collector but before the caller resumed. The reply still reaches the list: the
+    // collector finds the still-registered waiter, and the cancelled caller never runs its own upsert.
+    @Test
+    fun rename_callerCancelledAfterReplyArrives_stillFoldsRenamedConversationIntoList() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val caller = backgroundScope.launch { repo.rename("chan", "Renamed Channel") }
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "rename_conversation" }.id
+            // Queued ahead of the cancellation, so the collector handles the reply first.
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sentId, id = "chan", name = "Renamed Channel", cwd = "/p/chan"))
+            caller.cancel()
+            runCurrent()
+
+            assertTrue(caller.isCancelled)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals("Renamed Channel", all.last().single { it.id == "chan" }.name)
+        }
+
     // AC #2, #3: a not-Open session (pump.send returns false) throws IllegalStateException; no fold.
     @Test
     fun rename_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
@@ -7221,6 +7247,40 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("m1", "tu1", "t1"), messageIds(emissions.last()))
             val assistant = assistantRowOf(emissions.last(), "t1")!!
             assertEquals("ping", assistant.content)
+            assertFalse(assistant.isStreaming)
+        }
+
+    // #981: the #687 Read turn's order, with the permission prompt shown and answered between the
+    // tool_use and its tool_result. The fold keeps the finalized reply, so a thread that shows no reply
+    // after this sequence is the screen's failure, not the repository's.
+    @Test
+    fun assistantDelta_afterAnsweredPermissionPrompt_foldsFinalizedReply() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "Read the token file", "2026-09-24T05:27:00Z"))
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Read", "token.txt"))
+            pump.push(
+                modalShownEnvelope(
+                    """
+                    {"modal_id":"p1","class":"permission","title":"Allow Read?","prompt":"Read token.txt",
+                     "options":[{"id":"allow","label":"Allow"},{"id":"deny","label":"Deny"}],
+                     "default_option_id":"deny","conversation_id":"c1"}
+                    """.trimIndent(),
+                ),
+            )
+            pump.push(modalDismissedEnvelope("p1", outcome = "allowed", source = "remote"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "1 line"))
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "TOKEN-981"))
+            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "tu1", "t1"), messageIds(emissions.last()))
+            val assistant = assistantRowOf(emissions.last(), "t1")!!
+            assertEquals("TOKEN-981", assistant.content)
             assertFalse(assistant.isStreaming)
         }
 
