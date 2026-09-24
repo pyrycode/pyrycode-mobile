@@ -44,6 +44,7 @@
 #   DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, spinner
 #   DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool running→done
 #   DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool failed
+#   DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh # rung 4, running-tool label elapsed → gone
 #   DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, reconnect continuity
 #   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
 #   DETERMINISTIC=1 INTERACTIVE_RUNNER=stream-json PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, pinned runner
@@ -128,7 +129,7 @@ PYRYCODE_SRC="${PYRYCODE_SRC:-}"              # local pyrycode checkout (to buil
 FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overrides PYRYCODE_SRC build)
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
 SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
-                                              # tool | tool-failed (#455) | reconnect (#476) |
+                                              # tool | tool-failed (#455) | tool-progress (#950) | reconnect (#476) |
                                               # replay-order (#477). Resolved to a @Test method + fixture(s)
                                               # in the preflight below; bare DETERMINISTIC=1 (SCENARIO unset
                                               # → ping) keeps #431.
@@ -506,6 +507,11 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_failedToolStepRendersFailed"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-failed.jsonl}"    # single terminal drop
       ;;
+    tool-progress)
+      TEST_METHOD="interactiveTurn_seededChannel_runningToolLabelShowsElapsedThenClears"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-progress-open.jsonl}"      # drop A: tool_use + heartbeat, held open
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/tool-progress-result.jsonl}"  # drop B: tool_result only, turn stays busy
+      ;;
     reconnect)
       TEST_METHOD="interactiveTurn_seededChannel_replySurvivesMidTurnReconnect"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reconnect-open.jsonl}"      # drop A: thinking, held open across the drop
@@ -518,7 +524,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       DROP_B_FENCE=disconnect                                                  # drop B fences on the phone-leg disconnect, not enqueue #2
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | reconnect | replay-order)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | replay-order)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -907,10 +913,11 @@ fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
 # Deterministic mode runs exactly the scenario's one method (class#method); default rung 3 runs the whole
-# class; LIVE curates twenty real-claude methods (ping + create-workspace-folder + new-session +
+# class; LIVE curates twenty-one real-claude methods (ping + create-workspace-folder + new-session +
 # delete + archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
 # the #848 peer-started turn + the #849 peer queue + the #850 offline read + the #891 running model +
-# the #946 context usage + the four #545 settings scenarios + the #687 operator-bypass permission proof, 16 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
+# the #946 context usage + the four #545 settings scenarios + the #687 operator-bypass permission proof + the #950
+# running-tool label, 17 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
 # list-archive-entry arrival is pure navigation, and the two-host scenario (#847) is pairing, navigation,
 # rename and link cycling, none of them claude turns) via a comma-separated class list — the full class' #481 tool-use test would spend an extra turn, so it stays
 # excluded.
@@ -920,15 +927,16 @@ elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +
   # archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
   # peer-started turn + peer queue + offline read + running model + context usage + the four #545 settings
-  # scenarios + the #687 operator-bypass permission proof (20 methods, 16 turns — the #848 peer's ping
+  # scenarios + the #687 operator-bypass permission proof + the #950 running-tool label (21 methods, 17 turns — the #848 peer's ping
   # is the fourth, the #849 peer's wait turn and the phone's drained ping the fifth and sixth, the #850 phone's
   # ping and the peer's offline turn the seventh and eighth, the #891 status-sheet ping the ninth, the #946 footer ping the tenth, the #545
   # inherited-effort and chosen-effort pings the eleventh and twelfth, the #545 recall's chat and channel pings
-  # the thirteenth and fourteenth, the #687 tool-free ping and outside-workspace Read the fifteenth and sixteenth; delete, archive-restore, change-workspace, rename, save-as-channel,
+  # the thirteenth and fourteenth, the #687 tool-free ping and outside-workspace Read the fifteenth and sixteenth, the
+  # #950 permission-held python3 command the seventeenth; delete, archive-restore, change-workspace, rename, save-as-channel,
   # list-archive-entry, two-host and the #545 model round trip spend none), passed as a comma-separated
   # class#method list. The class' #481 tool-use test stays excluded from LIVE for cost (it runs only in the
   # default whole-class rung-3 run).
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild"
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
