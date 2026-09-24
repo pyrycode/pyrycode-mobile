@@ -98,6 +98,27 @@ it drives an Android `Service` class, not a Compose screen, so it does not belon
 - **The test message is built from a `Bundle`, not `RemoteMessage.Builder`.** A `Bundle` lets the
   test carry `gcm.n.*` notification-shaped keys next to the pairing- and command-shaped data
   entries in one message, which is what the "never reads the payload" assertion needs to cover.
+- **`newToken_isPersisted_andDoesNotWake` must read the token after the write has finished, not
+  race it with a wall-clock wait** ([#953](https://github.com/pyrycode/pyrycode-mobile/issues/953)).
+  The old test called `withTimeout(5_000) { preferences().pushToken.first { it == "fcm-rotated" } } }`
+  against the real `app_prefs` DataStore while `PushTokenSink.onNewToken` wrote to it on its own
+  `Dispatchers.IO` scope. Under load this timed out even at a 60 s wait: the write had landed —
+  `event=push_token_stored outcome=success` logged every time, and a fresh `pushToken.first()` after
+  the timeout returned the rotated token — but the collector had subscribed to a *fresh* DataStore
+  while its first write was still running, read `null`, and then never received the update; it stayed
+  parked in DataStore 1.1.7's in-memory `StateFlow`. `first { predicate }` under `withTimeout` against
+  a DataStore is not a harmless "wait a bit": if the first read overlaps the first write, it can wait
+  forever, and raising the timeout does not help. The test now runs in `runTest`, builds its own
+  `AppPreferences` over a `PreferenceDataStoreFactory.create` DataStore in a `TemporaryFolder`, and
+  gives both that DataStore and a same-scheduler `PushTokenSink` a `StandardTestDispatcher(testScheduler)`
+  so `advanceUntilIdle()` runs the write to completion before a plain `first()` reads it — no predicate,
+  no clock. The DataStore's scope must be its own `CoroutineScope(StandardTestDispatcher(testScheduler) + Job())`,
+  cancelled at the end, not `runTest`'s `backgroundScope`: `advanceUntilIdle()` does not drain
+  `backgroundScope` work (see [Development verification § Test scheduling and harnesses](development-verification.md#test-scheduling-and-harnesses),
+  #824), so a DataStore scoped there never runs its write actor and a post-write read sees the old
+  value. The same lost-emission window is possible in production if a `pushToken` collector starts
+  while a rotation write is in flight; that is out of scope here and filed as its own issue
+  ([#968](https://github.com/pyrycode/pyrycode-mobile/issues/968)).
 
 `LifecycleConnectionDriverTest` covers the wake-window behaviour the service triggers; see
 [Lifecycle driver § Testing](lifecycle-connection-driver.md#testing).
