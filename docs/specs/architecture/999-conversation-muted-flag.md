@@ -25,3 +25,9 @@ Mirror `isArchived` exactly. `ConversationSummaryDto` and `ConversationResponseD
 ## Documentation handoff
 
 None named by the ticket.
+
+## Revisions
+
+### 2026-09-24 — the conversation cache carries `muted` (verifier finding on PR #1005)
+
+`isArchived` also round-trips through `FileConversationCache`, which the first Files read list missed. `HostConversationSource` publishes the cached rows on start before the first live list, so a cache that dropped the field would read a muted channel as unmuted until the snapshot arrives, which is the window the #1001 alert gate reads from. `CachedConversation` gains `val muted: Boolean = false`, and `Conversation.toRecord` / `CachedConversation.toDomain` map it both ways, next to `archived`. The `false` default keeps a document written before this change readable. Proof: `FileConversationCacheTest.conversation()` sets `muted = true`, so `metadata round-trips field-for-field through a fresh instance` covers it, and `nullable fields round-trip as null` resets it to `false` beside `archived`.
