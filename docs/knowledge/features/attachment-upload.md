@@ -4,8 +4,9 @@ Uploads a file's bytes, name and declared MIME type to a conversation on **its o
 `attachment_chunk` frames over the connection the call was made on (#829). Data layer only — no UI.
 [#932](https://github.com/pyrycode/pyrycode-mobile/issues/932) wires this call and the three-argument
 `sendMessage` into the composer draft's send path (data only — see § Consumer below);
-[#670](https://github.com/pyrycode/pyrycode-mobile/issues/670)'s picker and attachment strip are the
-remaining, still-unbuilt UI; [#830](https://github.com/pyrycode/pyrycode-mobile/issues/830) sends a
+[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) is the picker and the strip that let a user
+actually fill that path — see [Thread screen § Composer pending attachments](thread-screen.md#composer-pending-attachments);
+[#830](https://github.com/pyrycode/pyrycode-mobile/issues/830) sends a
 message naming the uploaded ids; [#671](https://github.com/pyrycode/pyrycode-mobile/issues/671) reuses
 the chunk payload shape for retrieval; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)
 proves the flow live. Wire contract: `../pyrycode/docs/protocol-mobile.md` § Attachments
@@ -130,9 +131,9 @@ three-argument `sendMessage`. It reads `ComposerDraftStore`'s per-pair pending-a
 whichever entries have no acknowledged id yet in send order, and names only those ids — see
 [Thread screen § Composer pending attachments](thread-screen.md#composer-pending-attachments) for the
 store shape, the retry-keeps-earlier-ids behavior and the content-URI trust boundary
-(`ContentResolverAttachmentReader.isForeignContentUri`). No UI consumes this yet; the picker and
-attachment strip are [#670](https://github.com/pyrycode/pyrycode-mobile/issues/670)'s follow-up, and
-[#674](https://github.com/pyrycode/pyrycode-mobile/issues/674) still owns the live proof.
+(`ContentResolverAttachmentReader.isForeignContentUri`). [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)
+landed the picker and the strip that fill this path from the UI; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)
+still owns the live proof.
 
 ### `StableConversationRepository` — the one one-shot that doesn't throw
 
