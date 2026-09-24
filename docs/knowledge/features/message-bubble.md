@@ -22,12 +22,19 @@ fun MessageBubble(
     message: Message,
     modifier: Modifier = Modifier,
     toolNestingDepth: Int = 0,
+    attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
+    onAttachmentShown: (String) -> Unit = {},
+    onRetryAttachment: (String) -> Unit = {},
+    onOpenAttachment: (AttachmentTarget) -> Unit = {},
+    onSaveAttachment: (AttachmentTarget) -> Unit = {},
 )
 ```
 
 Single `Message` parameter (not pre-split `(text, isUser)`). `ThreadScreen`'s `LazyColumn` already keys each row on `"msg:${item.message.id}"`; #644 did not need to touch that keying, and the meta row's copy control reads `Message.content` directly rather than anything derived from the list key.
 
 **`toolNestingDepth` (since #896)** is read only by the `Role.Tool` arm — see [Subagent nesting indent](#subagent-nesting-indent-since-896) below. The `Role.User` and `Role.Assistant` arms ignore it; the parameter defaults to `0` so every pre-#896 call site (previews, other tests) is unaffected.
+
+**`attachmentStates`, `onAttachmentShown`, `onRetryAttachment` (since #984), `onOpenAttachment`, `onSaveAttachment` (since #985)** are read only by the two bubble roles, never by `Role.Tool` — see [MessageBubble — attachment slot](message-bubble-attachment-slot.md) below. `onOpenAttachment`/`onSaveAttachment` fire only for a `Ready` attachment, carrying an `AttachmentTarget(attachmentId, displayName, mimeType)`; every one of the five defaults (`emptyMap()`, no-op lambdas), so a text-only call site draws every attachment as loading, starts nothing, and offers neither action; `ThreadScreen` is the only caller that supplies real ones, from `ThreadViewModel.attachmentStates` / `onAttachmentShown` / `onRetryAttachment` and its own `rememberAttachmentActions(attachmentStates) { ... }`.
 
 The composable is **pure rendering** — no `remember`, no `LaunchedEffect`, no coroutines, no state hoisting at the `MessageBubble` level. `Message` is a `data class` with all stable fields, so Compose's stability inference skips recompositions on identity-equal and `equals`-equal inputs without any `@Stable` / `@Immutable` annotation.
 
@@ -110,6 +117,10 @@ The frame's 412dp reference width carries a 20dp gutter on each edge (`MessageCo
 The `Column`'s `horizontalAlignment = Alignment.Start` applies to **both** roles — the design puts `items-start` on the `Message` column even for the right-aligned user bubble (a short user body left-aligns inside its own bubble), while `justify-end` is on the *meta row* alone. That is why the meta row alone takes `Modifier.align(alignment)` rather than the whole column taking the role's alignment.
 
 The meta row is handed `message.content` directly — never text read back out of `body` — so an assistant bubble's copy control copies the markdown *source*, not the parsed render.
+
+### Attachment slot (since #984)
+
+Split into [MessageBubble — attachment slot](message-bubble-attachment-slot.md) on 2026-09-24 to keep this document under the 50000-byte cap the docs guard enforces. The slot's view states, name/MIME resolution, image and file row rendering, the retrieval load lifecycle, and the ready-only tap-to-open/long-press-to-save actions (#985, `onOpenAttachment`/`onSaveAttachment`) moved there verbatim, keeping their heading and anchors; the one link this section carried out, to [Fill vs. hug](#fill-vs-hug-the-streaming-arm-keeps-fillmaxwidth-since-644), now points back here from the child document instead of "above".
 
 ### The #128 divergence closes here
 
@@ -206,7 +217,7 @@ Each role container's `Row` carries `Modifier.padding(bottom = MessageAreaRowSpa
 
 - **`id`, `sessionId`** — passed through `Message` for `equals` / recomposition stability and downstream consumption (`ThreadScreen`'s `LazyColumn` keys items by `message.id`), but not visually surfaced here.
 
-`timestamp` is **no longer ignored** — since #644 it renders in every bubble's meta row via `formatShortDateTime`. `isStreaming` is consumed by the assistant arm since #184 — see the streaming-variant section above.
+`timestamp` is **no longer ignored** — since #644 it renders in every bubble's meta row via `formatShortDateTime`. `isStreaming` is consumed by the assistant arm since #184 — see the streaming-variant section above. `attachments` is **no longer ignored** either — since #984 a non-empty list renders through the [Attachment slot](#attachment-slot-since-984) above and also decides `hasNoBody()`.
 
 ## Configuration
 
@@ -214,6 +225,7 @@ Each role container's `Row` carries `Modifier.padding(bottom = MessageAreaRowSpa
 - **One string resource** (since #644): `cd_thread_copy_message` ("Copy this message"), the copy control's accessible name, in the `cd_thread_*` family. User bodies still render plainly and assistant bodies through `MarkdownText` — no role prefix, no fallback copy on the body text itself.
 - **One drawable** (since #644): `res/drawable/ic_copy.xml` — single-path, 11×12 viewport, tinted at the call site from `LocalContentColor`, the same idiom `ic_open_in_new.xml` already uses.
 - **No theme overrides.** Reads `colorScheme.primaryContainer` / `onPrimaryContainer` (user), `colorScheme.secondaryContainer` / `onSecondaryContainer` (assistant), `typography.bodyMedium` / `bodySmall` directly — see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes). The assistant body's colour now comes from `Surface(contentColor = …)` rather than a `CompositionLocalProvider` the bubble sets up itself; `Box`, `CompositionLocalProvider` and `LocalContentColor` are no longer referenced anywhere in `MessageBubble.kt` as a result — the meta row's de-emphasis and `MarkdownText`'s ambient both come from the one `Surface`.
+- **Attachment rendering** (since #984, `MessageAttachments.kt` beside this file): `android.graphics.ImageDecoder` for off-main-thread thumbnail decode at a capped target size — no third-party image library. Two new string families in the `thread_attachment_*` group (`unnamed`, `loading`, `not_found`, `failed`, `retry`); no new drawable, since the file row reuses `ic_attachment_file` from the composer strip (#933).
 
 ## Previews
 
@@ -240,6 +252,8 @@ No preview for the `Role.Tool` arm at depth 0 — preview coverage for the tool-
 
 `app/src/test/.../components/MessageMetaRowFormatTest.kt` (new, #644) pins `formatShortDateTime` locale-robustly, the way [`SessionBoundaryDelimiter`](session-boundary-delimiter.md)'s tests already do for `formatShortTime`: composition and order (`joinsLocalizedShortDateAndShortTimeInThatOrder`), the design's separator (`joinsTheTwoHalvesWithTheDesignsSeparator`), locale- and zone-sensitivity computed through the same `DateTimeFormatter.ofLocalized*` API rather than a literal (`followsTheSuppliedLocaleRatherThanAFixedPattern`, `followsTheSuppliedTimeZone`), and that the result never equals the Figma sample literal under an unrelated locale (`neverEmitsTheFigmaSampleLiteralForAnUnrelatedLocale`).
 
+**`app/src/sharedTest/.../components/MessageAttachmentsTest.kt` (new, #984, Robolectric `@GraphicsMode(NATIVE)`)** mounts the real `MessageBubble` with a fake `LocalAttachmentThumbnailDecoder` and covers: a decoded image and its content description; the image slot's size held equal from loading to loaded; a decode failure falling back to the file row; a file row labelled with its name and type; a long name shortened to one line inside the bubble's lane (asserted on drawn bounds via `useUnmergedTree = true`, not semantics — see [MessageBubble — attachment slot](message-bubble-attachment-slot.md#attachment-slot-since-984)); an unnamed reference showing the generic label until retrieval supplies one; loading; failed-with-retry, where the tap calls `onRetry(id)` for the right attachment among several; not-found with no retry control; attachments rendering in reference order; an attachment-only message drawing no empty text node; every composed attachment reporting itself shown by id; and, since #985, a `Ready` file row's tap and long-press calling `onOpen`/`onSave` with that attachment's `AttachmentTarget`, a `Ready` image's tap doing the same, and `Loading`/`Failed`/`NotFound` items offering neither (see [MessageBubble — attachment slot § Open and save](message-bubble-attachment-slot.md#open-and-save-since-985)). Native graphics mode is what lets the long-name case measure single-line truncation and the fake decoder hand back a real `ImageBitmap`.
+
 **No dedicated `MessageBubbleTest` case for `toolNestingDepth` (#896).** The parameter is exercised through the real `ThreadScreen` fold instead — `ToolRowNestingTest` (`app/src/sharedTest/.../thread/`) mounts the screen with a matched child, a grandchild and an unmatched-parent tool row and asserts the rendered indent steps by level; see [Thread screen § Subagent tool-row nesting](./thread-screen-how-it-works-list-and-status-row.md#subagent-tool-row-nesting-896). A unit-level `ToolNestingDepthsTest` covers the depth derivation itself, independent of any composable.
 
 Two pre-existing suites were re-run rather than relaxed across #644's restyle, because both read this surface closely: `ScriptedThreadRenderTest` (the streaming caret glyph through the real fold) and `ScriptedSessionBoundaryTest` (tight text-node rects through the unmerged tree, which a container wrapped around assistant text changes the ownership of — a `Surface` + `Column` adds no semantics node, so the leaf text nodes it addresses survive). Both stayed green unchanged.
@@ -260,16 +274,16 @@ Two pre-existing suites were re-run rather than relaxed across #644's restyle, b
 ## Related
 
 - Ticket notes: [`../codebase/128.md`](../codebase/128.md), [`../codebase/129.md`](../codebase/129.md), [`../codebase/130.md`](../codebase/130.md), [`../codebase/131.md`](../codebase/131.md), [`../codebase/184.md`](../codebase/184.md), [`../codebase/644.md`](../codebase/644.md)
-- Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`, `docs/specs/architecture/184-streaming-token-reveal-blinking-caret.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`, `docs/specs/architecture/896-nest-subagent-tool-rows.md`
+- Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`, `docs/specs/architecture/184-streaming-token-reveal-blinking-caret.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`, `docs/specs/architecture/896-nest-subagent-tool-rows.md`, `docs/specs/architecture/984-message-attachments-in-bubbles.md`, `docs/specs/architecture/985-open-and-save-message-attachment.md`
 - Decisions: [ADR 0002 — markdown renderer library](../decisions/0002-markdown-renderer-library.md) (assistant-variant rendering pipeline), [ADR 0003 — syntax highlighter library](../decisions/0003-syntax-highlighter-library.md) (fenced-code styling)
-- Upstream: [data model](./data-model.md) (`Message`, `Role`, `isStreaming`), [Thread screen](./thread-screen.md) (the `LazyColumn(reverseLayout = true)` host, `"msg:${item.message.id}"` keying)
+- Upstream: [data model](./data-model.md) (`Message`, `Role`, `isStreaming`, `attachments`), [Thread screen](./thread-screen.md) (the `LazyColumn(reverseLayout = true)` host, `"msg:${item.message.id}"` keying), [Attachment retrieval](./attachment-retrieval.md) (`retrieveAttachment`, `AttachmentRetrievalResult`, this ticket's `Ready`/`NotFound`/`Failed` mapping), [Thread screen — composer drafts and attachments](./thread-screen-composer-drafts-and-attachments.md) (`ComposerDraftStore.recordSentOriginals` / `sentOriginal`, `AttachmentReader.canRead` — the two calls [Load lifecycle](#load-lifecycle-since-984) resolves between)
 - Component pipeline: [`MarkdownText`](./markdown-text.md) (consumed by the assistant variant since #129; the streaming caret in #184 and the meta row's ambient colour in #644 both ride through the same `Surface.contentColor`); [`ToolCallRow`](./tool-call-row.md) (consumed by the `Role.Tool` arm since #131, gutter applied at the dispatch site since #644); [`SessionBoundaryDelimiter`](./session-boundary-delimiter.md) (shares `MessageContentGutter` / `MessageAreaRowSpacing` and `formatShortTime` since #644); [`QueuedBacklog`](./queued-backlog-section.md) (consumes `BubbleShape` / `BubbleHorizontalPadding` / `BubbleVerticalPadding` / `MessageRoleInset` since #644 rather than copying them); [`UnrecognizedMessageRow`](./unrecognized-message-row.md) (applies `MessageContentGutter` at its own call site since #644)
 - Sibling pattern references: [`DiscussionPreviewRow`](./discussion-preview-row.md) (closest stateless-row composable; mirrored preview-pairing shape), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`
 - Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — `Message area` (`533:1956`), the shared `Message` component in both containers (`114:3558` assistant / `114:3559` user), `Meta row` (`132:4446`). Both roles now match the frame; the pre-#644 flat-assistant divergence is closed.
 - Downstream:
   - [#657](../codebase/657.md) — per-code-block copy control, reusing `CopyTextControl` from `MessageMetaRow.kt` rather than parsing rendered text back out of the UI.
   - [#658](../codebase/658.md) — the tool-row treatment; owns `ToolCallRow.kt` itself.
-  - [#672](../codebase/672.md) — the attachment `Slot` inside `Message`.
+  - [#672](../codebase/672.md) — the attachment `Slot` inside `Message`, split into **#984** (rendering and the load lifecycle) and **#985** (opening and saving a ready attachment) — both now in [MessageBubble — attachment slot](message-bubble-attachment-slot.md).
   - [#681](../codebase/681.md) — the remaining markdown element set.
   - #185 — auto-scroll behaviour that keeps the thread anchored to the bottom as the streaming message grows; consumes the same `Message.isStreaming` contract, no change required inside `MessageBubble`.
   - **#896** — subagent tool-row nesting, split from #658: added `toolNestingDepth` to the `Role.Tool` arm only (see [Subagent nesting indent](#subagent-nesting-indent-since-896) above); the `Role.User` / `Role.Assistant` arms and every other behaviour in this file are unchanged.

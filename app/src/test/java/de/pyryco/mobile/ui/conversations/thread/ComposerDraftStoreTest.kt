@@ -265,4 +265,32 @@ class ComposerDraftStoreTest {
             store.drafts.value,
         )
     }
+
+    @Test
+    fun sentOriginals_areKeptPerHostAndConversation() {
+        val store = ComposerDraftStore()
+        store.recordSentOriginals("pyrybox", "c1", mapOf("a1" to "content://docs/a"))
+        store.recordSentOriginals("pyrybox", "c1", mapOf("a2" to "content://docs/b"))
+
+        assertEquals("content://docs/a", store.sentOriginal("pyrybox", "c1", "a1"))
+        assertEquals("content://docs/b", store.sentOriginal("pyrybox", "c1", "a2"))
+        // An attachment id is host-local: the same id elsewhere names another file.
+        assertNull(store.sentOriginal("laptop", "c1", "a1"))
+        assertNull(store.sentOriginal("pyrybox", "c2", "a1"))
+    }
+
+    @Test
+    fun sentOriginals_goWithTheirHostOrConversation() {
+        val store = ComposerDraftStore()
+        store.recordSentOriginals("pyrybox", "c1", mapOf("a1" to "content://docs/a"))
+        store.recordSentOriginals("pyrybox", "c2", mapOf("a2" to "content://docs/b"))
+        store.recordSentOriginals("laptop", "c3", mapOf("a3" to "content://docs/c"))
+
+        store.clearConversation("pyrybox", "c1")
+        store.clearHost("laptop")
+
+        assertNull(store.sentOriginal("pyrybox", "c1", "a1"))
+        assertEquals("content://docs/b", store.sentOriginal("pyrybox", "c2", "a2"))
+        assertNull(store.sentOriginal("laptop", "c3", "a3"))
+    }
 }

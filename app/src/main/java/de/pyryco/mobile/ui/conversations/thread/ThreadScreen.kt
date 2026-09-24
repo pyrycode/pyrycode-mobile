@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -58,6 +59,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
+import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.BannerNoticeRow
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
@@ -87,6 +89,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
@@ -189,6 +192,12 @@ fun ThreadScreen(
     onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
     onRemoveAttachment: (Long) -> Unit = {},
     attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
+    // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
+    // row is on screen, and a failed one's retry. Bound by MainActivity; defaulted so other screens and tests
+    // draw attachments as loading and start nothing.
+    attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
+    onAttachmentShown: (String) -> Unit = {},
+    onRetryAttachment: (String) -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -244,6 +253,13 @@ fun ThreadScreen(
         }
     }
     val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
+    // #985: a ready message attachment opens in another app or saves to a picked document; each outcome the
+    // user should hear about is one static sentence, never a name, URI or path.
+    val noticeScope = rememberCoroutineScope()
+    val attachmentActions =
+        rememberAttachmentActions(attachmentStates) { notice ->
+            noticeScope.launch { snackbarHostState.showSnackbar(resources.getString(notice.message)) }
+        }
     // #934: a pasted image joins the chat's strip through the same sink as a picked one.
     val onImagesPasted = rememberPastedImageReceiver(onAttachmentsPicked)
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
@@ -528,6 +544,11 @@ fun ThreadScreen(
                                                     MessageBubble(
                                                         message = item.message,
                                                         toolNestingDepth = toolDepths[item.message.id] ?: 0,
+                                                        attachmentStates = attachmentStates,
+                                                        onAttachmentShown = onAttachmentShown,
+                                                        onRetryAttachment = onRetryAttachment,
+                                                        onOpenAttachment = attachmentActions.open,
+                                                        onSaveAttachment = attachmentActions.save,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
                                                     SessionBoundaryDelimiter(boundary = item)
