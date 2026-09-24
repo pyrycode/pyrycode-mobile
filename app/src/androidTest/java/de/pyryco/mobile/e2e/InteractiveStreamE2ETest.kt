@@ -70,6 +70,7 @@ import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.CONTEXT_USAGE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.EFFORT_PLACEHOLDER_LABEL
+import de.pyryco.mobile.ui.conversations.thread.INHERITED_RUN_CONFIG_LABEL
 import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_WINDOW_MS
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.PermissionModeOption
@@ -1863,9 +1864,8 @@ class InteractiveStreamE2ETest {
      *    footer shows it. After one real turn in each, claude applies exactly that level.
      *  * A conversation with its own saved effort keeps it.
      *
-     * Every fixture carries an explicit saved model. The phone matches a saved `""` model against no
-     * published row, so a chat with no model chosen offers no levels and nothing can be recalled into it.
-     * That gap is #972. This scenario covers what the recall does once a model is chosen.
+     * No fixture has a model override: every saved model stays `""`, so the levels come from the published
+     * `default` row (#972).
      *
      * **Two real-claude turns**: one in the fresh chat and one in the fresh channel.
      */
@@ -1884,14 +1884,19 @@ class InteractiveStreamE2ETest {
             val primingName = RECALL_PRIMING_NAME_PREFIX + stamp
             val priming = prepareChat(primingName, originals)
             val row =
-                checkNotNull(usableRows(publishedMenu(priming.id)).firstOrNull { it.effortLevels.distinct().size >= 2 }) {
-                    "no published model offers two effort levels"
+                checkNotNull(
+                    usableRows(publishedMenu(priming.id)).firstOrNull {
+                        it.value == "default" &&
+                            it.effortLevels.distinct().size >= 2
+                    },
+                ) {
+                    "the published default row does not offer two effort levels"
                 }
             val remembered = row.effortLevels.first()
             val explicit = row.effortLevels.last { it != remembered }
-            writeSettings(priming.id, model = row.value)
+            assertSaved(priming.id, "", "")
             openChatRow(primingName)
-            awaitFooter(changeModelLabel, row.displayName.inert())
+            awaitFooter(changeModelLabel, INHERITED_RUN_CONFIG_LABEL)
             pickFooterOption(changeEffortLabel, remembered.inert())
             awaitFooter(changeEffortLabel, remembered.inert())
             assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
@@ -1904,12 +1909,10 @@ class InteractiveStreamE2ETest {
             val channel = prepareChannel(channelName, chat.cwd, originals)
             val explicitName = RECALL_EXPLICIT_NAME_PREFIX + stamp
             val explicitChat = prepareChat(explicitName, originals)
-            writeSettings(chat.id, model = row.value)
-            writeSettings(channel.id, model = row.value)
-            writeSettings(explicitChat.id, model = row.value, effort = explicit)
-            assertSaved(chat.id, row.value, "")
-            assertSaved(channel.id, row.value, "")
-            assertSaved(explicitChat.id, row.value, explicit)
+            writeSettings(explicitChat.id, effort = explicit)
+            assertSaved(chat.id, "", "")
+            assertSaved(channel.id, "", "")
+            assertSaved(explicitChat.id, "", explicit)
 
             // 3. Restart. No activity may outlive the graph it resolved, so the rule's activity goes first.
             composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)

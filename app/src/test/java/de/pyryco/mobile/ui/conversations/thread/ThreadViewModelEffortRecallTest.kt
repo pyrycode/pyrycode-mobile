@@ -108,6 +108,17 @@ class ThreadViewModelEffortRecallTest {
         }
 
     @Test
+    fun recall_withNoModelOverride_writesALevelTheDefaultRowPublishes() =
+        runTest {
+            val repo = ScriptedRepo()
+            val inheritedMenu = ModelMenu(rows = menu.rows + row("default", listOf("medium", "xhigh")), droppedModels = 0)
+            val vm = newVm(repo, MemoryStore("xhigh"), menu = inheritedMenu)
+            collect(vm, repo, reading(effort = "", model = ""))
+
+            assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, effort = "xhigh")), repo.calls)
+        }
+
+    @Test
     fun aReadingWithNoSessionToAddress_isNotWritten() =
         runTest {
             val repo = ScriptedRepo()
