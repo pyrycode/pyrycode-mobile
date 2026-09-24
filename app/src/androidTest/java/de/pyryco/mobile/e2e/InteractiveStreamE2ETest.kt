@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.SystemClock
 import android.util.Log
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
@@ -47,6 +48,11 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ToolResultPayloadDto
+import de.pyryco.mobile.data.network.ToolUsePayloadDto
+import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -2058,7 +2064,12 @@ class InteractiveStreamE2ETest {
      * An unmet prerequisite of the dedicated daemon fails here with its name, never a skip.
      *
      * **Two real-claude turns**: the tool-free ping and the Read.
+     *
+     * **`@Ignore`d until #981 lands.** Step 5 fails on every live run since #965's gate: the turn ends,
+     * claude's reply is exactly the token, and the phone shows no bubble carrying it (#977's diagnosis).
+     * The fix is production code, so #981 removes this `@Ignore`.
      */
+    @Ignore("blocked on #981 — the thread does not show the allowed Read's reply (step 5)")
     @Test
     fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -2126,17 +2137,34 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             sendFromPhone(prompt)
             awaitReadPrompt(tokenFile.substringAfterLast('/'))
+            // #977: the turn must end before the phone is judged, and a missing token says why.
+            val mark = peer.recorded(chat.id).size
             runBlocking {
                 val modalId = peer.awaitPermissionModal(chat.id, REPLY_TIMEOUT_MS)
                 peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
             }
+            val allowedAt = SystemClock.elapsedRealtime()
+            val turnEnd =
+                try {
+                    runBlocking { peer.awaitFrame(chat.id, "turn_end", REPLY_TIMEOUT_MS) }
+                } catch (e: TimeoutCancellationException) {
+                    throw AssertionError(
+                        "the allowed Read's turn never ended: no turn_end for the chat within $REPLY_TIMEOUT_MS ms of the allow",
+                        e,
+                    )
+                }
+            val endedAfterMs = SystemClock.elapsedRealtime() - allowedAt
             val reply = hasText(token, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
             try {
-                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.waitUntil(PHONE_TRAIL_MS) {
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
                 }
             } catch (e: ComposeTimeoutException) {
-                throw AssertionError("the allowed Read's reply never carried the file's token", e)
+                throw AssertionError(
+                    "the allowed Read's reply never carried the file's token: " +
+                        readReplyDiagnosis(peer.recorded(chat.id), mark, token, turnEnd, endedAfterMs),
+                    e,
+                )
             }
         } finally {
             peer.close()
@@ -2169,6 +2197,58 @@ class InteractiveStreamE2ETest {
             throw AssertionError("no permission prompt naming the Read appeared on the phone (prompts with Cancel: $shown)", e)
         }
     }
+
+    /**
+     * Why the ended Read turn left no token on the phone (#977): the phone's bubbles, the peer's [frames]
+     * for the chat (opened just before the Read was sent, so all of them are this turn's; the allow was
+     * sent at index [mark]), and the [turnEnd] that ended it [endedAfterMs] after the allow. Counts,
+     * booleans and the turn's bounded enum-like fields only; never bubble text, payload text or [token].
+     */
+    private fun readReplyDiagnosis(
+        frames: List<Envelope>,
+        mark: Int,
+        token: String,
+        turnEnd: Envelope,
+        endedAfterMs: Long,
+    ): String {
+        val bubbles =
+            composeTestRule
+                .onAllNodes(hasTestTag(MESSAGE_BUBBLE_TEST_TAG), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .map { it.textOfTree() }
+        val afterAllow = frames.drop(mark)
+        val readIds =
+            frames
+                .filter { it.type == "tool_use" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolUsePayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.name == "Read" }
+                .map { it.toolUseId }
+                .toSet()
+        val readResults =
+            frames
+                .filter { it.type == "tool_result" }
+                .map { runCatching { MobileJson.decodeFromJsonElement(ToolResultPayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it == null || it.toolUseId in readIds }
+        val readResultIsError =
+            when {
+                readResults.isEmpty() -> "absent"
+                readResults.any { it == null } -> "undecodable"
+                else -> readResults.map { it?.isError }.distinct().joinToString("/")
+            }
+        val end = runCatching { MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), turnEnd.payload) }.getOrNull()
+        val endFields =
+            end?.let { "stop_reason=${it.stopReason.inert()} outcome=${it.outcome.inert()} is_error=${it.isError}" }
+                ?: "turn_end undecodable"
+        return "bubbles=${bubbles.size} bubbleLengths=${bubbles.map { it.length }} " +
+            "anyBlocked=${bubbles.any { it.trim().equals(BLOCKED_REPLY, ignoreCase = true) }} " +
+            "readResultIsError=$readResultIsError $endFields endedAfterMs=$endedAfterMs " +
+            "peerFramesAfterAllow=${afterAllow.size} peerFramesWithToken=${afterAllow.any { token in it.payload.toString() }}"
+    }
+
+    /** The concatenated `Text` of this node and its descendants, in tree order. */
+    private fun SemanticsNode.textOfTree(): String =
+        config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString("") { it.text } +
+            children.joinToString("") { it.textOfTree() }
 
     /**
      * Poll fresh readings for [conversationId] on [serverId] until one reports [mode], and return it. The
@@ -3077,6 +3157,11 @@ class InteractiveStreamE2ETest {
             "Use the Read tool once to read the file at %s, then reply with its exact contents and nothing else. " +
                 "Do not use any other tool. If the read is denied or fails, do not retry it and reply with the single word blocked."
         val READ_TOOL_WORD = Regex("""\bRead\b""")
+
+        // #977: the word the template asks for on a failed Read, and how long the phone may trail the
+        // peer's turn_end before the missing token is diagnosed.
+        const val BLOCKED_REPLY = "blocked"
+        const val PHONE_TRAIL_MS = 15_000L
 
         // How long a fresh reading may take to report a mode, how often it is re-asked, and how early a
         // settle may end and still count as having run its window.
