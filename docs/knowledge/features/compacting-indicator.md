@@ -97,12 +97,12 @@ when {
 
 `[isCompacting]`, `[apiRetry]`, and (since #804) the usage-limit reading are all **conversation-level, not
 turn-scoped** — each must show
-regardless of what `turn_state` says, including while `turn_state` is `idle`. `StallPromotionBanner`
-(a **separate** affordance above the message list) and the interrupt control (the send button's stop
-variant in `ThreadInputBar` since [#643](../codebase/643.md), below this slot in the same composer
-column — see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) are both untouched by
-this arm — a compacting conversation stays interruptible and a stall can never be hidden by an endless
-stream of `compacting` frames.
+regardless of what `turn_state` says, including while `turn_state` is `idle`. The interrupt control (the
+send button's stop variant in `ThreadInputBar` since [#643](../codebase/643.md), below this slot in the
+same composer column — see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) is
+untouched by this arm — a compacting conversation stays interruptible. (Until [#883](../../specs/architecture/883-retire-literal-screen.md)
+retired it, the same held for the stall promotion banner: a stall could never be hidden by an endless
+stream of `compacting` frames.)
 
 ## Wiring
 
@@ -172,14 +172,15 @@ case).
 
 - **Visual is design-owed.** No compacting treatment is drawn in
   [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — the same design-owed gap
-  already recorded for [`ThinkingIndicator`](thinking-indicator.md),
-  [`ApiRetryIndicator`](api-retry-indicator.md), and [`StallPromotionBanner`](stall-promotion-banner.md).
+  already recorded for [`ThinkingIndicator`](thinking-indicator.md) and
+  [`ApiRetryIndicator`](api-retry-indicator.md) (and, until [#883](../../specs/architecture/883-retire-literal-screen.md)
+  retired it, the stall promotion banner).
   Re-verified via `get_metadata` during #597's code review: the frame is Top App Bar → Message list →
   Status row → Composer, with no status-affordance row drawn. Until it lands the visual follows the
   app's existing M3 progress idiom; when the frame arrives, re-tune spinner/typography here — no
   contract change.
-- **No `liveRegion`** on any of the four status affordances (this indicator, `ThinkingIndicator`,
-  `ApiRetryIndicator`, `StallPromotionBanner`) — a pre-existing, out-of-scope gap across the whole
+- **No `liveRegion`** on any of the status affordances (this indicator, `ThinkingIndicator`,
+  `ApiRetryIndicator`) — a pre-existing, out-of-scope gap across the whole
   family, folded into the design-owed a11y follow-up rather than fixed per-component (see
   [API-retry indicator § Edge cases](api-retry-indicator.md#edge-cases--limitations)).
 - **No animation.** The three-way swap is an instant `when`-branch change, matching every sibling
@@ -188,8 +189,9 @@ case).
   [Compacting state § Edge cases](compacting-state.md#edge-cases--limitations) for the data-layer
   framing (a hostile/crashed daemon could send a rising edge and never a falling one; #596 already
   declined a timeout at the layer that owns the state, and a reconnect clears it). The mitigation this
-  slice owes is structural, not temporal: `StallPromotionBanner` and `InterruptAffordance` both stay
-  visible regardless, so the operator is never trapped by the indicator.
+  slice owes is structural, not temporal: `InterruptAffordance` stays visible regardless (and, until
+  [#883](../../specs/architecture/883-retire-literal-screen.md) retired it, so did the stall promotion
+  banner), so the operator is never trapped by the indicator.
 - **Never observed in production today**, same as the data half: the daemon emits `compacting` only
   from the PTY-runner detector family; production runs the stream-json interactive runner, which has no
   emitter. Rung 3 (real claude) and rung 4 (`fakeclaude`) cannot exercise this component end-to-end for
@@ -223,8 +225,9 @@ case).
   ([#872](https://github.com/pyrycode/pyrycode-mobile/issues/872), immediately above this arm in the
   ladder — the direct clone of this component's `Row` shape), [Turn-outcome indicator](turn-outcome-indicator.md)
   ([#805](https://github.com/pyrycode/pyrycode-mobile/issues/805), immediately below this arm in the
-  ladder), [Stall promotion banner](stall-promotion-banner.md) (the different-slot,
-  independently-co-rendering counterpoint, untouched by this ticket).
+  ladder). The stall promotion banner was the different-slot, independently-co-rendering counterpoint
+  until [#883](../../specs/architecture/883-retire-literal-screen.md) retired it (untouched by this
+  ticket).
 - Parent: split from [#583](https://github.com/pyrycode/pyrycode-mobile/issues/583); sibling data slice
   [#596](../codebase/596.md) (PR #600, `da4c3f9`), natively blocking this ticket.
 - Server SSOT: pyrycode#1074 (design, merged PR pyrycode#1160, 2026-07-21),

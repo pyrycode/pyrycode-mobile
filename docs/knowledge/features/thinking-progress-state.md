@@ -145,8 +145,9 @@ daemon never decodes it and never surfaces it.
   identical property (worse, in `stall`'s case, with no wire clearing edge at all) without incident.
   **The rendering sibling must not block interaction on the reading and must tolerate a long-lived
   one.** [#803](thinking-indicator.md) meets both: nothing on the render path throws, logs, or blocks,
-  and the interrupt control, composer and `StallPromotionBanner` all stay live beside the arm regardless
-  of what it shows.
+  and the interrupt control and composer stay live beside the arm regardless of what it shows (as, until
+  [#883](../../specs/architecture/883-retire-literal-screen.md) retired it, did the stall promotion
+  banner).
 
 ## Security
 
