@@ -100,13 +100,13 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    repository to be published rather than firing on socket-up), with no reopen in between — each of the
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981 / #966 / #967)**
-   runs a **curated set of twenty-seven scenarios** (ping + create-workspace-folder + new-session + delete +
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981 / #966 / #967 / #1021)**
+   runs a **curated set of twenty-eight scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
    peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model +
    footer-context-usage + model-change + inherited-effort + chosen-effort + remembered-effort-recall +
    permission-held-running-tool + stop-running-turn + operator-bypass-permission + permission-answer +
-   question-answer + reconnect-footer + reconnect-commands + background-task, twenty-nine
+   question-answer + reconnect-footer + reconnect-commands + background-task + mute-channel, twenty-nine
    real claude turns — five pings (ping, create-workspace-folder, new-session, the peer-started turn's own
    ping, and the offline-read-reconcile scenario's own ping), the peer-queue-consistency scenario's wait
    turn and its drained ping, the offline-read-reconcile scenario's peer offline turn, the
@@ -122,7 +122,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    the reconnect-commands scenario's two turns (the ping and the compaction), and the background-task
    scenario's one turn (the prompt that starts the task), plus a
    possible reset wrap-up turn — delete, archive-restore,
-   change-workspace, rename, save-as-channel, list-archive-entry, two-host and model-change spend none)
+   change-workspace, rename, save-as-channel, list-archive-entry, two-host, model-change and
+   mute-channel spend none)
    against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
    [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The **operator-bypass-permission**
@@ -132,7 +133,9 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    The **permission-answer** and **question-answer** scenarios (#966) ride a fourth, dedicated daemon and
    are covered in their own paragraph below, after the operator-bypass-permission paragraph. The
    **reconnect-footer**, **reconnect-commands** and **background-task** scenarios (#967) are covered in
-   their own paragraph below, after the permission-answer / question-answer paragraph.
+   their own paragraph below, after the permission-answer / question-answer paragraph. The
+   **mute-channel** scenario (#1021) is covered in its own paragraph below, after the background-task
+   paragraph.
    The ping, create-workspace-folder and
    new-session scenarios in `InteractiveStreamE2ETest` require a displayed exact
    ping reply in the message list (#694), independently of disappearing queued text.
@@ -151,7 +154,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
-   turn. The curated twenty-seven-scenario gate does not cover cross-device Stop.
+   turn. The curated twenty-eight-scenario gate does not cover cross-device Stop.
    An open thread recovering a peer's reconnect-window prompt on its own — the gap #850 found — is
    **shipped (#861)**: the still-open thread's reconnect history re-ask now waits for the repository to
    be published, so it reaches a live repository instead of a socket that is up but not yet handshaked.
@@ -713,11 +716,12 @@ recall rules these methods assert against.
 
 The **operator-bypass permission** scenario (#687 —
 `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) rides the curated `LIVE=1`
-list like every scenario above (`LIVE_MINIMUM` is 27, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
+list like every scenario above (`LIVE_MINIMUM` is 28, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
 having restored it on top of #965's stop method, [#966](https://github.com/pyrycode/pyrycode-mobile/issues/966)
-having raised it again for the permission-answer and question-answer methods, and
+having raised it again for the permission-answer and question-answer methods,
 [#967](https://github.com/pyrycode/pyrycode-mobile/issues/967) having raised it again for the reconnect and
-background-task methods; see
+background-task methods, and [#1021](https://github.com/pyrycode/pyrycode-mobile/issues/1021) having
+raised it again for the zero-turn mute-channel method; see
 [Pre-ship gate](#pre-ship-gate)). Running it needs its
 own daemon: `scripts/e2e-emulator.sh` starts a
 third, dedicated `pyry` instance under its own isolated `HOME` (§ 4a, `start_bypass_daemon`), with
@@ -883,6 +887,17 @@ proven only deterministically, and are not part of this ticket's own methods: ba
 (`BannerNoticeRowTest`, `app/src/sharedTest`) and model refusals (`ModelRefusalRowTest`,
 `app/src/androidTest`) — real claude does not raise either on demand.
 
+The **mute-channel** scenario (#1021 — `interactiveTurn_muteChannel_roundTripsThroughTheHost`) proves
+that Edit channel's Mute notifications checkbox round-trips through the host: nothing is patched
+locally, so the modal can only reopen checked because the daemon stored `set_conversation_muted` and
+echoed it back in `conversation_updated`. A channel set up on the host directly (a discussion promoted
+in its own `cwd`, so no folder is created) is muted through the row's own pen, with OK closing only
+once the write is confirmed and the reopened modal reading the flag from the host's own row; the same
+round trip proves the clear by unmuting it, and the channel is deleted in `finally`. Zero real-claude
+turns — promote, mute, unmute and delete are all daemon round-trips. No rung-4 twin: the checkbox's
+write never depends on a claude turn, so the scripted `fakeclaude` backend has no turn to hold open for
+it.
+
 The **permission-held running-tool** scenario (#950 —
 `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`) is likewise **always-on** (not
 `@Ignore`d): the status area naming the tool claude is running (#897's label) is a **durable** fact for as
@@ -1027,13 +1042,14 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the twenty-seven curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the twenty-eight curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
 peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
 context usage, #946; model change, inherited effort, chosen effort and remembered-effort recall, #545;
 running-tool status label, #950; stop-running-turn, #965; operator-bypass permission, #687 (fixed #981);
-permission-answer and question-answer, #966; reconnect-footer, reconnect-commands and background-task, #967)
+permission-answer and question-answer, #966; reconnect-footer, reconnect-commands and background-task, #967;
+mute-channel round trip, #1021)
 ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
@@ -1058,7 +1074,7 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** twenty-nine real claude turns across twenty-seven curated methods — five pings (ping,
+**Cost:** twenty-nine real claude turns across twenty-eight curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
 ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, the
@@ -1074,14 +1090,16 @@ after it), the reconnect-commands scenario's two turns (the ping and the compact
 background-task scenario's one turn (the prompt that starts the task), #967 —
 and a reset wrap-up turn for the new-session scenario's own live child. Delete, archive-restore,
 change-workspace, rename, save-as-channel,
-list-archive-entry, two-host separation and the model-change scenario spend no Claude turns. Allow a few
+list-archive-entry, two-host separation, the model-change scenario and the mute-channel round trip
+(#1021) spend no Claude turns. Allow a few
 minutes of wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
 tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) rose from 20 to 21 with #965's new
 stop method, then from 21 to 22 with #981 restoring the #687 bypass method to the curated list, then from
 22 to 24 with #966 adding the permission-answer and question-answer methods on the dedicated answer daemon,
-then from 24 to 27 with #967 adding the two reconnect methods and the background-task method.
+then from 24 to 27 with #967 adding the two reconnect methods and the background-task method, then from
+27 to 28 with #1021 adding the zero-turn mute-channel method.
 `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
@@ -1101,7 +1119,8 @@ again, from 14 to 15, #545 raised it again, from 15 to 19, #687 raised it again,
 method, #981 raised it again, from 21 to 22, restoring \#687's method once its production bug was
 fixed, and #966 raised it again, from 22 to 24, adding the permission-answer and question-answer methods
 on the dedicated answer daemon, and #967 raised it again, from 24 to 27, adding the reconnect-footer,
-reconnect-commands and background-task methods, on the same mechanism. Shell cleanup preserves the original
+reconnect-commands and background-task methods, and #1021 raised it again, from 27 to 28, adding the
+mute-channel method, on the same mechanism. Shell cleanup preserves the original
 result and retains failure artifacts; a clean XML report with a failing process status is not
 a passing gate.
 
@@ -1125,7 +1144,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of twenty-seven rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of twenty-eight rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1149,7 +1168,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Twenty-seven curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Twenty-eight curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -1176,7 +1195,8 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation` (#966),
 `InteractiveStreamE2ETest#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` (#967),
 `InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork` (#967), and
-`InteractiveStreamE2ETest#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` (#967),
+`InteractiveStreamE2ETest#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` (#967), and
+`InteractiveStreamE2ETest#interactiveTurn_muteChannel_roundTripsThroughTheHost` (#1021),
 so exactly
 **twenty-nine real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
@@ -1192,10 +1212,12 @@ conversation, and the question-answer scenario's two turns — the phone's answe
 it, the reconnect-commands scenario's two turns — the ping and the compaction, and the background-task
 scenario's one turn — the prompt that starts the task (#967); the delete,
 archive-restore, change-workspace, rename,
-save-as-channel, list-archive-entry, two-host and model-change scenarios each add a method, not a turn
+save-as-channel, list-archive-entry, two-host, model-change and mute-channel scenarios each add a
+method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
 list-archive-entry is pure navigation with no daemon round-trip at all; two-host separation is pairing,
-navigation, rename and link cycling, also daemon round-trips).
+navigation, rename and link cycling, also daemon round-trips; mute-channel's promote, mute and unmute
+are daemon round-trips too, #1021).
 The full class also includes the
 \#481 tool-use test and #950's `@Ignore`d elapsed-reading twin, which stay excluded from LIVE — the
 operator-bypass-permission method rides LIVE now that
@@ -1235,7 +1257,7 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **twenty-nine real claude turns per run across twenty-seven curated methods** (ping + create-workspace-folder,
+Cost: **twenty-nine real claude turns per run across twenty-eight curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
 \#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
 status-sheet-running-model scenario's own ping, #891 + the footer-context-usage scenario's own ping,
@@ -1251,9 +1273,11 @@ it, the reconnect-commands scenario's two turns — the ping and the compaction,
 scenario's one turn — the prompt that starts the task, #967; `/clear` spends
 none beyond the ping that primes the session; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
-\#740, two-host separation, #847, and model change each spend none — create/rename/delete/archive/restore/
-change-workspace/promote are daemon round-trips, list-archive-entry is pure navigation, and two-host
-separation is pairing, navigation, rename and link cycling, also daemon round-trips), a few minutes of
+\#740, two-host separation, #847, model change, and the mute-channel round trip, #1021, each spend
+none — create/rename/delete/archive/restore/
+change-workspace/promote are daemon round-trips, list-archive-entry is pure navigation, two-host
+separation is pairing, navigation, rename and link cycling, also daemon round-trips, and mute-channel's
+promote, mute and unmute are daemon round-trips too), a few minutes of
 wall clock, subscription-covered.
 
 Environment checks for a new host (the recorded API 33 run passed these paths):
@@ -1881,6 +1905,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   panel. See the dedicated paragraph under [What rung 3 is made of](#what-rung-3-is-made-of). Banner
   notices (`BannerNoticeRowTest`) and model refusals (`ModelRefusalRowTest`) remain this family's
   deterministic-only cases — real claude does not raise either on demand.
+
+- **Coverage — shipped:** [#1021](https://github.com/pyrycode/pyrycode-mobile/issues/1021) added
+  `interactiveTurn_muteChannel_roundTripsThroughTheHost`, the twenty-eighth curated `LIVE=1` method. It
+  proves the Mute notifications checkbox `EditChannelModal` gained round-trips through the host: the
+  reopened modal can only read the flag checked because the daemon stored `set_conversation_muted` and
+  echoed it back in `conversation_updated`, since nothing is patched locally. Zero real-claude turns —
+  the channel's promote, mute, unmute and delete are all daemon round-trips. See the dedicated paragraph
+  under [What rung 3 is made of](#what-rung-3-is-made-of).
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns
