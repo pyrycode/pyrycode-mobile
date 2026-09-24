@@ -36,3 +36,30 @@ No change to the e2e test: the unscrolled wait is not the cause, and after the f
 A new unit test in `RemoteConversationRepositoryTest`, `rename_callerCancelledAfterReplyArrives_stillFoldsRenamedConversationIntoList`. Load the `MIXED_FIXTURE` snapshot and launch `rename` in its own job. Push the correlated `conversation_updated` reply, then cancel the job before `runCurrent()`. On the test dispatcher the collector's frame runs first, finding the still-registered waiter. The caller's cancellation runs after it. Assert that the list shows the new name. This is red before the fix and green after. The existing `rename_*`, `promote_*` and malformed-reply tests pin that nothing else moves.
 
 Live proof: `python3 scripts/android-test-gate.py live` is the dispatcher's gate for this method.
+
+## Revisions
+
+### 2026-09-24 — Security review added (verifier finding on PR #998)
+
+The ticket carries `security-sensitive`, and the plan was committed without its `## Security review`. The verifier failed the PR on that alone. This entry adds the section below; the design and the code are unchanged. The review found no MUST FIX, so no code moves.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The boundary is unchanged: `MobileJson.decodeFromJsonElement<ConversationResponseDto>` is the single decode-and-validate step for a `conversation_updated` payload, and `ConversationResponseDto.toConversation` is a total field copy with no second throw site. What moves is *where* a correlated payload is decoded first: on the single inbound collector in `onInbound`, not only on the caller's coroutine. The collector already ran exactly this decode for the unsolicited half, so it adds no new parser, no new field and no new render path. The name and cwd still reach Compose only as text through the existing list rows.
+- [Trust boundaries — hostile relay or daemon] No findings. A correlated reply now updates the list by the payload's own `id`, before the waiter completes and even when the caller is gone. This gives a lying peer nothing new. Every correlated caller (`ConversationCommands.rename` / `promote` / `sendArchiveToggle`, `WorkspaceCommands.changeWorkspace`, `SessionSettingsCommands.setSystemPrompt`) already upserted the decoded reply by its own `id`, without checking it against the id it asked about. And the unsolicited arm already accepted any `id` with no `in_reply_to` at all. So a peer that can put a frame inside the Noise session could already write any row this way. The relay is outside the session and cannot forge or alter a frame; it can only drop or delay one, which leaves the list on the old name until the next snapshot, as before.
+- [Malformed payload / collector liveness] No findings. Decode failure is `SerializationException` or kotlinx-datetime's `DateTimeFormatException`, both subtypes of `IllegalArgumentException`, which the arm catches. The fold is skipped, the collector stays alive, and the payload still reaches its waiter verbatim, so the caller's own decode throws as before. The existing `rename_onMalformedUpdatedReply_throwsAndLeavesListUnchanged`, `promote_…`, `archive_…` and `changeWorkspace_onMalformedUpdatedReply_throwsAndLeavesListUnchanged` tests pin the correlated half, and the unsolicited malformed-push test pins collector survival.
+- [Tokens, secrets, credentials] No findings — the change touches no key, token or pairing state.
+- [File / storage] No findings — nothing is written to disk. The list projection is in memory.
+- [Inter-process / Android surface] No findings — no intent, deep link, push path or WebView is touched.
+- [Cryptographic primitives] No findings — the Noise session and `MobileWireCodec` are unchanged.
+- [Network & I/O] No findings — no new frame, size limit or connection setting. A correlated reply is one frame already bounded by the transport.
+- [Error messages, logs] No findings. No branch of the arm logs anything: the payload carries the conversation's name and cwd, and a decode exception's message can quote it, so the catch drops it silently. The waiter receives the raw payload, not the exception.
+- [Concurrency] No findings. The fold runs on the single inbound collector, which is the only other writer ordering with the caller. `ConversationListProjection.upsertConversation` is a `MutableStateFlow.update`, so the collector's write and the caller's later write of the same value cannot lose each other, and an equal list does not re-emit. The fold is applied before `complete`, so the caller resumes onto a list that already carries the reply, matching the `TYPE_WORKSPACE_UPDATED` arm.
+- [Threat model] OUT OF SCOPE — checking that a correlated reply's `id` matches the requested conversation. The unsolicited path must accept any `id` by protocol (#721), so such a check would not close anything; it would need a protocol change first, which no ticket proposes.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-24
