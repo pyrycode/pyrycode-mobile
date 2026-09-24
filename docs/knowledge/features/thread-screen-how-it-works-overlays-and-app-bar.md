@@ -152,6 +152,39 @@ SlashCommandTypeAhead(
 
 `inputAnchor` mirrors the existing `footerAnchors` map's own pattern one level up — [`Thread input bar`](thread-input-bar.md)'s new `onAnchorChanged` parameter reports the field's live `boundsInWindow()`, translated into the layer's own coordinates by subtracting `layerOrigin`, the same translation every `OptionsOverlay` anchor in this file already applies. `anchor?.takeIf { openMenu == null }` is what keeps this overlay and the footer's from ever drawing at once — passing `null` closes [`SlashCommandTypeAhead`](slash-command-type-ahead.md) unconditionally whenever a footer menu (`openMenu != null`) is open, rather than relying on z-order or manual dismissal. `resetKey = state.conversationId` matches the conversation-keyed `remember` idiom the footer's own overlay state already uses, so no suggestion state survives a conversation switch. See [Slash-command type-ahead](slash-command-type-ahead.md) for the composable's own state machine (`dismissedFor`, the two `LaunchedEffect`s) and [Thread input bar § `TextFieldValue` and the cursor-at-end-on-outside-change rule](thread-input-bar.md#textfieldvalue-and-the-cursor-at-end-on-outside-change-rule-885) for what a pick's `onDraftChange` call requires of the field underneath it.
 
+### Background-tasks panel placement (post-#678)
+
+[#678](https://github.com/pyrycode/pyrycode-mobile/issues/678) draws
+[`BackgroundTaskPanel`](thread-composer-footer.md#actions-menu-884) directly inside `ThreadScreen`, right
+after the footer's `OptionsOverlay` `Box` closes and before the `WorkspacePicker` mount — not as an eighth
+`Scaffold` sibling and not from the `MainActivity` destination block the way
+[`QuestionBatchModal`](question-batch-modal.md) is drawn (`MobileReadOnlyModal` opens its own `Dialog`
+window, so its place in the composition tree doesn't affect what it draws over — the same reasoning
+[Permission-modal overlay placement](#permission-modal-overlay-placement-post-446) already gives for its own
+`Scaffold`-sibling `when` block):
+
+```kotlin
+var backgroundTasksOpen by remember(state.conversationId) { mutableStateOf(false) }
+// … footer OptionsOverlay Box …
+if (backgroundTasksOpen) {
+    BackgroundTaskPanel(roster = state.backgroundTasks, onDismiss = { backgroundTasksOpen = false })
+}
+WorkspacePicker(...)
+```
+
+`backgroundTasksOpen` is a plain `remember`, not `rememberSaveable`, keyed on `state.conversationId` — the
+same idiom `openControl` uses one field up: switching conversations drops an open panel, and a process
+death never restores one a fresh screen instance never opened. The Actions menu's background-tasks row sets
+it (see [Thread composer footer § Actions menu](thread-composer-footer.md#actions-menu-884)); closing the
+panel — the footer Close button, the close glyph, or Back, all routed through `MobileReadOnlyModal`'s single
+`onDismissRequest` — only flips it back, sending nothing and touching no task or conversation state.
+`state.backgroundTasks` (`BackgroundTaskRoster?`) and `state.backgroundTaskCount` (`Int`) reach
+`ThreadUiState` from two defaulted `ThreadViewModel` constructor lambdas bound in `AppModule` to the open
+host's `RelayRepositoryCoordinator.observeBackgroundTasks` / `observeLiveBackgroundTaskCount` — the same
+per-conversation binding shape `questionBatch` uses — and default to `null` / `0` on the demo destination.
+See [Shared mobile modal § Callers](mobile-modal.md#callers) for the panel's own content and trust-boundary
+handling.
+
 ### `fun retry()` — non-suspend, VM owns the launch
 
 ```kotlin
