@@ -248,6 +248,8 @@ fun ThreadScreen(
         }
     }
     val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
+    // #934: a pasted image joins the chat's strip through the same sink as a picked one.
+    val onImagesPasted = rememberPastedImageReceiver(onAttachmentsPicked)
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
     // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
@@ -348,6 +350,7 @@ fun ThreadScreen(
                         onAnchorChanged = { inputAnchor = it },
                         hasAttachments = attachments.isNotEmpty(),
                         sending = attachmentsSending,
+                        onImagesReceived = onImagesPasted,
                     )
                     // The design puts the model/effort controls in the footer, below the input field, not
                     // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`

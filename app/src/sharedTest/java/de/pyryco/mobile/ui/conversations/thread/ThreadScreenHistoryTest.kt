@@ -4,7 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -54,7 +54,7 @@ class ThreadScreenHistoryTest {
         var state by mutableStateOf(threadState(rows(count = 30), ThreadHistoryTail.None))
         var demands = 0
         setScreen({ state }, onDemand = { demands++ })
-        composeRule.onNode(hasScrollAction()).performScrollToIndex(29)
+        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(29)
         composeRule.waitForIdle()
         val afterReachingTheOldestRow = demands
         assertEquals(1, afterReachingTheOldestRow)
@@ -73,7 +73,7 @@ class ThreadScreenHistoryTest {
         // than shifting it, and the per-subtype keys are computed from item fields and never position.
         var state by mutableStateOf(threadState(rows(count = 30), ThreadHistoryTail.None))
         setScreen({ state }, onDemand = {})
-        composeRule.onNode(hasScrollAction()).performScrollToIndex(10)
+        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(10)
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Row 19.").assertIsDisplayed()
         composeRule.runOnIdle { state = state.copy(items = rows(count = 20, prefix = "Older") + state.items) }
@@ -119,7 +119,7 @@ class ThreadScreenHistoryTest {
         var state by mutableStateOf(threadState(rows(count = 30), ThreadHistoryTail.None))
         var demands = 0
         setScreen({ state }, onDemand = { demands++ }, onRetryOlder = {})
-        composeRule.onNode(hasScrollAction()).performScrollToIndex(29)
+        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(29)
         composeRule.waitForIdle()
         val afterReachingTheOldestRow = demands
         assertEquals(1, afterReachingTheOldestRow)
