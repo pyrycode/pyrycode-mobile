@@ -58,7 +58,7 @@ None: no I/O, no new failure mode.
   - after a real drag away from the newest end (`performTouchInput { swipeDown() }`, which goes through `NestedScrollSource.UserInput`; `performScrollToIndex` does not), a non-streaming arrival leaves the row the reader was looking at displayed and the new row not displayed;
   - same, with a streaming arrival — the existing yield still holds for the streaming pin.
 - **Repository test (new, beside `assistantDelta_interleavesWithMessagesAndTools_inArrivalOrder`).** The #687 frame order with a permission `modal_shown` / `modal_dismissed` between `tool_use` and `tool_result`; the assistant row is present, finalized, and carries the text. The cause-1 proof; green on `main`.
-- **Rung 3.** Remove the `@Ignore` on `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`, restore it to the LIVE `TEST_TARGET` in `scripts/e2e-emulator.sh` (and its PASS log clause), and raise `LIVE_MINIMUM` back to 21 so `test_live_floor_matches_the_curated_list` holds. `readReplyDiagnosis` gains `threadHeldToken` — whether the phone repository's `observeMessages(chat)` holds an assistant row containing the token — so a future live failure names cause 1 or cause 2 by itself (a boolean, never the text). The dispatcher runs the live suite after verifier (`needs-real-claude`).
+- **Rung 3.** Remove the `@Ignore` on `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`, restore it to the LIVE `TEST_TARGET` in `scripts/e2e-emulator.sh` (and its PASS log clause), and raise `LIVE_MINIMUM` to 22 (see Revisions) so `test_live_floor_matches_the_curated_list` holds. `readReplyDiagnosis` gains `threadHeldToken` — whether the phone repository's `observeMessages(chat)` holds an assistant row containing the token — so a future live failure names cause 1 or cause 2 by itself (a boolean, never the text). The dispatcher runs the live suite after verifier (`needs-real-claude`).
 - Existing thread screen tests in `app/src/sharedTest/.../thread/` re-run as touched scope.
 
 ## Documentation handoff
@@ -66,8 +66,37 @@ None: no I/O, no new failure mode.
 Pending for the documentation stage:
 
 - `docs/knowledge/features/thread-screen-how-it-works-list-and-status-row.md` § "Streaming auto-scroll": the newest-row pin that now sits beside the streaming pin, and cause 2's mechanism (key anchoring under `reverseLayout` hides a non-streaming newest row once the list overflows).
-- `docs/e2e-interactive-stream.md`: `LIVE_MINIMUM` back to 21 with the #687 method restored to the LIVE list (it currently says 20 "until #981"), and the new `threadHeldToken` field in the #977 diagnosis.
+- `docs/e2e-interactive-stream.md`: `LIVE_MINIMUM` at 22 with the #687 method restored to the LIVE list on top of #965's stop method (see Revisions), and the new `threadHeldToken` field in the #977 diagnosis.
 
 ## Open questions
 
 - Does Robolectric's key-anchored measure reproduce the hidden row on `main`? Expected yes (it is `LazyList` measure logic, not device behaviour); if not, § B1's tiebreaker applies.
+
+## Revisions
+
+### 2026-09-24 — security review, and the pin survives a refused scroll
+
+Driven by the verifier's MUST FIX on PR #988: the plan had no `## Security review` although #981 carries `security-sensitive`. The pass below ran against the design and the diff already on the branch. It found one real defect in the new effect (Concurrency, SHOULD FIX, fixed here):
+
+- **The newest-row pin catches a refused scroll and keeps collecting.** `scrollToItem` runs under the list's `MutatorMutex` at default priority. A drag holds it at `UserInput` priority, and the mutex refuses a lower-priority scroll by throwing `CancellationException("Current mutation had a higher priority")`. A finger resting at the newest end leaves `userScrolledAway` false while the drag still holds the mutex, so a row arriving then gets its scroll refused. Thrown inside `collect`, that ended the `LaunchedEffect(listState)` for good. The streaming pin relaunches on every `hasStreamingMessage` flip, but this effect does not relaunch, so every later non-streaming row would land hidden until the screen left composition. The new contract is that the collect wraps `scrollToItem(0)` in `try`/`catch (CancellationException)` and calls `ensureActive()`. A refusal costs that one scroll, and a real cancellation of the effect still ends it. The streaming pin is unchanged.
+- **New screen test** `a_scroll_refused_under_a_resting_finger_does_not_stop_later_rows_being_followed` in `ThreadScreenNewestRowTest` drags away and back to the newest end. The finger stays down. It appends a row whose scroll the held drag refuses, lifts the finger without a fling, and asserts that the next row is displayed. The test fails without the catch and passes with it.
+- **`LIVE_MINIMUM` is 22, not 21.** #965 merged first and added its stop method to the LIVE list, so restoring the #687 method takes the floor from 21 to 22. `scripts/android-test-gate.py` now sets it to 22 directly. The merge had left `= 21` plus `+= 1`. The Testing strategy's "back to 21" and the Documentation handoff's "21" now read 22.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The only daemon-derived value the new effect reads is the newest row's `listKey`, a string that `ThreadRow.listKey` builds from the wire message id or a client-stamped id. The `LazyColumn` already uses it as its item key. The effect compares it for change and never renders, logs, parses or stores it. Daemon-authored assistant text reaches Compose through the existing `MessageItem` render path as text, and this ticket does not change that path, the fold or the keys. A hostile daemon that floods new newest rows can only scroll a reader who is already at the newest end to the newest end. `snapshotFlow` conflates a burst to one scroll per frame, and a reader who dragged away (`userScrolledAway`) is not moved.
+- [Tokens, secrets] No findings. The token in the new e2e diagnostic `threadHoldsReply` is the #687 harness's file witness, a nonce written for the Read to find, not a credential. It is used only in a `contains` check. The diagnostic returns `"true"`, `"false"` or `"unread"`, never the token, the row text or an exception message. The peer's pairing token (`ARG_BYPASS_PEER_TOKEN`) is not touched.
+- [File / storage] No findings for the production change: no file or storage I/O. The diagnostic collects `observeMessages` through the app's repository chain, so `CachingConversationRepository` may write the conversation's thread rows to its existing cache. It is the same write that opening the thread performs, into the same app-private store.
+- [Android attack surface] No findings. No intents, deep links, pending intents, providers or WebViews are added. The restored LIVE entry in `scripts/e2e-emulator.sh` and the `LIVE_MINIMUM` floor in `scripts/android-test-gate.py` are host-side test configuration and ship nothing in the APK.
+- [Crypto] No findings. No primitives, keys or Noise code are touched.
+- [Network & I/O] No findings for production. The diagnostic's `observeMessages` collection sends one `backfillSinceRequest` over the already-paired session. It runs only on the failure path of step 5 and is bounded by `withTimeout(THREAD_TIMEOUT_MS)`.
+- [Errors, logs] No findings. The production change logs nothing. The assertion message gains one boolean-or-`unread` field. `runCatching` folds any failure to `"unread"`, so an exception's text cannot carry row content into the test report.
+- [Concurrency] SHOULD FIX, fixed in this revision. A refused `scrollToItem` ended the non-relaunching newest-row effect permanently (see Revisions). Otherwise the effect is composition-scoped and cancelled with its three siblings. It suspends only in `scrollToItem`, and it reads `userScrolledAway` and scrolls on the main thread with no shared mutable state across threads. `runBlocking` in `threadHoldsReply` is test-only instrumentation code.
+- [Threat model] No findings. A compromised relay or hostile daemon gains no new capability: the change adds no inbound verb, no new rendered field and no new outbound frame. UI-side leakage is unchanged, because the change only decides which already-rendered row is on screen.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-24
