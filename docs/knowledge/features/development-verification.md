@@ -82,6 +82,15 @@ cannot give it:
 - work on a background dispatcher that Robolectric's paused main clock does not
   drive, like `ScriptedUnrecognizedMessageTest`.
 
+A Compose test goes in plain `app/src/test`, not `sharedTest`, when it must never run
+on a real device even though it drives a Composable: `sharedTest` also runs on the
+emulator in the in-depth run, and a test that exercises a real system surface — like
+Android's own permission dialog — would trigger that surface for real there instead
+of hitting Robolectric's shadow. `NotificationPermissionPromptTest` (#685, driving
+`rememberNotificationPermissionRequest` under `createAndroidComposeRule<ComponentActivity>()`)
+is the first such case — see
+[Push messaging service § Testing](push-messaging-service.md#testing-685).
+
 A test in the wrong folder fails safe. A device-only test placed in `sharedTest`
 fails in `./gradlew test`. A Robolectric-capable test placed in `androidTest` still
 runs on every verifier pass, only slower.

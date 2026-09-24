@@ -176,6 +176,36 @@ low impact today because nothing draws attention yet, so it did not block. The f
 with whichever ticket next touches `launchAttention`'s restore branch (candidate: fold
 `opened` for this host's `viewing.viewed` entries right after `restored`).
 
+### Attention alerts (#685)
+
+`HostConversationSource.alerts: SharedFlow<AttentionAlert>` is `attention`'s sibling output, for a
+consumer that needs identities rather than states — a state map alone cannot tell a new turn from a
+still-running one, or a re-shown prompt from a fresh one. `AttentionAlert(serverId, conversationId, kind, key)`
+names one thing that may deserve a notification: `Kind.TurnCompleted` with `key = turnId`, or
+`Kind.Prompt` with `key = "modal:$modalId"` / `"batch:$questionBatchId"`. Every field but `serverId` is
+daemon-authored and used only as an equality key, exactly like the ids [§ Attention state](#attention-state-877)'s
+own fold treats the same way.
+
+- **Turn:** emitted inside `updateAttention`'s live-event collector, immediately after the fold's
+  `onEvent` call, by comparing `attention.counted[conversationId]` before and after. It fires only when
+  the fold counts that `TurnEnd` for the first time — reusing [§ Attention state](#attention-state-877)'s
+  once-per-turn rule verbatim (a blank or oversized turn id never counts; a re-delivered turn is a no-op;
+  a restored `positions` entry recognises the latest turn after process death). Emitted whether or not
+  the conversation is viewed — a backgrounded thread composition can stay alive.
+- **Prompt:** emitted inside the modal/batches collector by diffing the current prompt-key set
+  (the private `promptKeys(modal, batches)`) against `Held.prompts`, the previous set for that
+  generation; only keys new since the last emission alert. A `StateFlow` re-publish of the same modal or
+  batch therefore emits nothing; a reconnect that hides and re-shows the same prompt *does* re-emit it —
+  suppressing that repeat is the consumer's job (see
+  [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685)),
+  not this flow's. `promptKeys` drops a blank-`conversationId` modal or batch, the same way `resolve`
+  above does — its tap could never route to anything.
+- **Hot, not replayed, bounded:** `MutableSharedFlow(extraBufferCapacity = 64, onBufferOverflow = DROP_OLDEST)`,
+  emitted with `tryEmit` under the same class monitor `updateAttention` already holds — no new lock and
+  no suspension inside the fold. A late subscriber sees nothing emitted before it subscribed; the one
+  production consumer, `AttentionNotifier`, is bound `createdAtStart` so it is always already subscribed
+  before any host can connect.
+
 ### Exact-host repository access
 
 `repositoryFor(serverId)` resolves `RelayConnectionRegistry.connectionFor` by exact

@@ -85,6 +85,14 @@ class AppPreferences(
         dataStore.edit { prefs -> prefs[NOTIFICATIONS_ENABLED] = enabled }
     }
 
+    /** Whether the app has ever shown Android's notification-permission prompt (#685); only ever set. */
+    val notificationPermissionAsked: Flow<Boolean> =
+        dataStore.data.map { prefs -> prefs[NOTIFICATION_PERMISSION_ASKED] ?: false }
+
+    suspend fun setNotificationPermissionAsked() {
+        dataStore.edit { prefs -> prefs[NOTIFICATION_PERMISSION_ASKED] = true }
+    }
+
     val defaultWorkspace: Flow<String> =
         dataStore.data.map { prefs ->
             legacyWorkspaceKey(prefs)?.let { prefs[it] } ?: DEFAULT_SCRATCH_CWD
@@ -162,6 +170,7 @@ class AppPreferences(
         val REMEMBERED_EFFORT = stringPreferencesKey("remembered_effort")
         val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")
         val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
+        val NOTIFICATION_PERMISSION_ASKED = booleanPreferencesKey("notification_permission_asked")
         val DEFAULT_WORKSPACE = stringPreferencesKey("default_workspace")
         val WORKSPACE_MIGRATED = booleanPreferencesKey("default_workspace_migrated")
         val LEGACY_WORKSPACE_OWNER = stringPreferencesKey("legacy_workspace_owner")

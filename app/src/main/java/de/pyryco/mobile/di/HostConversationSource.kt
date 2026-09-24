@@ -18,9 +18,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
@@ -37,6 +40,20 @@ data class HostConversationSnapshot(
     val channels: List<Conversation> = emptyList(),
     val chats: List<Conversation> = emptyList(),
 )
+
+/**
+ * One thing on one host that may deserve an alert (#685): a turn the attention fold counted for the first
+ * time, or a prompt newly outstanding. [key] is the turn id, or `modal:<modalId>` / `batch:<batchId>`.
+ * Every field is daemon-authored except [serverId], so each is an identity only, never text to show.
+ */
+data class AttentionAlert(
+    val serverId: String,
+    val conversationId: String,
+    val kind: Kind,
+    val key: String,
+) {
+    enum class Kind { TurnCompleted, Prompt }
+}
 
 /**
  * Internal presentation and stream descriptor; repository-stream identity is the bundle generation.
@@ -88,6 +105,14 @@ class HostConversationSource internal constructor(
 
     /** Non-Idle states only, by `serverId` then conversation id; a conversation missing from it is Idle. */
     val attention = attentionState.asStateFlow()
+    private val alertEvents = MutableSharedFlow<AttentionAlert>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /**
+     * Candidate alerts (#685), emitted once per newly counted turn, whether or not the conversation is
+     * viewed, and once per prompt key new since the host's previous prompt set. Hot and not replayed:
+     * a re-shown prompt emits again after a reconnect, so a consumer that must alert once dedupes.
+     */
+    val alerts = alertEvents.asSharedFlow()
     private var disposed = false
 
     init {
@@ -187,7 +212,12 @@ class HostConversationSource internal constructor(
         scope.launch(entry.job) {
             connection.liveSessionEvents.collect { event ->
                 updateAttention(entry) {
+                    val before = attention.counted[event.conversationId]
                     attention = attention.onEvent(event, viewing.isViewing(connection.serverId, event.conversationId))
+                    // The fold appends a turn id to `counted` only when it counts that turn for the first time.
+                    if (event is LiveSessionEvent.TurnEnd && attention.counted[event.conversationId] != before) {
+                        alert(connection.serverId, event.conversationId, AttentionAlert.Kind.TurnCompleted, event.turnId)
+                    }
                 }
             }
         }
@@ -208,6 +238,11 @@ class HostConversationSource internal constructor(
                 updateAttention(entry) {
                     this.modal = modal
                     this.batches = batches
+                    val current = promptKeys(modal, batches)
+                    current.filterKeys { it !in prompts }.forEach { (key, conversationId) ->
+                        alert(connection.serverId, conversationId, AttentionAlert.Kind.Prompt, key)
+                    }
+                    prompts = current.keys
                 }
             }
         }
@@ -240,6 +275,25 @@ class HostConversationSource internal constructor(
         if (entry.positions.value != null) entry.positions.value = entry.attention.positions
         entry.resolved = entry.attention.resolve(entry.modal, entry.batches)
         publish()
+    }
+
+    private fun alert(
+        serverId: String,
+        conversationId: String,
+        kind: AttentionAlert.Kind,
+        key: String,
+    ) {
+        alertEvents.tryEmit(AttentionAlert(serverId, conversationId, kind, key))
+    }
+
+    /** Each outstanding prompt's key and its conversation; a blank-conversation prompt belongs to none. */
+    private fun promptKeys(
+        modal: ModalUiState,
+        batches: List<QuestionBatch>,
+    ): Map<String, String> {
+        val open = (modal as? ModalUiState.Open)?.takeIf { it.conversationId.isNotBlank() }
+        return batches.filter { it.conversationId.isNotBlank() }.associate { "batch:${it.questionBatchId}" to it.conversationId } +
+            listOfNotNull(open?.let { "modal:${it.modalId}" to it.conversationId })
     }
 
     /** Whether [entry] is still its host's live generation; a retired one may neither publish nor persist. */
@@ -310,6 +364,9 @@ class HostConversationSource internal constructor(
         var modal: ModalUiState = ModalUiState.Hidden
         var batches: List<QuestionBatch> = emptyList()
         var resolved: Map<String, ConversationAttention> = emptyMap()
+
+        /** The prompt keys already alerted for this generation, so an unchanged prompt emits once (#685). */
+        var prompts: Set<String> = emptySet()
 
         /** The positions to persist; null until the stored ones were restored, and never set without a cache. */
         val positions = MutableStateFlow<Map<String, ReadPosition>?>(null)
