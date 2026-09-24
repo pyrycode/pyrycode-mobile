@@ -2,11 +2,18 @@
 
 `ui/conversations/components/SystemPromptEditor.kt` (`de.pyryco.mobile.ui.conversations.components`)
 holds one conversation's system-prompt editing state: what is stored, whether the running session
-already uses it, the operator's in-progress draft, and save/failure tracking. Added in #824 as the
-state the create/save-as channel (#666) and edit channel (#667) view models will both own — shaped
+already uses it, the operator's in-progress draft, and save/failure tracking. Added in #824, shaped
 like [`HostEditorController`](host-editor.md): a plain Kotlin object with no Compose or Android
-imports, constructed over the owning view model's `viewModelScope`. Nothing is wired or rendered yet;
-that is #666/#667's work.
+imports, constructed over the owning view model's `viewModelScope`. It is still unused — #666 split
+into [Save as channel](save-as-channel-dialog.md) (#957) and [Create channel](mobile-modal.md#callers)
+(#958), and neither wired it in. Both flows write a system prompt only into a **new or freshly
+promoted** conversation, which has no stored prompt and no running session to read `appliedStatus`
+from, so there is nothing for this editor's read-then-track shape to do for them: they call
+`SystemPromptLimit.fits`/`utf8Bytes` directly for the byte-limit check and `setSystemPrompt` once,
+verbatim, after their own create/promote leg confirms — no `requestSystemPrompt`, no `draft`/`confirmed`
+distinction, no refresh read. This editor remains available for a caller that edits an **existing**
+conversation's already-stored prompt against a live session, which is what #667 (edit channel) still
+needs; nothing has claimed it since #824.
 
 ## Shape
 
