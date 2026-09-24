@@ -69,7 +69,15 @@ class RelayConnectionBundle internal constructor(
         RelayRepositoryCoordinator(
             connections = supervisor.currentConnection,
             relayStatus = supervisor.relayStatus,
-            createPump = { transport -> NoiseSessionPump(transport, sessionFactory, dispatcher) },
+            // Each pump reports its own transport's app-too-old minimum to the supervisor that dialled it (#1008).
+            createPump = { transport ->
+                NoiseSessionPump(
+                    transport,
+                    sessionFactory,
+                    dispatcher,
+                    onClientMinimum = { supervisor.recordClientMinimum(transport, it) },
+                )
+            },
             dispatcher = dispatcher,
             deviceName = clientInfo.deviceName,
             pushTokens = pushTokens,

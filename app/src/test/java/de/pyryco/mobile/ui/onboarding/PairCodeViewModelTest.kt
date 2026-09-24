@@ -150,6 +150,25 @@ class PairCodeViewModelTest {
             }
         }
 
+    @Test fun updateRequiredEndsTheConnectionWaitImmediately() =
+        runTest {
+            withVm {
+                vm.onEvent(PairCodeEvent.Code(code))
+                submit()
+                runCurrent()
+                assertEquals(PairCodePhase.Connecting, vm.state.value.phase)
+                status.value = ConnectionStatus(RelayLinkStatus.UpdateRequired("1.4.0"), PyrycodeLinkStatus.Down)
+                runCurrent()
+                assertEquals(PairCodePhase.Editing, vm.state.value.phase)
+                val error =
+                    vm.state.value.error
+                        .orEmpty()
+                assertTrue(error, error.contains("Update the app"))
+                // The daemon-authored minimum is not echoed into the copy.
+                assertTrue(error, !error.contains("1.4.0"))
+            }
+        }
+
     @Test fun rejectedPairingEndsTheConnectionWaitImmediately() =
         runTest {
             withVm {

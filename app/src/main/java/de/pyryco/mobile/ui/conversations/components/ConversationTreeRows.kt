@@ -260,6 +260,7 @@ internal fun RelayLinkStatus.isDisconnected(): Boolean =
         RelayLinkStatus.Offline,
         RelayLinkStatus.DaemonAbsent,
         RelayLinkStatus.PairingRejected,
+        is RelayLinkStatus.UpdateRequired,
         -> true
         RelayLinkStatus.Idle, RelayLinkStatus.Connecting, RelayLinkStatus.Connected -> false
     }

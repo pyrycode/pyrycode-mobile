@@ -73,6 +73,14 @@ class ConnectionStatusLineTest {
         )
     }
 
+    /** #1008: a host that rejects the app as too old reads as down; the minimum is not shown here. */
+    @Test
+    fun relayUpdateRequired_mapsToDown_withOrWithoutAMinimum() {
+        val expected = ConnectionLegVisual(ConnectionLegCategory.Down, "Update required", "Relay: update required")
+        assertEquals(expected, RelayLinkStatus.UpdateRequired(null).toLegVisual())
+        assertEquals(expected, RelayLinkStatus.UpdateRequired("1.4.0").toLegVisual())
+    }
+
     // --- Pyrycode leg (PyrycodeLinkStatus) ---
 
     @Test
