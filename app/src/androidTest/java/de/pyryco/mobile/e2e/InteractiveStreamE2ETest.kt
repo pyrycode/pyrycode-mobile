@@ -1,6 +1,7 @@
 package de.pyryco.mobile.e2e
 
 import android.Manifest
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -11,6 +12,7 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -68,12 +70,15 @@ import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.CONTEXT_USAGE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.EFFORT_PLACEHOLDER_LABEL
+import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_WINDOW_MS
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
+import de.pyryco.mobile.ui.conversations.thread.PermissionModeOption
 import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
 import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -169,6 +174,12 @@ class InteractiveStreamE2ETest {
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_effort)
     private val footerPending: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_pending)
+
+    // #687: the footer's permission control, found by its click label, and the permission prompt's Cancel.
+    private val changePermissionLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_permission)
+    private val modalCancel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.modal_cancel)
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
@@ -1931,6 +1942,180 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * The phone never describes an operator-bypass child as enforcing approvals (#687, pyrycode#2510). The
+     * scenario runs on a dedicated daemon that `scripts/e2e-emulator.sh` starts under its own HOME, with the
+     * stdio prompt surface on and its children launched in operator bypass (stored mode `default`). The phone
+     * pairs with it by code and stays unprivileged. A peer paired `--allow-remote-permissions` to the same
+     * daemon answers the one prompt. The chat is made with `createDiscussion`: the daemon builds a minted
+     * session from the bootstrap's template, so its child launches in bypass too.
+     *  * **Bypass reads as bypass.** After a tool-free turn, a fresh reading reports `bypassPermissions`,
+     *    and the reopened footer reads Bypass approvals, never Manual approval.
+     *  * **An acknowledgement is not a confirmation.** Manual approval sends a `default` write, which the
+     *    daemon acknowledges without touching a child whose stored mode is already `default`. The control
+     *    stays pending for the whole settle window and ends on Bypass approvals. A refusal would clear the
+     *    pending mark at once. Plan, Bypass approvals and Manual approval then each settle on their own
+     *    label once a fresh reading reports them, on the same session with no turn in between.
+     *  * **Manual approval enforces.** A Read of a file outside the workspace raises a prompt on the phone
+     *    that names the Read. The peer allows it, and the reply carries the file's token, which the prompt
+     *    never contains.
+     *
+     * An unmet prerequisite of the dedicated daemon fails here with its name, never a skip.
+     *
+     * **Two real-claude turns**: the tool-free ping and the Read.
+     */
+    @Test
+    fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val args = InstrumentationRegistry.getArguments()
+        args.getString(ARG_BYPASS_UNMET)?.let { throw AssertionError(bypassUnmetMessage(it)) }
+        val serverId = bypassArg(ARG_BYPASS_SERVER_ID)
+        val pairCode = bypassArg(ARG_BYPASS_PAIR_CODE)
+        val tokenFile = bypassArg(ARG_BYPASS_TOKEN_FILE)
+        val token = bypassArg(ARG_BYPASS_TOKEN)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = bypassArg(ARG_BYPASS_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = bypassArg(ARG_BYPASS_SERVER_STATIC_PUBLIC_KEY),
+                ),
+            )
+        val bypass = PermissionModeOption.Bypass
+        val manual = PermissionModeOption.Default
+        try {
+            // 1. Pair the dedicated host by code, create a chat on it, and run one tool-free turn.
+            awaitChannelList()
+            awaitConnected()
+            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+            pairHostByCode(pairCode, BYPASS_HOST_NAME)
+            val name = BYPASS_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            val repository = hostRepository(serverId)
+            val chat = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.rename(repository.createDiscussion().id, name) } }
+            openChatRow(name)
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+            // 2. AC-1: the thread re-reads its settings on subscription, not at turn end, so reopen it first.
+            leaveThread()
+            openChatRow(name)
+            val sessionId = awaitPermissionReading(serverId, chat.id, bypass.wire).sessionId
+            awaitFooter(changePermissionLabel, bypass.label)
+            composeTestRule.onAllNodes(footerControl(changePermissionLabel) and hasText(manual.label)).assertCountEquals(0)
+
+            // 3. AC-2: the no-op `default` write. Pending proves the tap sent it; lasting the settle window
+            //    proves it was acknowledged, and no re-read in that window reported `default`.
+            pickFooterOption(changePermissionLabel, manual.label)
+            awaitFooter(changePermissionLabel, bypass.label) { it == footerPending }
+            val pendingSince = SystemClock.elapsedRealtime()
+            awaitFooter(changePermissionLabel, bypass.label)
+            val pendingFor = SystemClock.elapsedRealtime() - pendingSince
+            assertTrue(
+                "the Manual approval write settled after $pendingFor ms: refused, or confirmed by a reading",
+                pendingFor >= PERMISSION_SETTLE_WINDOW_MS - SETTLE_SLACK_MS,
+            )
+            assertEquals("a fresh reading after the acknowledged no-op", bypass.wire, freshSettings(chat.id, serverId).permissionMode)
+
+            // 4. AC-2: real changes on the same child, each confirmed by a fresh reading and then the footer.
+            listOf(PermissionModeOption.Plan, bypass, manual).forEach { mode ->
+                pickFooterOption(changePermissionLabel, mode.label)
+                val reading = awaitPermissionReading(serverId, chat.id, mode.wire)
+                assertEquals("the conversation moved to another session", sessionId, reading.sessionId)
+                awaitFooter(changePermissionLabel, mode.label)
+            }
+
+            // 5. AC-3: a Read outside the workspace raises a prompt that names it; the peer allows it once.
+            val prompt = READ_PROMPT_TEMPLATE.format(tokenFile)
+            assertTrue("the Read prompt contains the witness token", token !in prompt)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            sendFromPhone(prompt)
+            awaitReadPrompt(tokenFile.substringAfterLast('/'))
+            runBlocking {
+                val modalId = peer.awaitPermissionModal(chat.id, REPLY_TIMEOUT_MS)
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+            }
+            val reply = hasText(token, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+            try {
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the allowed Read's reply never carried the file's token", e)
+            }
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
+     * Wait until the open thread shows a permission prompt that names this Read: a node in the prompt's
+     * dialog, the one holding its Cancel, whose text carries the file's [baseName] or the tool name `Read`.
+     * The phone's own message names both, so the dialog scope is what makes the match the prompt's.
+     */
+    private fun awaitReadPrompt(baseName: String) {
+        val inPrompt = hasAnyAncestor(hasAnyDescendant(hasText(modalCancel) and hasClickAction()))
+        val namesRead =
+            SemanticsMatcher("names the Read of $baseName") { node ->
+                val text =
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .joinToString("") { it.text }
+                baseName in text || READ_TOOL_WORD.containsMatchIn(text)
+            }
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(namesRead and inPrompt).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            val shown = composeTestRule.onAllNodes(hasText(modalCancel) and hasClickAction()).fetchSemanticsNodes().size
+            throw AssertionError("no permission prompt naming the Read appeared on the phone (prompts with Cancel: $shown)", e)
+        }
+    }
+
+    /**
+     * Poll fresh readings for [conversationId] on [serverId] until one reports [mode], and return it. The
+     * mode comes from the child's own confirmation, which can trail a write or a turn by a moment.
+     */
+    private fun awaitPermissionReading(
+        serverId: String,
+        conversationId: String,
+        mode: String,
+    ): SessionSettings {
+        var last: SessionSettings? = null
+        return try {
+            runBlocking {
+                withTimeout(PERMISSION_READING_TIMEOUT_MS) {
+                    var reading = freshSettings(conversationId, serverId)
+                    while (reading.permissionMode != mode) {
+                        last = reading
+                        delay(PERMISSION_POLL_MS)
+                        reading = freshSettings(conversationId, serverId)
+                    }
+                    reading
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError(
+                "no fresh reading reported '$mode'; the last reported '${last?.permissionMode?.inert()}' yolo=${last?.yolo}",
+                e,
+            )
+        }
+    }
+
+    /** A dedicated-daemon argument (#687), failing with the script that passes it. */
+    private fun bypassArg(key: String): String =
+        requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
+            "missing instrumentation arg '$key' — scripts/e2e-emulator.sh passes it once the operator-bypass daemon (#687) is up"
+        }
+
+    /** The failure for an unmet dedicated-daemon prerequisite: the script's code, and what it means. */
+    private fun bypassUnmetMessage(code: String): String =
+        "the operator-bypass daemon (#687) did not start: " + (BYPASS_UNMET_REASONS[code] ?: "unmet prerequisite '$code'") +
+            ". See scripts/e2e-emulator.sh § 4a and its log."
+
+    /**
      * In the open thread of [conversationId]: the recall settles the footer on [level], a fresh reply's saved
      * effort is [level], and after one real turn claude applies exactly [level].
      */
@@ -1945,16 +2130,26 @@ class InteractiveStreamE2ETest {
         assertEquals(EffectiveEffort.Applied(level), freshSettings(conversationId).effectiveEffort)
     }
 
-    /** The paired host's current repository, read from the current graph so it survives a restart. */
-    private fun hostRepository(): ConversationRepository {
-        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+    /**
+     * A paired host's current repository, by default the harness's first host, read from the current graph
+     * so it survives a restart.
+     */
+    private fun hostRepository(
+        serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
+    ): ConversationRepository {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
         return runBlocking { withTimeout(CONNECT_TIMEOUT_MS) { checkNotNull(bundle.coordinator.currentRepository.first { it != null }) } }
     }
 
-    /** A new `request_session_settings` for [conversationId] and its reply: each collection sends its own read. */
-    private fun freshSettings(conversationId: String): SessionSettings {
-        val repository = hostRepository()
+    /**
+     * A new `request_session_settings` for [conversationId] and its reply: each collection sends its own read.
+     * [serverId] is the host that holds the conversation, by default the harness's first host.
+     */
+    private fun freshSettings(
+        conversationId: String,
+        serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
+    ): SessionSettings {
+        val repository = hostRepository(serverId)
         return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeSessionSettings(conversationId).filterNotNull().first() } }
     }
 
@@ -2269,7 +2464,10 @@ class InteractiveStreamE2ETest {
      * every state offers a paste link ([PASTE_CODE_LINK]), which opens `PairCodeScreen`. Pair → confirm the
      * fingerprint → the screen waits for Connected and returns to the list.
      */
-    private fun pairHostByCode(pairCode: String) {
+    private fun pairHostByCode(
+        pairCode: String,
+        hostName: String = HOST_B_NAME,
+    ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val pairControl =
             context.getString(R.string.cd_tree_section_pair_host, context.getString(R.string.channels_section_header))
@@ -2282,7 +2480,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNode(hasSetTextAction() and hasText(HOST_NAME_FIELD)).performTextInput(HOST_B_NAME)
+        composeTestRule.onNode(hasSetTextAction() and hasText(HOST_NAME_FIELD)).performTextInput(hostName)
         composeTestRule.onNode(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).performTextInput(pairCode)
         composeTestRule.onNode(hasText(PAIR_BUTTON) and hasClickAction()).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -2691,6 +2889,52 @@ class InteractiveStreamE2ETest {
         const val RECALL_CHAT_NAME_PREFIX = "e2e545-recall-chat-"
         const val RECALL_CHANNEL_NAME_PREFIX = "e2e545-recall-channel-"
         const val RECALL_EXPLICIT_NAME_PREFIX = "e2e545-explicit-"
+
+        // #687 operator-bypass scenario. The arguments scripts/e2e-emulator.sh passes once its dedicated
+        // daemon is up, or ARG_BYPASS_UNMET naming the prerequisite it lacked. The pair code and the peer
+        // token carry pairing tokens: never log them. The witness token authorizes nothing.
+        const val ARG_BYPASS_UNMET = "bypassUnmet"
+        const val ARG_BYPASS_SERVER_ID = "bypassServerId"
+        const val ARG_BYPASS_PAIR_CODE = "bypassPairCode"
+        const val ARG_BYPASS_PEER_TOKEN = "bypassPeerToken"
+        const val ARG_BYPASS_SERVER_STATIC_PUBLIC_KEY = "bypassServerStaticPublicKey"
+        const val ARG_BYPASS_TOKEN_FILE = "bypassTokenFile"
+        const val ARG_BYPASS_TOKEN = "bypassToken"
+
+        // What each of the script's BYPASS_UNMET codes means.
+        val BYPASS_UNMET_REASONS =
+            mapOf(
+                "no_credential" to "no Claude credential; set CLAUDE_CODE_OAUTH_TOKEN (the live gate's route) or ANTHROPIC_API_KEY",
+                "claude_json_unreadable" to
+                    "CLAUDE_CODE_OAUTH_TOKEN is set but ~/.claude.json, copied into the isolated HOME, is unreadable",
+                "revision_unavailable" to "the daemon revision is unavailable, so it cannot be shown to contain pyrycode 475c406a",
+                "revision_unverifiable" to
+                    "the daemon revision cannot be checked for pyrycode 475c406a; set PYRYCODE_SRC to a checkout holding both",
+                "revision_lacks_475c406a" to "the daemon revision does not contain pyrycode 475c406a",
+                "claude_missing" to "claude is not on PATH",
+                "instance_name" to "the dedicated instance name is not a test instance name",
+                "isolated_home" to "the isolated HOME, its config or the token file could not be written",
+                "daemon_not_ready" to "the dedicated daemon did not answer `pyry status` within 15 s",
+                "pairing" to "the phone's pairing with the dedicated daemon could not be minted",
+                "peer_pairing" to "the peer's --allow-remote-permissions pairing could not be minted",
+            )
+
+        // The dedicated host's display name and its chat's run-unique name: neither contains "ping" or
+        // another scenario's prefix.
+        const val BYPASS_HOST_NAME = "Bypass e2e host"
+        const val BYPASS_CHAT_NAME_PREFIX = "e2e687-"
+
+        // pyrycode#2510's outside-workspace Read, with the path filled in. The token is in the file only.
+        const val READ_PROMPT_TEMPLATE =
+            "Use the Read tool once to read the file at %s, then reply with its exact contents and nothing else. " +
+                "Do not use any other tool. If the read is denied or fails, do not retry it and reply with the single word blocked."
+        val READ_TOOL_WORD = Regex("""\bRead\b""")
+
+        // How long a fresh reading may take to report a mode, how often it is re-asked, and how early a
+        // settle may end and still count as having run its window.
+        const val PERMISSION_READING_TIMEOUT_MS = 30_000L
+        const val PERMISSION_POLL_MS = 500L
+        const val SETTLE_SLACK_MS = 5_000L
 
         // A model row whose `truncated_fields` names any of these cannot be used: its value would not be
         // accepted, its levels would be incomplete, or its label would be cut.

@@ -6,7 +6,7 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated set of rung-3 scenarios (nineteen methods, fourteen real claude turns — listed at the LIVE
+#     curated set of rung-3 scenarios (twenty methods, sixteen real claude turns — listed at the LIVE
 #     TEST_TARGET below) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
@@ -173,6 +173,29 @@ PAIR_NAME_PEER="${PAIR_NAME}-peer"
 PAIR_PEER_OUT="${WORK_DIR}/pair-peer.out"
 PEER_TOKEN=""
 
+# Dedicated operator-bypass daemon (#687), rung 3 / LIVE only: a third test daemon under its OWN isolated
+# HOME, whose config turns on the stdio permission prompt and whose claude children launch with
+# `--dangerously-skip-permissions --permission-prompt-tool stdio`. Claude authenticates from
+# CLAUDE_CODE_OAUTH_TOKEN (the live gate's route) or ANTHROPIC_API_KEY, inherited from this environment and
+# never written anywhere. The phone pairs with it by code, unprivileged; a second peer device pairs with
+# --allow-remote-permissions to answer its one prompt. An unmet prerequisite never aborts the run: it
+# becomes BYPASS_UNMET, a static code the one method that needs this daemon fails with.
+PYRY_NAME_BYPASS="${PYRY_NAME}-bypass"
+PAIR_NAME_BYPASS="${PAIR_NAME}-bypass"
+PAIR_NAME_BYPASS_PEER="${PAIR_NAME}-bypass-peer"
+DAEMON_BYPASS_LOG="${WORK_DIR}/daemon-bypass.log"
+PAIR_BYPASS_OUT="${WORK_DIR}/pair-bypass.out"
+PAIR_BYPASS_PEER_OUT="${WORK_DIR}/pair-bypass-peer.out"
+BYPASS_HOME=""
+BYPASS_PID=""
+BYPASS_UNMET=""
+BYPASS_TOKEN_FILE=""
+BYPASS_WITNESS=""
+SERVER_ID_BYPASS=""
+PAIR_CODE_BYPASS=""
+BYPASS_PEER_TOKEN=""
+BYPASS_PEER_SERVER_STATIC_PUBKEY=""
+
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
@@ -300,12 +323,13 @@ except BaseException:
 PY
 }
 
-# phone_pair_code <pair-out> <phone-relay-url> (#847)
+# phone_pair_code <pair-out> <phone-relay-url> [<suffix>] (#847; <suffix> #687, default B)
 #   The second host is paired through the app's own paste-a-code flow, so the phone needs the WHOLE
 #   pairing code, not four fields. Finds the payload line the first host's parse accepts, replaces only
 #   `relay` with the URL the phone can dial (the daemon's own is /v1/server-baked, and on the local-relay
 #   rung a loopback address), and re-encodes it base64url without padding, as `pyry pair` prints it.
-#   Prints exactly two shell assignments and nothing else: the code carries the pairing token.
+#   Prints exactly two shell assignments, SERVER_ID_<suffix> and PAIR_CODE_<suffix>, and nothing else: the
+#   code carries the pairing token.
 phone_pair_code() {
   python3 - "$@" <<'PY'
 import base64, json, shlex, sys
@@ -329,16 +353,19 @@ with open(sys.argv[1]) as f:
 if payload is None:
     sys.exit("could not find the base64url pairing payload line in the second `pyry pair` output")
 payload["relay"] = sys.argv[2]
+suffix = sys.argv[3] if len(sys.argv) > 3 else "B"
 code = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
-print("SERVER_ID_B=" + shlex.quote(payload["server"]))
-print("PAIR_CODE_B=" + shlex.quote(code))
+print("SERVER_ID_" + suffix + "=" + shlex.quote(payload["server"]))
+print("PAIR_CODE_" + suffix + "=" + shlex.quote(code))
 PY
 }
 
-# pair_token <pair-out> (#848)
+# pair_token <pair-out> [<prefix>] (#848; <prefix> #687)
 #   The second-client peer dials host A as its own device, so it needs only its own token: the server id,
 #   relay URL and server static key are host A's, already passed. Finds the payload line the first host's
-#   parse accepts and prints exactly one shell assignment and nothing else: the value is a pairing token.
+#   parse accepts and prints exactly one shell assignment, PEER_TOKEN, and nothing else: the value is a
+#   pairing token. With <prefix> it prints <prefix>_TOKEN and <prefix>_SERVER_STATIC_PUBKEY instead, for a
+#   peer on a host whose key the harness has not otherwise read.
 pair_token() {
   python3 - "$@" <<'PY'
 import base64, json, shlex, sys
@@ -356,7 +383,11 @@ with open(sys.argv[1]) as f:
         except Exception:
             continue
         if isinstance(obj, dict) and {"server", "token", "server_static_pubkey"} <= obj.keys():
-            print("PEER_TOKEN=" + shlex.quote(obj["token"]))
+            if len(sys.argv) > 2:
+                print(sys.argv[2] + "_TOKEN=" + shlex.quote(obj["token"]))
+                print(sys.argv[2] + "_SERVER_STATIC_PUBKEY=" + shlex.quote(obj["server_static_pubkey"]))
+            else:
+                print("PEER_TOKEN=" + shlex.quote(obj["token"]))
             sys.exit(0)
 sys.exit("could not find the base64url pairing payload line in the peer's `pyry pair` output")
 PY
@@ -368,8 +399,15 @@ cleanup() {
   [ -n "${WATCHER_PID}" ] && kill "${WATCHER_PID}" 2>/dev/null || true
   [ -n "${DAEMON_PID}" ] && kill "${DAEMON_PID}" 2>/dev/null || true
   [ -n "${DAEMON_B_PID:-}" ] && kill "${DAEMON_B_PID}" 2>/dev/null || true
+  [ -n "${BYPASS_PID:-}" ] && kill "${BYPASS_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
   wait 2>/dev/null || true
+  # The operator-bypass HOME (#687) goes whatever the exit code: it holds a copy of ~/.claude.json and the
+  # witness file. Only a path this script minted is removed. Its daemon log stays in WORK_DIR as the rest do.
+  if [[ "${BYPASS_HOME:-}" == /tmp/pyry-e2e-byp.* ]]; then
+    [ -z "${BYPASS_TOKEN_FILE}" ] || rm -f "${BYPASS_TOKEN_FILE}"
+    rm -rf "${BYPASS_HOME}"
+  fi
   if [ "${code}" -ne 0 ]; then
     log "logs kept at ${WORK_DIR} (relay.log, daemon.log, pair.out)"
     if [ -n "${ISO_HOME}" ]; then
@@ -625,6 +663,13 @@ if command -v go >/dev/null 2>&1; then
   DAEMON_REVISION="$(go version -m "$(command -v "${PYRY_BIN}")" 2>/dev/null | sed -n 's/.*vcs.revision=//p' || true)"
 fi
 log "daemon revision: ${DAEMON_REVISION:-unavailable}; binary: ${PYRY_BIN}"
+# Claude's own revision (#687), clamped to a plain charset: it is a binary's output, printed to the log.
+if [ -n "${DETERMINISTIC}" ]; then
+  log "claude revision: scripted fakeclaude (no real claude on this rung)"
+else
+  CLAUDE_REVISION="$(claude --version 2>/dev/null | head -n 1 | LC_ALL=C tr -cd 'A-Za-z0-9 ._()+-' | cut -c 1-80 || true)"
+  log "claude revision: ${CLAUDE_REVISION:-unavailable}"
+fi
 log "starting pyry daemon (PYRY_MOBILE_V2=1) → ${DAEMON_RELAY_URL}…"
 if [ -n "${DETERMINISTIC}" ]; then
   # The fake speaks the current runner protocol and replays the first fragment
@@ -750,6 +795,96 @@ if [ -z "${DETERMINISTIC}" ]; then
   log "second-client peer minted on serverId=${SERVER_ID}"
 fi
 
+# ---- 4a. the dedicated operator-bypass daemon (rung 3 / LIVE only, #687) ------------------------
+# See PYRY_NAME_BYPASS above. Each prerequisite that fails records ONE static code in BYPASS_UNMET and
+# stops this section; the run carries on and only the #687 method fails, naming the code. Nothing here
+# reads or writes the operator's ~/.pyry: the daemon's HOME is a fresh `mktemp -d` under /tmp (short, for
+# the control socket's sun_path), and `cleanup` removes it whatever the outcome.
+bypass_unmet() {
+  BYPASS_UNMET="$1"
+  [ -z "${BYPASS_PID}" ] || { kill "${BYPASS_PID}" 2>/dev/null || true; }
+  log "operator-bypass daemon (#687) not available: ${1} — ${2}"
+}
+
+start_bypass_daemon() {
+  local route="" parsed="" deadline=0
+  # 1. A credential for claude under the isolated HOME. The OAuth route also needs the operator's
+  #    ~/.claude.json (copied, read-only on the source), as pyrycode's WithWorktreeAuthenticated does.
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    route="oauth"
+    [ -r "${HOME}/.claude.json" ] \
+      || { bypass_unmet claude_json_unreadable "CLAUDE_CODE_OAUTH_TOKEN is set but ~/.claude.json is not readable"; return 0; }
+  elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    route="api-key"
+  else
+    bypass_unmet no_credential "neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set"
+    return 0
+  fi
+  # 2. A daemon that contains pyrycode 475c406a (session_settings reports the confirmed permission mode).
+  [[ "${DAEMON_REVISION}" =~ ^[0-9a-f]{7,64}$ ]] \
+    || { bypass_unmet revision_unavailable "the daemon binary carries no vcs.revision"; return 0; }
+  [ -n "${PYRYCODE_SRC}" ] \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "475c406a^{commit}" 2>/dev/null \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "${DAEMON_REVISION}^{commit}" 2>/dev/null \
+    || { bypass_unmet revision_unverifiable "set PYRYCODE_SRC to a pyrycode checkout holding ${DAEMON_REVISION} and 475c406a"; return 0; }
+  git -C "${PYRYCODE_SRC}" merge-base --is-ancestor 475c406a "${DAEMON_REVISION}" \
+    || { bypass_unmet revision_lacks_475c406a "daemon revision ${DAEMON_REVISION} does not contain pyrycode 475c406a"; return 0; }
+  # 3. Fixture capabilities.
+  command -v claude >/dev/null 2>&1 || { bypass_unmet claude_missing "claude is not on PATH"; return 0; }
+  two_host_name_ok "${PYRY_NAME_BYPASS}" \
+    || { bypass_unmet instance_name "${PYRY_NAME_BYPASS} is not a test instance name"; return 0; }
+  BYPASS_HOME="$(mktemp -d /tmp/pyry-e2e-byp.XXXXXX)" \
+    || { bypass_unmet isolated_home "could not create the isolated HOME"; return 0; }
+  BYPASS_WITNESS="$(python3 -c 'import secrets; print(secrets.token_hex(16))')" \
+    && BYPASS_TOKEN_FILE="${BYPASS_HOME}/outside/e2e687-$(python3 -c 'import uuid; print(uuid.uuid4())').txt" \
+    && (
+      umask 077
+      mkdir -p "${BYPASS_HOME}/.pyry" "${BYPASS_HOME}/work" "${BYPASS_HOME}/outside"
+      printf '%s\n' '{"interactive_runner":"stream-json","stdio_permission_prompt":true}' >"${BYPASS_HOME}/.pyry/config.json"
+      if [ "${route}" = "oauth" ]; then cp "${HOME}/.claude.json" "${BYPASS_HOME}/.claude.json"; fi
+      printf '%s\n' "${BYPASS_WITNESS}" >"${BYPASS_TOKEN_FILE}"
+    ) \
+    || { bypass_unmet isolated_home "could not write the isolated HOME's config, credential file or witness file"; return 0; }
+  log "operator-bypass daemon (#687): isolated HOME ${BYPASS_HOME}, credential route ${route}"
+  report_interactive_runner "${BYPASS_HOME}/.pyry/config.json"
+
+  # The operator-bypass launch: pyrycode's spawnPermissionDaemon operatorBypass argv. The daemon injects no
+  # approval gate of its own for an operator bypass, so the stdio prompt tool is what keeps a downgraded
+  # child's prompts reachable.
+  local -a bypass_env=("HOME=${BYPASS_HOME}" PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}")
+  [ -n "${LIVE}" ] || bypass_env+=(PYRY_ALLOW_INSECURE_RELAY=1)
+  env "${bypass_env[@]}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME_BYPASS}" -pyry-workdir="${BYPASS_HOME}/work" -pyry-idle-timeout=0 \
+    -- --dangerously-skip-permissions --permission-prompt-tool stdio \
+    >"${DAEMON_BYPASS_LOG}" 2>&1 &
+  BYPASS_PID=$!
+  deadline=$((SECONDS + 15))
+  until env "HOME=${BYPASS_HOME}" "${PYRY_BIN}" status -pyry-name="${PYRY_NAME_BYPASS}" >/dev/null 2>&1; do
+    if ! kill -0 "${BYPASS_PID}" 2>/dev/null || [ "${SECONDS}" -ge "${deadline}" ]; then
+      bypass_unmet daemon_not_ready "not ready within 15s; see private log ${DAEMON_BYPASS_LOG}"
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  # The phone pairs unprivileged, by code; the peer pairs --allow-remote-permissions. Never log either value.
+  env "HOME=${BYPASS_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_BYPASS}" --name="${PAIR_NAME_BYPASS}" \
+    >"${PAIR_BYPASS_OUT}" 2>&1 \
+    && parsed="$(phone_pair_code "${PAIR_BYPASS_OUT}" "${PHONE_RELAY_URL}" BYPASS)" \
+    && eval "${parsed}" \
+    && [ -n "${SERVER_ID_BYPASS}" ] && [ -n "${PAIR_CODE_BYPASS}" ] \
+    || { bypass_unmet pairing "the phone pairing could not be minted; see private log ${PAIR_BYPASS_OUT}"; return 0; }
+  env "HOME=${BYPASS_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_BYPASS}" --name="${PAIR_NAME_BYPASS_PEER}" --allow-remote-permissions \
+    >"${PAIR_BYPASS_PEER_OUT}" 2>&1 \
+    && parsed="$(pair_token "${PAIR_BYPASS_PEER_OUT}" BYPASS_PEER)" \
+    && eval "${parsed}" \
+    && [ -n "${BYPASS_PEER_TOKEN}" ] && [ -n "${BYPASS_PEER_SERVER_STATIC_PUBKEY}" ] \
+    || { bypass_unmet peer_pairing "the peer pairing could not be minted; see private log ${PAIR_BYPASS_PEER_OUT}"; return 0; }
+  log "operator-bypass daemon (#687) up: serverId=${SERVER_ID_BYPASS} (the test pairs it by code)"
+}
+if [ -z "${DETERMINISTIC}" ]; then
+  start_bypass_daemon
+fi
+
 # ---- 4b. release a held stream fragment after an explicit test action ---------
 # First-fragment replay belongs to fakeclaude's user-envelope handler. Only the
 # second fragment needs a host signal: enqueue #2, or a phone disconnect while
@@ -772,10 +907,10 @@ fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
 # Deterministic mode runs exactly the scenario's one method (class#method); default rung 3 runs the whole
-# class; LIVE curates nineteen real-claude methods (ping + create-workspace-folder + new-session +
+# class; LIVE curates twenty real-claude methods (ping + create-workspace-folder + new-session +
 # delete + archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
 # the #848 peer-started turn + the #849 peer queue + the #850 offline read + the #891 running model +
-# the #946 context usage + the four #545 settings scenarios, 14 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
+# the #946 context usage + the four #545 settings scenarios + the #687 operator-bypass permission proof, 16 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
 # list-archive-entry arrival is pure navigation, and the two-host scenario (#847) is pairing, navigation,
 # rename and link cycling, none of them claude turns) via a comma-separated class list — the full class' #481 tool-use test would spend an extra turn, so it stays
 # excluded.
@@ -785,15 +920,15 @@ elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +
   # archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
   # peer-started turn + peer queue + offline read + running model + context usage + the four #545 settings
-  # scenarios (19 methods, 14 turns — the #848 peer's ping
+  # scenarios + the #687 operator-bypass permission proof (20 methods, 16 turns — the #848 peer's ping
   # is the fourth, the #849 peer's wait turn and the phone's drained ping the fifth and sixth, the #850 phone's
   # ping and the peer's offline turn the seventh and eighth, the #891 status-sheet ping the ninth, the #946 footer ping the tenth, the #545
   # inherited-effort and chosen-effort pings the eleventh and twelfth, the #545 recall's chat and channel pings
-  # the thirteenth and fourteenth; delete, archive-restore, change-workspace, rename, save-as-channel,
+  # the thirteenth and fourteenth, the #687 tool-free ping and outside-workspace Read the fifteenth and sixteenth; delete, archive-restore, change-workspace, rename, save-as-channel,
   # list-archive-entry, two-host and the #545 model round trip spend none), passed as a comma-separated
   # class#method list. The class' #481 tool-use test stays excluded from LIVE for cost (it runs only in the
   # default whole-class rung-3 run).
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel"
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
@@ -815,6 +950,19 @@ fi
 if [ -n "${PEER_TOKEN:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.peerToken="${PEER_TOKEN}")
 fi
+# The operator-bypass daemon (#687): its unmet prerequisite, or the pairing, the peer and the witness.
+if [ -n "${BYPASS_UNMET:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.bypassUnmet="${BYPASS_UNMET}")
+elif [ -n "${BYPASS_PEER_TOKEN:-}" ]; then
+  GRADLE_TEST_ARGS+=(
+    -Pandroid.testInstrumentationRunnerArguments.bypassServerId="${SERVER_ID_BYPASS}"
+    -Pandroid.testInstrumentationRunnerArguments.bypassPairCode="${PAIR_CODE_BYPASS}"
+    -Pandroid.testInstrumentationRunnerArguments.bypassPeerToken="${BYPASS_PEER_TOKEN}"
+    -Pandroid.testInstrumentationRunnerArguments.bypassServerStaticPublicKey="${BYPASS_PEER_SERVER_STATIC_PUBKEY}"
+    -Pandroid.testInstrumentationRunnerArguments.bypassTokenFile="${BYPASS_TOKEN_FILE}"
+    -Pandroid.testInstrumentationRunnerArguments.bypassToken="${BYPASS_WITNESS}"
+  )
+fi
 "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \
   "${GRADLE_TEST_ARGS[@]}" \
   -Pandroid.testInstrumentationRunnerArguments.class="${TEST_TARGET}" \
@@ -827,7 +975,7 @@ fi
 if [ -n "${DETERMINISTIC}" ]; then
   log "PASS — scenario '${SCENARIO}' green: the emulator connected, sent the prompt, and the scripted reply rendered."
 elif [ -n "${LIVE}" ]; then
-  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, the rename top-bar/list re-label, the save-as-channel promote (top-bar re-label + channel tier), the list's archive entry reaching Archived, two hosts sharing one conversation id staying separate, a turn started from a second client continuing on the phone, phone replies, queued sends and drops staying consistent with that client, a conversation staying readable offline and catching up on reconnect, the Status sheet's running model and the footer's context usage after a real turn, and the model and effort settings round trips (per-conversation model change, applied effort after a turn, remembered effort across a restart) all rendered."
+  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, the rename top-bar/list re-label, the save-as-channel promote (top-bar re-label + channel tier), the list's archive entry reaching Archived, two hosts sharing one conversation id staying separate, a turn started from a second client continuing on the phone, phone replies, queued sends and drops staying consistent with that client, a conversation staying readable offline and catching up on reconnect, the Status sheet's running model and the footer's context usage after a real turn, and the model and effort settings round trips (per-conversation model change, applied effort after a turn, remembered effort across a restart), and a bypass child's permission control following only its confirmed mode through a manual-approval Read all rendered."
 else
   log "PASS — the headless emulator connected, sent the prompt, and 'ping' rendered in the thread."
 fi

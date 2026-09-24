@@ -86,6 +86,39 @@ class EmulatorGradleTest(unittest.TestCase):
                                             env=env, capture_output=True, text=True, check=True)
                     self.assertEqual(expected, arg in result.stdout.splitlines())
 
+    def test_bypass_arguments_carry_the_unmet_code_or_the_pairing(self):
+        # #687: the operator-bypass daemon passes nothing, only its unmet prerequisite, or its six arguments.
+        root = Path(__file__).resolve().parent.parent
+        script = (root / "scripts/e2e-emulator.sh").read_text()
+        start = script.index("GRADLE_TEST_ARGS=(")
+        invocation = script[start:script.index("  --console=plain", start) + len("  --console=plain")]
+        prefix = "-Pandroid.testInstrumentationRunnerArguments."
+        pairing = {"SERVER_ID_BYPASS": "srv-byp", "PAIR_CODE_BYPASS": "code-byp",
+                   "BYPASS_PEER_TOKEN": "peer-byp", "BYPASS_PEER_SERVER_STATIC_PUBKEY": "key-byp",
+                   "BYPASS_TOKEN_FILE": "/tmp/pyry-e2e-byp.x/outside/e2e687-1.txt", "BYPASS_WITNESS": "abc123"}
+        cases = (
+            ({}, []),
+            ({"BYPASS_UNMET": "no_credential"}, [prefix + "bypassUnmet=no_credential"]),
+            (pairing, [prefix + "bypassServerId=srv-byp", prefix + "bypassPairCode=code-byp",
+                       prefix + "bypassPeerToken=peer-byp", prefix + "bypassServerStaticPublicKey=key-byp",
+                       prefix + "bypassTokenFile=/tmp/pyry-e2e-byp.x/outside/e2e687-1.txt",
+                       prefix + "bypassToken=abc123"]),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "gradlew"
+            stub.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+            stub.chmod(0o700)
+            base = {k: v for k, v in os.environ.items() if not k.startswith("BYPASS_") and "_BYPASS" not in k}
+            base.update(GRADLEW=str(stub), REPO_ROOT=str(root), DEVICE="pixel2Api33Atd",
+                        TEST_TARGET="fixture.Class#method", PHONE_RELAY_URL="ws://10.0.2.2:8888",
+                        TOKEN="stub-token", SERVER_ID="stub-server", SERVER_STATIC_PUBKEY="stub-key")
+            for extra, expected in cases:
+                with self.subTest(case=sorted(extra)):
+                    result = subprocess.run(["bash", "-c", "set -euo pipefail\n" + invocation],
+                                            env=dict(base, **extra), capture_output=True, text=True, check=True)
+                    passed = [line for line in result.stdout.splitlines() if line.startswith(prefix + "bypass")]
+                    self.assertEqual(expected, passed)
+
 
 if __name__ == "__main__":
     unittest.main()
