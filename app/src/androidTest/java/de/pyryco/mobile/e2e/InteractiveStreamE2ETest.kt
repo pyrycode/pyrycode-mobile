@@ -2181,12 +2181,7 @@ class InteractiveStreamE2ETest {
      * An unmet prerequisite of the dedicated daemon fails here with its name, never a skip.
      *
      * **Two real-claude turns**: the tool-free ping and the Read.
-     *
-     * **`@Ignore`d until #981 lands.** Step 5 fails on every live run since #965's gate: the turn ends,
-     * claude's reply is exactly the token, and the phone shows no bubble carrying it (#977's diagnosis).
-     * The fix is production code, so #981 removes this `@Ignore`.
      */
-    @Ignore("blocked on #981 — the thread does not show the allowed Read's reply (step 5)")
     @Test
     fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -2279,7 +2274,8 @@ class InteractiveStreamE2ETest {
             } catch (e: ComposeTimeoutException) {
                 throw AssertionError(
                     "the allowed Read's reply never carried the file's token: " +
-                        readReplyDiagnosis(peer.recorded(chat.id), mark, token, turnEnd, endedAfterMs),
+                        readReplyDiagnosis(peer.recorded(chat.id), mark, token, turnEnd, endedAfterMs) +
+                        " threadHeldToken=${threadHoldsReply(repository, chat.id, token)}",
                     e,
                 )
             }
@@ -2716,6 +2712,26 @@ class InteractiveStreamE2ETest {
             "readResultIsError=$readResultIsError $endFields endedAfterMs=$endedAfterMs " +
             "peerFramesAfterAllow=${afterAllow.size} peerFramesWithToken=${afterAllow.any { token in it.payload.toString() }}"
     }
+
+    /**
+     * Whether the phone's own thread for [conversationId] holds an assistant row carrying [token] (#981):
+     * true names the screen (the row was kept but never shown), false names the repository fold. A
+     * boolean only; never the row's text.
+     */
+    private fun threadHoldsReply(
+        repository: ConversationRepository,
+        conversationId: String,
+        token: String,
+    ): String =
+        runCatching {
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repository.observeMessages(conversationId).first().any {
+                        it is ThreadItem.MessageItem && it.message.role == Role.Assistant && token in it.message.content
+                    }
+                }
+            }
+        }.fold(onSuccess = { it.toString() }, onFailure = { "unread" })
 
     /** The concatenated `Text` of this node and its descendants, in tree order. */
     private fun SemanticsNode.textOfTree(): String =

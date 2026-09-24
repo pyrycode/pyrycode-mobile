@@ -25,8 +25,9 @@ SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "tool-progress"
 # so a method silently dropped from that list reddens the gate. Raise it with the list.
 # 20 while #977 keeps the #687 bypass method out of the list; #981 restores it and 21.
 # #965 adds the stop method on top: 21 while #687 stays out, 22 once #981 restores it.
-# #966 adds the permission-answer and question-answer methods: 23 while #687 stays out, 24 once restored.
-LIVE_MINIMUM = 23
+LIVE_MINIMUM = 22
+# #966 adds the permission-answer and question-answer methods on top of #981's 22.
+LIVE_MINIMUM += 2
 
 
 def claude_authenticated(env):
