@@ -32,6 +32,8 @@ LIVE_MINIMUM += 2
 LIVE_MINIMUM += 3
 # #1016 adds two attachment-exchange methods; its third joins once #1020 lets history replay name a file.
 LIVE_MINIMUM += 2
+# #1017 adds the interrupted-upload, interrupted-retrieval and cross-host attachment methods.
+LIVE_MINIMUM += 3
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

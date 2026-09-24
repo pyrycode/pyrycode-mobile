@@ -86,3 +86,7 @@ The deliverable is itself three rung-3 methods, run by the dispatcher's post-ver
 ## Documentation handoff
 
 Pending for the documentation stage: add the interrupted-transfer and cross-host scenario to `docs/e2e-interactive-stream.md`. Cover its three curated-list entries, the three real-claude turns and the `RelayLog`-sink cut drive, including the AC-2 offered-file substitution and why (#1020). Also record the mobile and daemon revisions and the result of its first live run.
+
+## Revisions
+
+- 2026-09-24, during implementation: the helper names settled as follows. `failedAttachmentRow` became `attachmentRetry(name)`, built on `inAttachmentRow(name, node)`, and both match in the unmerged tree, since a row that is not ready takes no clicks and may not be a merged node of its own. `assertComposerHoldsFile` became `awaitComposerHolds(text, name)`, and the sign that the send has ended is the tile's **Remove** control, which is drawn only while no send is under way. `LinkCut.await` takes a `poll` that AC-2 uses to keep the offered row on screen until the cut. Every method restores its host's link in `finally`, so a failure between cut and restore cannot leave later methods offline. No contract changed.
