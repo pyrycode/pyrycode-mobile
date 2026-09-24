@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -180,6 +181,23 @@ class ThreadViewModel(
                 SharingStarted.Eagerly,
                 draftStore.attachmentsFor(serverId, conversationId),
             )
+
+    private val _attachmentsSending = MutableStateFlow(false)
+
+    /**
+     * Whether a send carrying attachments is uploading or sending right now (#933). The strip shows it, and
+     * [sendMessage] refuses a second tap while it holds, so one snapshot is never uploaded twice. Written on
+     * the main thread only, and cleared however the send ends.
+     */
+    val attachmentsSending: StateFlow<Boolean> = _attachmentsSending.asStateFlow()
+
+    private val attachmentRefusalChannel = Channel<AttachmentRefusal>(capacity = Channel.BUFFERED)
+
+    /**
+     * One notice per pick that had entries refused (#933), with how many were refused for each reason. Counts
+     * only, never a name, URI or type, so the snackbar it drives shows fixed local text.
+     */
+    val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -1105,6 +1123,7 @@ class ThreadViewModel(
      * between them.
      */
     fun sendMessage(text: String) {
+        if (_attachmentsSending.value) return
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
         if (attachments.isNotEmpty()) return sendWithAttachments(text, attachments)
         if (text.isBlank()) return
@@ -1133,17 +1152,23 @@ class ThreadViewModel(
         text: String,
         attachments: List<PendingAttachment>,
     ) {
+        _attachmentsSending.value = true
         launchGuardedRepoCall {
-            val target = state.value.conversationId
-            val ids = mutableListOf<String>()
-            for (entry in attachments) {
-                ids += entry.attachmentId ?: upload(target, entry) ?: return@launchGuardedRepoCall
+            try {
+                val target = state.value.conversationId
+                val ids = mutableListOf<String>()
+                for (entry in attachments) {
+                    ids += entry.attachmentId ?: upload(target, entry) ?: return@launchGuardedRepoCall
+                }
+                // #686: a message sent while this opening's recall write is outstanding follows it.
+                effortRecall.awaitWrite()
+                repository.sendMessage(target, text, ids)
+                if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+                draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
+            } finally {
+                // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
+                _attachmentsSending.value = false
             }
-            // #686: a message sent while this opening's recall write is outstanding follows it.
-            effortRecall.awaitWrite()
-            repository.sendMessage(target, text, ids)
-            if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
-            draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
         }
     }
 
@@ -1186,6 +1211,23 @@ class ThreadViewModel(
             AttachmentAddOutcome.TOO_MANY -> RelayLog.d { "event=composer_attachment_add outcome=too_many" }
         }
         return outcome
+    }
+
+    /**
+     * Add what the picker returned (#933), in its order, through [addAttachment]. Refused entries are skipped
+     * and the rest still added; when any were refused, one [attachmentRefusals] notice counts them by reason.
+     */
+    fun addPickedAttachments(picked: List<PickedAttachment>) {
+        var tooLarge = 0
+        var tooMany = 0
+        for (entry in picked) {
+            when (addAttachment(entry.uri, entry.displayName, entry.mimeType, entry.size)) {
+                AttachmentAddOutcome.ADDED -> Unit
+                AttachmentAddOutcome.TOO_LARGE -> tooLarge++
+                AttachmentAddOutcome.TOO_MANY -> tooMany++
+            }
+        }
+        if (tooLarge > 0 || tooMany > 0) attachmentRefusalChannel.trySend(AttachmentRefusal(tooLarge, tooMany))
     }
 
     /** Remove one pending attachment from this chat (#932), leaving the rest in order. */

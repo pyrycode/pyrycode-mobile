@@ -2,13 +2,17 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.network.MessageAttachmentIds
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -53,6 +57,7 @@ class ThreadViewModelAttachmentTest {
         private val uploadOutcome: (filename: String) -> AttachmentUploadResult = { AttachmentUploadResult.Stored("id-$it") },
         private val sendFailure: Throwable? = null,
         private val whileSending: () -> Unit = {},
+        private val beforeUpload: suspend () -> Unit = {},
         private val delegate: FakeConversationRepository = FakeConversationRepository(),
     ) : ConversationRepository by delegate {
         val uploads = mutableListOf<Pair<String, String>>() // filename to content
@@ -64,6 +69,7 @@ class ThreadViewModelAttachmentTest {
             filename: String,
             mimeType: String,
         ): AttachmentUploadResult {
+            beforeUpload()
             uploads += filename to bytes.decodeToString()
             return uploadOutcome(filename)
         }
@@ -318,6 +324,95 @@ class ThreadViewModelAttachmentTest {
             assertTrue(logs.isNotEmpty())
             assertFalse("no provider text in logs: $logs", logs.any { "secret" in it || "application/pdf" in it })
         }
+
+    @Test
+    fun addPickedAttachments_addsInOrder_andReportsEachRefusalKindOnce() =
+        runTest {
+            val store = ComposerDraftStore()
+            val vm = vm(RecordingRepository(), store)
+            repeat(MessageAttachmentIds.MAX - 2) { vm.attach("f$it") }
+            val refusals = mutableListOf<AttachmentRefusal>()
+            val collector = launch { vm.attachmentRefusals.toList(refusals) }
+
+            vm.addPickedAttachments(
+                listOf(
+                    picked("a"),
+                    picked("huge", size = Long.MAX_VALUE),
+                    picked("b"),
+                    picked("c"),
+                    picked("d"),
+                ),
+            )
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf("a", "b"),
+                vm.pendingAttachments.value
+                    .takeLast(2)
+                    .map { it.displayName },
+            )
+            assertEquals(listOf(AttachmentRefusal(tooLarge = 1, tooMany = 2)), refusals)
+            collector.cancel()
+        }
+
+    @Test
+    fun addPickedAttachments_reportsNothing_whenEverythingIsAdded() =
+        runTest {
+            val vm = vm(RecordingRepository(), ComposerDraftStore())
+            val refusals = mutableListOf<AttachmentRefusal>()
+            val collector = launch { vm.attachmentRefusals.toList(refusals) }
+
+            vm.addPickedAttachments(listOf(picked("a"), picked("b")))
+            advanceUntilIdle()
+
+            assertEquals(listOf("a", "b"), vm.pendingAttachments.value.map { it.displayName })
+            assertTrue(refusals.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun attachmentsSending_coversTheUploadsAndTheSend_andASecondTapSendsNothingMore() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val repository = RecordingRepository(beforeUpload = { gate.await() })
+            val vm = vm(repository, ComposerDraftStore())
+            vm.attach("a")
+            assertFalse(vm.attachmentsSending.value)
+
+            vm.sendMessage("")
+            advanceUntilIdle()
+            assertTrue(vm.attachmentsSending.value)
+
+            vm.sendMessage("")
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertFalse(vm.attachmentsSending.value)
+            assertEquals(listOf("a"), repository.uploads.map { it.first })
+            assertEquals(listOf("" to listOf("id-a")), repository.sends)
+        }
+
+    @Test
+    fun attachmentsSending_clearsAfterAFailedUpload_orAThrownSend() =
+        runTest {
+            val refused = RecordingRepository(uploadOutcome = { AttachmentUploadResult.ReconnectRequired })
+            val thrown = RecordingRepository(sendFailure = IllegalStateException("not connected"))
+            for (repository in listOf(refused, thrown)) {
+                val vm = vm(repository, ComposerDraftStore())
+                vm.attach("a")
+
+                vm.sendMessage("")
+                advanceUntilIdle()
+
+                assertFalse(vm.attachmentsSending.value)
+                assertEquals(listOf("a"), vm.pendingAttachments.value.map { it.displayName })
+            }
+        }
+
+    private fun picked(
+        name: String,
+        size: Long? = 5L,
+    ) = PickedAttachment("content://docs/$name", name, "text/plain", size)
 
     private fun attachmentLogs() = logs.filter { "composer_attachment" in it }
 

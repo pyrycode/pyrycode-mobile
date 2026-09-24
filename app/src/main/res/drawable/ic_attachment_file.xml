@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Figma 16:8's `File` attachment tile (390:7147): an outlined page with a folded corner (#933). Tinted by the caller. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="45dp"
+    android:height="60dp"
+    android:viewportWidth="45"
+    android:viewportHeight="60">
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1"
+        android:pathData="M7.5,0.5H25.0195C26.7633,0.5 28.4292,1.1438 29.7119,2.30566L29.9629,2.54492L42.4551,15.0254C43.7667,16.3371 44.5,18.1197 44.5,19.9805V52.5C44.5,56.3606 41.3606,59.5 37.5,59.5H7.5C3.63942,59.5 0.5,56.3606 0.5,52.5V7.5C0.5,3.63942 3.63942,0.5 7.5,0.5ZM23.875,17.8125C23.875,19.6472 25.3528,21.125 27.1875,21.125H39.3516L23.875,5.64844V17.8125Z" />
+</vector>

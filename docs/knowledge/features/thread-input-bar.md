@@ -19,6 +19,8 @@ fun ThreadInputBar(
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
     onAnchorChanged: (Rect) -> Unit = {},
+    hasAttachments: Boolean = false,
+    sending: Boolean = false,
 )
 
 // Stateless — used by previews and UI tests
@@ -31,10 +33,14 @@ fun ThreadInputBar(
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
     onAnchorChanged: (Rect) -> Unit = {},
+    hasAttachments: Boolean = false,
+    sending: Boolean = false,
 )
 ```
 
 [#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) added `onAnchorChanged`, defaulted on both overloads so no existing call site changes. It reports the field's `boundsInWindow()` with `left` moved in by `FieldLeadingInset` (16dp) on every frame the field's own position changes, so a row of the [slash-command type-ahead](slash-command-type-ahead.md)'s `OptionsOverlay` lines its text up with the composer's own typed text. See [§ `TextFieldValue` and the cursor-at-end-on-outside-change rule](#textfieldvalue-and-the-cursor-at-end-on-outside-change-rule-885) for the other #885 change to this file.
+
+[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) added `hasAttachments` and `sending`, both defaulted so every pre-#933 call site still compiles. They come from the chat's own pending-attachment strip — see [Thread screen § Composer pending attachments](thread-screen.md#composer-pending-attachments) — not from anything local to this composable.
 
 [#643](../codebase/643.md) added `isBusy` and `onInterrupt` to both overloads, defaulted so the pre-existing previews and call sites stay one-liners. The stateful overload holds `var text by rememberSaveable { mutableStateOf("") }` and delegates to the stateless overload; on send it invokes `onSend(text)` and resets `text = ""` **only when `text.isNotBlank()`**. Blank input is a UI no-op (button is also disabled when idle, but the IME `Send` action can still fire on some keyboards). The stateless overload is what the previews call directly.
 
@@ -44,13 +50,17 @@ The two-overload pattern matches the project convention for composables that nee
 
 [#643](../codebase/643.md) retired the standalone foot-of-list `InterruptAffordance` (see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) and folded its stop action into this button, following desktop's #678 precedent instead of inventing a third placement:
 
-| `text` | `isBusy` | description | action | enabled |
-|---|---|---|---|---|
-| non-blank | either | `cd_send_message` ("Send message") | `onSend` | yes |
-| blank | `true` | `cd_thread_interrupt` ("Stop the running turn") | `onInterrupt` | yes |
-| blank | `false` | `cd_send_message` ("Send message") | — | no |
+| `text` | `hasAttachments` | `isBusy` | `sending` | description | action | enabled |
+|---|---|---|---|---|---|---|
+| non-blank | either | either | either | `cd_send_message` ("Send message") | `onSend` | yes |
+| blank | `true` | either | `false` | `cd_send_message` ("Send message") | `onSend` | yes |
+| blank | `true` | either | `true` | `cd_send_message` ("Send message") | `onSend` | no |
+| blank | `false` | `true` | either | `cd_thread_interrupt` ("Stop the running turn") | `onInterrupt` | yes |
+| blank | `false` | `false` | either | `cd_send_message` ("Send message") | — | no |
 
-Text present wins over an in-flight turn **deliberately**: sending while the agent is busy is a shipped path (the daemon queues it and [`QueuedBacklog`](queued-backlog-section.md) renders it, #461/#467), so a stop variant that pre-empted a typed message would silently remove the only tap that reaches it. Stop therefore owns the button exactly when the composer is empty — the state anyone actually reaching for stop is in. One consequence worth knowing for anyone touching this path: **stop is unreachable while a draft sits in the composer** — the user must clear the field first. Deliberate and settled (queue-while-busy is real, the design has exactly one button slot), but a real thing to watch during a live turn.
+Text present wins over an in-flight turn **deliberately**: sending while the agent is busy is a shipped path (the daemon queues it and [`QueuedBacklog`](queued-backlog-section.md) renders it, #461/#467), so a stop variant that pre-empted a typed message would silently remove the only tap that reaches it. Stop therefore owns the button exactly when the composer is empty **and holds no attachment** — [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) widened `stopping = isBusy && text.isBlank() && !hasAttachments`, since an attachment with no text is still something to send, not the empty state stop is for. One consequence worth knowing for anyone touching this path: **stop is unreachable while a draft sits in the composer, or while an attachment is pending** — the user must clear both first. Deliberate and settled (queue-while-busy is real, the design has exactly one button slot), but a real thing to watch during a live turn.
+
+`enabled = stopping || (!sending && (text.isNotBlank() || hasAttachments))` (also #933): attachments alone enable Send, and `sending` — true for as long as [`ThreadViewModel.sendWithAttachments`](thread-screen.md#composer-pending-attachments) is uploading and sending — disables it outright rather than letting it fall through to stop, so a second tap during an in-flight attachment send does nothing.
 
 Both states draw the same filled-circle silhouette so the control reads as one button in two states: `Icons.Filled.ArrowCircleUp` for send, `Icons.Filled.StopCircle` for stop, both tinted `colorScheme.primary` inside a container-less 48dp `IconButton`.
 

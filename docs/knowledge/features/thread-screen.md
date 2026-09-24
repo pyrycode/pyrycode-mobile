@@ -151,8 +151,13 @@ builds a thread destination pays for it; one that does (`NotificationTapNavigati
 `LiteralScreenNavigationTest`) must bind an inert `AttachmentReader { AttachmentRead.Unreadable }`, the
 posture `RelayConnectionFactoryTest` already used for its own inert override.
 
-This is a data path only — no picker, no attachment strip yet. See
-[Attachment upload](attachment-upload.md) for the upload/send contract it wires into.
+**The picker and the strip ([#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)).** The
+paperclip opens `rememberAttachmentPicker`'s `OpenMultipleDocuments()` launcher; a cancel calls nothing,
+otherwise `describePickedAttachment` drops any refused URI and hands the rest to `addPickedAttachments`,
+which adds each via `addAttachment` and reports `TOO_LARGE`/`TOO_MANY` refusals as one counts-only
+notice. `ComposerAttachmentStrip` renders the list as a `LazyRow` between the status area and input field
+when non-empty, thumbnailing an image or falling back to the file tile. `attachmentsSending` blocks a
+second `sendMessage` and hides remove controls while `sendWithAttachments` runs.
 
 ## Configuration
 
