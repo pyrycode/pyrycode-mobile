@@ -30,6 +30,8 @@ LIVE_MINIMUM = 22
 LIVE_MINIMUM += 2
 # #967 adds the two reconnect methods and the background-task method.
 LIVE_MINIMUM += 3
+# #1016 adds two attachment-exchange methods; its third joins once #1020 lets history replay name a file.
+LIVE_MINIMUM += 2
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 
