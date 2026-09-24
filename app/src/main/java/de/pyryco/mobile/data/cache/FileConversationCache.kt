@@ -354,6 +354,7 @@ private data class CachedConversation(
     val sessionHistory: List<String> = emptyList(),
     val isSleeping: Boolean = false,
     val archived: Boolean = false,
+    val muted: Boolean = false,
     val workspaceLabel: String? = null,
 )
 
@@ -368,6 +369,7 @@ private fun Conversation.toRecord() =
         sessionHistory = sessionHistory,
         isSleeping = isSleeping,
         archived = archived,
+        muted = muted,
         workspaceLabel = workspaceLabel,
     )
 
@@ -382,6 +384,7 @@ private fun CachedConversation.toDomain() =
         lastUsedAt = Instant.parse(lastUsedAt),
         isSleeping = isSleeping,
         archived = archived,
+        muted = muted,
         workspaceLabel = workspaceLabel,
     )
 

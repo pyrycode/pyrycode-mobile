@@ -9344,6 +9344,28 @@ class RemoteConversationRepositoryTest {
             assertEquals("Tax filing", a1.workspaceLabel)
         }
 
+    // #999: each conversation_updated fold carries the record's is_muted — muting and a later unmute both
+    // land in the projection, so the row always holds the host's value.
+    @Test
+    fun conversationUpdated_unsolicitedPush_foldsTheRecordsMutedFlagOnEveryFold() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+            assertFalse(all.last().single { it.id == "a1" }.muted)
+
+            pump.push(conversationUpdatedEnvelope(id = "a1", cwd = "/w/alpha", isMuted = true))
+            runCurrent()
+            assertTrue(all.last().single { it.id == "a1" }.muted)
+
+            pump.push(conversationUpdatedEnvelope(id = "a1", cwd = "/w/alpha", isMuted = false))
+            runCurrent()
+            assertFalse(all.last().single { it.id == "a1" }.muted)
+        }
+
     // AC #2: a frame moving the conversation to a differently-labelled workspace lands the DESTINATION
     // cwd and the destination label — the case a client cannot resolve for itself.
     @Test
@@ -9770,6 +9792,7 @@ class RemoteConversationRepositoryTest {
         inReplyTo: Long? = null,
         isPromoted: Boolean = true,
         isArchived: Boolean = false,
+        isMuted: Boolean = false,
         name: String? = null,
         workspaceLabel: String? = null,
         lastUsedAt: String = "2026-05-08T10:00:00Z",
@@ -9781,11 +9804,11 @@ class RemoteConversationRepositoryTest {
             id = envId,
             type = "conversation_updated",
             ts = TS,
-            // is_archived and workspace_label are always present on the wire (pyrycode#881, #2210 —
-            // both nullable but never omitted).
+            // is_archived, is_muted and workspace_label are always present on the wire (pyrycode#881,
+            // #2210 — the label nullable but never omitted).
             payload =
                 MobileJson.parseToJsonElement(
-                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"is_archived":$isArchived,"cwd":"$cwd","last_used_at":"$lastUsedAt","workspace_label":$labelJson}""",
+                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"is_archived":$isArchived,"is_muted":$isMuted,"cwd":"$cwd","last_used_at":"$lastUsedAt","workspace_label":$labelJson}""",
                 ),
             inReplyTo = inReplyTo,
         )

@@ -64,6 +64,7 @@ class FileConversationCacheTest {
         lastUsedAt = Instant.parse(lastUsedAt),
         isSleeping = true,
         archived = true,
+        muted = true,
         workspaceLabel = "Workspace $id",
     )
 
@@ -93,6 +94,7 @@ class FileConversationCacheTest {
                     isPromoted = false,
                     isSleeping = false,
                     archived = false,
+                    muted = false,
                 )
             cache().writeConversations("server-a", listOf(written)).getOrThrow()
 
