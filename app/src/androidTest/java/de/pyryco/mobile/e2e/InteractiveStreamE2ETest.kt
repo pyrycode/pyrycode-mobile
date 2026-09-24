@@ -2622,8 +2622,9 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
             sendFromPhone(BACKGROUND_PROMPT)
+            val allowed = mutableSetOf<String>()
             val startedFrame =
-                allowPromptsUntil(peer, chatId, REPLY_TIMEOUT_MS, "claude started no background task") {
+                allowPromptsUntil(peer, chatId, REPLY_TIMEOUT_MS, "claude started no background task", allowed) {
                     it.type ==
                         "background_task_started"
                 }
@@ -2640,8 +2641,10 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
             closeBackgroundTasks()
 
-            // 3. AC-3: once the task finishes, the count is 0 and the panel labels the task finished.
-            allowPromptsUntil(peer, chatId, BACKGROUND_FINISH_TIMEOUT_MS, "the background task never finished") { frame ->
+            // 3. AC-3: once the task finishes, the count is 0 and the panel no longer lists the task as live. It
+            //    labels the task finished until the empty roster claude sends after a finish drops it (#677's
+            //    `applyRoster`), then says there are no tasks; the live gate saw the empty roster win.
+            allowPromptsUntil(peer, chatId, BACKGROUND_FINISH_TIMEOUT_MS, "the background task never finished", allowed) { frame ->
                 frame.type == "background_task_updated" &&
                     runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskUpdatedPayloadDto.serializer(), frame.payload) }
                         .getOrNull()
@@ -2649,12 +2652,17 @@ class InteractiveStreamE2ETest {
             }
             openActions()
             openBackgroundTasks { it == 0 }
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule
-                    .onAllNodes(hasText(string(R.string.background_tasks_finished)) and inBackgroundPanel())
-                    .fetchSemanticsNodes()
-                    .isNotEmpty()
+            val finishedOrGone =
+                (hasText(string(R.string.background_tasks_finished)) or hasText(string(R.string.background_tasks_empty))) and
+                    inBackgroundPanel()
+            try {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(finishedOrGone).fetchSemanticsNodes().isNotEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the panel neither labelled the finished task nor showed no tasks", e)
             }
+            composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
             closeBackgroundTasks()
         } finally {
             peer.close()
@@ -2724,7 +2732,8 @@ class InteractiveStreamE2ETest {
         val prefix = ComposerAction.BackgroundTasks.label + " ("
         val row =
             actionRow {
-                it.startsWith(prefix) && it.endsWith(")") &&
+                it.startsWith(prefix) &&
+                    it.endsWith(")") &&
                     it
                         .removePrefix(prefix)
                         .removeSuffix(")")
@@ -2764,17 +2773,18 @@ class InteractiveStreamE2ETest {
     /**
      * Poll [peer]'s frames for [conversationId] until one passes [done], and return it. Every permission prompt
      * raised there on the way is allowed once through the peer, the main daemon's privileged device (#950).
-     * The failure names [failure] and a count, never a frame's text.
+     * [allowed] holds the modal ids already answered; share it across calls on one peer so a prompt still in
+     * its recorded frames is not answered twice. The failure names [failure] and a count, never a frame's text.
      */
     private fun allowPromptsUntil(
         peer: SecondClientPeer,
         conversationId: String,
         timeoutMs: Long,
         failure: String,
+        allowed: MutableSet<String> = mutableSetOf(),
         done: (Envelope) -> Boolean,
-    ): Envelope {
-        val allowed = mutableSetOf<String>()
-        return try {
+    ): Envelope =
+        try {
             runBlocking {
                 withTimeout(timeoutMs) {
                     var found: Envelope? = null
@@ -2792,7 +2802,8 @@ class InteractiveStreamE2ETest {
                                         )
                                     }.getOrNull()
                                 }.filter { shown ->
-                                    shown.modalClass == PERMISSION_CLASS && shown.modalId !in allowed &&
+                                    shown.modalClass == PERMISSION_CLASS &&
+                                        shown.modalId !in allowed &&
                                         shown.options.any { it.id == ALLOW_ONCE }
                                 }.forEach { shown ->
                                     allowed += shown.modalId
@@ -2807,7 +2818,6 @@ class InteractiveStreamE2ETest {
         } catch (e: TimeoutCancellationException) {
             throw AssertionError("$failure within $timeoutMs ms (permission prompts allowed: ${allowed.size})", e)
         }
-    }
 
     /**
      * The answer daemon's server id and a peer for it (#966), or the failure for its unmet prerequisite. The

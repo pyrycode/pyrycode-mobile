@@ -149,3 +149,13 @@ curated list and update the method count (27) and the real-claude turn count (29
   `sleep 40`. The harness's `WAIT_PROMPT` records that claude's Bash tool refuses a bare `sleep` of 25 s or more,
   and a `python3` command is never auto-allowed on the main daemon, so the permission path in
   `allowPromptsUntil` is the one the run exercises. The assertions are unchanged.
+- **2026-09-24, rework 1 (live gate FAIL).** The live gate ran all 27 methods. AC-1 and AC-2 passed, and so did AC-3's
+  start and count. `interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` failed at Design § 3 step 4's
+  `Finished` wait, after `Background tasks (0)` had passed. claude sends an empty `background_task_roster` after a
+  finish (the daemon note in Files read), and `BackgroundTaskProjection.applyRoster` drops a task a roster omits,
+  so the panel then says "No background tasks". Step 4 now accepts either reading, `Finished` on the task or the
+  no-tasks sentence, and still rejects "no report". The count check is unchanged. `allowPromptsUntil` also takes
+  the answered modal ids from its caller now, so the finish wait does not answer the start's prompt a second time
+  (the verifier's NIT). The same run also failed `interactiveTurn_deleteConversation_removesFromListAndClosesThread`.
+  That method ran before any of this ticket's methods, and this branch changes neither it nor production code.
+  The PR records it as a failure that did not come from this branch.
