@@ -28,6 +28,8 @@ SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "tool-progress"
 LIVE_MINIMUM = 22
 # #966 adds the permission-answer and question-answer methods on top of #981's 22.
 LIVE_MINIMUM += 2
+# #967 adds the two reconnect methods and the background-task method.
+LIVE_MINIMUM += 3
 
 
 def claude_authenticated(env):
