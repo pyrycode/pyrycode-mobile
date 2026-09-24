@@ -21,6 +21,7 @@ import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.InertAttachmentStore
 import de.pyryco.mobile.di.InertConversationCache
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.RelayConnectionFactory
@@ -146,6 +147,7 @@ class NotificationTapNavigationTest {
                     single { store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                     single { preferences }
                     single<ConversationCache> { InertConversationCache }
+                    single { InertAttachmentStore }
                 },
             )
         compose.setContent {
