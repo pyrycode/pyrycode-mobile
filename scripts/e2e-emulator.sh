@@ -1113,6 +1113,9 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel"
   # #1021: the Edit channel mute round trip joins at no turn cost, so the list holds 28 methods and 29 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_muteChannel_roundTripsThroughTheHost"
+  # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
+  # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
+  if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
