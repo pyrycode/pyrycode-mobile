@@ -24,7 +24,11 @@ a channel name field plus an optional system prompt field, replacing the dialog'
 Since #958 [`CreateChannelModal`](#callers) draws this shell directly as its seventh caller — the same
 name-plus-system-prompt form reused by construction (both share `ChannelFormFields`), driven by a plus on
 every Channels-section workspace row instead of the thread overflow, and creating a new promoted channel
-rather than promoting an existing chat. Existing dialogs
+rather than promoting an existing chat. Since #667 [`EditChannelModal`](#callers) draws this shell
+directly as its eighth caller — the same `ChannelFormFields` form once more, plus an outlined `Archive
+channel` action in `EditChatModal`'s shape, driven by the permanent pen every Channels row now carries
+(mirroring the Chats row pen #827 added) and editing that row's own name and already-**stored** prompt
+in place, rather than creating or promoting anything. Existing dialogs
 such as [CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
 their migration and operation-specific acceptance — `CreateFolderDialog` itself is now reused
 unchanged as a second window stacked over `AddWorkspaceModal`, described below.
@@ -423,6 +427,36 @@ control](channel-list-screen-tree-and-controls.md#workspace-row-create-channel-c
 caller: every Channels-section workspace row's own plus opens it on that row's own host and exact `cwd`
 — see that section and [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the two-write state
 machine and why a second host sharing the same `cwd` is never addressed.
+
+[`EditChannelModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditChannelModal.kt)
+(`ui/components/EditChannelModal.kt`, #667) is the shell's eighth direct caller — like `EditChatModal`, it
+draws `MobileModal` itself around `ChannelFormFields` plus a private outlined `Archive channel` action
+copied from `EditChatModal`'s `ArchiveAction` (a verifier SHOULD FIX left for a follow-up: a shared
+`internal` action taking a `@StringRes` label would keep the two from drifting apart). It edits an
+**existing** channel's own name and already-stored system prompt in place, unlike `CreateChannelModal`
+and `SaveAsChannelDialog`, which only ever write a system prompt into a conversation with no stored one.
+The name buffer is `remember(conversationId)`, prefilled from the caller's `initialName` — the row's own
+host's snapshot name, clamped to `MAX_WORKSPACE_LABEL_CHARS` the same surrogate-safe way `EditChatModal`'s
+field is. The prompt buffer is `remember(conversationId) { mutableStateOf<String?>(null) }`: the field
+shows `typed ?: read.prompt.orEmpty()` and stays **disabled** — with a static reading line under it in
+`ChannelFormFields`'s new `promptNote` slot — until the caller's `prompt: ChannelPromptReading` reading
+arrives as `Read`, at which point it shows the stored prompt verbatim and a `Differs` status adds a
+static next-session line in the same slot. Until the field is enabled, `onSubmit` reports the prompt as
+`null` rather than an empty draft, so nothing the operator never saw can be written. OK needs an
+available host, a non-blank trimmed name and (when the prompt is showing) a draft within
+`SystemPromptLimit.MAX_BYTES`; Archive needs only the host and no write in flight, independent of either
+field, with no confirmation step — an archived channel comes back through Archive's own Restore, the
+same parity `EditChatModal`'s Archive established. [ChannelListScreen](channel-list-screen.md) is its
+only caller: the Channels row's own permanent pen — the same pen shape #827 gave Chats rows, now
+generalised behind `TreeConversationRow`'s `editDescription: @StringRes Int` parameter — opens it on
+that row's own host and conversation, reads the stored prompt once the row's host has a live
+repository, and OK writes only what changed (a rename, then the prompt, each independently) through the
+repository resolved **at the press** — see [ChannelListScreen § Channels row edit control
+(#667)](channel-list-screen-tree-and-controls.md#channels-row-edit-control-667) and
+[ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for the two target-tagged state flows
+that keep a prompt read from ever landing on a write's own `compareAndSet`, and for why this caller
+resolves the repository at the press rather than binding one at construction the way
+[`SystemPromptEditor`](system-prompt-editor.md) does.
 
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadPermissionModal.kt`, #815) is the first of
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than

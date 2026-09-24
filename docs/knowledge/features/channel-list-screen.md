@@ -68,15 +68,24 @@ sealed interface ChannelListEvent {
     data class HostEditNameSubmitted(val name: String) : ChannelListEvent
     /** The modal's Cancel, Close and Back, which the shell routes through one dismissal callback. */
     data object HostEditDismissed : ChannelListEvent
-    /** A Chats row's edit control: open the Edit chat modal for **that** row's own host and
-     *  conversation (#827). Channels rows draw no control and emit nothing here — editing a
-     *  channel is #667. */
+    /** A Chats row's pencil: open the Edit chat modal on **that** row's own host and conversation (#827).
+     *  Ids only — the view model reads the name from that host's own snapshot. */
     data class TreeChatEditTapped(val target: HostConversationTarget) : ChannelListEvent
     /** The open Edit chat modal's OK, already trimmed. No ids, for the reason
      *  [HostEditNameSubmitted] carries none: the target is the open editor's. */
     data class ChatEditNameSubmitted(val name: String) : ChannelListEvent
     /** The Edit chat modal's Cancel, Close and Back. */
     data object ChatEditDismissed : ChannelListEvent
+    /** A Channels row's pen: open Edit channel on **that** row's own host and conversation (#667). The
+     *  name is read from the host's own snapshot, never from the row's text. */
+    data class TreeChannelEditTapped(val target: HostConversationTarget) : ChannelListEvent
+    /** The Edit channel modal's OK: the name already trimmed by the component, the prompt verbatim — or
+     *  `null` when the modal never showed a stored prompt. No ids: the target is the open modal's. */
+    data class ChannelEditSubmitted(val name: String, val systemPrompt: String?) : ChannelListEvent
+    /** The Edit channel modal's Archive channel; the target is the open modal's. */
+    data object ChannelArchiveRequested : ChannelListEvent
+    /** The Edit channel modal's Cancel, Close and Back. */
+    data object ChannelEditDismissed : ChannelListEvent
     /** An Add workspace row selected (#904): the raw path, never the displayed text. */
     data class AddWorkspaceSelected(val path: String) : ChannelListEvent
     /** The new-folder dialog's trimmed name; the folder is created on the open modal's host. */

@@ -53,7 +53,9 @@ private const val FIELD_FILL_ALPHA = 0.12f
  * first composes; the request lives here because the form composes inside the modal's own dialog window,
  * where a request made from the parent composition never lands (#589). The prompt is never trimmed here
  * or anywhere after: it is sent verbatim. A prompt over [SystemPromptLimit.MAX_BYTES] UTF-8 bytes is
- * marked with a static message; the caller disables its submit for the same reason.
+ * marked with a static message; the caller disables its submit for the same reason. [promptNote] is a
+ * caller's static line drawn in the same place when the prompt is within the limit — Edit channel's
+ * reading and next-session notes (#667) — and [promptEnabled] locks the prompt while there is nothing to edit.
  */
 @Composable
 internal fun ChannelFormFields(
@@ -63,6 +65,8 @@ internal fun ChannelFormFields(
     onSystemPromptChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     nameEnabled: Boolean = true,
+    promptEnabled: Boolean = true,
+    promptNote: String? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
@@ -94,15 +98,20 @@ internal fun ChannelFormFields(
                 value = systemPrompt,
                 onValueChange = onSystemPromptChange,
                 modifier = Modifier.fillMaxWidth().testTag(CHANNEL_PROMPT_FIELD_TAG),
+                enabled = promptEnabled,
                 textStyle = MaterialTheme.typography.bodyMedium,
                 minLines = PROMPT_MIN_LINES,
                 shape = MaterialTheme.shapes.small,
                 isError = promptOverLimit,
                 supportingText =
-                    if (promptOverLimit) {
-                        { Text(stringResource(R.string.channel_form_prompt_too_long)) }
-                    } else {
-                        null
+                    when {
+                        promptOverLimit -> {
+                            { Text(stringResource(R.string.channel_form_prompt_too_long)) }
+                        }
+                        promptNote != null -> {
+                            { Text(promptNote) }
+                        }
+                        else -> null
                     },
                 colors = wellColors(),
             )
