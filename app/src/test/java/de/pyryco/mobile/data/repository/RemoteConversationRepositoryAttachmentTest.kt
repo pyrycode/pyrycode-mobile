@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.AttachmentChunkPayloadDto
 import de.pyryco.mobile.data.network.Envelope
@@ -306,6 +307,46 @@ class RemoteConversationRepositoryAttachmentTest {
         }
 
     @Test
+    fun sendWithAttachments_theThreadRowCarriesOneReferencePerIdInSendOrder_withItsNameAndMimeType() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val thread = collectThread(repo)
+            runCurrent()
+
+            val send =
+                startSend(
+                    repo,
+                    emptyList(),
+                    listOf(
+                        MessageAttachment(ID_B, "photo.jpg", "image/jpeg"),
+                        MessageAttachment(ID_A, "notes\u202E.txt", "text/plain"),
+                        MessageAttachment(ID_B, "again.jpg", "image/jpeg"),
+                    ),
+                )
+            runCurrent()
+            val sent = pump.sends().single()
+            assertEquals(
+                listOf(ID_B, ID_A),
+                sent.payload.jsonObject
+                    .getValue("attachment_ids")
+                    .jsonArray
+                    .map { it.jsonPrimitive.content },
+            )
+            pump.push(ack(sent.id))
+            runCurrent()
+
+            val expected =
+                listOf(
+                    MessageAttachment(ID_B, "photo.jpg", "image/jpeg"),
+                    MessageAttachment(ID_A, "notes.txt", "text/plain"),
+                )
+            assertEquals(expected, requireNotNull(send()).getOrThrow().attachments)
+            val row = (thread.last().single() as ThreadItem.MessageItem).message
+            assertEquals(expected, row.attachments)
+        }
+
+    @Test
     fun sendWithoutIds_carriesNoAttachmentIdsKey() =
         runTest {
             val pump = FakeSessionPump()
@@ -364,9 +405,10 @@ class RemoteConversationRepositoryAttachmentTest {
     private fun TestScope.startSend(
         repo: RemoteConversationRepository,
         attachmentIds: List<String>,
+        attachments: List<MessageAttachment> = attachmentIds.map { MessageAttachment(it) },
     ): () -> Result<Message>? {
         var outcome: Result<Message>? = null
-        backgroundScope.launch { outcome = runCatching { repo.sendMessage("conv-1", "hi", attachmentIds) } }
+        backgroundScope.launch { outcome = runCatching { repo.sendMessage("conv-1", "hi", attachments) } }
         return { outcome }
     }
 

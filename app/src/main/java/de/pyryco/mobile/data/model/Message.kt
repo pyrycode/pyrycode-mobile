@@ -11,9 +11,29 @@ data class Message(
     val isStreaming: Boolean,
     /** Non-null iff [role] is [Role.Tool]. */
     val toolCall: ToolCall? = null,
+    /** The files this message references (#983), in send, wire or arrival order; see [MessageAttachment]. */
+    val attachments: List<MessageAttachment> = emptyList(),
 )
 
 enum class Role { User, Assistant, Tool }
+
+/**
+ * One file a thread message references (#983): a file the operator sent with it, one a replayed
+ * `send_message` named, or one claude offered. [attachmentId] is the id to fetch the bytes by. [displayName]
+ * and [mimeType] are hints, `null` when not known: a history entry names ids only. `""` is a name that was
+ * known and empty.
+ *
+ * **SECURITY.** Both hints are untrusted display text even after cleaning. Render them as inert text only:
+ * never as a path or part of one, a cache key or a log field, and never pick a viewer from either. [toString]
+ * leaves them out.
+ */
+data class MessageAttachment(
+    val attachmentId: String,
+    val displayName: String? = null,
+    val mimeType: String? = null,
+) {
+    override fun toString(): String = "MessageAttachment(attachmentId=$attachmentId)"
+}
 
 /**
  * Lifecycle of a tool call surfaced live in the thread (#387). A `tool_use` event opens the row as

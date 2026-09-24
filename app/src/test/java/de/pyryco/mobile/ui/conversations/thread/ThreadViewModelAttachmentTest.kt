@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.network.MessageAttachmentIds
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
@@ -62,6 +63,7 @@ class ThreadViewModelAttachmentTest {
     ) : ConversationRepository by delegate {
         val uploads = mutableListOf<Pair<String, String>>() // filename to content
         val sends = mutableListOf<Pair<String, List<String>?>>() // text to ids; null ids = two-argument send
+        val sentAttachments = mutableListOf<List<MessageAttachment>>()
 
         override suspend fun uploadAttachment(
             conversationId: String,
@@ -85,11 +87,12 @@ class ThreadViewModelAttachmentTest {
         override suspend fun sendMessage(
             conversationId: String,
             text: String,
-            attachmentIds: List<String>,
+            attachments: List<MessageAttachment>,
         ): Message {
             whileSending()
             sendFailure?.let { throw it }
-            sends += text to attachmentIds
+            sends += text to attachments.map { it.attachmentId }
+            sentAttachments += attachments
             return delegate.sendMessage(conversationId, text)
         }
     }
@@ -171,6 +174,28 @@ class ThreadViewModelAttachmentTest {
             assertEquals("", vm.draft.value)
             assertTrue(vm.pendingAttachments.value.isEmpty())
             assertTrue(store.attachments.value.isEmpty())
+        }
+
+    @Test
+    fun send_namesEachAttachmentWithTheDisplayNameAndMimeTypeUsedForTheUpload() =
+        runTest {
+            val repository = RecordingRepository()
+            val vm = vm(repository, ComposerDraftStore())
+            vm.addAttachment("content://docs/photo", "photo.jpg", "image/jpeg", 5L)
+            vm.attach("notes")
+
+            vm.sendMessage("two files")
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(
+                    listOf(
+                        MessageAttachment("id-photo.jpg", "photo.jpg", "image/jpeg"),
+                        MessageAttachment("id-notes", "notes", "text/plain"),
+                    ),
+                ),
+                repository.sentAttachments,
+            )
         }
 
     @Test

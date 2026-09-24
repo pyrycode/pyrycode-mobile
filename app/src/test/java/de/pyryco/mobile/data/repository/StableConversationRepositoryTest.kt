@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.CompletableDeferred
@@ -230,11 +231,14 @@ class StableConversationRepositoryTest {
             val current = MutableStateFlow<ConversationRepository?>(null)
             val facade = StableConversationRepository(current)
 
-            assertTrue(runCatching { facade.sendMessage("c1", "hi", listOf("a")) }.exceptionOrNull() is IllegalStateException)
+            assertTrue(
+                runCatching { facade.sendMessage("c1", "hi", listOf(MessageAttachment("a"))) }.exceptionOrNull() is IllegalStateException,
+            )
 
             current.value = repoA
-            assertSame(sent, facade.sendMessage("c1", "hi", listOf("b", "a", "b")))
-            assertEquals(listOf(Triple("c1", "hi", listOf("b", "a", "b"))), repoA.sendWithAttachmentsCalls)
+            val attachments = listOf(MessageAttachment("b", "b.png", "image/png"), MessageAttachment("a"), MessageAttachment("b"))
+            assertSame(sent, facade.sendMessage("c1", "hi", attachments))
+            assertEquals(listOf(Triple("c1", "hi", attachments)), repoA.sendWithAttachmentsCalls)
             assertTrue("the two-argument send was not used", repoA.sendMessageCalls.isEmpty())
         }
 
@@ -1082,14 +1086,14 @@ class StableConversationRepositoryTest {
             return sendMessageResult
         }
 
-        val sendWithAttachmentsCalls = mutableListOf<Triple<String, String, List<String>>>()
+        val sendWithAttachmentsCalls = mutableListOf<Triple<String, String, List<MessageAttachment>>>()
 
         override suspend fun sendMessage(
             conversationId: String,
             text: String,
-            attachmentIds: List<String>,
+            attachments: List<MessageAttachment>,
         ): Message {
-            sendWithAttachmentsCalls += Triple(conversationId, text, attachmentIds)
+            sendWithAttachmentsCalls += Triple(conversationId, text, attachments)
             return sendMessageResult
         }
 

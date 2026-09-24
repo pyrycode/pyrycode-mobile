@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
@@ -1156,13 +1157,15 @@ class ThreadViewModel(
         launchGuardedRepoCall {
             try {
                 val target = state.value.conversationId
-                val ids = mutableListOf<String>()
+                val references = mutableListOf<MessageAttachment>()
                 for (entry in attachments) {
-                    ids += entry.attachmentId ?: upload(target, entry) ?: return@launchGuardedRepoCall
+                    val id = entry.attachmentId ?: upload(target, entry) ?: return@launchGuardedRepoCall
+                    // #983: the thread row names each file as it was uploaded.
+                    references += MessageAttachment(id, entry.displayName, entry.mimeType)
                 }
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
-                repository.sendMessage(target, text, ids)
+                repository.sendMessage(target, text, references)
                 if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
                 draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
             } finally {
