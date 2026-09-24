@@ -1537,6 +1537,32 @@ class RemoteConversationRepositoryTest {
             assertEquals("Renamed Channel", all.last().single { it.id == "chan" }.name)
         }
 
+    // #996: the caller's scope (the thread's viewModelScope, cleared by a Back pop) is cancelled after the
+    // reply reached the collector but before the caller resumed. The reply still reaches the list: the
+    // collector finds the still-registered waiter, and the cancelled caller never runs its own upsert.
+    @Test
+    fun rename_callerCancelledAfterReplyArrives_stillFoldsRenamedConversationIntoList() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val caller = backgroundScope.launch { repo.rename("chan", "Renamed Channel") }
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "rename_conversation" }.id
+            // Queued ahead of the cancellation, so the collector handles the reply first.
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sentId, id = "chan", name = "Renamed Channel", cwd = "/p/chan"))
+            caller.cancel()
+            runCurrent()
+
+            assertTrue(caller.isCancelled)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals("Renamed Channel", all.last().single { it.id == "chan" }.name)
+        }
+
     // AC #2, #3: a not-Open session (pump.send returns false) throws IllegalStateException; no fold.
     @Test
     fun rename_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
