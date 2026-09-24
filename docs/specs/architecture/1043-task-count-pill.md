@@ -34,3 +34,7 @@ Existing `ThreadTopOverlayTest` covers the overlay pills, which keep the default
 ## Documentation handoff
 
 The ticket names none.
+
+## Revisions
+
+**During the build: the touch target and the collapse measurement.** The pill is a clickable `Surface`, so M3 laid it out at its 48dp minimum interactive size, and the band grew to 48dp instead of Figma's 24dp. `ThreadStatusArea` now provides `LocalMinimumInteractiveComponentSize = Dp.Unspecified` around the pill. Layout stays at 24dp, and Compose's hit test still extends the pill's touch bounds to the 48dp minimum. The zero-count test measures the newest message's bottom rather than the input field's top, because the bottom bar is anchored at the bottom and only its top edge moves. It asserts the exact 32dp rise (the 24dp pill plus the 8dp gap) and the exact return. The test class runs under `@GraphicsMode(NATIVE)`, because in legacy mode the label measures almost no width and the pill wraps.
