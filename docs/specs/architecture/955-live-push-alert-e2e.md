@@ -189,3 +189,27 @@ Pending for the documentation stage:
    repository-observable prompt state for the conversation. If none is exposed, wait a bounded settle
    period after the cycle, and record that choice here.
 3. The exact AVD stem for `google-atd`. Confirm it from the provisioned AVD.
+
+## Revisions
+
+**2026-09-24, during the build. Resolves the three open questions.**
+
+1. **Background.** `sendAppToBackground` starts the system Settings activity with a shell
+   `am start -W -a android.settings.SETTINGS`. It does not press Home. A string scan of the ATD system
+   image found `FallbackHome` but no launcher package, so Home may have nowhere to go. Settings is
+   always present, because `FallbackHome` lives in it. Starting it moves another process's activity in
+   front, which is exactly what the operator's switch to another app does. The helper still waits until
+   the host link drops, and fails with "the app did not go to the background" if it never does.
+2. **Re-shown prompt.** `RelayRepositoryCoordinator.currentModal` is retained across a reconnect, and
+   the raw modal stream is private, so neither can show the re-show. The test instead subscribes to
+   `HostConversationSource.alerts` before `cycleHostLink` and waits for the prompt alert for this
+   conversation. That flow re-emits on a reconnect that re-shows the prompt, as its docs say. It then
+   waits `NOTIFIER_SETTLE_MS` (2 s), because the notifier handles the alert on its own dispatcher. The
+   post-time assertion comes after that wait.
+3. **AVD stem.** The setup task created `dev33_google_atd_arm64-v8a_Pixel_2`, which is the glob
+   `dev33_google_atd_*_Pixel_2.ini`. The old `dev33_aosp_atd_*` AVD stays on disk. The gate never
+   boots it, and the unit test now checks that too.
+
+AC1's chat is created and named through `answerChat` and opened with `openChatRow`, the #967 shape, rather
+than through `holdToolOnPermission` followed by a rename. This gives the same held prompt with one fewer
+step. `awaitPushRegistered` waits out a 32 s coalescing window, not 31 s, to allow for clock skew.

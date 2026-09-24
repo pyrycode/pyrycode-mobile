@@ -31,8 +31,8 @@
 #     for the relay host. Mutually exclusive with DETERMINISTIC.
 #   * rung 4 only: either FAKE_CLAUDE_BIN (a prebuilt fakeclaude) or PYRYCODE_SRC (a local pyrycode
 #     checkout) + `go` to build it. No claude auth needed; no claude turns spent.
-#   * Android SDK with the `aosp-atd` API 33 system image. AGP auto-provisions it on first run, which
-#     needs the image licence accepted. Android Studio can remain closed.
+#   * Android SDK with the `google-atd` API 33 system image (Play services, for the #955 push
+#     scenarios' FCM token). AGP auto-provisions it on first run, which needs the image licence accepted. Android Studio can remain closed.
 #   * python3 (used only to decode the base64url pairing payload).
 #
 # rung 3 is semi-deterministic by nature (real claude); rung 4 is fully deterministic and re-running it
@@ -1111,6 +1111,11 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_slashCommandsAndCompactStillWork"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel"
+  # #955: the push scenarios join (one turn each): a turn that ends while the app is in the background, and
+  # a prompt that surfaces while it is, each alerted through a real FCM push from the production relay.
+  # The list holds 29 methods and 31 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi

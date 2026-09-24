@@ -109,17 +109,17 @@ android {
             it.systemProperty("expectedUseRelayRepository", providers.gradleProperty("useRelayRepository").orElse("true").get())
         }
         managedDevices {
-            // Headless Automated Test Device (ATD): GPU off, no window, no Play services. Generates the
-            // Gradle task `pixel2Api33AtdDebugAndroidTest`, which creates, runs, and tears down the
-            // emulator with no display — the e2e harness target driven by scripts/e2e-emulator.sh.
-            // If the paired happy-path ever needs Play services, switch systemImageSource to
-            // "google-atd" (still headless). AGP auto-provisions the system image on first run; that
-            // needs the SDK cmdline-tools installed and the image licence accepted.
+            // Headless Automated Test Device (ATD): GPU off, no window. Generates the Gradle task
+            // `pixel2Api33AtdDebugAndroidTest`, which creates, runs, and tears down the emulator with no
+            // display — the e2e harness target driven by scripts/e2e-emulator.sh. The Google ATD image
+            // carries Play services (#955): the live push scenarios need a real FCM token, which the
+            // aosp-atd image cannot obtain. AGP auto-provisions the system image on first run; that needs
+            // the image licence accepted.
             localDevices {
                 create("pixel2Api33Atd") {
                     device = "Pixel 2"
                     apiLevel = 33
-                    systemImageSource = "aosp-atd"
+                    systemImageSource = "google-atd"
                 }
             }
         }
