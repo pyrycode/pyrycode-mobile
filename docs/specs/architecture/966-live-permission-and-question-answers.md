@@ -104,3 +104,7 @@ Pending for the documentation stage: `docs/e2e-interactive-stream.md` § Live mo
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- 2026-09-24 (implementation): `SecondClientPeer` also gains `field(envelope, name)`, so the test can compare a dismissal's daemon-asserted `outcome` and `source` sentinels; the private `payloadField` stays private. The three waits share one private `awaitDismissal`. No contract change.

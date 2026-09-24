@@ -15,6 +15,9 @@ import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.NoiseSessionPump
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.QuestionAnswerEntryDto
+import de.pyryco.mobile.data.network.QuestionAnswerPayloadDto
+import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.QueueStatePayloadDto
 import de.pyryco.mobile.data.network.QueuedMessageDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
@@ -147,16 +150,78 @@ class SecondClientPeer(
                 ModalAnswerPayloadDto(modalId = modalId, optionId = ALLOW_ONCE, answerToken = UUID.randomUUID().toString()),
             ),
         )
-        val dismissed =
-            withTimeout(timeoutMs) {
-                received
-                    .first { frames -> frames.any { it.isDismissalOf(modalId) } }
-                    .first { it.isDismissalOf(modalId) }
-            }
+        val dismissed = awaitDismissal("modal_dismissed", "modal_id", modalId, timeoutMs)
         check(dismissed.payloadField("outcome") == ALLOW_ONCE && dismissed.payloadField("source") == REMOTE_SOURCE) {
             "permission modal resolved otherwise: ${dismissed.payloadField("outcome")} from ${dismissed.payloadField("source")}"
         }
     }
+
+    /**
+     * The `modal_dismissed` for [modalId], whichever device resolved it (#966), waiting up to [timeoutMs].
+     * Its `outcome` and `source` are daemon-asserted sentinels, safe to compare and to name in a failure.
+     */
+    internal suspend fun awaitModalDismissed(
+        modalId: String,
+        timeoutMs: Long,
+    ): Envelope = awaitDismissal("modal_dismissed", "modal_id", modalId, timeoutMs)
+
+    /**
+     * The batch id of the [occurrence]th clarification question claude raises in [conversationId] (#966),
+     * waiting up to [timeoutMs]. The batch stays outstanding, and its turn open, until a privileged device
+     * answers or refuses it.
+     */
+    internal suspend fun awaitQuestion(
+        conversationId: String,
+        timeoutMs: Long,
+        occurrence: Int = 1,
+    ): String =
+        MobileJson
+            .decodeFromJsonElement(
+                QuestionShownPayloadDto.serializer(),
+                awaitFrame(conversationId, "question_shown", timeoutMs, occurrence).payload,
+            ).questionBatchId
+
+    /**
+     * Answer question [questionIndex] of [batchId] with [value] as this device, and wait for the daemon's
+     * `question_dismissed` for it (#966). As with `modal_answer`, the daemon replies nothing and ignores an
+     * answer from a device paired without `--allow-remote-permissions`, so that case times out.
+     */
+    internal suspend fun answerQuestion(
+        batchId: String,
+        questionIndex: Int,
+        value: String,
+        timeoutMs: Long,
+    ) {
+        send(
+            "question_answer",
+            MobileJson.encodeToJsonElement(
+                QuestionAnswerPayloadDto(
+                    questionBatchId = batchId,
+                    answerToken = UUID.randomUUID().toString(),
+                    answers = listOf(QuestionAnswerEntryDto(questionIndex = questionIndex, values = listOf(value))),
+                ),
+            ),
+        )
+        val dismissed = awaitQuestionDismissed(batchId, timeoutMs)
+        check(dismissed.payloadField("outcome") == ANSWERED && dismissed.payloadField("source") == REMOTE_SOURCE) {
+            "question resolved otherwise: ${dismissed.payloadField("outcome")} from ${dismissed.payloadField("source")}"
+        }
+    }
+
+    /** The `question_dismissed` for [batchId], whichever device resolved it (#966), waiting up to [timeoutMs]. */
+    internal suspend fun awaitQuestionDismissed(
+        batchId: String,
+        timeoutMs: Long,
+    ): Envelope = awaitDismissal("question_dismissed", "question_batch_id", batchId, timeoutMs)
+
+    /**
+     * The payload field [name] of [envelope] as a string, or null (#966). Callers compare it or name a
+     * daemon-asserted sentinel from it; never claude-authored text.
+     */
+    internal fun field(
+        envelope: Envelope,
+        name: String,
+    ): String? = envelope.payloadField(name)
 
     /**
      * The backlog the **latest** recorded `queue_state` for [conversationId] reports, once it satisfies
@@ -237,7 +302,18 @@ class SecondClientPeer(
         type: String,
     ): Boolean = this.type == type && payloadField("conversation_id") == conversationId
 
-    private fun Envelope.isDismissalOf(modalId: String): Boolean = type == "modal_dismissed" && payloadField("modal_id") == modalId
+    /** The first recorded [type] frame whose [idField] is [id], waiting up to [timeoutMs]. */
+    private suspend fun awaitDismissal(
+        type: String,
+        idField: String,
+        id: String,
+        timeoutMs: Long,
+    ): Envelope {
+        fun Envelope.matches() = this.type == type && payloadField(idField) == id
+        return withTimeout(timeoutMs) {
+            received.first { frames -> frames.any { it.matches() } }.first { it.matches() }
+        }
+    }
 
     private fun Envelope.payloadField(name: String): String? = (payload as? JsonObject)?.get(name)?.jsonPrimitive?.contentOrNull
 
@@ -283,5 +359,6 @@ class SecondClientPeer(
         const val PERMISSION_CLASS = "permission"
         const val ALLOW_ONCE = "allow_once"
         const val REMOTE_SOURCE = "remote"
+        const val ANSWERED = "answered"
     }
 }
