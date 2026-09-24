@@ -60,3 +60,7 @@ The changed test is its own proof.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+**2026-09-24, during implementation.** The DataStore's scope is not `backgroundScope`. `TestScope.advanceUntilIdle()` stops when only background work is left, so the DataStore's write actor never ran and the plain `first()` read `null`. That is the fail-instead-of-wait behaviour the design asks for, observed once. The store now gets its own `CoroutineScope(StandardTestDispatcher(testScheduler) + Job())`, which is foreground work on the same scheduler, and the test cancels it at the end. The rest of the design is unchanged.

@@ -1,6 +1,7 @@
 package de.pyryco.mobile.push
 
 import android.os.Bundle
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -9,15 +10,22 @@ import com.google.firebase.messaging.RemoteMessage
 import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
@@ -31,6 +39,9 @@ import org.robolectric.Robolectric
  */
 @RunWith(AndroidJUnit4::class)
 class PyryMessagingServiceTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
     private val controller = RecordingController()
     private val owner = BackgroundOwner()
     private lateinit var driver: LifecycleConnectionDriver
@@ -68,15 +79,34 @@ class PyryMessagingServiceTest {
         assertNull("a message never writes the push token", runBlocking { preferences().pushToken.first() })
     }
 
+    /**
+     * The sink and its DataStore run on this test's scheduler, so the write has finished before the token
+     * is read (#953). A collector that subscribed to a fresh DataStore while its first write was still
+     * running could miss the update and wait forever, which a loaded machine made likely. The store's
+     * scope is not `backgroundScope`: [advanceUntilIdle] leaves background work unrun.
+     */
     @Test
-    fun newToken_isPersisted_andDoesNotWake() {
-        service.onNewToken("fcm-rotated")
+    fun newToken_isPersisted_andDoesNotWake() =
+        runTest {
+            val storeScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+            val preferences =
+                AppPreferences(
+                    PreferenceDataStoreFactory.create(
+                        scope = storeScope,
+                        produceFile = { tmp.newFile("push_token.preferences_pb") },
+                    ),
+                )
+            val sink = PushTokenSink(preferences, StandardTestDispatcher(testScheduler))
+            loadKoinModules(module { single { sink } })
 
-        val stored = runBlocking { withTimeout(5_000) { preferences().pushToken.first { it == "fcm-rotated" } } }
+            service.onNewToken("fcm-rotated")
+            advanceUntilIdle()
 
-        assertEquals("fcm-rotated", stored)
-        assertEquals(emptyList<String>(), controller.calls)
-    }
+            assertEquals("fcm-rotated", preferences.pushToken.first())
+            assertEquals(emptyList<String>(), controller.calls)
+            sink.dispose()
+            storeScope.cancel()
+        }
 
     private fun preferences(): AppPreferences = GlobalContext.get().get()
 
