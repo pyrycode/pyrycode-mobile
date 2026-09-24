@@ -242,6 +242,19 @@ class AppPreferencesTest {
         }
 
     @Test
+    fun clearRememberedEffort_removesTheLevel_andReadsAbsent() =
+        runBlocking {
+            prefs.setRememberedEffort("xhigh")
+            prefs.setDefaultEffort(Effort.LOW)
+
+            assertTrue(prefs.clearRememberedEffort().isSuccess)
+
+            assertNull(prefs.rememberedEffort.first())
+            assertEquals(Effort.LOW, prefs.defaultEffort.first())
+            assertTrue("clearing an absent level succeeds", prefs.clearRememberedEffort().isSuccess)
+        }
+
+    @Test
     fun rememberedEffort_andTheSettingsDefaultEffort_areIndependent() =
         runBlocking {
             prefs.setRememberedEffort("xhigh")

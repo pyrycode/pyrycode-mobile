@@ -28,7 +28,7 @@ The phone keeps **one remembered effort level app-wide**, across chats, channels
 
 **Logging.** Every decided outcome logs `event=effort_recall outcome=<code>` (`started`, `saved_choice`, `no_session`, `unpublished`, `cancelled_by_tap`, `read_failed`) by static code only — never the level or the session id. The one exception: deciding to send nothing because nothing is remembered logs nothing at all, and neither does a cancelling tap while nothing is remembered. `RelayLog` is enabled in debug unit tests and its default sink calls `android.util.Log`, which throws on a plain JVM outside Robolectric; a log call reachable from every thread opening — this decision runs inside the `state` combine — would otherwise crash the state flow of every pre-#686 `ThreadViewModel` test using the inert `RememberedEffortStore.None` default. `setRememberedEffort`'s own `event=remembered_effort_set outcome=success|io_failure` log (in `AppPreferences`) is unconditional and never level-bearing, so it needed no such carve-out.
 
-No visual change: this rides the same pending/settled footer states [Thread composer footer § Applied effort](thread-composer-footer.md#applied-effort-889) already renders. No rung-3 scenario; the live recall and restart proof is [#545](https://github.com/pyrycode/pyrycode-mobile/issues/545)'s, not this ticket's.
+No visual change: this rides the same pending/settled footer states [Thread composer footer § Applied effort](thread-composer-footer.md#applied-effort-889) already renders. The live recall and restart proof is [#545](https://github.com/pyrycode/pyrycode-mobile/issues/545)'s `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` — see [e2e coverage](../../e2e-interactive-stream.md).
 
 ## Related
 
