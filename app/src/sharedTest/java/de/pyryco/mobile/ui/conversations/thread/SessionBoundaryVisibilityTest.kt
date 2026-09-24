@@ -5,7 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
-import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToIndex
@@ -83,7 +83,7 @@ class SessionBoundaryVisibilityTest {
 
         // Pin the viewport to the wrap-up row, now at index 1 in ThreadScreen's reversed list.
         // Off-screen lazy content may still exist in semantics; the precondition is non-display.
-        composeRule.onNode(hasScrollAction()).performScrollToIndex(1)
+        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(1)
         composeRule.onNodeWithText("Wrap-up detail 80.").assertIsDisplayed()
         explanation.assertIsNotDisplayed()
         composeRule.awaitDisplayedSessionBoundary(timeoutMillis = 5_000)

@@ -1,5 +1,10 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.content.ReceiveContentListener
+import androidx.compose.foundation.content.consume
+import androidx.compose.foundation.content.contentReceiver
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -8,8 +13,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowCircleUp
 import androidx.compose.material.icons.filled.StopCircle
@@ -23,18 +31,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -68,9 +78,13 @@ private val ButtonGlyphSize = 28.dp
  * [hasAttachments] and [sending] come from the chat's pending attachments (#933): attachments alone are
  * enough to send, and while [sending] the button stays disabled so a second tap cannot resend them.
  *
+ * [onImagesReceived], when set, takes the image content URIs a paste or a keyboard image insert offers the
+ * field (#934); the rest of the clip, text included, still goes into the field.
+ *
  * [onAnchorChanged] reports the field's window bounds with the left edge moved in to where the typed text
  * starts, which the screen uses to place the slash-command suggestions above the field (#885).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ThreadInputBar(
     text: String,
@@ -82,6 +96,7 @@ fun ThreadInputBar(
     onAnchorChanged: (Rect) -> Unit = {},
     hasAttachments: Boolean = false,
     sending: Boolean = false,
+    onImagesReceived: ((List<Uri>) -> Unit)? = null,
 ) {
     val textInset = with(LocalDensity.current) { FieldLeadingInset.toPx() }
     // One button, two jobs (#643) — the placement desktop's #678 settled, replacing the standalone
@@ -92,23 +107,72 @@ fun ThreadInputBar(
     // reaching for stop is in. Pending attachments (#933) are something to send, so they count as not empty.
     val stopping = isBusy && text.isBlank() && !hasAttachments
     // #885: the field keeps its own cursor, and text replaced from outside (a slash-command completion, a
-    // cleared send) puts the cursor at the end. A String-valued field would keep the old offset, so an
-    // argument typed after picking `/model` from `/mo` would land inside the name. The draft returns
-    // asynchronously, so [text] can still be the value from before the field's own latest edit
-    // ([textAtLastEdit]); that is not an outside change, and the field keeps showing its own value.
-    var fieldValue by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+    // cleared send) puts the cursor at the end. The draft returns asynchronously, so [text] can still be the
+    // value from before the field's own latest edit ([textAtLastEdit]); that is not an outside change, and
+    // the field keeps its own value. #934 moved this onto a TextFieldState, the only text field that can
+    // receive pasted content: user edits reach the draft through the input transformation, which a
+    // programmatic set never runs, so an outside change cannot echo back as an edit.
+    // Plain `remember`, never `rememberTextFieldState`: that one is saveable, and its saver writes the text and
+    // the whole undo history into the saved-state Bundle. The draft is heap-only (#789).
+    val fieldState = remember { TextFieldState(text, TextRange(text.length)) }
     var textAtLastEdit by remember { mutableStateOf<String?>(null) }
-    val shownValue =
-        if (fieldValue.text == text || text == textAtLastEdit) {
-            fieldValue
-        } else {
-            TextFieldValue(text, TextRange(text.length))
+    // The text either path last put in the field: a user edit reported through the transformation, or an
+    // outside change set here. A field text that is neither came from undo or redo, which bypass input
+    // transformations, and still has to reach the draft.
+    var accountedText by remember { mutableStateOf(text) }
+    val currentText by rememberUpdatedState(text)
+    val currentOnTextChange by rememberUpdatedState(onTextChange)
+    val reportEdits =
+        remember {
+            InputTransformation {
+                val edited = toString()
+                accountedText = edited
+                if (edited != currentText) {
+                    textAtLastEdit = currentText
+                    currentOnTextChange(edited)
+                }
+            }
         }
-    // Once the draft has caught up, the pre-edit text means nothing: a send that clears back to it is an
-    // outside change like any other.
     LaunchedEffect(text) {
-        if (text == fieldValue.text) textAtLastEdit = null
+        val shown = fieldState.text.toString()
+        if (shown == text) {
+            // Once the draft has caught up, the pre-edit text means nothing: a send that clears back to it
+            // is an outside change like any other.
+            textAtLastEdit = null
+        } else if (text != textAtLastEdit) {
+            accountedText = text
+            fieldState.setTextAndPlaceCursorAtEnd(text)
+        }
     }
+    LaunchedEffect(fieldState) {
+        snapshotFlow { fieldState.text.toString() }.collect { shown ->
+            if (shown != accountedText) {
+                accountedText = shown
+                textAtLastEdit = currentText
+                currentOnTextChange(shown)
+            }
+        }
+    }
+    val ownPackage = LocalContext.current.packageName
+    val currentOnImagesReceived by rememberUpdatedState(onImagesReceived)
+    // #934: a paste or a keyboard image insert offers the field a clip. Image content URIs from another
+    // app go to the attachment path; everything else is left for the field, so text still pastes as text.
+    val imageReceiver =
+        remember(ownPackage) {
+            ReceiveContentListener { content ->
+                val receive = currentOnImagesReceived ?: return@ReceiveContentListener content
+                val description = content.clipMetadata.clipDescription
+                val images = mutableListOf<Uri>()
+                val rest =
+                    content.consume { item ->
+                        val image = isPastedImageItem(item, description, ownPackage)
+                        if (image) images += item.uri
+                        image
+                    }
+                if (images.isNotEmpty()) receive(images)
+                rest
+            }
+        }
     Surface(
         shape = FieldCorner,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -126,32 +190,26 @@ fun ThreadInputBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BasicTextField(
-                value = shownValue,
-                onValueChange = { value ->
-                    fieldValue = value
-                    if (value.text != text) {
-                        textAtLastEdit = text
-                        onTextChange(value.text)
-                    }
-                },
+                state = fieldState,
                 // The design's `Text area` py-12: the 48dp button sets the single-line height, this
                 // keeps wrapped text off the container's edge as the field grows.
                 modifier =
                     Modifier
                         .weight(1f)
-                        .padding(vertical = FieldTextVerticalInset),
+                        .padding(vertical = FieldTextVerticalInset)
+                        .then(if (onImagesReceived != null) Modifier.contentReceiver(imageReceiver) else Modifier),
+                inputTransformation = reportEdits,
                 textStyle =
                     MaterialTheme.typography.bodyLarge.copy(
                         color = MaterialTheme.colorScheme.onSurface,
                     ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                singleLine = false,
-                maxLines = 5,
+                lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
-                decorationBox = { innerTextField ->
+                onKeyboardAction = { onSend() },
+                decorator = { innerTextField ->
                     Box {
-                        if (text.isEmpty()) {
+                        if (fieldState.text.isEmpty()) {
                             Text(
                                 text = stringResource(R.string.thread_input_placeholder),
                                 style = MaterialTheme.typography.bodyLarge,

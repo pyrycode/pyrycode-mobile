@@ -284,7 +284,7 @@ Lazy<ConversationCache>, attachments: Lazy<AttachmentStore>): suspend (String) -
 `ObservablePairedServerStore.remove` runs once `delegate.remove` and the revision bump have both
 succeeded — see [paired server store § Wiring & usage](paired-server-store.md#wiring--usage) for the
 hook's own contract. It clears the host's composer drafts first (`ComposerDraftStore.clearHost`, see
-[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership)), then, inside one
+[Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership)), then, inside one
 `withContext(NonCancellable)` block so a view model cleared mid-cleanup cannot strand the forgotten
 host's content or files on disk, calls `cache.value.removeHost(serverId)` and then
 [`attachments.value.removeHost(serverId)`](attachment-retrieval.md#host-store--datacacheattachmentstorekt)
