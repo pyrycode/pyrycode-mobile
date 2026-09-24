@@ -36,15 +36,20 @@ sealed interface ThreadEvent {
 
     data object SaveAsChannel : ThreadEvent
 
+    /**
+     * OK on the Save as channel modal (#957): promote in place under the trimmed [name], then store a
+     * non-blank [systemPrompt] verbatim. [toString] is overridden: the generated one would print the
+     * prompt, which may hold a pasted credential, into any crash trace or logged event.
+     */
     data class SaveAsChannelSubmit(
         val name: String,
-        val workspace: WorkspaceChoice,
-    ) : ThreadEvent
+        val systemPrompt: String,
+    ) : ThreadEvent {
+        override fun toString(): String = "SaveAsChannelSubmit(name=$name, systemPrompt=<redacted>)"
+    }
 
     data object SaveAsChannelDismiss : ThreadEvent
 }
-
-enum class WorkspaceChoice { DEDICATED, SCRATCH }
 
 sealed interface ThreadNavigation {
     data object PopBack : ThreadNavigation
@@ -53,6 +58,8 @@ sealed interface ThreadNavigation {
 data class ThreadUiState(
     val conversationId: String,
     val displayName: String,
+    // #957: the conversation's own name, before [displayName]'s fallback; `null` when it has none.
+    val conversationName: String? = null,
     val isPromoted: Boolean = false,
     val hasMessages: Boolean = false,
     val workspaceLabel: String = "scratch",
@@ -91,9 +98,20 @@ data class ThreadUiState(
     val slashCommands: List<SlashCommandMenuRow>? = null,
 )
 
+/**
+ * The Save as channel modal's seed and flags (#957). No typed value lives here — the name and prompt are
+ * the modal's own buffers — so a failure publishes a flag, never a daemon message, and no prompt reaches
+ * a logged state. [promoted] is a promote the daemon confirmed: a retry then writes only the prompt.
+ */
 data class SaveAsChannelDialogState(
     val initialName: String,
+    val saving: Boolean = false,
+    val promoted: Boolean = false,
+    val failure: SaveAsChannelFailure? = null,
 )
+
+/** Which write of Save as channel failed (#957); each resolves its own static string on screen. */
+enum class SaveAsChannelFailure { Promote, SystemPrompt }
 
 /**
  * One selectable model (#807) — a [de.pyryco.mobile.data.repository.ModelMenuRow] reduced to what the

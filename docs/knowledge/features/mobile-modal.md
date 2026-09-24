@@ -17,7 +17,11 @@ host-row Add workspace dialog on the phone, a folder list in place of a typed pa
 the host row's own long-press into [`WorkspacePicker`](workspace-picker.md). Since #905
 [`EditWorkspaceModal`](#callers) draws this shell directly as its fifth caller — desktop's
 `EditWorkspaceDialogView` on the phone, a name field plus an outlined archive action, driven by
-every workspace row's own pencil in both tree sections. Existing dialogs
+every workspace row's own pencil in both tree sections. Since #957
+[`SaveAsChannelDialog`](save-as-channel-dialog.md) draws this shell directly as its sixth caller —
+a channel name field plus an optional system prompt field, replacing the dialog's earlier
+`AlertDialog`-with-workspace-radios shape, driven by the thread overflow's **Save as channel…** item.
+Existing dialogs
 such as [CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
 their migration and operation-specific acceptance — `CreateFolderDialog` itself is now reused
 unchanged as a second window stacked over `AddWorkspaceModal`, described below.
@@ -384,6 +388,24 @@ every folder-name comparison, which cleared labels for names it should not have 
 field's own merged `Text` semantics, so `assertTextEquals(typed)` fails against the byte-count line even
 when the typed value is correct. Use `assertTextContains(typed)` for any field in this shell that pairs a
 value with supporting text.
+
+[`SaveAsChannelDialog`](save-as-channel-dialog.md#shape)
+(`ui/conversations/components/SaveAsChannelDialog.kt`, #957) is the shell's sixth direct caller — like
+`EditChatModal`, it draws `MobileModal` itself. It replaces a channel name and system prompt
+`AlertDialog`-with-workspace-radios pair with this shell's fixed Cancel/OK footer: a "Channel name:"
+field seeded from the conversation's own name (or "New channel"), clamped to `MAX_WORKSPACE_LABEL_CHARS`
+the same way `EditChatModal`'s field is, and an optional multi-line "Channel system prompt:" field that
+always opens empty. Both fields are pulled into a standalone, reusable `ChannelFormFields` composable
+(`ui/components/ChannelFormFields.kt`) rather than kept private to this caller, since the future Create
+channel modal reuses the same form. OK promotes the conversation in place
+(`ConversationRepository.promote(id, name, workspace = null)` — no dedicated-folder choice any more,
+following desktop's pyrycode-desktop#1436) and, once that is confirmed, writes a non-blank prompt
+verbatim with `setSystemPrompt`; a blank prompt writes nothing. `nameEditable = false` locks the name
+field once the promote leg is confirmed, so a retry after a prompt-write failure never repeats the
+promote. See [Save as channel](save-as-channel-dialog.md) for the full two-write state machine, its
+`compareAndSet` terminal transitions, and why `SaveAsChannelSubmit`'s `toString` redacts the prompt.
+[ThreadOverflowMenu](thread-overflow-menu.md)'s discussion-only **Save as channel…** item is its only
+caller.
 
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadPermissionModal.kt`, #815) is the first of
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than

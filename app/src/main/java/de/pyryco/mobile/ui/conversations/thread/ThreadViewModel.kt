@@ -25,6 +25,7 @@ import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
+import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
@@ -372,6 +373,7 @@ class ThreadViewModel(
             ThreadUiState(
                 conversationId = conversationId,
                 displayName = conv?.displayName() ?: conversationId,
+                conversationName = conv?.name,
                 isPromoted = conv?.isPromoted ?: false,
                 hasMessages = content.items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = workspaceDisplayName(cwd = conv?.cwd ?: "", label = conv?.workspaceLabel),
@@ -1643,24 +1645,84 @@ class ThreadViewModel(
                 }
             }
             ThreadEvent.RenameDismiss -> pendingRenameDialog.value = false
-            ThreadEvent.SaveAsChannel ->
+            ThreadEvent.SaveAsChannel -> {
                 pendingSaveAsChannelDialog.value =
-                    SaveAsChannelDialogState(initialName = AUTO_SUGGESTED_CHANNEL_NAME)
-            is ThreadEvent.SaveAsChannelSubmit -> {
-                pendingSaveAsChannelDialog.value = null
-                launchGuardedRepoCall {
-                    repository.promote(
-                        state.value.conversationId,
-                        event.name,
-                        resolveWorkspace(event.name, event.workspace),
+                    SaveAsChannelDialogState(
+                        initialName = state.value.conversationName?.takeIf { it.isNotBlank() } ?: DEFAULT_CHANNEL_NAME,
                     )
-                }
+                RelayLog.d { "event=save_as_channel_opened" }
             }
-            ThreadEvent.SaveAsChannelDismiss -> pendingSaveAsChannelDialog.value = null
+            is ThreadEvent.SaveAsChannelSubmit -> submitSaveAsChannel(event.name, event.systemPrompt)
+            ThreadEvent.SaveAsChannelDismiss -> {
+                pendingSaveAsChannelDialog.value = null
+                RelayLog.d { "event=save_as_channel_dismissed" }
+            }
             ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true
             ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
+        }
+    }
+
+    /**
+     * Save as channel's OK (#957): promote this conversation **in place** under the trimmed [name] — the
+     * `workspace = null` promote keeps its `cwd`, id and history — then, once the promote is confirmed,
+     * store a non-blank [systemPrompt] verbatim. A blank prompt writes nothing, so a prompt the chat
+     * already stores is kept. The modal closes only when every write it asked for has been confirmed.
+     *
+     * A failure keeps the modal open with a [SaveAsChannelFailure] flag, never the exception's message.
+     * A confirmed promote is recorded as [SaveAsChannelDialogState.promoted], so OK after a failed prompt
+     * write retries only that write and never sends a second promote. Every terminal transition is a
+     * `compareAndSet` against the state published before it, so a result landing after Cancel cannot
+     * resurrect the modal; the writes themselves carry on, since the operator already pressed OK.
+     *
+     * Logs static event names only — never the name, the prompt, the id or an exception message.
+     */
+    private fun submitSaveAsChannel(
+        name: String,
+        systemPrompt: String,
+    ) {
+        val dialog = pendingSaveAsChannelDialog.value ?: return
+        if (dialog.saving) return
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || !SystemPromptLimit.fits(systemPrompt)) {
+            RelayLog.d { "event=save_as_channel_rejected" }
+            return
+        }
+        val pending = dialog.copy(saving = true, failure = null)
+        pendingSaveAsChannelDialog.value = pending
+        viewModelScope.launch {
+            if (!dialog.promoted) {
+                RelayLog.d { "event=save_as_channel_promote_started" }
+                try {
+                    repository.promote(conversationId, trimmed, null)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    RelayLog.d { "event=save_as_channel_promote_failed" }
+                    pendingSaveAsChannelDialog.compareAndSet(pending, pending.copy(saving = false, failure = SaveAsChannelFailure.Promote))
+                    return@launch
+                }
+            }
+            if (systemPrompt.isBlank()) {
+                pendingSaveAsChannelDialog.compareAndSet(pending, null)
+                RelayLog.d { "event=save_as_channel_saved" }
+                return@launch
+            }
+            val promoted = pending.copy(promoted = true)
+            pendingSaveAsChannelDialog.compareAndSet(pending, promoted)
+            try {
+                repository.setSystemPrompt(conversationId, systemPrompt)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                RelayLog.d { "event=save_as_channel_prompt_failed" }
+                pendingSaveAsChannelDialog.compareAndSet(
+                    promoted,
+                    promoted.copy(saving = false, failure = SaveAsChannelFailure.SystemPrompt),
+                )
+                return@launch
+            }
+            pendingSaveAsChannelDialog.compareAndSet(promoted, null)
+            RelayLog.d { "event=save_as_channel_saved" }
         }
     }
 
@@ -1729,23 +1791,8 @@ private fun usageLimitRereads(): Flow<Unit> =
         }
     }
 
-private const val AUTO_SUGGESTED_CHANNEL_NAME = "New channel"
-
-private fun resolveWorkspace(
-    name: String,
-    choice: WorkspaceChoice,
-): String? =
-    when (choice) {
-        WorkspaceChoice.DEDICATED -> "pyry-workspace/channels/${name.toChannelSlug()}"
-        WorkspaceChoice.SCRATCH -> null
-    }
-
-private fun String.toChannelSlug(): String =
-    lowercase()
-        .replace(Regex("\\s+"), "-")
-        .replace(Regex("[^a-z0-9-]"), "")
-        .trim('-')
-        .ifEmpty { "channel" }
+/** Save as channel's name seed for a conversation that has no name of its own (#957). */
+private const val DEFAULT_CHANNEL_NAME = "New channel"
 
 // ---- #544: Model / Effort → set_session_settings wire strings (file-private) ---------------------
 //
