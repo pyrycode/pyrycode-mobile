@@ -38,6 +38,21 @@ re-upload them. On success `uploadAttachment`'s ids are named to `sendMessage`, 
 snapshot's attachments clear together — an entry added after the snapshot survives, the same
 "the message is what was tapped" guarantee the text draft's in-flight guard already gives.
 
+**Sent originals (#984).** Beside the text and pending-attachment maps, `ComposerDraftStore` keeps a
+third, unexposed `(serverId, conversationId)`-keyed map, attachment id to the content URI it was uploaded
+from: `fun recordSentOriginals(serverId, conversationId, originals: Map<String, String>)` and
+`fun sentOriginal(serverId, conversationId, attachmentId): String?`. `ThreadViewModel.sendWithAttachments`
+calls `recordSentOriginals` once every upload in the snapshot has succeeded and **before**
+`repository.sendMessage` — the confirmed row can render while that call is still suspended, so the
+originals must already be there when it does; an id recorded for a send that then fails is harmless,
+since a retry reuses the same ids. Not a `StateFlow`: nothing renders this map, and the thread reads one
+entry at most once per attachment it shows (see [MessageBubble § Load
+lifecycle](message-bubble.md#load-lifecycle-since-984)). Same rules as the other two maps — in memory
+only, never logged, `clearHost` / `clearConversation` drop it with the text and the pending attachments.
+A picker grant does not outlive the process, so neither does this entry; "sent in this app session," not
+"sent, ever," is the guarantee — reopening the app after a background/foreground cycle keeps it (the
+store is app-scoped), a process death does not.
+
 **Reading a content URI is a trust boundary.** `ContentResolver.openInputStream` opens `file://`,
 `android.resource://` and this app's own non-exported providers with the app's identity, so a URI handed
 back by another app's picker could otherwise make the app upload its own private files.
@@ -57,6 +72,20 @@ test containers build the factory without one. Resolving lazily means only a con
 builds a thread destination pays for it; one that does (`NotificationTapNavigationTest`,
 `LiteralScreenNavigationTest`) must bind an inert `AttachmentReader { AttachmentRead.Unreadable }`, the
 posture `RelayConnectionFactoryTest` already used for its own inert override.
+
+**`AttachmentReader.canRead(uri): Boolean` (#984)** answers whether a grant still lets the app open `uri`,
+without reading any bytes — the thread shows a sent file's own original ([Sent
+originals](#composer-pending-attachments) above) only while this is true. A default method on the `fun
+interface` (`= false`), so the single-method-lambda call sites in tests stay valid and a reader that
+cannot tell sends the thread to retrieval instead of hanging on `Loading`.
+`ContentResolverAttachmentReader.canRead` applies the same `isForeignContentUri` refusal `read` does, then
+opens and immediately closes an `AssetFileDescriptor`. **A coroutine timeout around the open does not
+bound it**: `withContext(io) { resolver.openInputStream(uri) }` blocks in a Binder call that never observes
+coroutine cancellation, so `withTimeoutOrNull` around it still waits for the provider. The bound is a
+`CancellationSignal` passed into `openAssetFileDescriptor(uri, "r", signal)` — the same open `read` performs
+— cancelled by a deadline job after `CAN_READ_TIMEOUT = 5.seconds`, or at once if the caller itself is
+cancelled. Every exception, including the `OperationCanceledException` the signal raises, is dropped unread
+and answers `false`, the same posture as `read`'s own failure handling.
 
 **The picker and the strip ([#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)).** The
 paperclip opens `rememberAttachmentPicker`'s `OpenMultipleDocuments()` launcher; a cancel calls nothing,

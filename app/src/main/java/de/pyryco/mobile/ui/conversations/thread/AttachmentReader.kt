@@ -1,14 +1,19 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.ContentResolver
+import android.os.CancellationSignal
 import androidx.core.net.toUri
 import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Reads a pending attachment's bytes through its content URI at send time (#932). An interface so
@@ -17,6 +22,13 @@ import java.io.InputStream
  */
 fun interface AttachmentReader {
     suspend fun read(uri: String): AttachmentRead
+
+    /**
+     * Whether [uri] can still be opened for reading (#984): the thread shows a sent file's original only
+     * while its grant lasts. Reads no bytes. Defaulted to `false`, so a reader that cannot tell sends the
+     * thread to retrieval instead.
+     */
+    suspend fun canRead(uri: String): Boolean = false
 }
 
 /** One read's outcome (#932). Never an exception: every provider failure is [Unreadable]. */
@@ -36,6 +48,9 @@ sealed interface AttachmentRead {
 }
 
 private const val READ_BUFFER_BYTES = 8192
+
+/** How long [ContentResolverAttachmentReader.canRead] waits on a provider before answering `false` (#984). */
+private val CAN_READ_TIMEOUT = 5.seconds
 
 /**
  * All of [input], or `null` as soon as more than [maxBytes] have been read (#932). The count is this
@@ -83,7 +98,7 @@ internal fun isForeignContentUri(
 /**
  * [AttachmentReader] over the app's [ContentResolver] (#932), on [io] because the stream read blocks.
  *
- * Refuses any URI [isForeignContentUri] rejects before touching the resolver. Never converts a URI to
+ * Refuses any URI [isForeignContentUri] rejects before touching the resolver, in [read] and [canRead] alike. Never converts a URI to
  * a path and needs no storage permission: the picker's grant is what makes the URI readable. Every
  * failure maps to [AttachmentRead.Unreadable] and the exception is dropped unread — a provider's
  * `FileNotFoundException` message carries the URI, which must never reach a log.
@@ -110,5 +125,42 @@ class ContentResolverAttachmentReader(
             } catch (e: Exception) {
                 AttachmentRead.Unreadable
             }
+        }
+
+    /**
+     * Opens and closes [uri] without reading it (#984). The open carries a [CancellationSignal] that a
+     * deadline cancels after [CAN_READ_TIMEOUT], or as soon as the caller is cancelled: a blocked
+     * provider call never sees coroutine cancellation, but it does see the signal. A provider that has not
+     * answered by then counts as unreadable, so a stalled grant sends the thread to retrieval.
+     */
+    override suspend fun canRead(uri: String): Boolean =
+        coroutineScope {
+            val signal = CancellationSignal()
+            val deadline =
+                launch {
+                    try {
+                        delay(CAN_READ_TIMEOUT)
+                    } finally {
+                        signal.cancel()
+                    }
+                }
+            try {
+                withContext(io) { opens(uri, signal) }
+            } finally {
+                deadline.cancel()
+            }
+        }
+
+    private fun opens(
+        uri: String,
+        signal: CancellationSignal,
+    ): Boolean =
+        try {
+            val parsed = uri.toUri()
+            isForeignContentUri(parsed.scheme, parsed.authority, ownPackage) &&
+                resolver.openAssetFileDescriptor(parsed, "r", signal)?.use { true } == true
+        } catch (e: Exception) {
+            // Includes the OperationCanceledException the deadline raises. Dropped unread, like read's.
+            false
         }
 }
