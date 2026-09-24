@@ -1,0 +1,284 @@
+# Attachment retrieval — `ConversationRepository.retrieveAttachment`
+
+Fetches a conversation attachment's bytes from **its owning host** and keeps them in app-private
+storage, whether the assistant produced the file or the phone uploaded it (#829's id and #898's offered
+id are fetched the same way). Data layer only — no UI; [#672](https://github.com/pyrycode/pyrycode-mobile/issues/672)
+renders and opens the kept file. Split from [#671](https://github.com/pyrycode/pyrycode-mobile/issues/671);
+clearing a host's retained files on unpair is a sibling ticket. Wire contract:
+`../pyrycode/docs/protocol-mobile.md` § Attachments (`request_attachment`, `attachment_chunk`,
+"Reassembly & integrity", "Retrieval, and its two terminal signals", "Trust and content hygiene"). That
+section still says nothing answers `request_attachment` — stale; the daemon answers it through
+`handleRequestAttachment` (`cmd/pyry/relay.go`). That correction belongs to the pyrycode repo, not here.
+
+This is the retrieval-leg sibling of [Attachment upload](attachment-upload.md) (#829): same chunk shape
+(`AttachmentChunkPayloadDto`, `ATTACHMENT_CHUNK_BYTES = 45_000`), opposite correlation. Upload correlates
+by the chunk's own envelope id, because the daemon's one success reply doesn't need to; retrieval
+correlates by **the request's own envelope id**, because every answering frame — each chunk and the
+`error` alike — names it in `in_reply_to`.
+
+## Three layers, matching who knows what
+
+1. **Connection** (`RemoteConversationRepository.fetchAttachment`) — knows the socket, not the host.
+   Sends one `request_attachment`, reassembles the correlated chunks in memory, verifies, returns the
+   verified content. Never touches the filesystem.
+2. **Facade** (`StableConversationRepository.fetchAttachment`) — delegates to the repository live at call
+   entry; none live is a retryable failure, not an exception.
+3. **Host** (`CachingConversationRepository.retrieveAttachment` + `AttachmentStore`) — knows `serverId`.
+   The store is an app singleton: it single-flights per `(host, conversation, attachment)`, returns a
+   kept file without asking, otherwise calls the connection layer and writes the verified bytes
+   temp-then-rename.
+
+## Wire type — `data/network/AttachmentPayloads.kt`
+
+`internal data class RequestAttachmentPayloadDto(conversation_id, attachment_id)` — both keys always
+sent, both checked with `isAttachmentIdShape` before one is built. There is no request-id key on the
+wire; the answer names the request's own envelope id instead. Chunks decode through the existing
+`AttachmentChunkPayloadDto` unchanged; its retrieval-leg `conversation_id` is empty and ignored.
+
+## Result types — `data/repository/AttachmentRetrieval.kt`
+
+```kotlin
+sealed interface AttachmentFetchResult {
+    class Fetched(val content: AttachmentContent, val displayName: String, val mimeType: String) : AttachmentFetchResult
+}
+sealed interface AttachmentRetrievalResult {
+    data class Retrieved(val file: File, val displayName: String, val mimeType: String) : AttachmentRetrievalResult
+    sealed interface Failed : AttachmentRetrievalResult, AttachmentFetchResult
+    data object NotFound : Failed      // attachment.not_found, or an id that fails isAttachmentIdShape
+    data object TooLarge : Failed      // claimed size over AttachmentRetrievalLimit.MAX_BYTES; nothing allocated
+    data object Invalid : Failed       // the stream broke a reassembly/integrity rule
+    data object Unavailable : Failed   // retryable: stream_aborted, other error codes, no connection,
+                                        // refused send, dropped connection, stall, local write failure
+}
+```
+
+`Failed` is shared between the two sealed hierarchies on purpose: a connection-level failure and a
+host-level failure read as the same value, so `CachingConversationRepository` can hand a
+`Failed` straight back without translating it. `displayName` is `attachmentDisplayName(filename)` (no
+ISO control or Unicode format code points, ≤ 255 UTF-8 bytes — #898's sanitiser); `mimeType` is the
+daemon's sniffed hint passed through the same sanitiser. Both are hints from attacker-chosen bytes,
+never a path and never a privilege, and neither is ever logged. `AttachmentContent` holds the verified
+chunks as the list they arrived in and writes them to an `OutputStream` in index order; its `toString()`
+is opaque, never bytes or a length breakdown beyond the total size.
+
+### The bound — `AttachmentRetrievalLimit`: 512 chunks, 23,040,000 bytes
+
+Reassembly is in memory and one connection runs one retrieval at a time, so the bound is this
+repository's heap budget for a file: `MAX_CHUNKS = 512`, `MAX_BYTES = 512 × 45_000`. It sits above the
+daemon's 16 MiB upload bound (so anything any client uploaded fits) and near the ceiling of the daemon's
+32 MiB base64 push queue delivered in one stream; it equals desktop's figure, so both clients refuse the
+same files (`pyrycode-desktop` `docs/knowledge/features/attachment-retrieval.md`). The daemon publishes
+no bound for host-produced files — a larger one is `TooLarge`.
+
+## Reassembly — `AttachmentRetrievalTransfer` (internal)
+
+One request, settled once, `@Synchronized` like [`DebugBundleTransfer`](relay-debug-bundle-transfer.md).
+`accept(envelope)` claims only frames whose `inReplyTo` equals the request's own envelope id; everything
+else returns `false` and flows on to the ordinary demux.
+
+- `error` → `attachment.not_found` settles `NotFound`; any other code (including
+  `attachment.stream_aborted`), or a payload without a readable `code`, settles `Unavailable` — the
+  transfer reads only the `code` string, not the full `ErrorPayload`, so a refusal missing `message` or
+  `retryable` still classifies.
+- `attachment_chunk` → one validation chain; any violation settles `Invalid` or `TooLarge`:
+  - decode fails, or `attachment_id` doesn't equal the requested one → `Invalid` (a chunk that names the
+    right request but the wrong attachment fails the retrieval, per the acceptance criteria);
+  - **first chunk fixes the claims**: `size`, `total_chunks`, `sha256`, `filename`, `mime_type`.
+    `size < 0` → `Invalid`; `size > MAX_BYTES` → `TooLarge`, checked **before** the per-index slot array
+    is allocated; `total_chunks != max(1, ceil(size / 45000))` → `Invalid`;
+  - later chunks: `total_chunks`, `size` or `sha256` differing from the first chunk → `Invalid` (a
+    changed `filename`/`mime_type` is silently ignored — the first chunk's hint wins);
+  - `index` outside `[0, total_chunks)` or already filled → `Invalid`;
+  - `data` must round-trip through canonical standard base64, decode to ≤ 45000 bytes, and keep the
+    running total ≤ `size` by subtraction (no overflow) → else `Invalid`;
+  - once every slot is filled: `sha256` over the slots in index order, lowercase hex, exactly equal, and
+    the assembled length exactly equal to `size` → `Fetched`; otherwise `Invalid`.
+- `fail(failure)` settles unless already settled and zero-fills the slots — no verified-length buffer
+  or partial content survives a failed transfer, even transiently.
+
+`activity: StateFlow<Int>` changes on every accepted chunk **and once when the transfer settles**
+(Phase B revision) — see § Lessons below for why the settle-only case matters.
+
+## Per-connection driver — `AttachmentRetrievals` (internal)
+
+Built by `RemoteConversationRepository` with `nextRequestId`, `send = pump::send`, and
+`stallTimeout = 30.seconds` (`DEFAULT_STALL_TIMEOUT` — the same figure desktop's reassembler uses and the
+relay's pong timeout). `fetch(conversationId, attachmentId)`:
+
+1. Both ids must pass `isAttachmentIdShape` or return `NotFound` without sending anything.
+2. Takes a `Mutex` — **one retrieval per connection**, which is what bounds memory to one
+   `AttachmentRetrievalLimit.MAX_BYTES` buffer per host, mirroring the upload leg's one-upload-per-
+   connection `uploadLock`.
+3. Registers the transfer **before** sending — a refused registration (inbound already ended) returns
+   `Unavailable` with nothing sent; a fast answer can never be missed.
+4. Sends one `request_attachment`; a thrown exception or a `false` return fails the transfer
+   `Unavailable`.
+5. Waits: each `stallTimeout` window with no change on `activity` fails the transfer `Unavailable`.
+6. Unregisters in `finally`, and logs `event=attachment_request id=<A>`, per-chunk
+   `event=attachment_chunk_in id=<A> index=<i> total=<n>`, and
+   `event=attachment_retrieval id=<A> outcome=<Class>` at settle. Never bytes, filename, digest, or path.
+
+`route(envelope)` (`@Synchronized`) offers to the active transfer; `end()` (`@Synchronized`, called from
+the inbound collector's `finally`, beside `endAttachmentUploads()`) marks inbound ended and fails the
+active transfer `Unavailable` — a stream cannot outlive its connection, and a retrieval started after
+teardown is refused rather than orphaned.
+
+`RemoteConversationRepository` builds `attachmentRetrievals` as a `private val`, routes it in
+`onInbound` right after `routeAttachmentUpload` (ahead of the general demux), calls `end()` in the
+`init` collector's `finally` next to `endAttachmentUploads()`, and
+`override suspend fun fetchAttachment(...) = attachmentRetrievals.fetch(...)`.
+
+## Facade — `StableConversationRepository.fetchAttachment`
+
+Snapshots `currentRepository.value` and delegates, exactly like `uploadAttachment`'s [snapshot-or-result
+posture](stable-conversation-repository.md#uploads--snapshot-or-result-829): with no live repository it
+returns `AttachmentRetrievalResult.Unavailable`, a value in the same `Failed` set the connected path can
+also produce, not an `IllegalStateException`. A connection change mid-fetch never moves a fetch already
+in flight — it keeps running (or fails) against the connection it started on.
+
+## Host store — `data/cache/AttachmentStore.kt`
+
+One Koin `single` over `File(androidContext().noBackupFilesDir, "attachments")` — the same backup
+reasoning [`FileConversationCache`](conversation-cache.md) gives: a retrieved file must be exactly as
+transferable as the Keystore-wrapped pairing that authorised fetching it, which is not at all.
+
+**Layout:** `<root>/<sha256hex(serverId)>/<conversationId>/<attachmentId>` holds the bytes,
+`<attachmentId>.meta.json` beside it the sanitised `display_name` / `mime_type`. Both ids are used as
+path components only **after** `isAttachmentIdShape` — lowercase hex and `-` cannot spell anything but
+themselves; an id that fails the shape check returns `NotFound` before any path is built and before
+`fetch` is called. The server id is hashed, never pasted, mirroring `FileConversationCache`'s host
+directories. One host is one directory, so a future per-host removal on unpair is one recursive delete.
+
+**Writes:** metadata is written first, content last, each through a `.part` file and
+`Files.move(..., ATOMIC_MOVE, REPLACE_EXISTING)` — content last makes its name the commit point, so a
+partial file is never readable under the attachment's id, and a kept pair with unreadable or
+version-mismatched metadata (`readKept` checks `KeptAttachment.version`) is treated as absent and fetched
+again rather than trusted. A write failure (`IOException` or `SecurityException`) deletes its `.part`,
+logs `event=attachment_store_failed id=<A>` with no exception message (the message carries the local
+path), and returns `Unavailable`.
+
+**Single-flight:** a `synchronized` `HashMap<Key, CompletableDeferred<AttachmentRetrievalResult?>>`. The
+leader (the caller that inserts the entry) first checks for a kept file — a success returns `Retrieved`
+with **no fetch call at all**, satisfying "after a success, a later retrieval returns the kept file
+without sending anything." Otherwise it calls `fetch`, and on `AttachmentFetchResult.Fetched` writes the
+bytes before returning `Retrieved`. Followers `await()` the same deferred. **A cancelled leader completes
+the deferred with `null`**, and a follower that reads `null` loops and becomes the next leader — a
+follower never inherits another caller's cancellation, and cancelling one of several concurrent callers
+never fails the others.
+
+## Wiring — `CachingConversationRepository` + `AppModule`
+
+`CachingConversationRepository` takes a fourth constructor param, `attachments: AttachmentStore? = null`:
+
+```kotlin
+override suspend fun retrieveAttachment(conversationId: String, attachmentId: String): AttachmentRetrievalResult =
+    attachments?.retrieve(serverId, conversationId, attachmentId) { delegate.fetchAttachment(conversationId, attachmentId) }
+        ?: delegate.retrieveAttachment(conversationId, attachmentId)
+```
+
+With no store it is plain delegation, the same fallback shape the class already uses elsewhere. `AppModule`
+binds `single { AttachmentStore(File(androidContext().noBackupFilesDir, "attachments")) }` beside the
+`ConversationCache` single, and `ThreadDestinationFactory` gained the matching `attachments: AttachmentStore?
+= null` constructor param, threaded into `CachingConversationRepository(stable, cache, serverId, attachments)`
+and passed `if (useRelay) get() else null` from `hostConversationModule`, mirroring the existing
+`cache = if (useRelay) get() else null` gate.
+
+### `ConversationRepository` interface
+
+Two new default-throwing members, the same idiom as `requestSystemPrompt`:
+
+- `fetchAttachment(conversationId, attachmentId): AttachmentFetchResult` — connection-level, host-blind.
+  Screens don't call this directly; it exists so `StableConversationRepository` and
+  `RemoteConversationRepository` have something to override.
+- `retrieveAttachment(conversationId, attachmentId): AttachmentRetrievalResult` — the kept file on this
+  repository's host. Only `CachingConversationRepository` actually keeps files; every other repository
+  either doesn't override it (default-throws) or, on `StableConversationRepository`, doesn't need to
+  since screens read through the host-bound wrapper. `FakeConversationRepository` (demo) doesn't override
+  either — retrieval, like upload, is explicitly out of the demo branch's scope.
+
+## Lessons learned
+
+- **The stall wait must wake on settle, not only on a chunk.** `AttachmentRetrievalTransfer.activity`
+  originally changed only when a chunk was accepted. A retrieval settled by an `error`, a refused send, or
+  a torn-down connection then sat in the `stallTimeout` wait for the full 30 s before `fetch` returned,
+  because nothing ever bumped `activity` for those paths. The fix bumps `activity` once inside `fail(...)`
+  too. The stall-deadline test alone can't catch this regression — it passes either way — so a test that
+  specifically settles the transfer with no chunk and asserts the wait returns immediately is the one that
+  matters (see the Phase B revision in `docs/specs/architecture/899-attachment-retrieval.md`).
+- **Per-host shared state cannot live in `CachingConversationRepository` itself.**
+  `ThreadDestinationFactory.repository` builds a *new* `CachingConversationRepository` instance on every
+  call, so any state that must be shared across every call for one host — here, the single-flight
+  bookkeeping that makes two concurrent retrievals of the same file share one fetch — has to live one
+  level up, in an app singleton keyed by host (`AttachmentStore`, keyed by `serverId`), not in the
+  per-call wrapper.
+- **A 3-byte base64 test can't prove non-canonical rejection.** 3 bytes encode to base64 with no padding
+  (`=`) at all, so a "strip the trailing `=`" mutation on a 3-byte payload changes nothing and any test
+  built that way fails for the wrong reason (or doesn't fail at all). Use a chunk length that is not a
+  multiple of 3 when testing the canonical-round-trip check in `AttachmentRetrievalTransfer.place`.
+- **DI: resolving a per-host store eagerly through `get()` inside a `single { }` block needs the same
+  test-container treatment as `ConversationCache`.** See [Dependency injection §
+  AttachmentStore](dependency-injection.md#attachmentstore-and-context-free-thread-destination-containers-899).
+
+## Logging
+
+`RelayLog.d` only (debug-gated): `event=attachment_request id=<A>`, `event=attachment_chunk_in id=<A>
+index=<i> total=<n>`, `event=attachment_retrieval id=<A> outcome=<Class>` from the connection layer, and
+`event=attachment_store_failed id=<A>` from the store on a write failure. Never the bytes, the filename,
+the digest, the MIME type, the daemon's error code text, an exception message, or a local path.
+
+## Testing
+
+- `AttachmentRetrievalTransferTest` — 0, 45000 and 45001-byte files; out-of-order chunks; a chunk naming
+  the right request but the wrong attachment id; duplicate index; out-of-range index; `total_chunks` /
+  `size` / `sha256` changed mid-stream; `total_chunks` inconsistent with `size`; size over the bound →
+  `TooLarge` before allocation; negative size; non-canonical base64; an oversized chunk; a length or
+  digest mismatch at completion; an uppercase digest rejected (lowercase-hex only); `not_found` →
+  `NotFound`; `stream_aborted` after partial chunks → `Unavailable` with the partial state discarded (a
+  chunk arriving after the abort is claimed but changes nothing); another or malformed `error` →
+  `Unavailable`; a foreign `in_reply_to` not claimed; first outcome wins once settled.
+- `RemoteConversationRepositoryAttachmentRetrievalTest` (fake pump, the sibling-test-class pattern
+  `RemoteConversationRepositoryAttachmentTest` established) — one `request_attachment` naming the right
+  conversation and attachment; success end to end; an invalid id shape sends nothing; a refused send; a
+  dropped connection (pump closes) → `Unavailable`; a stall after `stallTimeout` of virtual time →
+  `Unavailable`; a retry after a failure sends a fresh request; logs carry no filename or digest.
+- `AttachmentStoreTest` (`TemporaryFolder`) — success writes exact bytes under the host directory with no
+  `.part` left behind; a kept file is returned with no fetch call; concurrent retrievals of the same key
+  produce one fetch and one shared outcome; a failure leaves no file under the attachment's id; a later
+  retrieval after a failure fetches again; an invalid id shape never calls `fetch`; two hosts keep
+  separate trees.
+- `StableConversationRepositoryTest` — `fetchAttachment` with no live repository returns `Unavailable`.
+- `CachingConversationRepositoryTest` — `retrieveAttachment` goes through the store with this wrapper's
+  own `serverId` and the delegate's `fetchAttachment` as the fetch function.
+- Under `testDebugUnitTest`, `RelayLog.enabled` is `true` and the default sink calls `android.util.Log`,
+  which throws on plain JVM with no Robolectric — the same capturing-sink requirement documented at
+  [Relay diagnostic log § Testing](relay-log.md#testing) and [Attachment upload §
+  Testing](attachment-upload.md#testing) applies to every test here that reaches a `RelayLog.d` call.
+- No Compose surface and no operator-facing flow of its own — the UI is #672 — so no rung-3/4 scenario.
+
+## Related
+
+- Ticket: `docs/specs/architecture/899-attachment-retrieval.md` — design, the bound's reasoning, security
+  review, revisions (the settle-wake fix and the `InertAttachmentStore` rework).
+- Sibling leg: [Attachment upload](attachment-upload.md) (#829) — the opposite correlation direction, the
+  local socket-queue bound, the `MessageCommands`-hosted state shape this leg's per-connection driver
+  mirrors.
+- Nearest shape: [Host diagnostic archive transfer](relay-debug-bundle-transfer.md) — the other
+  connection-bound, settle-once transfer sharing the sole inbound consumer.
+- Contract: [Conversation repository](conversation-repository.md) — the default-throwing member idiom,
+  `fetchAttachment` / `retrieveAttachment`.
+- Implementation: [Remote conversation repository](remote-conversation-repository.md) — where
+  `attachmentRetrievals` is wired into `onInbound` and the inbound collector's `finally`.
+- Facade: [Stable conversation repository](stable-conversation-repository.md) — the snapshot-or-result
+  posture `fetchAttachment` shares with `uploadAttachment`.
+- Host wrapper: [Caching conversation repository](caching-conversation-repository.md) — where
+  `retrieveAttachment` and the `AttachmentStore` param are wired; conceptually this ticket's home for "the
+  host-bound wrapper is where per-host storage belongs," alongside the thread-row cache it already keeps.
+- [Conversation cache](conversation-cache.md) — the `noBackupFilesDir` reasoning and the hashed host
+  directory layout `AttachmentStore` mirrors.
+- DI: [Dependency injection § AttachmentStore and context-free thread destination
+  containers](dependency-injection.md#attachmentstore-and-context-free-thread-destination-containers-899).
+- [Relay diagnostic log](relay-log.md) — the `RelayLog.d` calls this leg makes, and the JVM
+  capturing-sink test requirement.
+- Desktop precedent: `pyrycode-desktop` `docs/knowledge/features/attachment-retrieval.md` and
+  `attachment-reassembly-and-store.md` — the same failure set, the same stall figure, the same chunk
+  bound.

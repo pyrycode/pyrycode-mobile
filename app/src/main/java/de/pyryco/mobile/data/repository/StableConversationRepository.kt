@@ -292,6 +292,13 @@ class StableConversationRepository(
         return repository.uploadAttachment(conversationId, bytes, filename, mimeType)
     }
 
+    /** Fetches on the repository live at call entry (#899), like [uploadAttachment]; none live is a retryable failure. */
+    override suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult =
+        currentRepository.value?.fetchAttachment(conversationId, attachmentId) ?: AttachmentRetrievalResult.Unavailable
+
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"
     }
