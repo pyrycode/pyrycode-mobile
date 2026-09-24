@@ -1184,6 +1184,12 @@ class RemoteConversationRepository(
     /** Restore over `unarchive_conversation` (#549); see [ConversationCommands.unarchive]. */
     override suspend fun unarchive(conversationId: String): Unit = conversationCommands.unarchive(conversationId)
 
+    /** Set or clear the mute flag over `set_conversation_muted` (#1000); see [ConversationCommands.setMuted]. */
+    override suspend fun setMuted(
+        conversationId: String,
+        muted: Boolean,
+    ): Unit = conversationCommands.setMuted(conversationId, muted)
+
     /** Permanently delete a conversation (#532); see [ConversationCommands.delete]. */
     override suspend fun delete(conversationId: String): Unit = conversationCommands.delete(conversationId)
 
@@ -1309,6 +1315,9 @@ class RemoteConversationRepository(
 
         /** Request: restore an archived conversation (#549, #881, shares `ArchiveConversationPayload`). Reply is `conversation_updated`. */
         const val TYPE_UNARCHIVE_CONVERSATION = "unarchive_conversation"
+
+        /** Request: set or clear a conversation's mute flag (#1000, pyrycode#2572). Reply is `conversation_updated`, also pushed uncorrelated. */
+        const val TYPE_SET_CONVERSATION_MUTED = "set_conversation_muted"
 
         /** Request: permanently delete an existing conversation (#532, #822 `DeleteConversationPayload`). */
         const val TYPE_DELETE_CONVERSATION = "delete_conversation"
