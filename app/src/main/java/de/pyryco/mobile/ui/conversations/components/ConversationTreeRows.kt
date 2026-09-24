@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.annotation.StringRes
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -332,8 +333,9 @@ fun TreeWorkspaceRow(
  *
  * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge, permanently, since the
  * phone has no hover (#827) — the host row's pencil made the same trade (#744). The caller decides which
- * rows get it: Chats rows do, Channels rows wait for #667. It is a [TreeRowControl], so a tap on it
- * edits the row without opening it or moving the highlight.
+ * rows get it and names what it edits through [editDescription]: Edit chat on Chats rows, Edit channel on
+ * Channels rows (#667). It is a [TreeRowControl], so a tap on it edits the row without opening it or
+ * moving the highlight.
  */
 @Composable
 fun TreeConversationRow(
@@ -342,6 +344,7 @@ fun TreeConversationRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onEditTapped: (() -> Unit)? = null,
+    @StringRes editDescription: Int = R.string.cd_tree_chat_edit,
 ) {
     // Clamped once and reused for the name and the pencil's label, as the host row does.
     val bounded = boundedRowText(conversationName)
@@ -377,7 +380,7 @@ fun TreeConversationRow(
         if (onEditTapped != null) {
             TreeRowControl(
                 icon = Icons.Filled.Edit,
-                contentDescription = stringResource(R.string.cd_tree_chat_edit, bounded),
+                contentDescription = stringResource(editDescription, bounded),
                 onClick = onEditTapped,
             )
         }
