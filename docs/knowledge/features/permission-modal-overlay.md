@@ -294,14 +294,15 @@ the render-time output-encoding, the screen-capture hardening, the send-error co
 
 - **Output-encoding / injection sink** — every server string renders through plain `Text(String)` (literal,
   no markup / HTML / active-content interpretation). The injection sink would be routing them through
-  [`MarkdownText`](markdown-text.md) (which parses) — explicitly forbidden, mirroring
-  [`LiteralScreenSurface`](literal-screen-surface.md)'s verbatim-`Text` rule. No `buildAnnotatedString`
-  parse, no `SelectionContainer` (text selection is a clipboard-exfiltration path past `FLAG_SECURE`).
+  [`MarkdownText`](markdown-text.md) (which parses) — explicitly forbidden, mirroring the retired
+  `LiteralScreenSurface`'s verbatim-`Text` rule (#381, [retired by #883](../../specs/architecture/883-retire-literal-screen.md)).
+  No `buildAnnotatedString` parse, no `SelectionContainer` (text selection is a clipboard-exfiltration path
+  past `FLAG_SECURE`).
 - **Screen-capture hardening** — since [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), owned by
   [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal)'s private `gate = true` shell
   branch: `DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` sets `FLAG_SECURE` on the **dialog's
   own window**. A Compose dialog draws in its own window, so the [#381](../codebase/381.md)
-  `LiteralScreenSurface.SecureScreen()` precedent (which flags the **Activity** window) would **not** cover
+  `LiteralScreenSurface.SecureScreen()` precedent (which flagged the **Activity** window, before [#883](../../specs/architecture/883-retire-literal-screen.md) retired the file) would **not** cover
   it; `SecureOn`, **not** the default `Inherit`, is the load-bearing choice because the host thread screen
   carries `FLAG_SECURE` nowhere. A deterministic Compose property — a real code-level net, not a stochastic
   rule. Previously this had no Compose-test semantics node and was code-review-verified only; #815's
@@ -447,8 +448,8 @@ and the snackbar-vs-inline dismiss affordance remains design-owed.
 - [Thread screen](thread-screen.md) — the host; the overlay is the seventh `Scaffold` sibling, alongside
   `WorkspacePicker` / `RenameDialog` / `SaveAsChannelDialog` / `StatusSheet` / `ChannelInfoSheet` /
   `DeleteConfirmationDialog`.
-- [Literal screen surface](literal-screen-surface.md) ([#381](../codebase/381.md)) — the `FLAG_SECURE`
-  **Activity-window** precedent this slice mirrors with the **dialog-window** `securePolicy` variant; also
+- `LiteralScreenSurface` ([#381](../codebase/381.md), retired by [#883](../../specs/architecture/883-retire-literal-screen.md)) — the `FLAG_SECURE`
+  **Activity-window** precedent this slice mirrored with the **dialog-window** `securePolicy` variant; also
   the verbatim-`Text` (never `MarkdownText`) rule.
 - [Archived discussions screen](archived-discussions-screen.md) — the snackbar dismiss-reason precedent
   (`remember { SnackbarHostState() }` + `LaunchedEffect` + `Scaffold(snackbarHost = …)`).

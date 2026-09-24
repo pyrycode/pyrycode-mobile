@@ -228,8 +228,14 @@ data class ThreadRunConfig(
     val selectedChoice: ThreadModelChoice? get() = choices.firstOrNull { it.value == selectedModel }
 
     /** The effort levels **the selected row** supports. Empty is a positive statement that this model
-     *  exposes no effort control — never a cue to substitute the `Effort` entries. */
-    val effortChoices: List<ThreadEffortChoice> get() = selectedChoice?.effortChoices.orEmpty()
+     *  exposes no effort control — never a cue to substitute the `Effort` entries. With no model override
+     *  (`""`) the row is the inherited default's, published as `default` (#972, desktop `effortRowFor`).
+     *  Only this lookup substitutes: [selectedChoice] and everything reading it stay unwidened. */
+    val effortChoices: List<ThreadEffortChoice>
+        get() {
+            val model = selectedModel.ifEmpty { INHERITED_DEFAULT_MODEL_VALUE }
+            return choices.firstOrNull { it.value == model }?.effortChoices.orEmpty()
+        }
 
     /** Whether a model or effort write is outstanding: the surfaces keep it visibly distinct from confirmed
      *  state. A permission write is [pendingPermission], kept apart so it gates only its own control. */
@@ -271,6 +277,9 @@ data class ThreadRunConfig(
 internal const val UNKNOWN_RUN_CONFIG_LABEL = "unknown"
 
 internal const val INHERITED_RUN_CONFIG_LABEL = "default"
+
+/** The published row `value` the daemon gives the inherited-default model (#972). A lookup key, not a label. */
+private const val INHERITED_DEFAULT_MODEL_VALUE = "default"
 
 internal const val EFFORT_PLACEHOLDER_LABEL = "Effort"
 

@@ -367,8 +367,9 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   session transition, or reconnect (see
   [Thinking-progress state § Edge cases](thinking-progress-state.md#edge-cases--limitations)). Not
   handled here: a client-side timeout would be exactly the "infer something from a gap" the wire contract
-  forbids. The operator is never trapped by it — the interrupt control, the composer and
-  `StallPromotionBanner` all stay live beside this slot regardless of what it shows.
+  forbids. The operator is never trapped by it — the interrupt control and the composer stay live beside
+  this slot regardless of what it shows (as, until [#883](../../specs/architecture/883-retire-literal-screen.md)
+  retired it, did the stall promotion banner).
 - **A reading can briefly describe the previous inference request (#803, code-review NIT, not fixed
   here).** The reading clears only on turn end or session transition, not when `turn_state` leaves
   `thinking` for an intermediate phase. In a turn shaped thinking → tool → thinking, the arm can come back

@@ -134,10 +134,9 @@ this slot until [#643](../codebase/643.md), now the send button's stop variant i
 just below the status area (see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) —
 is untouched by this arm: an in-flight turn stays interruptible while retrying or compacting.
 
-This is the counterpoint to [`StallPromotionBanner`](stall-promotion-banner.md), which lives in a
-different slot entirely (above the list, below `ConnectionBanner`) and is independent — every signal in
-this slot can legitimately co-render with it; that pairing is out of scope for this family (open
-question, PO's call if it ever reads badly in practice).
+Until [#883](../../specs/architecture/883-retire-literal-screen.md) retired it, this was also the
+counterpoint to `StallPromotionBanner`, which lived in a different slot entirely (above the list, below
+`ConnectionBanner`) and was independent — every signal in this slot could legitimately co-render with it.
 
 ## Wiring
 
@@ -203,12 +202,12 @@ both rendered branches are covered.
 
 - **Visual is design-owed.** No retry treatment is drawn in
   [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — the same design-owed gap
-  already recorded for [`ThinkingIndicator`](thinking-indicator.md) and
-  [`StallPromotionBanner`](stall-promotion-banner.md). Until it lands the visual follows the app's
+  already recorded for [`ThinkingIndicator`](thinking-indicator.md) (and, until [#883](../../specs/architecture/883-retire-literal-screen.md)
+  retired it, the stall promotion banner). Until it lands the visual follows the app's
   existing M3 progress idiom; when the frame arrives, re-tune spinner/typography here — no contract
   change.
-- **No `liveRegion` on any of the four status affordances** (this indicator, its counter-less sibling,
-  `ThinkingIndicator`, `StallPromotionBanner`) — flagged as a non-gating NIT in #594's code review, same
+- **No `liveRegion` on any of the status affordances** (this indicator, its counter-less sibling,
+  `ThinkingIndicator`) — flagged as a non-gating NIT in #594's code review, same
   class of deferred a11y enhancement as `ThinkingIndicator`'s. Folded into the design-owed follow-up
   rather than fixed per-component.
 - **No animation.** The swap between thinking / retrying / neither is an instant early-return/either-or
@@ -235,8 +234,8 @@ both rendered branches are covered.
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
   light/dark previews, file-private spacing `val`s intentionally **not** shared/refactored across the
-  two components), [Stall promotion banner](stall-promotion-banner.md) (the different-slot,
-  independently-co-rendering counterpoint).
+  two components). The stall promotion banner was the different-slot, independently-co-rendering
+  counterpoint until [#883](../../specs/architecture/883-retire-literal-screen.md) retired it.
 - Sibling render slices: [Compacting indicator](compacting-indicator.md) ([#597](../codebase/597.md)) —
   joined this slot as the third arm, ordered below api-retry so the alarming signal is never masked by
   the benign one; [Usage-limit indicator](usage-limit-indicator.md)
