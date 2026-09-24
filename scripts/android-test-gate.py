@@ -34,6 +34,8 @@ LIVE_MINIMUM += 3
 LIVE_MINIMUM += 2
 # #1016 adds two attachment-exchange methods; its third joins once #1020 lets history replay name a file.
 LIVE_MINIMUM += 2
+# #1050 adds the live markdown-note link method.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

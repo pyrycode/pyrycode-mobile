@@ -45,6 +45,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
@@ -3190,6 +3191,108 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A markdown link in claude's reply opens the note in the in-app reader, read live (#1050, rung 3). Claude
+     * writes a markdown note in its workspace with one `printf` and replies with a link to it. A tap on the
+     * link shows the note's heading and its file name in the reader, with the thread's composer gone. Back
+     * returns to the thread. Claude then rewrites the note, and the same link shows the new heading and not
+     * the old one: the reader reads the host's file on every open and keeps nothing between opens.
+     *
+     * **Two real-claude turns**: the note and the rewrite.
+     */
+    @Test
+    fun interactiveTurn_markdownLink_opensLiveNoteInReader() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        try {
+            val stamp = System.currentTimeMillis()
+            val fileName = NOTE_FILE_PREFIX + "$stamp.md"
+            val linkText = NOTE_LINK_PREFIX + stamp
+            val first = NOTE_MARKER_PREFIX + "$stamp-first"
+            val second = NOTE_MARKER_PREFIX + "$stamp-second"
+            val allowed = mutableSetOf<String>()
+
+            // 1. A fresh chat X; claude writes the note and replies with a link to it.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, NOTE_CHAT_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+            sendFromPhone(notePrompt(first, fileName, "reply with exactly this markdown link and nothing else: [$linkText]($fileName)"))
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the note turn in X did not end", allowed) { it.type == "turn_end" }
+
+            // 2. AC-1, AC-3: the tap opens the reader on the note as it is now, named by its file.
+            assertLinkOpensNote(linkText, fileName, first, stale = null)
+
+            // 3. AC-3: back returns to the same thread.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitThreadComposer()
+
+            // 4. AC-2, AC-5: claude rewrites the note; the same link now shows the new content only.
+            sendFromPhone(notePrompt(second, fileName, "reply with a single short word"))
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the rewrite turn in X did not end", allowed) {
+                it.type == "turn_end" && peer.recorded(chatX).count { frame -> frame.type == "turn_end" } >= 2
+            }
+            assertLinkOpensNote(linkText, fileName, second, stale = first)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitThreadComposer()
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * The #1050 note prompt: write a one-heading markdown note [marker] to [fileName] in the workspace with one
+     * shell command, then [reply]. `printf` with a quoted literal keeps the bytes exactly as written.
+     */
+    private fun notePrompt(
+        marker: String,
+        fileName: String,
+        reply: String,
+    ): String =
+        "Run this exact shell command with your tools: `printf '# $marker\\n' > $fileName`. " +
+            "Do not use Write or Edit, and do not create any other file. After the command returns, $reply."
+
+    /**
+     * Tap the first [linkText] link in claude's reply and wait for the reader: the note's [marker] heading
+     * under a bar named [fileName], the composer gone, and never the [stale] heading.
+     */
+    private fun assertLinkOpensNote(
+        linkText: String,
+        fileName: String,
+        marker: String,
+        stale: String?,
+    ) {
+        val link = hasText(linkText, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                runCatching {
+                    scrollListTo(link)
+                    composeTestRule.onAllNodes(link, useUnmergedTree = true).onFirst().performFirstLinkClick()
+                }.isSuccess
+            }
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(marker)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("tapping the link to $fileName did not show the note $marker in the reader", e)
+        }
+        // Past the navigation transition, so the thread beneath (whose prompts name both markers) is gone.
+        composeTestRule.waitForIdle()
+        composeTestRule.onNode(hasText(marker)).assertIsDisplayed()
+        composeTestRule.onNode(hasText(fileName)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).assertCountEquals(0)
+        stale?.let { composeTestRule.onAllNodes(hasText(it)).assertCountEquals(0) }
+    }
+
+    /** Wait until the open thread's composer is back. */
+    private fun awaitThreadComposer() {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
      * The #1016 offer prompt: write [content] to [fileName] in the workspace with one shell command, then hand
      * it over with `send_file`. The file must be in the workspace, since `send_file` refuses any other path,
      * and `printf` with a quoted literal and no newline keeps its bytes exactly [content].
@@ -4810,6 +4913,12 @@ class InteractiveStreamE2ETest {
         const val TEXT_MIME = "text/plain"
         const val DOCUMENT_BYTES = 100_000
         const val FIXTURE_COLOR = 0xFF2A6FDB.toInt()
+
+        // #1050: the live-note link. Run-unique names; the markers are what the note's heading renders as.
+        const val NOTE_CHAT_NAME_PREFIX = "e2e1050-"
+        const val NOTE_FILE_PREFIX = "e2e1050-note-"
+        const val NOTE_LINK_PREFIX = "e2e1050-open-"
+        const val NOTE_MARKER_PREFIX = "pyrycode-mobile-note-"
 
         // A `python3` command, so it needs permission (see WAIT_PROMPT). The token is its output, which no
         // prompt contains; claude could still compute it, so the tests prove the run by a successful Bash

@@ -111,3 +111,7 @@ Pending for the documentation stage: the ticket names no documentation section. 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-25
+
+## Revisions
+
+- 2026-09-25 (implementation): Open question resolved: `performFirstLinkClick` exists at BOM `2026.02.01`, so the screen tests and the rung-3 scenario tap the rendered link itself. A streaming reply reveals its source a character at a time, so the tap is retried until the link is complete. Both kinds of test wait for the link before they tap. No contract changed.

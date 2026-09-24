@@ -1123,6 +1123,9 @@ elif [ -n "${LIVE}" ]; then
   # phone-to-peer method last and the offered-file method before the background-task one (see their KDoc).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart"
+  # #1050: a markdown link in claude's reply opens the note live in the in-app reader (two turns: the note and
+  # its rewrite). The list holds 32 methods and 35 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownLink_opensLiveNoteInReader"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
