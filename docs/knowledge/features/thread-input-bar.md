@@ -18,6 +18,7 @@ fun ThreadInputBar(
     modifier: Modifier = Modifier,
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
+    onAnchorChanged: (Rect) -> Unit = {},
 )
 
 // Stateless — used by previews and UI tests
@@ -29,8 +30,11 @@ fun ThreadInputBar(
     modifier: Modifier = Modifier,
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
+    onAnchorChanged: (Rect) -> Unit = {},
 )
 ```
+
+[#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) added `onAnchorChanged`, defaulted on both overloads so no existing call site changes. It reports the field's `boundsInWindow()` with `left` moved in by `FieldLeadingInset` (16dp) on every frame the field's own position changes, so a row of the [slash-command type-ahead](slash-command-type-ahead.md)'s `OptionsOverlay` lines its text up with the composer's own typed text. See [§ `TextFieldValue` and the cursor-at-end-on-outside-change rule](#textfieldvalue-and-the-cursor-at-end-on-outside-change-rule-885) for the other #885 change to this file.
 
 [#643](../codebase/643.md) added `isBusy` and `onInterrupt` to both overloads, defaulted so the pre-existing previews and call sites stay one-liners. The stateful overload holds `var text by rememberSaveable { mutableStateOf("") }` and delegates to the stateless overload; on send it invokes `onSend(text)` and resets `text = ""` **only when `text.isNotBlank()`**. Blank input is a UI no-op (button is also disabled when idle, but the IME `Send` action can still fire on some keyboards). The stateless overload is what the previews call directly.
 
@@ -70,6 +74,35 @@ Inside, a `Row` (padding `start = FieldLeadingInset /* 16.dp */, end = FieldTrai
 - `singleLine = false, maxLines = 5` — multi-line, capped at 5 visible lines so the field never overruns the screen on long pastes.
 - `keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send)` + `keyboardActions = KeyboardActions(onSend = { onSend() })` — the IME `Send` action invokes the same path as the message-input button, so the user can submit without leaving the keyboard.
 - `decorationBox = { innerTextField -> Box { if (text.isEmpty()) Text("Message", color = onSurfaceVariant.copy(alpha = 0.6f)); innerTextField() } }` — the placeholder renders behind `innerTextField` when the field is empty. `text.isEmpty()` (not `isBlank()`) is intentional — a leading space shouldn't clobber the placeholder visually mid-typing.
+
+### `TextFieldValue` and the cursor-at-end-on-outside-change rule (#885)
+
+Found by the [slash-command type-ahead](slash-command-type-ahead.md)'s pick test.
+Before #885, the stateless overload passed the hoisted `text: String` straight to
+`BasicTextField(value: String, ...)`, which keeps the field's *previous* cursor
+offset whenever the string changes from outside the field — indistinguishable, from
+the field's point of view, from the user having typed at that same offset. Picking
+`/model ` from a draft of `/mo` left the cursor at offset 3 (where the user had left
+it), so typing `opus` next landed inside the name instead of after it:
+`/moopusdel `, not `/model opus`.
+
+`ThreadInputBar` now holds its own `var fieldValue by remember { mutableStateOf(TextFieldValue(text)) }`
+and passes `BasicTextField(value = shownValue, onValueChange = { fieldValue = it; onTextChange(it.text) }, ...)`.
+On every recomposition, if `text` differs from `fieldValue.text`, the field adopts
+`TextFieldValue(text, selection = TextRange(text.length))` — cursor at the end — which
+covers both a completion pick and the field clearing after a send. The one exception:
+`var textAtLastEdit by remember { mutableStateOf(text) }` tracks what the draft was
+immediately after the field's own last edit, and if `text` still equals
+`textAtLastEdit` the field keeps its own `fieldValue` and cursor rather than
+re-adopting — this is the asynchronous [draft round trip](thread-screen.md#composer-draft-ownership)
+lagging behind the field's own keystroke, not a genuine outside change, and treating
+it as one would fight the cursor on ordinary typing. A `LaunchedEffect(text)` clears
+`textAtLastEdit` once `text` catches up to the field's own value, so a later send that
+clears the draft back to that same remembered text is still adopted as a real outside
+change. Both overloads' signatures are otherwise unchanged by this fix; see the
+ticket's plan Revisions (`docs/specs/architecture/885-slash-command-type-ahead.md`)
+for the mutation-checked test that pins it (`copy(text = text)` alone fails the pick
+test with `/mo…`).
 
 ### The mic stub is gone
 
@@ -208,7 +241,8 @@ The existing `ThreadScreenLightPreview` / `ThreadScreenDarkPreview` in `ThreadSc
 - **No error *surface* (but crash-guarded since #490).** A `repository.sendMessage` failure is swallowed quietly by [`launchGuardedRepoCall`](guarded-repo-launch.md) — no crash, no user-visible message. Phase 4 adds the user-visible surfacing when the real network client lands.
 - **`maxLines = 5` is a soft cap on visible lines, not on content length.** The user can paste 50 lines; only 5 are visible and the field scrolls internally. No character cap on `text` is enforced anywhere in the stack.
 - **No undo for the cleared field.** Once the user taps send (or the IME `Send` action), `text` is reset to `""`. There is no "restore last draft" affordance.
-- **No autocomplete, no slash-commands, no `/clear` plumbing yet.** The text field is a plain `BasicTextField`. The pyrycode CLI's `/clear` / `/compact` slash commands land at the conversations-model layer in pyrycode Phase 2 and surface here in mobile Phase 3+; out of scope.
+- **Slash-command completion, not slash-command execution.** [#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) added the [type-ahead](slash-command-type-ahead.md) that completes a typed `/name`, but the text field itself is still a plain `BasicTextField` with no knowledge of commands — a completed `/clear` is ordinary text that reaches the daemon through the same send path as any other message. The pyrycode CLI's `/clear` / `/compact` behavior lives at the conversations-model layer, not in this composable.
+- **`fieldValue` / `textAtLastEdit` are unkeyed `remember`s.** A reused composition slot (e.g. a `LazyColumn` cell reuse, which does not currently apply to this composable's own single mount) would keep the previous conversation's `TextFieldValue` in memory until the next outside change. What renders is still correct, because `shownValue` adopts the current `text` regardless — see [§ `TextFieldValue` and the cursor-at-end-on-outside-change rule](#textfieldvalue-and-the-cursor-at-end-on-outside-change-rule-885). Heap-only, never `rememberSaveable`, so not a privacy concern; flagged as a non-blocking review NIT, keying both on the conversation id would be tidier if slot reuse ever becomes a real concern.
 - **Keyboard `Send` action vs. multi-line entry.** Some keyboards render the IME `Send` action as a glyph; others fall through to `Done` or `Enter`. The `KeyboardActions(onSend = …)` callback fires only for `ImeAction.Send`. Multi-line entry via `Enter` is the OS's responsibility under `singleLine = false`; no manual `\n` handling needed.
 - **Stop is unreachable while the field holds a draft** — see [The message-input button](#the-message-input-button--one-control-two-actions) above; this is the live #643 consequence that superseded the old "mic is a stub" limitation.
 - **The disabled send button has no visual dimming** — see [The message-input button](#the-message-input-button--one-control-two-actions) above; a shipped, non-blocking gap, not a design limitation.
@@ -217,7 +251,8 @@ The existing `ThreadScreenLightPreview` / `ThreadScreenDarkPreview` in `ThreadSc
 ## Related
 
 - Ticket notes: [`../codebase/188.md`](../codebase/188.md) (original implementation), [`../codebase/187.md`](../codebase/187.md) (the `sendMessage` repository mutator this consumes), [`../codebase/459.md`](../codebase/459.md) (added `isBusy`/`onInterrupt` to `ThreadScreen`, pre-#643), [`../codebase/643.md`](../codebase/643.md) (the Figma `16:8` frame — `Input large` field, mic removal, send/stop button, three-part composer)
-- Specs: `docs/specs/architecture/188-thread-input-bar.md`, `docs/specs/architecture/187-sendmessage-on-conversation-repository.md`, `docs/specs/architecture/643-thread-header-and-composer-layout.md`
+- Specs: `docs/specs/architecture/188-thread-input-bar.md`, `docs/specs/architecture/187-sendmessage-on-conversation-repository.md`, `docs/specs/architecture/643-thread-header-and-composer-layout.md`, `docs/specs/architecture/885-slash-command-type-ahead.md` (`onAnchorChanged` + the `TextFieldValue` cursor fix)
 - Parent: [Thread screen](thread-screen.md) (the screen this mounts into) and [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md) (the `ThreadTopAppBar` rewrite and the status-area/interrupt relocation, both part of the same #643 pass); [Conversation repository](conversation-repository.md) (the `sendMessage` mutator the VM forwards to); [Navigation](navigation.md) (the `conversation_thread/{conversationId}` route this destination lives under); [Dependency injection](dependency-injection.md) (the unchanged Koin `viewModel { ThreadViewModel(get(), get()) }` binding)
+- Sibling: [Slash-command type-ahead](slash-command-type-ahead.md) — the [#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) caller of `onAnchorChanged`, and the reason `text` can now change from outside the field mid-composition
 - Sibling: [Interrupt affordance](interrupt-affordance.md) — the composable #643 retired from the screen; its stop action lives on this button now
 - Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) (parent thread screen), `Input large` (`347:6635`, the field itself), `Input area` (`533:1957`, the three-band composer this field is the middle of)

@@ -288,4 +288,71 @@ class FooterMenuTest {
         assertEquals(UNKNOWN_RUN_CONFIG_LABEL, runConfig.effortLabel)
         assertNull(runConfig.effortNote)
     }
+
+    // #884: the Actions menu is the client-owned rows in order, and never a radio choice. #678 added the
+    // background-tasks row last, with the live count in its label.
+    @Test
+    fun actions_listsTheRowsInOrder_withNothingSelected() {
+        val menu = footerMenu(FooterControl.Actions, config())
+
+        assertEquals(
+            listOf("Reset session", "Compact session", "Knowledge capture", "Background tasks (0)"),
+            menu?.options?.map { it.label },
+        )
+        assertEquals(listOf("reset", "compact", "knowledge-capture", "background-tasks"), menu?.options?.map { it.value })
+        assertTrue(menu?.options.orEmpty().all { it.enabled })
+        assertEquals("", menu?.selectedValue)
+        assertEquals(0, menu?.notListed)
+        assertTrue(menu?.actions == true)
+    }
+
+    // #884: Reset session sits under the overflow item's own mutationsSupported gate.
+    @Test
+    fun actions_withoutMutations_omitsResetSession() {
+        val menu = footerMenu(FooterControl.Actions, config(), mutationsSupported = false)
+
+        assertEquals(listOf("Compact session", "Knowledge capture", "Background tasks (0)"), menu?.options?.map { it.label })
+    }
+
+    // #884: a command the published menu proves absent is greyed out, and the other rows are not.
+    @Test
+    fun actions_absentCommand_isDisabled_andTheOthersStayEnabled() {
+        val menu = footerMenu(FooterControl.Actions, config(), absentActions = setOf(ComposerAction.CompactSession))
+
+        assertEquals(listOf(true, false, true, true), menu?.options?.map { it.enabled })
+    }
+
+    // #678: the background-tasks row carries the live count, and stays enabled when every command is absent.
+    @Test
+    fun actions_backgroundTasksRow_carriesTheCount_andStaysEnabled() {
+        val menu =
+            footerMenu(
+                FooterControl.Actions,
+                config(),
+                absentActions = setOf(ComposerAction.CompactSession, ComposerAction.KnowledgeCapture),
+                backgroundTaskCount = 3,
+            )
+        val row = menu?.options?.single { it.value == "background-tasks" }
+
+        assertEquals("Background tasks (3)", row?.label)
+        assertTrue(row?.enabled == true)
+    }
+
+    // #884: a command send needs no session to address and no idle run configuration.
+    @Test
+    fun actions_isEnabled_withoutASession_andWhileAWriteIsPending() {
+        assertTrue(footerControlEnabled(FooterControl.Actions, config(sessionId = "")))
+        assertTrue(footerControlEnabled(FooterControl.Actions, config(pendingModel = "haiku", pendingPermission = "plan")))
+        assertTrue(footerControlEnabled(FooterControl.Actions, ThreadRunConfig()))
+    }
+
+    // #884: the pre-existing controls are untouched by the Actions inputs.
+    @Test
+    fun otherControls_ignoreTheActionsInputs() {
+        assertEquals(
+            footerMenu(FooterControl.Model, config()),
+            footerMenu(FooterControl.Model, config(), mutationsSupported = false, absentActions = ComposerAction.entries.toSet()),
+        )
+        assertTrue(footerMenu(FooterControl.Model, config())?.actions == false)
+    }
 }

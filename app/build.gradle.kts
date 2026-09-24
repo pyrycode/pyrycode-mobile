@@ -129,6 +129,9 @@ android {
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.koin.bom))
+    // #361: push only. No firebase-analytics; builds without google-services.json run with push off.
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)

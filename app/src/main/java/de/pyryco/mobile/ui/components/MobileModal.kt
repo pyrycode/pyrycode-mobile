@@ -128,6 +128,30 @@ internal fun MobileGateModal(
     )
 }
 
+/**
+ * The editing shell with nothing to submit (#678): its footer holds one [closeLabel] button, which
+ * dismisses exactly as the close glyph and Back do. For a read-only panel such as the background-task
+ * list; outside taps still do not dismiss.
+ */
+@Composable
+internal fun MobileReadOnlyModal(
+    title: String,
+    closeLabel: String,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    MobileModalShell(
+        title = title,
+        onDismissRequest = onDismissRequest,
+        gate = false,
+        modifier = modifier,
+        error = null,
+        footer = { dismiss -> ModalCancelButton(label = closeLabel, onClick = dismiss) },
+        content = content,
+    )
+}
+
 /** [gate] is the only switch between the editing shell and the hardened decision gate. */
 @Composable
 private fun MobileModalShell(

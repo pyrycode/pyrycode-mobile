@@ -9,7 +9,8 @@ Split out of [ChannelListScreen](channel-list-screen.md) on 2026-09-22 to keep t
 No `viewModel()`, no `koinViewModel()`, no `LocalContext.current`, no `NavController` parameter. `hostState`
 joined `onEvent` as a second parameter in #731 and became the screen's **only** state parameter in #738,
 when the compatibility `state: ChannelListUiState` retired with the button it fed. `hostState` carries the
-host-qualified rows, the collapsed nodes, the last-opened target and the workspace picker's target. The
+host-qualified rows, the collapsed nodes, the last-opened target and (since #904) the open Add workspace
+modal's target and its own host's recent folders. The
 canonical CLAUDE.md shape (hoist state to the ViewModel; UI receives state + `onEvent`) is unchanged.
 
 ### The list's own top bar (#737)
@@ -61,16 +62,23 @@ The `floatingActionButton` slot and the file-private `ChannelListFab` it hosted 
 `TreeAddControl`, which inherits the manually-composed-`Surface`-not-`IconButton` construction
 `ChannelListFab` pioneered in #221 for the same reason.
 
-#### `WorkspacePicker` host as Scaffold sibling (#221)
+#### Add workspace modal as Scaffold sibling (#221, replaced #904)
 
-After the `Scaffold { ... }` block closes, the screen composes `WorkspacePicker(visible, onPicked, onDismiss)`
-as a sibling of the Scaffold, not inside its content lambda — matching #78's `SaveAsChannelDialog` placement,
-since the sheet manages its own `Popup`/`Window` above the entire activity. `visible` reads
-`hostState.workspacePickerServerId != null` directly (#738) — before, this was a `when (state)` copy of the
-same fact into `Loaded`/`Empty.workspacePickerVisible`, `Loading`/`Error` mapped to `false`; the direct read
-is strictly more correct, since the old copy could hold a non-null picker target while the flat state was
-still `Loading` and draw nothing. `onPicked(path)` dispatches `WorkspacePicked(path)`; `onDismiss` dispatches
-`WorkspacePickerDismissed`.
+After the `Scaffold { ... }` block closes, the screen composes `AddWorkspaceModalBinding(hostState, onEvent)`
+as a sibling of the Scaffold, not inside its content lambda — matching #78's `SaveAsChannelDialog` placement
+and, since [`MobileModal`](mobile-modal.md) is itself a `Dialog`, the same placement `HostEditorModal` and
+`ChatEditorModal` use below it. The private binding returns early when `hostState.addWorkspace` is `null`,
+so the modal draws exactly while a target is open; `hostAvailable = hostState.isHostConnected(state.serverId)`
+is read fresh on every draw from the same host-snapshot flow the rows render from, `loading = state.busy`,
+and `error` resolves `createFailed` / `startFailed` to one of two static strings. `onSelect` dispatches
+`AddWorkspaceSelected(path)`, `onCreateFolder` dispatches `AddWorkspaceFolderCreateRequested(name)`,
+`onSubmit` dispatches `AddWorkspaceSubmitted`, and every dismissal route dispatches `AddWorkspaceDismissed`.
+
+**#904 replaced the bottom-sheet `WorkspacePicker(visible, onPicked, onDismiss)` this section used to
+describe here** — `visible = hostState.workspacePickerServerId != null`, `onPicked` → `WorkspacePicked(path)`,
+`onDismiss` → `WorkspacePickerDismissed` — with the shared `MobileModal` shell. `WorkspacePicker` itself is
+unchanged and still composed the same way, as a `Scaffold` sibling, by the thread screen and by Settings;
+see [WorkspacePicker § Consumers](workspace-picker.md#consumers).
 
 ## Tree rows (#730)
 
@@ -88,14 +96,20 @@ this document covers only how the screen assembles and drives them.
 ## Wiring
 
 `PyryNavHost`'s `Routes.CHANNEL_LIST` composable resolves `ChannelListViewModel` and collects `hostState` —
-the screen's only state since #738 — passing it into `ChannelListScreen`. The event `when` maps the two tree
+the screen's only state since #738 — passing it into `ChannelListScreen`. Since #904 the route no longer
+wraps this destination in `HostWorkspaceRepository` either: nothing on this screen reads
+`LocalWorkspacePickerRepository` any more, since the Add workspace modal reads and writes through the
+view model's own host-resolved-at-the-press lookup instead of the composition local — see
+[WorkspacePicker § Repository ownership](workspace-picker.md#repository-ownership) for the thread and
+Settings destinations that still wrap it. The event `when` maps the two tree
 events straight to the VM: `is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)` and
 `is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)` — no adapter, no `selectedServerId()`
 lookup, because the row already carries its own host. This is the wrong-host fix #731 landed with the render;
 \#738 carried the same discipline into creation: `is ChannelListEvent.TreeHostAddTapped ->
-vm.createHostDiscussion(event.serverId)` and `is ChannelListEvent.TreeHostAddLongPressed ->
-vm.openHostWorkspacePicker(event.serverId)`, both against the control's own row, never
-`destinations.selectedServerId()`. #744 carries the same discipline into editing: `is
+vm.createHostDiscussion(event.serverId)`, against the control's own row, never
+`destinations.selectedServerId()`. Since #904, `is ChannelListEvent.TreeHostAddLongPressed ->
+vm.openAddWorkspace(event.serverId)` follows the same rule to open the Add workspace modal in place of the
+retired `openHostWorkspacePicker`. #744 carries the same discipline into editing: `is
 ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)`,
 `is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)` and
 `ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()`. #745 adds three more, none carrying a
@@ -119,9 +133,12 @@ see [Navigation § Archive](navigation.md#archive-a-required-owner-destination-t
 scanner's own completions already return here (see [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738) above). The
 `RecentDiscussionsTapped` branch that navigated to `Routes.DISCUSSION_LIST` is gone with the event, and so
 are the FAB's own branches (`CreateDiscussionTapped`, `LongPressFab`) — #738 retired the button and the
-`destinations.selectedServerId()` capture those two branches made; `WorkspacePicked` /
-`WorkspacePickerDismissed` are unchanged and still resolve through `vm.pickHostWorkspace` /
-`vm.dismissHostWorkspacePicker`. `Routes.DISCUSSION_LIST` and `DiscussionListScreen` stay in the graph,
+`destinations.selectedServerId()` capture those two branches made. Since #904, `AddWorkspaceSelected`,
+`AddWorkspaceFolderCreateRequested`, `AddWorkspaceSubmitted` and `AddWorkspaceDismissed` map to
+`vm.selectAddWorkspaceFolder(event.path)`, `vm.createAddWorkspaceFolder(event.name)`,
+`vm.submitAddWorkspace()` and `vm.dismissAddWorkspace()` — none carrying a `serverId`, since the target is
+already the open modal's — replacing the `WorkspacePicked` / `WorkspacePickerDismissed` branches that used
+to resolve through `vm.pickHostWorkspace` / `vm.dismissHostWorkspacePicker` here. `Routes.DISCUSSION_LIST` and `DiscussionListScreen` stay in the graph,
 unreachable — removing them remains out of scope.
 
 See [ViewModel wiring](channel-list-viewmodel.md#wiring) for the Koin binding, the `hostState` combine and the
@@ -197,5 +214,12 @@ own `serverId` at the press, never the selected host) and the close (`dismissCha
   ("Couldn't rename the chat. Try again.") lives beside `EditChatModal`'s own strings and, like
   `edit_host_save_failed`, is deliberately generic — it names neither the chat nor the server's own
   message, since the shell renders it verbatim into a live region.
+- **Strings added in #904:** `add_workspace_title` ("Add workspace"), `add_workspace_recent` ("Recent") and
+  `add_workspace_create_folder` ("Create new folder under pyry-workspace…") keep the bottom sheet's own
+  wording, which the device suites already matched; `add_workspace_new_folder` ("New folder") labels a
+  selection absent from recents; `add_workspace_empty` is the no-recents-yet line; `add_workspace_create_failed`
+  and `add_workspace_start_failed` are the two static failure sentences, generic for the same reason
+  `edit_chat_save_failed` is. The content-description strings the row's own add control uses
+  (`cd_tree_host_pick_workspace` from #738) are unchanged — only what the long-press opens moved.
 - **Drawables:** `R.drawable.ic_pyry_logo` (since #68) — no longer used on this screen since #737 retired the
   logo along with the old bar; its only remaining consumer is [`WelcomeScreen`](welcome-screen.md).

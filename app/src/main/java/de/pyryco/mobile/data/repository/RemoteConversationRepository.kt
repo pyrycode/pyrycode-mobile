@@ -155,6 +155,9 @@ class RemoteConversationRepository(
     private val announcedModelProjection = AnnouncedModelProjection()
     private val sessionFactsProjection = SessionFactsProjection()
 
+    /** The files the daemon offered in each conversation on this connection (#898). */
+    private val attachmentOfferProjection = AttachmentOfferProjection()
+
     /**
      * The context-usage reading of every conversation (#945) and the `request_context_usage` ask that keeps a
      * watched one fresh. Wired like [modelMenuProjection], with its envelope ids read through a lambda for the
@@ -190,6 +193,12 @@ class RemoteConversationRepository(
         )
 
     /**
+     * The slash-command menu of every conversation (#882). [onInbound] hands it `slash_command_list` behind
+     * the `interactive` gate; [observeSlashCommandMenu] reads it. It sends nothing: the frame has no verb.
+     */
+    private val slashCommandMenuProjection = SlashCommandMenuProjection()
+
+    /**
      * The request↔reply plumbing of this connection (#914): the one envelope-id counter every request takes
      * its id from, the reply waiters, the correlated await and the teardown sweep. [onInbound] completes or
      * fails waiters through it, and the [init] collector's `finally` sweeps it last.
@@ -223,6 +232,17 @@ class RemoteConversationRepository(
             conversationList = conversationListProjection,
             threadProjection = threadProjection,
             queueProjection = queueProjection,
+        )
+
+    /**
+     * The attachment retrievals of this connection (#899): one `request_attachment` at a time, answered by chunks
+     * or an `error` naming it. [onInbound] offers each frame to it after the upload, and the [init] collector's
+     * `finally` ends it beside the upload.
+     */
+    private val attachmentRetrievals =
+        AttachmentRetrievals(
+            nextRequestId = { relayRequests.nextRequestId() },
+            send = pump::send,
         )
 
     /**
@@ -340,6 +360,7 @@ class RemoteConversationRepository(
             } finally {
                 endDebugBundle()
                 messageCommands.endAttachmentUploads()
+                attachmentRetrievals.end()
                 relayRequests.failAllPending()
             }
         }
@@ -348,6 +369,7 @@ class RemoteConversationRepository(
     private fun onInbound(envelope: Envelope) {
         if (messageCommands.routeDebugBundle(envelope)) return
         if (messageCommands.routeAttachmentUpload(envelope)) return
+        if (attachmentRetrievals.route(envelope)) return
         recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS ->
@@ -579,6 +601,13 @@ class RemoteConversationRepository(
                     modelMenuProjection.apply(envelope)
                 }
             }
+            TYPE_SLASH_COMMAND_LIST -> {
+                // The per-conversation slash-command menu (#882), behind the same `interactive` gate as
+                // `model_list`: see [SlashCommandMenuProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    slashCommandMenuProjection.apply(envelope)
+                }
+            }
             TYPE_API_RETRY -> {
                 // API-retry status (#593): see [ApiRetryProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
@@ -761,6 +790,12 @@ class RemoteConversationRepository(
                     questionBatchProjection.apply(envelope)
                 }
             }
+            TYPE_ATTACHMENT_OFFERED ->
+                // A file claude produced (#898): see [AttachmentOfferProjection.apply]. Deliberately NOT behind
+                // the `interactive` gate: the daemon delivers it to every attached client, outside the
+                // interactive family, like the upload leg's `attachment_stored`. The daemon routes nothing, so
+                // the projection filters on the payload's conversation_id. Not a thread row, no stall touched.
+                attachmentOfferProjection.apply(envelope)
             TYPE_BACKGROUND_TASK_STARTED, TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER -> {
                 // Background work claude left running past its turn (#677): see [BackgroundTaskProjection.apply].
                 // Same `interactive` gate as the question arm. Daemon state, not turn content: no thread row, and
@@ -1032,12 +1067,18 @@ class RemoteConversationRepository(
 
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsageProjection.observe(conversationId)
 
+    override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> =
+        attachmentOfferProjection.observe(conversationId)
+
     override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimitProjection.observe(conversationId)
 
     override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> =
         thinkingProgressProjection.observe(conversationId)
 
     override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenuProjection.observe(conversationId)
+
+    override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> =
+        slashCommandMenuProjection.observe(conversationId)
 
     /** Create an unpromoted discussion (#347); see [ConversationCommands.createDiscussion]. */
     override suspend fun createDiscussion(workspace: String?): Conversation = conversationCommands.createDiscussion(workspace)
@@ -1069,6 +1110,12 @@ class RemoteConversationRepository(
         filename: String,
         mimeType: String,
     ): AttachmentUploadResult = messageCommands.uploadAttachment(conversationId, bytes, filename, mimeType)
+
+    /** Fetch one stored file over `request_attachment` (#899); see [AttachmentRetrievals.fetch]. */
+    override suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult = attachmentRetrievals.fetch(conversationId, attachmentId)
 
     /** Request the rendered claude screen (#375); see [MessageCommands.requestScreenSnapshot]. */
     override suspend fun requestScreenSnapshot(conversationId: String): String = messageCommands.requestScreenSnapshot(conversationId)
@@ -1386,6 +1433,14 @@ class RemoteConversationRepository(
         const val TYPE_MODEL_LIST = "model_list"
 
         /**
+         * Capability-gated inventory (#882): the slash commands claude will accept for one conversation, a
+         * full snapshot that replaces that conversation's menu. Arrives on the live interactive lane (with an
+         * `event_id`) and as a per-conversation snapshot on every (re)connect (with none). Declares no
+         * inbound verb.
+         */
+        const val TYPE_SLASH_COMMAND_LIST = "slash_command_list"
+
+        /**
          * Request: one conversation's model menu, on demand (#792, daemon pyrycode#2125). The third and
          * last way a client gets a menu and the only one it can trigger itself — it covers the
          * conversation created *after* the phone connected, which crosses neither unsolicited delivery
@@ -1632,6 +1687,12 @@ class RemoteConversationRepository(
         /** Correlated failure reply (`{code, message, retryable}`) to a request (#346, #272). */
         const val TYPE_ERROR = "error"
         const val TYPE_ATTACHMENT_CHUNK = "attachment_chunk"
+
+        /**
+         * Outbound push naming a file claude produced (#898): `{conversation_id, attachment_id, filename}`, no
+         * bytes, delivered to every attached client and live-only. See [AttachmentOfferProjection].
+         */
+        const val TYPE_ATTACHMENT_OFFERED = "attachment_offered"
 
         /** Server `error.code` for an unknown conversation → [IllegalArgumentException] (#346, AC #3). */
         const val ERROR_CONVERSATION_NOT_FOUND = "conversation.not_found"

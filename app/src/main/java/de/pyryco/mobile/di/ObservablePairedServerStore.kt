@@ -1,5 +1,6 @@
 package de.pyryco.mobile.di
 
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
@@ -66,25 +67,34 @@ class ObservablePairedServerStore(
 
 /**
  * The production [ObservablePairedServerStore.onHostRemoved]: a removed pairing takes its host's unsent
- * composer text (#790) and its cached conversation content (#798) with it.
+ * composer text (#790), its cached conversation content (#798) and its retained attachment files (#900)
+ * with it.
  *
  * Named rather than written inline in `appModule` so the JVM unpair test binds this exact function —
  * a restated lambda would stay green while production forgot a step.
  *
- * [cache] is [Lazy] so resolving the store never constructs the cache: its root is a Context directory
- * the store itself does not need, and JVM tests resolve this binding without a Context.
+ * [cache] and [attachments] are [Lazy] so resolving the store never constructs either: their roots are
+ * Context directories the store itself does not need, and JVM tests resolve this binding without a Context.
  *
- * The cache removal runs `NonCancellable`: the pairing is already gone, so a view model cleared
- * mid-cleanup must not leave the forgotten machine's conversation names and rows on disk. A failed
- * removal is logged and not surfaced, for the reason `confirmUnpair` gives for the workspace clear —
- * reporting it would claim the host is still paired. Never logs the id or the cache's message.
+ * Both removals run `NonCancellable`: the pairing is already gone, so a view model cleared mid-cleanup
+ * must not leave the forgotten machine's conversation names, rows or files on disk. Each runs whether or
+ * not the other failed. A failed removal is logged and not surfaced, for the reason `confirmUnpair` gives
+ * for the workspace clear — reporting it would claim the host is still paired. Never logs the id or a
+ * removal's message.
  */
 internal fun forgetRemovedHost(
     drafts: ComposerDraftStore,
     cache: Lazy<ConversationCache>,
+    attachments: Lazy<AttachmentStore>,
 ): suspend (String) -> Unit =
     { serverId ->
         drafts.clearHost(serverId)
-        withContext(NonCancellable) { cache.value.removeHost(serverId) }
-            .onFailure { RelayLog.d { "event=host_cache_remove_failed" } }
+        withContext(NonCancellable) {
+            cache.value
+                .removeHost(serverId)
+                .onFailure { RelayLog.d { "event=host_cache_remove_failed" } }
+            attachments.value
+                .removeHost(serverId)
+                .onFailure { RelayLog.d { "event=host_attachments_remove_failed" } }
+        }
     }

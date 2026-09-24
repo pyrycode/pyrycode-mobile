@@ -4,10 +4,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -50,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
@@ -112,7 +117,7 @@ private val RePairButtonVerticalPadding = 8.dp
 // at most one of them is ever emitted.
 private const val HISTORY_TAIL_KEY = "history-tail"
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ThreadScreen(
     state: ThreadUiState,
@@ -139,6 +144,9 @@ fun ThreadScreen(
     onEffortSelected: (String) -> Unit = {},
     // #650: a PermissionModeOption wire value from the footer's permission menu.
     onPermissionModeSelected: (String) -> Unit = {},
+    // #884: a command row of the footer's Actions menu, wired by MainActivity → vm::onComposerCommand.
+    // Reset session is not a command: it goes through onOverflowEvent(ThreadEvent.NewSession).
+    onComposerCommand: (ComposerAction) -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
@@ -221,15 +229,29 @@ fun ThreadScreen(
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
     // closes when the control stops offering anything (a write goes pending, a reading drops the menu).
     var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
+    // #678: the read-only background-task panel the Actions menu opens. Local and keyed like [openControl]:
+    // closing it only flips this flag, so nothing is sent and no conversation or task changes.
+    var backgroundTasksOpen by remember(state.conversationId) { mutableStateOf(false) }
     val footerAnchors = remember { mutableStateMapOf<FooterControl, Rect>() }
     var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     val openMenu =
         openControl
             ?.takeIf { footerControlEnabled(it, state.runConfig) }
-            ?.let { control -> footerMenu(control, state.runConfig)?.let { control to it } }
+            ?.let { control ->
+                footerMenu(
+                    control,
+                    state.runConfig,
+                    state.mutationsSupported,
+                    state.absentActions,
+                    state.backgroundTaskCount,
+                )?.let { control to it }
+            }
     LaunchedEffect(openControl, openMenu == null) {
         if (openMenu == null) openControl = null
     }
+    // #885: the input field's text-aligned window bounds, where the slash-command suggestions anchor.
+    var inputAnchor by remember { mutableStateOf<Rect?>(null) }
+    val imeVisible = WindowInsets.isImeVisible
     Box(
         modifier = modifier.onGloballyPositioned { layerOrigin = it.positionInWindow() },
     ) {
@@ -265,6 +287,8 @@ fun ThreadScreen(
                             .padding(top = ComposerTopGap, bottom = ComposerBottomGap),
                     verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
                 ) {
+                    // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
+                    val openTool = remember(state.items) { openToolCall(state.items) }
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         usageLimit = usageLimit,
@@ -273,6 +297,7 @@ fun ThreadScreen(
                         turnOutcome = turnOutcome,
                         isThinking = isThinking,
                         thinkingProgress = thinkingProgress,
+                        runningTool = if (isBusy) openTool else null,
                         showRePair = showRePair,
                         onRePair = onRePair,
                     )
@@ -287,6 +312,7 @@ fun ThreadScreen(
                         modifier = Modifier.padding(horizontal = ComposerGutter),
                         isBusy = isBusy,
                         onInterrupt = onInterrupt,
+                        onAnchorChanged = { inputAnchor = it },
                     )
                     // The design puts the model/effort controls in the footer, below the input field, not
                     // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
@@ -348,6 +374,8 @@ fun ThreadScreen(
                     // `items` index-for-index and only ever appends unmatched queued rows after them.
                     val cutoffChronologicalIndex =
                         remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
+                    // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
+                    val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                     val listState = rememberLazyListState()
                     val hasStreamingMessage by remember(state.items) {
                         derivedStateOf {
@@ -440,7 +468,11 @@ fun ThreadScreen(
                                 when (row) {
                                     is ThreadRow.Delivered ->
                                         when (val item = row.item) {
-                                            is ThreadItem.MessageItem -> MessageBubble(message = item.message)
+                                            is ThreadItem.MessageItem ->
+                                                MessageBubble(
+                                                    message = item.message,
+                                                    toolNestingDepth = toolDepths[item.message.id] ?: 0,
+                                                )
                                             is ThreadItem.SessionBoundary ->
                                                 SessionBoundaryDelimiter(boundary = item)
                                             is ThreadItem.UnrecognizedMessage ->
@@ -491,13 +523,35 @@ fun ThreadScreen(
                             FooterControl.Model -> onModelSelected(value)
                             FooterControl.Effort -> onEffortSelected(value)
                             FooterControl.Permission -> onPermissionModeSelected(value)
+                            // #884: Reset session is the overflow menu's own path; a command row sends.
+                            FooterControl.Actions ->
+                                when (val action = ComposerAction.fromValue(value)) {
+                                    null -> Unit
+                                    ComposerAction.ResetSession -> onOverflowEvent(ThreadEvent.NewSession)
+                                    ComposerAction.BackgroundTasks -> backgroundTasksOpen = true
+                                    else -> onComposerCommand(action)
+                                }
                         }
                         openControl = null
                     },
                     onDismiss = { openControl = null },
+                    actions = menu.actions,
                 )
             }
         }
+        // #885: the slash-command suggestions share the footer overlay's layer. They stand down while a
+        // footer menu is open, so two overlays never stack. A pick completes the draft and sends nothing.
+        SlashCommandTypeAhead(
+            text = draft,
+            commands = state.slashCommands,
+            anchor = inputAnchor?.takeIf { openMenu == null }?.translate(-layerOrigin),
+            imeVisible = imeVisible,
+            onComplete = onDraftChange,
+            resetKey = state.conversationId,
+        )
+    }
+    if (backgroundTasksOpen) {
+        BackgroundTaskPanel(roster = state.backgroundTasks, onDismiss = { backgroundTasksOpen = false })
     }
     WorkspacePicker(
         visible = state.workspacePickerVisible,
@@ -638,6 +692,11 @@ fun ThreadScreen(
  * unchanged. Visibility stays governed by [isThinking] alone — `turn_state` owns the thinking phase
  * (#406), and letting a reading raise the arm on its own would be a fourth arm wearing the third one's
  * name.
+ *
+ * [runningTool] (#897) rides the same `else` branch and does raise it: a tool claude is running during
+ * the `responding` phase is exactly the signal the band otherwise lacks. The screen passes it only while
+ * the turn is busy, so every arm above still pre-empts it and a closed call drops the band back to what
+ * it would otherwise show.
  */
 @Composable
 private fun ThreadStatusArea(
@@ -648,6 +707,7 @@ private fun ThreadStatusArea(
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
+    runningTool: ToolCall?,
     showRePair: Boolean = false,
     onRePair: () -> Unit = {},
 ) {
@@ -659,7 +719,13 @@ private fun ThreadStatusArea(
             resetting != null -> ResettingIndicator(status = resetting, modifier = slot)
             isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
             turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-            else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
+            else ->
+                ThinkingIndicator(
+                    isThinking = isThinking,
+                    modifier = slot,
+                    progress = thinkingProgress,
+                    runningTool = runningTool,
+                )
         }
     }
     if (!showRePair) {
@@ -748,3 +814,15 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         memoryPlugins = emptyList(),
         channelId = conversationId,
     )
+
+/**
+ * The thread's open tool call (#897): the latest row in [items] whose call is still
+ * [ToolCallStatus.Running], or `null`. Denied, done and failed rows are not open. One call supplies both
+ * the name and the elapsed reading the status area shows, so the two can never come from different calls,
+ * and a newer open call replaces an older one because it sits later in the chronological list.
+ */
+internal fun openToolCall(items: List<ThreadItem>): ToolCall? =
+    items
+        .lastOrNull { item ->
+            item is ThreadItem.MessageItem && item.message.toolCall?.status == ToolCallStatus.Running
+        }.let { (it as? ThreadItem.MessageItem)?.message?.toolCall }

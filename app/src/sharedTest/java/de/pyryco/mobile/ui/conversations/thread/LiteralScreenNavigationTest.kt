@@ -1,6 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -28,6 +30,7 @@ import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.InertAttachmentStore
 import de.pyryco.mobile.di.InertConversationCache
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.RelayConnectionFactory
@@ -180,11 +183,15 @@ class LiteralScreenNavigationTest {
     @Test fun flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges() {
         start(live = true)
         select(a.serverId)
-        compose.runOnIdle { model<ChannelListViewModel>().openHostWorkspacePicker(a.serverId) }
+        compose.runOnIdle { model<ChannelListViewModel>().openAddWorkspace(a.serverId) }
         assertOwnerPicker()
         select(b.serverId)
         assertOwnerPicker()
+        // Add workspace (#904): a created folder is only selected; OK starts the chat in it.
         createFolder()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("OK") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.runOnIdle { assertTrue(peers.getValue(a.serverId).outbound.none { it.type == "create_conversation" }) }
+        compose.onNode(hasText("OK")).performClick()
         awaitTarget(a, Routes.CONVERSATION_THREAD)
         compose.runOnIdle {
             assertEquals(1, peers.getValue(a.serverId).outbound.count { it.type == "create_conversation" })
@@ -298,6 +305,7 @@ class LiteralScreenNavigationTest {
                     // ConversationCache (#796) whose real binding needs one. See InertConversationCache
                     // for why these containers override it rather than supply the Context.
                     single<ConversationCache> { InertConversationCache }
+                    single { InertAttachmentStore }
                 },
             )
         return StateRestorationTester(compose).also { tester ->
