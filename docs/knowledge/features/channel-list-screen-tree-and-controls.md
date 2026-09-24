@@ -140,11 +140,13 @@ deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTre
 header's own band grows from the design's bare 20dp text line to 48dp for the same reason — it carries a
 control now, not just a label.
 
-**Still no add control (#905 added the pencil, not a plus).** `TreeWorkspaceRow` draws no add control of
-its own — adding a workspace is the host row's plus, a tier above, replaced by
-[`AddWorkspaceModal`](mobile-modal.md#callers) in #904. #663 (the same phase) added `renameWorkspace` /
-`archiveWorkspace` to the host-owned repository with no UI caller; #905 is that caller — see
-[Workspace row edit and archive control (#905)](#workspace-row-edit-and-archive-control-905) below.
+**#905 added the pencil; #958 added a plus, but only on Channels rows.** #663 (the same phase as #905) added
+`renameWorkspace` / `archiveWorkspace` to the host-owned repository with no UI caller; #905 is that caller —
+see [Workspace row edit and archive control (#905)](#workspace-row-edit-and-archive-control-905) below. The
+host row's own plus (a tier above, opening [`AddWorkspaceModal`](mobile-modal.md#callers) in #904) still
+creates an unpromoted chat in a picked or new folder; the workspace row's plus, added later, creates a
+**promoted channel** directly at that row's own folder — see
+[Workspace row create-channel control (#958)](#workspace-row-create-channel-control-958) below.
 
 ## Host row edit control (#744)
 
@@ -232,11 +234,14 @@ and the pencil's `R.string.cd_tree_chat_edit` content description — the same o
 host row's controls use, and for the same reason: two identical accessible names on the same screen would
 be indistinguishable to TalkBack.
 
-**Only Chats rows draw it.** `treeSection` in [ChannelListScreen](channel-list-screen.md) passes
-`onEditTapped` from an exhaustive `when (section)` — `null` for `ConversationTreeSection.Channels`,
-`{ onEvent(TreeChatEditTapped(target)) }` for `Chats` — rather than a parameter on the section itself, so
-a channel's own editor (#667) can be added later without touching this row. `target` is the row's own
-`HostConversationTarget`, resolved the same way `TreeRowTapped`'s already is, never the selected host.
+**Both sections draw it, each to its own modal (#827, then #667).** `treeSection` in
+[ChannelListScreen](channel-list-screen.md) passes `onEditTapped` from an exhaustive `when (section)` —
+originally `null` for `ConversationTreeSection.Channels` and `{ onEvent(TreeChatEditTapped(target)) }`
+for `Chats` — rather than a parameter on the section itself, which is exactly what let
+[Edit channel](#channels-row-edit-control-667) (#667) add the `Channels` arm later, binding
+`TreeChannelEditTapped(target)` and its own `editDescription`, without touching this row's shape at all.
+`target` is the row's own `HostConversationTarget`, resolved the same way `TreeRowTapped`'s already is,
+never the selected host.
 
 Opening the modal from that target, resolving which host renames it, and following that host's connection
 live are the view model's job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring) — and the
@@ -244,6 +249,31 @@ modal itself is [`EditChatModal`](mobile-modal.md#callers), unchanged by this ti
 its first caller. Archive chat was wired in #828, the same placeholder-then-wire shape the host row's
 Unpair action carried between #744 and #745 — but unlike Unpair, Archive takes no confirmation step,
 since the host's own Archive screen restores the chat.
+
+## Channels row edit control (#667)
+
+`TreeConversationRow` gained a fifth parameter, `@StringRes editDescription: Int =
+R.string.cd_tree_chat_edit`, generalising the pencil's content description that #827 hard-wired to the
+chat string: `treeSection`'s exhaustive `when (section)` now passes `cd_tree_chat_edit` for `Chats` (as
+before) and `cd_tree_channel_edit` for `Channels`, alongside `{ onEvent(TreeChannelEditTapped(target)) }`
+in place of the `null` every Channels row passed until this ticket — the pencil itself, its permanent
+(non-hover) drawing and its own merging-semantics node inside `FoldableTreeRow`'s `clickable` are
+unchanged from #827's chat-row shape, since both tiers share one row composable. `target` is the row's
+own `HostConversationTarget`, the same targeting discipline every row control in this file uses.
+
+Opening [`EditChannelModal`](mobile-modal.md#callers) from that target, reading the channel's stored
+prompt once the row's host has a live repository, and resolving which host renames, writes the prompt or
+archives are `ChannelListViewModel`'s job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring).
+Unlike every other row control here, the modal cannot fill its second field synchronously at open: the
+name comes from the row's own host snapshot the way `EditChatModal`'s and `EditWorkspaceModal`'s seeds
+do, but the system prompt is a separate daemon round trip, so the field opens **disabled** with a static
+reading line until that read lands. `ChannelFormFields` gained the two parameters this needs —
+`promptEnabled: Boolean = true` and `promptNote: String? = null`, the note drawn as `supportingText` in
+the same slot the over-limit message already used, so a caller that never passes a note is unaffected —
+rather than teaching the shared form to run its own read, keeping `ChannelFormFields` itself as inert as
+`EditChatModal`'s field always was. See [Mobile modal § Callers](mobile-modal.md#callers) for the full
+caller contract: the target-tagged prompt reading, the `null`-until-shown prompt draft that keeps an
+unread prompt from ever being overwritten, and the outlined Archive action with no confirmation step.
 
 ## Workspace row edit and archive control (#905)
 
@@ -275,3 +305,29 @@ confirming calls `archiveWorkspace` for that host and `cwd` only, and a partial 
 confirmation open so a retry archives only the rows still active — see the operation's own contract in
 `ConversationRepository.kt`. See [Mobile modal § Callers](mobile-modal.md#callers) for the modal's own
 field, its label-rule edge case and a Compose semantics trap in its test.
+
+## Workspace row create-channel control (#958)
+
+`TreeWorkspaceRow` gained a fifth parameter, `onAddTapped: (() -> Unit)? = null`, drawn as a second,
+trailing `TreeRowControl(Icons.Filled.Add, …)` **after** the #905 pencil — the row now carries dots-free
+pencil-then-plus, the same left-to-right order the host row's edit-then-add pair established in #744. Both
+controls keep their own merging-semantics node inside `FoldableTreeRow`'s `clickable`, so tapping either
+neither folds the row nor triggers the other.
+
+`treeSection` passes `onAddTapped` only for `ConversationTreeSection.Channels` rows, bound to
+`{ onEvent(TreeWorkspaceAddTapped(group.serverId, group.cwd)) }` — `HostWorkspaceGroup`'s own `serverId`
+and `cwd`, the same targeting discipline the #905 pencil uses. Chats-section rows pass `null` and draw no
+plus: a chat's workspace is not yet a channel, so there is nothing to promote it *from* at that tier (Save
+as channel, on the chat itself, is the promotion path there — see
+[Save as channel dialog](save-as-channel-dialog.md)). The content description
+(`R.string.cd_tree_workspace_new_channel`, "New channel in %1$s") reuses the row's already-`boundedRowText`-
+clamped name, the same one-clamp-two-uses shape the pencil's description uses.
+
+Opening [`CreateChannelModal`](mobile-modal.md#callers) from that target, resolving the repository at the
+press and running the two-write create-then-prompt sequence are `ChannelListViewModel`'s job — see
+[ChannelListViewModel](channel-list-viewmodel.md#wiring). `openCreateChannel(serverId, cwd)` opens only when
+that host's snapshot holds an active **channel** at exactly `cwd` — the same source a Channels-section row's
+existence already implies, so the plus's own visibility and the open guard agree by construction. OK sends
+one `createChannel(name, cwd)`; a non-blank system prompt is then written with `setSystemPrompt` to the
+**created** conversation, never read back. See [System prompt editor § intro](system-prompt-editor.md) for
+why this write bypasses that editor entirely.

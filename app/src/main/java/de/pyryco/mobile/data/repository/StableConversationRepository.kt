@@ -97,6 +97,13 @@ class StableConversationRepository(
         switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
+     * The context-usage reading for [conversationId] (#945), cleared across connections as [observeAnnouncedModel]
+     * is. After a reconnect it stays absent until the conversation's next turn ends on the new connection.
+     */
+    override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
+        switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
+
+    /**
      * The files offered in [conversationId] on the owner host's live connection (#898). The switch is what
      * makes offers live-only across connections: a reconnect or a host switch drops the previous
      * connection's offers rather than carrying one host's files over to the next.
@@ -180,6 +187,11 @@ class StableConversationRepository(
     override fun recentWorkspaces(): Flow<List<String>> = switchToLive(emptyList()) { it.recentWorkspaces() }
 
     override suspend fun createDiscussion(workspace: String?): Conversation = live.createDiscussion(workspace)
+
+    override suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = live.createChannel(name, workspace)
 
     override suspend fun promote(
         conversationId: String,

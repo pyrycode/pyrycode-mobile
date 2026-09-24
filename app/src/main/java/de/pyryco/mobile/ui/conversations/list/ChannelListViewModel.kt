@@ -10,17 +10,22 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.SessionPromptStatus
+import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.host.HostEditorController
 import de.pyryco.mobile.ui.host.HostEditorState
+import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import de.pyryco.mobile.ui.workspace.isWorkspaceLabelTooLong
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import de.pyryco.mobile.ui.workspace.workspaceLabelFor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -78,6 +83,10 @@ data class HostChannelListState(
     val chatEditor: ChatEditorState? = null,
     /** The workspace whose Edit workspace modal is open, or null when none is (#905). */
     val workspaceEditor: WorkspaceEditorState? = null,
+    /** The Channels-section workspace whose Create channel modal is open, or null when none is (#958). */
+    val createChannel: CreateChannelState? = null,
+    /** The channel whose Edit channel modal is open, or null when none is (#667). */
+    val channelEditor: ChannelEditorState? = null,
 ) {
     /**
      * Whether [serverId]'s own session is up, read from the same snapshot its rows are drawn from (#827).
@@ -91,6 +100,21 @@ data class HostChannelListState(
 }
 
 private fun ConnectionStatus.isLive(): Boolean = relay == RelayLinkStatus.Connected && pyrycode == PyrycodeLinkStatus.Connected
+
+/** [editor]'s own reading, or [ChannelPromptReading.Reading] while the latest one is another channel's. */
+private fun channelPromptFor(
+    editor: ChannelEditorState,
+    reading: Pair<HostConversationTarget, ChannelPromptReading>?,
+): ChannelPromptReading =
+    reading?.takeIf { it.first == HostConversationTarget(editor.serverId, editor.conversationId) }?.second
+        ?: ChannelPromptReading.Reading
+
+/**
+ * A daemon-authored name clamped before layout, as `EditChatModal` clamps its own. The clamp must not end on
+ * half a surrogate pair, since an untouched field is compared against it.
+ */
+private fun boundedName(name: String): String =
+    name.take(MAX_WORKSPACE_LABEL_CHARS).let { if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it }
 
 /**
  * The Edit chat modal's target and flags (#827), shaped like [HostEditorState]: ids and display text only.
@@ -146,6 +170,70 @@ data class AddWorkspaceState(
     val busy: Boolean = false,
     val createFailed: Boolean = false,
     val startFailed: Boolean = false,
+)
+
+/**
+ * The Create channel modal's target and flags (#958), shaped like [AddWorkspaceState].
+ *
+ * The target is the ([serverId], [cwd]) pair a Channels-section workspace row is keyed on — never its shown
+ * name. [createdConversationId] is set once the daemon confirmed the create, so a retry after a failed
+ * prompt write addresses that conversation and never creates a second channel. [saving] covers either
+ * write in flight; [createFailed] and [promptFailed] are flags so the failure string resolves on screen and
+ * no daemon message can reach the shell's live region. The typed name and prompt are the modal's own
+ * buffers and never live here.
+ */
+data class CreateChannelState(
+    val serverId: String,
+    val cwd: String,
+    val saving: Boolean = false,
+    val createdConversationId: String? = null,
+    val createFailed: Boolean = false,
+    val promptFailed: Boolean = false,
+)
+
+/**
+ * The Edit channel modal's stored-prompt reading (#667).
+ *
+ * [Unavailable] is a failed read — or a reply over [SystemPromptLimit.MAX_BYTES], which is never put in the
+ * field — and is not the same statement as "no prompt stored": that one is a [Read] whose prompt is `null`.
+ * Neither [Reading] nor [Unavailable] can lead to a prompt write.
+ */
+sealed interface ChannelPromptReading {
+    data object Reading : ChannelPromptReading
+
+    data object Unavailable : ChannelPromptReading
+
+    /**
+     * [prompt] keeps `null` (none stored) and `""` apart and is held verbatim: it is untrusted
+     * operator-authored text. [toString] is overridden because the generated one would print it, and it
+     * may hold a pasted credential.
+     */
+    data class Read(
+        val prompt: String?,
+        val status: SessionPromptStatus,
+    ) : ChannelPromptReading {
+        override fun toString(): String = "Read(prompt=${if (prompt == null) "absent" else "<redacted>"}, status=$status)"
+    }
+}
+
+/**
+ * The Edit channel modal's target and flags (#667), shaped like [ChatEditorState].
+ *
+ * [savedName] is the channel's name as its own host's snapshot held it at open time, clamped for layout,
+ * and then the name the daemon confirmed: OK renames only when the trimmed field differs from it, so a
+ * retry after a failed prompt write never renames twice. [prompt] is published by the view model from the
+ * target's own reading. [saving] covers any write in flight; [failed] is a rename or prompt write's
+ * failure and [archiveFailed] the archive's, both flags so the string resolves on screen and no daemon
+ * message reaches the shell's live region. The typed name and prompt are the modal's own buffers.
+ */
+data class ChannelEditorState(
+    val serverId: String,
+    val conversationId: String,
+    val savedName: String,
+    val prompt: ChannelPromptReading = ChannelPromptReading.Reading,
+    val saving: Boolean = false,
+    val failed: Boolean = false,
+    val archiveFailed: Boolean = false,
 )
 
 /** The tree's two tiers. The same host draws a row in each, and the two fold independently. */
@@ -232,6 +320,19 @@ class ChannelListViewModel(
     private val hostEditor = HostEditorController(viewModelScope, pairedServers, appPreferences)
     private val chatEditor = MutableStateFlow<ChatEditorState?>(null)
     private val workspaceEditor = MutableStateFlow<WorkspaceEditorState?>(null)
+    private val createChannel = MutableStateFlow<CreateChannelState?>(null)
+
+    // #667: the editor's own prompt stays at its default here; the reading lives apart, tagged with the
+    // channel it was read for, so a read landing mid-write never breaks that write's `compareAndSet` and no
+    // emission can pair one channel's modal with another channel's prompt.
+    private val channelEditor = MutableStateFlow<ChannelEditorState?>(null)
+    private val channelPrompt = MutableStateFlow<Pair<HostConversationTarget, ChannelPromptReading>?>(null)
+    private var channelPromptRead: Job? = null
+
+    private val publishedChannelEditor: Flow<ChannelEditorState?> =
+        combine(channelEditor, channelPrompt) { editor, reading ->
+            editor?.copy(prompt = channelPromptFor(editor, reading))
+        }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val hostState: StateFlow<HostChannelListState> =
@@ -246,12 +347,14 @@ class ChannelListViewModel(
                     },
                 hostSource.attention,
             ) { entries, attention -> entries.map { it.copy(attention = attention[it.host.serverId].orEmpty()) } },
-            combine(addWorkspace, addWorkspaceRecent, ::Pair),
+            // The list's two add modals, grouped (#958): five flows is the typed `combine`'s limit.
+            combine(addWorkspace, addWorkspaceRecent, createChannel, ::Triple),
             collapsedKeys,
             lastOpenedTarget,
             // Grouped first: five flows is the typed `combine`'s limit.
-            combine(hostEditor.state, chatEditor, workspaceEditor, ::Triple),
-        ) { hosts, (adding, recent), collapsed, selected, (editor, chat, workspace) ->
+            combine(combine(hostEditor.state, chatEditor, ::Pair), workspaceEditor, publishedChannelEditor, ::Triple),
+        ) { hosts, (adding, recent, creating), collapsed, selected, (editorAndChat, workspace, channel) ->
+            val (editor, chat) = editorAndChat
             HostChannelListState(
                 hosts = hosts,
                 addWorkspace = adding,
@@ -262,6 +365,8 @@ class ChannelListViewModel(
                 hostEditor = editor,
                 chatEditor = chat,
                 workspaceEditor = workspace,
+                createChannel = creating,
+                channelEditor = channel,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
 
@@ -468,7 +573,7 @@ class ChannelListViewModel(
      *
      * The name is read from that host's own snapshot, never from row text or another host's list: the
      * conversation id is host-local, so a second host may hold a different chat under the same id. Only a
-     * chat qualifies — a channel's editor is #667. The selection and navigation are left alone: the pen
+     * chat qualifies — a channel's editor is [openChannelEditor]. The selection and navigation are left alone: the pen
      * edits the row, it does not open it.
      */
     fun openChatEditor(target: HostConversationTarget) {
@@ -693,6 +798,276 @@ class ChannelListViewModel(
         workspaceEditor.value = null
         RelayLog.d { "event=workspace_editor_dismissed" }
     }
+
+    /**
+     * Opens the Create channel modal on a Channels-section workspace row's own host and exact `cwd` (#958).
+     *
+     * A host the list does not hold, or a path that host holds no active channel at — so no Channels row to
+     * press — opens nothing. Selection and navigation are left alone until a channel is created.
+     */
+    fun openCreateChannel(
+        serverId: String,
+        cwd: String,
+    ) {
+        val known =
+            hostSource.snapshots.value
+                .firstOrNull { it.serverId == serverId }
+                ?.channels
+                ?.any { it.cwd == cwd } == true
+        if (!known) {
+            RelayLog.d { "event=create_channel_open_rejected code=unknown_workspace" }
+            return
+        }
+        createChannel.value = CreateChannelState(serverId, cwd)
+        RelayLog.d { "event=create_channel_opened" }
+    }
+
+    /**
+     * OK: creates a channel named [name] at the modal's exact `cwd` on the modal's own host, writes a
+     * non-blank [systemPrompt] verbatim to the **created** conversation, then closes the modal and opens
+     * the channel (#958).
+     *
+     * One create per channel: once the daemon confirmed it, the created id is published and a retry after
+     * a failed prompt write sends only the prompt. The repository is resolved from the modal's `serverId`
+     * at the press, as [submitAddWorkspace] does, and every terminal transition is a `compareAndSet`
+     * against the state published before the write, so a result landing after a dismissal or a reopen
+     * cannot touch the modal or open anything. The chain itself is not cancelled by a dismissal: the
+     * operator already pressed OK. The trim and the byte limit are applied here, so they hold for any caller.
+     */
+    fun submitCreateChannel(
+        name: String,
+        systemPrompt: String,
+    ) {
+        val state = createChannel.value ?: return
+        if (state.saving) return
+        val createdId = state.createdConversationId
+        val trimmed = name.trim()
+        if ((createdId == null && trimmed.isEmpty()) || !SystemPromptLimit.fits(systemPrompt)) {
+            RelayLog.d { "event=create_channel_rejected code=invalid" }
+            return
+        }
+        val live = hostSource.repositoryFor(state.serverId)
+        if (live == null) {
+            RelayLog.d { "event=create_channel_rejected code=unavailable" }
+            createChannel.value =
+                if (createdId == null) state.copy(createFailed = true) else state.copy(promptFailed = true)
+            return
+        }
+        val pending = state.copy(saving = true, createFailed = false, promptFailed = false)
+        createChannel.value = pending
+        viewModelScope.launch {
+            val conversationId =
+                createdId ?: try {
+                    RelayLog.d { "event=create_channel_started" }
+                    live.createChannel(trimmed, state.cwd).id
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    // Never log the name, the path or the server's message; the UI gets one static string.
+                    RelayLog.d { "event=create_channel_failed" }
+                    createChannel.compareAndSet(pending, pending.copy(saving = false, createFailed = true))
+                    return@launch
+                }
+            var current = pending
+            if (systemPrompt.isNotBlank()) {
+                val created = pending.copy(createdConversationId = conversationId)
+                // Inert after a dismissal; the prompt is still written, since OK was pressed.
+                createChannel.compareAndSet(pending, created)
+                current = created
+                try {
+                    live.setSystemPrompt(conversationId, systemPrompt)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    RelayLog.d { "event=create_channel_prompt_failed" }
+                    createChannel.compareAndSet(created, created.copy(saving = false, promptFailed = true))
+                    return@launch
+                }
+            }
+            if (!createChannel.compareAndSet(current, null)) {
+                RelayLog.d { "event=create_channel_created code=dismissed" }
+                return@launch
+            }
+            val target = HostConversationTarget(state.serverId, conversationId)
+            lastOpenedTarget.value = target
+            hostNavigationChannel.send(target)
+            RelayLog.d { "event=create_channel_created" }
+        }
+    }
+
+    /** Cancel, Close and Back: close the Create channel modal and send nothing. */
+    fun dismissCreateChannel() {
+        createChannel.value = null
+        RelayLog.d { "event=create_channel_dismissed" }
+    }
+
+    /**
+     * Opens the Edit channel modal on a Channels row's own host and conversation (#667), then reads that
+     * channel's stored prompt once.
+     *
+     * The name is read from that host's own snapshot, never from row text or another host: conversation ids
+     * are host-local. Only a channel qualifies — a chat's editor is [openChatEditor]. The read waits for the
+     * host's repository, so a modal opened while its host is down fills once it connects; it calls nothing
+     * that starts or resets a session. Selection and navigation are left alone.
+     */
+    fun openChannelEditor(target: HostConversationTarget) {
+        val channel =
+            hostSource.snapshots.value
+                .firstOrNull { it.serverId == target.serverId }
+                ?.channels
+                ?.firstOrNull { it.id == target.conversationId }
+        if (channel == null) {
+            RelayLog.d { "event=channel_editor_open_rejected code=unknown_channel" }
+            return
+        }
+        channelPromptRead?.cancel()
+        channelPrompt.value = target to ChannelPromptReading.Reading
+        channelEditor.value =
+            ChannelEditorState(
+                serverId = target.serverId,
+                conversationId = target.conversationId,
+                savedName = boundedName(channel.name?.takeIf { it.isNotBlank() }.orEmpty()),
+            )
+        RelayLog.d { "event=channel_editor_opened" }
+        channelPromptRead =
+            viewModelScope.launch {
+                val live =
+                    hostSource.snapshots
+                        .map { hostSource.repositoryFor(target.serverId) }
+                        .filterNotNull()
+                        .first()
+                channelPrompt.value = target to readChannelPrompt(live, target.conversationId)
+            }
+    }
+
+    /**
+     * OK: renames the open editor's channel when the trimmed [name] differs from its saved name, then writes
+     * [systemPrompt] verbatim when it differs from the stored prompt that was read, then closes (#667).
+     *
+     * [systemPrompt] is `null` when the modal never showed a stored prompt, and it is ignored unless this
+     * editor's reading arrived: a prompt the operator never saw can never be overwritten. An absent stored
+     * prompt reads as an empty box, as `SystemPromptEditorState.Loaded.changed` does. A confirmed rename is
+     * recorded as the saved name, so a retry after a failed prompt write sends only the prompt.
+     *
+     * The repository is resolved from the editor's `serverId` at the press — a reconnect replaces it — and
+     * every terminal transition is a `compareAndSet`, as [submitChatName]. The chain is not cancelled by a
+     * dismissal: the operator already pressed OK.
+     */
+    fun submitChannelEdit(
+        name: String,
+        systemPrompt: String?,
+    ) {
+        val state = channelEditor.value ?: return
+        if (state.saving) return
+        val trimmed = name.trim()
+        val read = channelPromptFor(state, channelPrompt.value) as? ChannelPromptReading.Read
+        val draft = systemPrompt?.takeIf { read != null }
+        if (trimmed.isEmpty() || (draft != null && !SystemPromptLimit.fits(draft))) {
+            RelayLog.d { "event=channel_edit_rejected code=invalid" }
+            return
+        }
+        val live = hostSource.repositoryFor(state.serverId)
+        if (live == null) {
+            RelayLog.d { "event=channel_edit_rejected code=unavailable" }
+            channelEditor.value = state.copy(failed = true, archiveFailed = false)
+            return
+        }
+        val renameTo = trimmed.takeIf { it != state.savedName.trim() }
+        val promptToWrite = draft?.takeIf { it != read?.prompt.orEmpty() }
+        val pending = state.copy(saving = true, failed = false, archiveFailed = false)
+        channelEditor.value = pending
+        viewModelScope.launch {
+            var current = pending
+            if (renameTo != null) {
+                try {
+                    live.rename(state.conversationId, renameTo)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    // Never log the name, the prompt, the ids or the server's message.
+                    RelayLog.d { "event=channel_rename_failed" }
+                    channelEditor.compareAndSet(pending, pending.copy(saving = false, failed = true))
+                    return@launch
+                }
+                current = pending.copy(savedName = renameTo)
+                channelEditor.compareAndSet(pending, current)
+            }
+            if (promptToWrite != null) {
+                try {
+                    live.setSystemPrompt(state.conversationId, promptToWrite)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    RelayLog.d { "event=channel_prompt_write_failed" }
+                    channelEditor.compareAndSet(current, current.copy(saving = false, failed = true))
+                    return@launch
+                }
+            }
+            // The row picks the new name up from the host's own conversation stream; nothing is patched here.
+            channelEditor.compareAndSet(current, null)
+            RelayLog.d { "event=channel_edited renamed=${renameTo != null} prompt=${promptToWrite != null}" }
+        }
+    }
+
+    /**
+     * Archives the open editor's channel on the editor's own host, then closes the modal (#667).
+     *
+     * [archiveChat]'s shape: no confirmation, since Archive restores it, and nothing the fields hold — a
+     * blank name or an unread prompt — stands in the way. The channel leaves Channels through the host's own
+     * conversation stream.
+     */
+    fun archiveChannel() {
+        val state = channelEditor.value ?: return
+        if (state.saving) return
+        val live = hostSource.repositoryFor(state.serverId)
+        if (live == null) {
+            RelayLog.d { "event=channel_archive_rejected code=unavailable" }
+            channelEditor.value = state.copy(failed = false, archiveFailed = true)
+            return
+        }
+        val pending = state.copy(saving = true, failed = false, archiveFailed = false)
+        channelEditor.value = pending
+        viewModelScope.launch {
+            RelayLog.d { "event=channel_archive_started" }
+            try {
+                live.archive(state.conversationId)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                RelayLog.d { "event=channel_archive_failed" }
+                channelEditor.compareAndSet(pending, pending.copy(saving = false, archiveFailed = true))
+                return@launch
+            }
+            channelEditor.compareAndSet(pending, null)
+            RelayLog.d { "event=channel_archived" }
+        }
+    }
+
+    /** Cancel, Close and Back: close the Edit channel modal, stop its prompt read and send nothing. */
+    fun dismissChannelEditor() {
+        channelEditor.value = null
+        channelPromptRead?.cancel()
+        RelayLog.d { "event=channel_editor_dismissed" }
+    }
+
+    /**
+     * One stored-prompt read. A reply over the byte limit is [ChannelPromptReading.Unavailable]: the decoder
+     * bounds nothing, and a prompt the field cannot hold must never be rendered or written back.
+     */
+    private suspend fun readChannelPrompt(
+        live: ConversationRepository,
+        conversationId: String,
+    ): ChannelPromptReading =
+        try {
+            val reading = live.requestSystemPrompt(conversationId)
+            val prompt = reading.systemPrompt
+            if (prompt != null && !SystemPromptLimit.fits(prompt)) {
+                RelayLog.d { "event=channel_prompt_read_failed code=oversize" }
+                ChannelPromptReading.Unavailable
+            } else {
+                RelayLog.d { "event=channel_prompt_read" }
+                ChannelPromptReading.Read(prompt, reading.sessionPromptStatus)
+            }
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            RelayLog.d { "event=channel_prompt_read_failed" }
+            ChannelPromptReading.Unavailable
+        }
 
     private suspend fun sendHostDiscussion(
         serverId: String,

@@ -1,22 +1,30 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertIsNotSelected
-import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import de.pyryco.mobile.ui.conversations.thread.WorkspaceChoice
+import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.R
+import de.pyryco.mobile.data.repository.SystemPromptLimit
+import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,246 +32,160 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SaveAsChannelDialogTest {
     @get:Rule
-    val composeTestRule = createComposeRule()
+    val rule = createComposeRule()
 
-    @Test
-    fun title_field_label_radios_and_buttons_render() {
-        composeTestRule.setContent {
+    private var dismissals = 0
+    private val submitted = mutableListOf<Pair<String, String>>()
+    private val nameEditable = mutableStateOf(true)
+    private val error = mutableStateOf<String?>(null)
+
+    private fun string(resId: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
+
+    private fun show(initialName: String = "Release notes") {
+        rule.setContent {
             PyrycodeMobileTheme {
                 SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { _, _ -> },
-                    onDismiss = {},
+                    conversationId = "conversation-1",
+                    initialName = initialName,
+                    onSubmit = { name, prompt -> submitted += name to prompt },
+                    onDismissRequest = { dismissals++ },
+                    nameEditable = nameEditable.value,
+                    error = error.value,
                 )
             }
         }
+    }
 
-        composeTestRule.onNode(hasText("Save as channel")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("Name")).assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Move to dedicated channel folder")
-            .assertIsDisplayed()
-        composeTestRule.onNodeWithText("Keep in scratch").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Cancel").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Save").assertIsDisplayed()
+    private fun name() = rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG)
+
+    private fun prompt() = rule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG)
+
+    private fun ok() = rule.onNodeWithText("OK")
+
+    @Test
+    fun rendersTheTitleBothLabelsAndTheFooter() {
+        show()
+
+        rule.onNodeWithText(string(R.string.save_as_channel_dialog_title)).assertIsDisplayed()
+        rule.onNodeWithText(string(R.string.channel_form_name_label)).assertIsDisplayed()
+        rule.onNodeWithText(string(R.string.channel_form_prompt_label)).assertIsDisplayed()
+        rule.onNodeWithText("Cancel").assertIsDisplayed()
+        ok().assertIsDisplayed()
+        // No location choice survives from the old dialog.
+        rule.onNodeWithText("Keep in scratch").assertDoesNotExist()
     }
 
     @Test
-    fun field_prefills_with_initial_name() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { _, _ -> },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun prefillsTheNameAndOpensThePromptEmpty() {
+        show()
 
-        composeTestRule
-            .onNode(hasSetTextAction() and hasText("New channel"))
-            .assertIsDisplayed()
+        name().assertTextEquals("Release notes")
+        prompt().assertTextEquals("")
     }
 
     /**
-     * Guards the auto-focus contract the LIVE `interactiveTurn_saveAsChannel_promotesToChannelTier`
-     * scenario waits on before typing (`InteractiveStreamE2ETest.kt:1145`): the dialog opens **over the
-     * thread**, whose composer is also editable, and disambiguates the two `hasSetTextAction()` nodes by
-     * focus. The predicate below is that live predicate verbatim — a paraphrase would leave the property
-     * that scenario actually depends on unmeasured.
-     *
-     * The follow-up [androidx.compose.ui.test.junit4.ComposeTestRule.onNode] is not redundant: it throws
-     * on multiple matches, so it asserts the **uniqueness** the live scenario relies on when it calls
-     * `performTextReplacement` on this same selector. Uniqueness carries extra weight in this dialog —
-     * its `text` slot also holds [WorkspaceChoice] radios, so it is the one of the three where a sibling
-     * could plausibly match.
-     *
-     * The 2 s bound is deliberate and is not [de.pyryco.mobile.e2e.InteractiveStreamE2ETest]'s 30 s. It
-     * absorbs the frame between `LaunchedEffect` and focus dispatch — a bare `assertIsFocused()` could
-     * report "contract broken" when the truth is "focus landed one frame later" — while staying short
-     * enough that anything slower is a finding worth reporting rather than quietly waited out.
+     * The live `interactiveTurn_saveAsChannel_promotesToChannelTier` scenario tells the modal's name field
+     * from the thread composer behind it by focus, with this predicate verbatim; `onNode` also asserts the
+     * match is unique now that the modal holds a second editable field.
      */
     @Test
-    fun field_reports_focus_once_dialog_composes() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { _, _ -> },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun theNameFieldIsTheOneFocusedFieldOnceTheModalComposes() {
+        show()
 
-        composeTestRule.waitUntil(2_000L) {
-            composeTestRule
-                .onAllNodes(hasSetTextAction() and isFocused())
-                .fetchSemanticsNodes()
-                .isNotEmpty()
+        rule.waitUntil(2_000L) {
+            rule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNode(hasSetTextAction() and isFocused()).assertIsDisplayed()
+        rule.onNode(hasSetTextAction() and isFocused()).assertTextEquals("Release notes")
     }
 
     @Test
-    fun dedicated_radio_selected_by_default() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { _, _ -> },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun okIsDisabledForABlankOrWhitespaceName() {
+        show()
 
-        composeTestRule
-            .onNodeWithText("Move to dedicated channel folder")
-            .assertIsSelected()
-        composeTestRule.onNodeWithText("Keep in scratch").assertIsNotSelected()
+        name().performTextClearance()
+        ok().assertIsNotEnabled()
+        name().performTextInput("   ")
+        ok().assertIsNotEnabled()
+        ok().performClick()
+        assertTrue(submitted.isEmpty())
     }
 
     @Test
-    fun save_enabled_with_seeded_name() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { _, _ -> },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun okFollowsThePromptsUtf8ByteLimit() {
+        show()
 
-        composeTestRule.onNodeWithText("Save").assertIsEnabled()
+        // Two bytes per "é": exactly at the limit fits, one more byte does not.
+        val atLimit = "é".repeat(SystemPromptLimit.MAX_BYTES / 2)
+        prompt().performTextReplacement(atLimit)
+        ok().assertIsEnabled()
+        rule.onNodeWithText(string(R.string.channel_form_prompt_too_long)).assertDoesNotExist()
+
+        prompt().performTextReplacement(atLimit + "a")
+        ok().assertIsNotEnabled()
+        rule.onNodeWithText(string(R.string.channel_form_prompt_too_long)).assertExists()
     }
 
     @Test
-    fun save_disabled_when_input_cleared() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { _, _ -> },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun okSubmitsTheTrimmedNameAndTheVerbatimPrompt() {
+        show()
 
-        composeTestRule.onNode(hasSetTextAction()).performTextReplacement("")
+        name().performTextReplacement("  Ops channel  ")
+        prompt().performTextInput("  Be brief.\n")
+        ok().performClick()
 
-        composeTestRule.onNodeWithText("Save").assertIsNotEnabled()
+        assertEquals(listOf("Ops channel" to "  Be brief.\n"), submitted)
+        assertEquals(0, dismissals)
     }
 
     @Test
-    fun save_disabled_on_whitespace_only_input() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { _, _ -> },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun okWithAnEmptyPromptSubmitsAnEmptyPrompt() {
+        show()
 
-        composeTestRule.onNode(hasSetTextAction()).performTextReplacement("   ")
+        ok().performClick()
 
-        composeTestRule.onNodeWithText("Save").assertIsNotEnabled()
+        assertEquals(listOf("Release notes" to ""), submitted)
     }
 
     @Test
-    fun save_enabled_with_non_blank_trimmed_input() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { _, _ -> },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun cancelAndCloseDismissWithoutSubmitting() {
+        show()
 
-        composeTestRule.onNode(hasSetTextAction()).performTextReplacement("  alpha  ")
+        rule.onNodeWithText("Cancel").performClick()
+        rule.onNodeWithContentDescription("Close").performClick()
 
-        composeTestRule.onNodeWithText("Save").assertIsEnabled()
+        assertEquals(2, dismissals)
+        assertTrue(submitted.isEmpty())
     }
 
     @Test
-    fun selecting_scratch_radio_updates_selection() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { _, _ -> },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun aLongDaemonNameIsClampedWithoutSplittingASurrogatePair() {
+        // An emoji straddling the bound would leave half a pair; the clamp drops it whole.
+        show(initialName = "a".repeat(MAX_WORKSPACE_LABEL_CHARS - 1) + "😀" + "tail")
 
-        composeTestRule.onNodeWithText("Keep in scratch").performClick()
-
-        composeTestRule.onNodeWithText("Keep in scratch").assertIsSelected()
-        composeTestRule
-            .onNodeWithText("Move to dedicated channel folder")
-            .assertIsNotSelected()
+        name().assertTextEquals("a".repeat(MAX_WORKSPACE_LABEL_CHARS - 1))
     }
 
     @Test
-    fun tapping_save_with_dedicated_invokes_onSubmit_with_trimmed_name_and_dedicated_choice() {
-        var submitted: Pair<String, WorkspaceChoice>? = null
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { name, workspace -> submitted = name to workspace },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun anErrorIsShownAndTheTypedValuesSurviveIt() {
+        show()
+        prompt().performTextInput("Keep answers short.")
 
-        composeTestRule.onNode(hasSetTextAction()).performTextReplacement("  alpha  ")
-        composeTestRule.onNodeWithText("Save").performClick()
+        error.value = string(R.string.save_as_channel_failed)
 
-        assertEquals("alpha" to WorkspaceChoice.DEDICATED, submitted)
+        rule.onNodeWithText(string(R.string.save_as_channel_failed)).assertIsDisplayed()
+        prompt().assertTextEquals("Keep answers short.")
+        ok().performClick()
+        assertEquals(listOf("Release notes" to "Keep answers short."), submitted)
     }
 
     @Test
-    fun tapping_save_with_scratch_invokes_onSubmit_with_scratch_choice() {
-        var submitted: Pair<String, WorkspaceChoice>? = null
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { name, workspace -> submitted = name to workspace },
-                    onDismiss = {},
-                )
-            }
-        }
+    fun aConfirmedPromoteLocksTheNameButLeavesThePromptEditable() {
+        show()
 
-        composeTestRule.onNode(hasSetTextAction()).performTextReplacement("alpha")
-        composeTestRule.onNodeWithText("Keep in scratch").performClick()
-        composeTestRule.onNodeWithText("Save").performClick()
+        nameEditable.value = false
 
-        assertEquals("alpha" to WorkspaceChoice.SCRATCH, submitted)
-    }
-
-    @Test
-    fun tapping_cancel_invokes_onDismiss_without_invoking_onSubmit() {
-        var dismissed = 0
-        var submitted: Pair<String, WorkspaceChoice>? = null
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SaveAsChannelDialog(
-                    initialName = "New channel",
-                    onSubmit = { name, workspace -> submitted = name to workspace },
-                    onDismiss = { dismissed++ },
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText("Cancel").performClick()
-
-        assertEquals(1, dismissed)
-        assertNull(submitted)
+        name().assertIsNotEnabled()
+        prompt().assertIsEnabled()
+        ok().assertIsEnabled()
     }
 }

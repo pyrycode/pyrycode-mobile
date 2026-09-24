@@ -11,7 +11,7 @@ per-row fan-out that fed it — `ChannelListUiState`, `ChannelListNavigation`,
 `state`, `onEvent` and `navigationEvents` all retired with the floating action
 button that was their last consumer, and that material retired with them rather
 than staying as a description of dead code. See
-[ChannelListViewModel](channel-list-viewmodel.md#related) for where each
+[ChannelListViewModel — related documents and ticket history](channel-list-viewmodel-related.md#related) for where each
 technique's ticket history lives.
 
 ## `hostState` via `stateIn`

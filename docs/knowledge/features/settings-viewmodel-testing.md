@@ -76,4 +76,4 @@ Tests that read `vm.themeMode.value` / `vm.useWallpaperColors.value` / `vm.defau
 
 - Parent document: [SettingsViewModel](settings-viewmodel.md)
 - How it works: [SettingsViewModel — how it works](settings-viewmodel-how-it-works.md)
-- Shared machine under test: [Host editor](host-editor.md) — `HostEditorController`'s own contract; this file's nine `hostEditor_*` cases are its second owner's coverage, alongside [`HostChannelListViewModelTest`](channel-list-viewmodel.md#testing)'s unchanged regression proof for the first
+- Shared machine under test: [Host editor](host-editor.md) — `HostEditorController`'s own contract; this file's nine `hostEditor_*` cases are its second owner's coverage, alongside [`HostChannelListViewModelTest`](channel-list-viewmodel-testing.md#testing)'s unchanged regression proof for the first

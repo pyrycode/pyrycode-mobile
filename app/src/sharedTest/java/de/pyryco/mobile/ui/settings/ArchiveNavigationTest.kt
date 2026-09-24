@@ -9,7 +9,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.preferencesOf
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -67,7 +68,10 @@ class ArchiveNavigationTest {
     private lateinit var nav: NavHostController
 
     private val peers = mutableMapOf<String, NavigationPeer>()
-    private val stored = MutableStateFlow(emptyPreferences() as Preferences)
+
+    // Seeded as already asked: on a device the channel list would otherwise raise the one-time
+    // notification prompt (#685) over the test activity.
+    private val stored = MutableStateFlow(preferencesOf(booleanPreferencesKey("notification_permission_asked") to true))
 
     @After fun close() {
         if (::app.isInitialized) app.close()

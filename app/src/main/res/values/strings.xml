@@ -25,8 +25,11 @@
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <!-- A Chats row's pencil (#827); %1$s is the chat's (clamped) name or the untitled fallback. -->
     <string name="cd_tree_chat_edit">Edit chat %1$s</string>
+    <!-- A Channels row's pencil (#667); %1$s is the channel's (clamped) name or the untitled fallback. -->
+    <string name="cd_tree_channel_edit">Edit channel %1$s</string>
     <!-- A workspace row's pencil (#905), in both sections; %1$s is the workspace's (clamped) shown name. -->
     <string name="cd_tree_workspace_edit">Edit workspace %1$s</string>
+    <string name="cd_tree_workspace_new_channel">New channel in %1$s</string>
     <string name="untitled_discussion">Untitled discussion</string>
     <string name="channels_section_header">Channels</string>
     <string name="chats_section_header">Chats</string>
@@ -90,6 +93,13 @@
     <string name="status_sheet_running_model_unavailable">Not announced yet</string>
     <string name="status_sheet_running_build">Claude Code %1$s</string>
     <string name="status_sheet_running_truncated">" (truncated)"</string>
+    <!-- #946: Claude's reported context usage. Client-owned wording; the figure is Claude's percentage as sent. -->
+    <string name="status_sheet_context_used">%1$d%% used</string>
+    <string name="status_sheet_context_unavailable">Context usage unavailable</string>
+    <string name="thread_footer_context">Cxt: %1$d%%</string>
+    <string name="thread_footer_context_unavailable">Cxt: n/a</string>
+    <string name="cd_context_usage">Context usage %1$d%%</string>
+    <string name="cd_context_usage_unavailable">Context usage unavailable</string>
     <string name="thread_effort_note_selected_unavailable">Selected effort. The running effort is unavailable.</string>
     <string name="thread_effort_note_default_unavailable">Claude\'s default applies. The running effort is unavailable.</string>
     <string name="thread_effort_note_not_reported">Claude reports no effort parameter.</string>
@@ -187,11 +197,17 @@
     <string name="rename_dialog_save">Save</string>
     <string name="rename_dialog_cancel">Cancel</string>
     <string name="save_as_channel_dialog_title">Save as channel</string>
-    <string name="save_as_channel_dialog_field_label">Name</string>
-    <string name="save_as_channel_dialog_workspace_dedicated">Move to dedicated channel folder</string>
-    <string name="save_as_channel_dialog_workspace_scratch">Keep in scratch</string>
-    <string name="save_as_channel_dialog_save">Save</string>
-    <string name="save_as_channel_dialog_cancel">Cancel</string>
+    <!-- Generic for the same reason edit_chat_save_failed is: the shell announces them aloud (#957). -->
+    <string name="save_as_channel_failed">Couldn\'t save the chat as a channel. Try again.</string>
+    <string name="save_as_channel_prompt_failed">The channel was saved, but its system prompt wasn\'t. Try again.</string>
+    <!-- The channel form (#957), in desktop's Save as channel copy; the Create channel modal reuses it. -->
+    <string name="channel_form_name_label">Channel name:</string>
+    <string name="channel_form_prompt_label">Channel system prompt:</string>
+    <string name="channel_form_prompt_too_long">This system prompt is too long.</string>
+    <string name="create_channel_title">Create channel</string>
+    <!-- Generic for the same reason save_as_channel_failed is: the shell announces them aloud (#958). -->
+    <string name="create_channel_failed">Couldn\'t create the channel. Try again.</string>
+    <string name="create_channel_prompt_failed">The channel was created, but its system prompt wasn\'t. Try again.</string>
     <string name="literal_screen_title">Claude\'s screen</string>
     <string name="literal_screen_back">Back</string>
     <string name="literal_screen_refresh">Refresh</string>
@@ -260,6 +276,16 @@
     <!-- Generic for the same reason edit_host_save_failed is: the shell announces it aloud (#827). -->
     <string name="edit_chat_save_failed">Couldn\'t rename the chat. Try again.</string>
     <!--
+      The Edit channel modal (#667), in desktop's EditChannelDialog copy. The three prompt notes are
+      static lines under the prompt field; the failure is static because the shell announces it aloud.
+    -->
+    <string name="edit_channel_title">Edit channel</string>
+    <string name="edit_channel_archive">Archive channel</string>
+    <string name="edit_channel_save_failed">Couldn\'t save the channel. Try again.</string>
+    <string name="edit_channel_prompt_reading">Reading the stored system prompt…</string>
+    <string name="edit_channel_prompt_unavailable">Couldn\'t read the stored system prompt.</string>
+    <string name="edit_channel_prompt_next_session">The stored prompt applies from this channel\'s next session.</string>
+    <!--
       The host row's Add workspace modal (#904). "Recent" and the create entry keep the bottom
       sheet's wording, which the device suites match. Both failures are static for the reason
       edit_chat_save_failed is: the shell announces them aloud.
@@ -324,4 +350,9 @@
     -->
     <string name="markdown_task_mark_checked">Task done</string>
     <string name="markdown_task_mark_unchecked">Task not done</string>
+    <!-- #685: alert copy is fixed app text; no conversation name or daemon text ever reaches the shade. -->
+    <string name="notification_channel_attention">Replies and prompts</string>
+    <string name="notification_channel_attention_description">When claude finishes a reply or needs your answer</string>
+    <string name="notification_turn_completed">claude finished a reply</string>
+    <string name="notification_prompt">claude is waiting for your answer</string>
 </resources>

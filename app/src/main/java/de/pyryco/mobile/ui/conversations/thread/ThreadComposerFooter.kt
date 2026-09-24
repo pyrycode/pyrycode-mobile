@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -24,8 +23,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
@@ -219,8 +220,8 @@ private const val PENDING_ALPHA = 0.55f
  *
  * It replaces #602's single monospace `model · effort` line (`ThreadStatusRow`). The design has no
  * footer affordance for the Status sheet, so a trailing icon keeps it one tap away. The design's
- * `Cxt:` (#591) and attachment segments belong to other tickets. The Actions button (#884) leads the row,
- * as in the design, and always opens its menu.
+ * attachment segment belongs to another ticket. The Actions button (#884) leads the row, as in the design,
+ * and always opens its menu. The `Cxt:` segment (#946) follows the buttons as plain text, not a control.
  *
  * Stateless. The model and effort buttons show [ThreadRunConfig.modelLabel] / [ThreadRunConfig.effortLabel].
  * Those labels read the pending tap first and the confirmed reading after it; for effort that reading is
@@ -279,7 +280,9 @@ fun ThreadComposerFooter(
             onClick = { onOpen(FooterControl.Effort) },
             onBounds = { onAnchorChanged(FooterControl.Effort, it) },
         )
-        Spacer(modifier = Modifier.weight(1f))
+        // The segment takes the row's leftover width in place of a spacer, so the Status opener keeps the end.
+        // As a weighted child it is measured last: on a narrow row it ellipsizes rather than squeeze the opener.
+        ContextSegment(percent = runConfig.contextPercent, modifier = Modifier.weight(1f))
         Box(
             modifier =
                 Modifier
@@ -296,6 +299,39 @@ fun ThreadComposerFooter(
         }
     }
 }
+
+/**
+ * Figma's `Cxt: 84%` text (110:3497): Claude's reported [percent] as sent, in the footer's body-small style.
+ * `null` is the unavailable state, dimmed like a disabled button and described as unavailable — never `0%`.
+ */
+@Composable
+private fun ContextSegment(
+    percent: Int?,
+    modifier: Modifier = Modifier,
+) {
+    val description =
+        if (percent != null) {
+            stringResource(R.string.cd_context_usage, percent)
+        } else {
+            stringResource(R.string.cd_context_usage_unavailable)
+        }
+    Text(
+        text =
+            if (percent != null) {
+                stringResource(R.string.thread_footer_context, percent)
+            } else {
+                stringResource(R.string.thread_footer_context_unavailable)
+            },
+        style = MaterialTheme.typography.bodySmall,
+        color = if (percent != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier.testTag(CONTEXT_USAGE_TEST_TAG).semantics { contentDescription = description },
+    )
+}
+
+/** Marks the footer's context-usage segment for the rung-3 scenario (#946). A static tag; never daemon text. */
+const val CONTEXT_USAGE_TEST_TAG = "thread_footer_context_usage"
 
 /** Figma's `Input footer button`. A disabled button still shows its value, without the chevron that
  *  promises a menu. [note] explains the value in the state description when no write is pending (#889). */
@@ -359,6 +395,7 @@ private val previewRunConfig =
         savedEffort = "max",
         permissionMode = "plan",
         sessionId = "s1",
+        contextPercent = 84,
     )
 
 @Preview(name = "ComposerFooter — Dark", showBackground = true, widthDp = 372)
@@ -374,7 +411,7 @@ private fun ThreadComposerFooterDarkPreview() {
 private fun ThreadComposerFooterLightPendingPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ThreadComposerFooter(
-            runConfig = previewRunConfig.copy(pendingEffort = "high", pendingPermission = "default"),
+            runConfig = previewRunConfig.copy(pendingEffort = "high", pendingPermission = "default", contextPercent = null),
             onOpen = {},
             onStatusClick = {},
             onAnchorChanged = { _, _ -> },

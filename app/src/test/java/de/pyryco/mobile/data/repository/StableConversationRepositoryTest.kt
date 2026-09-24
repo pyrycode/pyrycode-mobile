@@ -172,6 +172,7 @@ class StableConversationRepositoryTest {
             val facade = StableConversationRepository(current)
 
             assertTrue(runCatching { facade.createDiscussion("/ws") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.createChannel("Chan", "/ws") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.sendMessage("c1", "hi") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.promote("c1", "Name", null) }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestScreenSnapshot("c1") }.exceptionOrNull() is IllegalStateException)
@@ -288,12 +289,15 @@ class StableConversationRepositoryTest {
             val created = conversation("created")
             val sent = message("m1")
             repoA.createDiscussionResult = created
+            val channel = conversation("channel")
+            repoA.createChannelResult = channel
             repoA.sendMessageResult = sent
             repoA.requestScreenSnapshotResult = "screen!"
             val current = MutableStateFlow<ConversationRepository?>(repoA)
             val facade = StableConversationRepository(current)
 
             val createResult = facade.createDiscussion("/ws")
+            val channelResult = facade.createChannel("  Chan ", "/ws/chan")
             val sendResult = facade.sendMessage("c1", "hi")
             val snapshotResult = facade.requestScreenSnapshot("c9")
             facade.dropQueuedMessage("c7", 99L)
@@ -302,11 +306,13 @@ class StableConversationRepositoryTest {
             val historyResult = facade.requestHistory("c8", cursor = "OPAQUE==", limit = 25)
 
             assertEquals(listOf<String?>("/ws"), repoA.createDiscussionCalls)
+            assertEquals(listOf("  Chan " to "/ws/chan"), repoA.createChannelCalls)
             assertEquals(listOf("c1" to "hi"), repoA.sendMessageCalls)
             assertEquals(listOf("c9"), repoA.requestScreenSnapshotCalls)
             assertEquals(listOf("c7" to 99L), repoA.dropQueuedMessageCalls)
             assertEquals(listOf(Triple("c8", "OPAQUE==", 25)), repoA.requestHistoryCalls)
             assertSame(created, createResult)
+            assertSame(channel, channelResult)
             assertSame(sent, sendResult)
             assertEquals("screen!", snapshotResult)
             assertSame(repoA.requestHistoryResult, historyResult)
@@ -567,6 +573,43 @@ class StableConversationRepositoryTest {
             runCurrent()
             assertEquals(listOf(null, model, null), models)
             assertEquals(listOf(null, sessionFacts, null), facts)
+        }
+
+    // ---- #945: observeContextUsage delegates, and a switch drops the previous connection's reading ------
+
+    // Absent reads as unavailable, never as a zero reading.
+    @Test
+    fun observeContextUsage_whileAbsent_emitsNull() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { facade.observeContextUsage("c1").collect { readings += it } }
+            runCurrent()
+
+            assertEquals(listOf<ContextUsage?>(null), readings)
+        }
+
+    @Test
+    fun observeContextUsage_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { facade.observeContextUsage("c1").collect { readings += it } }
+            runCurrent()
+
+            val reading = ContextUsage(totalTokens = 50_000, maxTokens = 200_000, percentage = 25, asOf = null)
+            repoA.pushContextUsage(reading)
+            runCurrent()
+            assertEquals(listOf(null, reading), readings)
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, reading, null), readings)
         }
 
     // ---- #898: observeAttachmentOffers delegates and tracks connection churn ---------------------
@@ -877,12 +920,14 @@ class StableConversationRepositoryTest {
         private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
 
         val createDiscussionCalls = mutableListOf<String?>()
+        val createChannelCalls = mutableListOf<Pair<String, String>>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
         val requestScreenSnapshotCalls = mutableListOf<String>()
         val dropQueuedMessageCalls = mutableListOf<Pair<String, Long>>()
         val requestHistoryCalls = mutableListOf<Triple<String, String, Int>>()
 
         var createDiscussionResult: Conversation = conversation("created")
+        var createChannelResult: Conversation = conversation("created-channel")
         var sendMessageResult: Message = message("sent")
         var requestScreenSnapshotResult: String = "snapshot-text"
         var requestHistoryResult: HistoryPage = HistoryPage(entries = emptyList(), cursor = "", atStart = true)
@@ -954,6 +999,14 @@ class StableConversationRepositoryTest {
 
         override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFacts
 
+        private val contextUsage = MutableStateFlow<ContextUsage?>(null)
+
+        fun pushContextUsage(value: ContextUsage?) {
+            contextUsage.value = value
+        }
+
+        override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsage
+
         private val attachmentOffers = MutableStateFlow<List<AttachmentOffer>>(emptyList())
 
         fun pushAttachmentOffers(value: List<AttachmentOffer>) {
@@ -1005,6 +1058,14 @@ class StableConversationRepositoryTest {
         override suspend fun createDiscussion(workspace: String?): Conversation {
             createDiscussionCalls += workspace
             return createDiscussionResult
+        }
+
+        override suspend fun createChannel(
+            name: String,
+            workspace: String,
+        ): Conversation {
+            createChannelCalls += name to workspace
+            return createChannelResult
         }
 
         override suspend fun promote(

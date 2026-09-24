@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.grantNotificationPermission
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -75,6 +76,10 @@ import org.koin.core.context.GlobalContext
  */
 @RunWith(AndroidJUnit4::class)
 class DeterministicInteractiveStreamE2ETest {
+    init {
+        grantNotificationPermission()
+    }
+
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 

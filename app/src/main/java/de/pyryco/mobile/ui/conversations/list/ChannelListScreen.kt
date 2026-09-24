@@ -38,6 +38,8 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.AddWorkspaceModal
+import de.pyryco.mobile.ui.components.CreateChannelModal
+import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.components.EditWorkspaceModal
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
@@ -282,6 +284,57 @@ sealed interface ChannelListEvent {
      * distinct from [WorkspaceEditDismissed] because it returns to the editor instead of closing.
      */
     data object WorkspaceArchiveDeclined : ChannelListEvent
+
+    /**
+     * A Channels-section workspace row's plus: open Create channel on **that** row's own host and exact `cwd`
+     * (#958). Never the shown name, which two workspaces can share.
+     */
+    data class TreeWorkspaceAddTapped(
+        val serverId: String,
+        val cwd: String,
+    ) : ChannelListEvent
+
+    /**
+     * The Create channel modal's OK: the name already trimmed by the component, the prompt verbatim. No ids,
+     * for the reason [HostEditNameSubmitted] carries none: the target is the open modal's.
+     */
+    data class CreateChannelSubmitted(
+        val name: String,
+        val systemPrompt: String,
+    ) : ChannelListEvent {
+        // The prompt may hold a pasted credential; a logged or crash-traced event must not carry it.
+        override fun toString(): String = "CreateChannelSubmitted(name=$name, systemPrompt=<redacted>)"
+    }
+
+    /** The Create channel modal's Cancel, Close and Back. */
+    data object CreateChannelDismissed : ChannelListEvent
+
+    /**
+     * A Channels row's pen: open Edit channel on **that** row's own host and conversation (#667). The name
+     * is read from the host's own snapshot, never from the row's text.
+     */
+    data class TreeChannelEditTapped(
+        val target: HostConversationTarget,
+    ) : ChannelListEvent
+
+    /**
+     * The Edit channel modal's OK: the name already trimmed by the component, the prompt verbatim — or `null`
+     * when the modal never showed a stored prompt. No ids: the target is the open modal's.
+     */
+    data class ChannelEditSubmitted(
+        val name: String,
+        val systemPrompt: String?,
+    ) : ChannelListEvent {
+        // The prompt may hold a pasted credential; a logged or crash-traced event must not carry it.
+        override fun toString(): String =
+            "ChannelEditSubmitted(name=$name, systemPrompt=${if (systemPrompt == null) "absent" else "<redacted>"})"
+    }
+
+    /** The Edit channel modal's Archive channel; the target is the open modal's. */
+    data object ChannelArchiveRequested : ChannelListEvent
+
+    /** The Edit channel modal's Cancel, Close and Back. */
+    data object ChannelEditDismissed : ChannelListEvent
 }
 
 /**
@@ -327,6 +380,69 @@ fun ChannelListScreen(
     )
     ChatEditorModal(hostState = hostState, onEvent = onEvent)
     WorkspaceEditorModal(hostState = hostState, onEvent = onEvent)
+    CreateChannelModalBinding(hostState = hostState, onEvent = onEvent)
+    ChannelEditorModal(hostState = hostState, onEvent = onEvent)
+}
+
+/**
+ * [EditChannelModal] bound to the open [ChannelEditorState] (#667), present exactly while there is one.
+ *
+ * OK and Archive follow the channel's **own** host's connection, read on every draw as the chat editor does.
+ * Both failure strings are static: the shell announces them aloud, and the daemon's message never reaches
+ * this screen.
+ */
+@Composable
+private fun ChannelEditorModal(
+    hostState: HostChannelListState,
+    onEvent: (ChannelListEvent) -> Unit,
+) {
+    val editor = hostState.channelEditor ?: return
+    EditChannelModal(
+        conversationId = editor.conversationId,
+        initialName = editor.savedName,
+        prompt = editor.prompt,
+        onSubmit = { name, systemPrompt -> onEvent(ChannelListEvent.ChannelEditSubmitted(name, systemPrompt)) },
+        onArchiveRequested = { onEvent(ChannelListEvent.ChannelArchiveRequested) },
+        onDismissRequest = { onEvent(ChannelListEvent.ChannelEditDismissed) },
+        hostAvailable = hostState.isHostConnected(editor.serverId),
+        loading = editor.saving,
+        error =
+            when {
+                editor.archiveFailed -> stringResource(R.string.archive_failed)
+                editor.failed -> stringResource(R.string.edit_channel_save_failed)
+                else -> null
+            },
+    )
+}
+
+/**
+ * [CreateChannelModal] bound to the open [CreateChannelState] (#958), present exactly while there is one.
+ *
+ * OK follows the modal's **own** host's connection, read on every draw as the other bindings do. The name
+ * locks once the create is confirmed, since a retry then writes only the prompt. Both failure strings are
+ * static: the shell announces them aloud, and the daemon's message never reaches this screen.
+ */
+@Composable
+private fun CreateChannelModalBinding(
+    hostState: HostChannelListState,
+    onEvent: (ChannelListEvent) -> Unit,
+) {
+    val state = hostState.createChannel ?: return
+    CreateChannelModal(
+        serverId = state.serverId,
+        cwd = state.cwd,
+        onSubmit = { name, systemPrompt -> onEvent(ChannelListEvent.CreateChannelSubmitted(name, systemPrompt)) },
+        onDismissRequest = { onEvent(ChannelListEvent.CreateChannelDismissed) },
+        hostAvailable = hostState.isHostConnected(state.serverId),
+        nameEditable = state.createdConversationId == null,
+        loading = state.saving,
+        error =
+            when {
+                state.createFailed -> stringResource(R.string.create_channel_failed)
+                state.promptFailed -> stringResource(R.string.create_channel_prompt_failed)
+                else -> null
+            },
+    )
 }
 
 /**
@@ -577,6 +693,14 @@ private fun LazyListScope.treeSection(
                     onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(workspaceKey)) },
                     // The group's own host and exact cwd, in both sections, never its shown name.
                     onEditTapped = { onEvent(ChannelListEvent.TreeWorkspaceEditTapped(group.serverId, group.cwd)) },
+                    // Channels only (#958): the plus creates a channel at the group's own host and cwd.
+                    onAddTapped =
+                        when (section) {
+                            ConversationTreeSection.Channels -> {
+                                { onEvent(ChannelListEvent.TreeWorkspaceAddTapped(group.serverId, group.cwd)) }
+                            }
+                            ConversationTreeSection.Chats -> null
+                        },
                 )
             }
             if (workspaceKey in hostState.collapsed) return@forEach
@@ -592,13 +716,20 @@ private fun LazyListScope.treeSection(
                     selected = target == hostState.selected,
                     onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
                     modifier = Modifier.testTag(section.rowTestTag),
-                    // The row's own target, as for its tap. Only chats: editing a channel is #667.
+                    // The row's own target, as for its tap: Edit channel on Channels rows (#667), Edit chat on Chats.
                     onEditTapped =
                         when (section) {
-                            ConversationTreeSection.Channels -> null
+                            ConversationTreeSection.Channels -> {
+                                { onEvent(ChannelListEvent.TreeChannelEditTapped(target)) }
+                            }
                             ConversationTreeSection.Chats -> {
                                 { onEvent(ChannelListEvent.TreeChatEditTapped(target)) }
                             }
+                        },
+                    editDescription =
+                        when (section) {
+                            ConversationTreeSection.Channels -> R.string.cd_tree_channel_edit
+                            ConversationTreeSection.Chats -> R.string.cd_tree_chat_edit
                         },
                 )
             }

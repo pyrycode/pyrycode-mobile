@@ -70,6 +70,7 @@ class StatusSheetTest {
         onDismiss: () -> Unit = {},
         effortNote: String? = null,
         running: ThreadRunningModel = ThreadRunningModel(),
+        contextPercent: Int? = null,
     ) = setContent {
         PyrycodeMobileTheme {
             StatusSheetContent(
@@ -88,6 +89,7 @@ class StatusSheetTest {
                 onDismiss = onDismiss,
                 effortNote = effortNote,
                 running = running,
+                contextPercent = contextPercent,
             )
         }
     }
@@ -325,5 +327,18 @@ class StatusSheetTest {
         composeTestRule
             .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo))
             .assertCountEquals(0)
+    }
+
+    // #946: Claude's reported percentage replaces the unavailable line; the caption stays.
+    @Test
+    fun renders_the_reported_context_percentage_in_place_of_the_unavailable_line() {
+        composeTestRule.setSheet(contextPercent = 84)
+
+        composeTestRule.onNode(hasText("Context window")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("84% used")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Context usage unavailable")).assertDoesNotExist()
+        composeTestRule
+            .onNode(hasText("When full, oldest messages get dropped from claude's view", substring = true))
+            .assertIsDisplayed()
     }
 }

@@ -131,6 +131,20 @@ interface ConversationRepository {
     fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = flowOf(null)
 
     /**
+     * Emits the context-window reading Claude last reported for [conversationId] (#945), or **`null` while
+     * there is none**, which reads as "unavailable", never as zero. Cold flow; re-emits on every change. Each
+     * `context_usage` frame the daemon pushes after a turn replaces the reading. The conversation's session
+     * transition clears it, and a reconnect or host switch starts from nothing, so it stays absent until the next
+     * turn ends. The implementation sends no `request_context_usage` until pyrycode#2563 (#946).
+     *
+     * **Not [SessionSettings.usedTokens] / [SessionSettings.windowTokens].** Those are transcript-derived; this is
+     * Claude's own arithmetic, and neither stands in for the other.
+     *
+     * Default `flowOf(null)`, the same cascade-avoidance as [observeSessionFacts].
+     */
+    fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = flowOf(null)
+
+    /**
      * Emits the files the daemon has offered in [conversationId] on this connection (#898), in arrival order
      * with one entry per attachment id, or an empty list until one arrives. Cold flow; re-emits when an offer
      * for this conversation lands. The offer is **live-only** on the wire (no replay, no list verb), so this
@@ -211,6 +225,23 @@ interface ConversationRepository {
     val mutationsSupported: Boolean get() = true
 
     suspend fun createDiscussion(workspace: String? = null): Conversation
+
+    /**
+     * Create a named, promoted channel in [workspace] in one step (#956), rather than a discussion that is
+     * promoted afterwards. [name] and [workspace] are sent **verbatim**: trimming the name is the caller's
+     * job, and the daemon re-validates both.
+     *
+     * Returns the daemon's confirmed conversation — its values, not the request's — which then appears as a
+     * promoted row in [observeConversations]. A server `error`, a disconnected session or a malformed reply
+     * throws and inserts nothing, as with [createDiscussion].
+     *
+     * Default throws — implementations without the verb (inline test doubles) inherit it, the same
+     * cascade-avoidance as [setSystemPrompt].
+     */
+    suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = error("createChannel is not implemented for this ConversationRepository")
 
     suspend fun promote(
         conversationId: String,
@@ -1257,6 +1288,28 @@ data class SessionFacts(
     val claudeCodeVersion: String,
     val permissionMode: String,
     val truncatedFields: List<String>?,
+)
+
+/**
+ * How full a conversation's context window is, as Claude last reported it (#945, pyrycode#2370/#2431/#2461) — the
+ * element type of [ConversationRepository.observeContextUsage]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § `context_usage`.
+ *
+ * [percentage] is **Claude's own number**, held verbatim and never derived from [totalTokens] / [maxTokens]; the
+ * three need not agree. It is never negative (the decoder drops a frame that says otherwise). [asOf] is non-null
+ * only on a **remembered** answer, the daemon's record of when Claude last reported it for a dormant
+ * conversation; the figure is still the last one Claude gave, so it is held like any other.
+ *
+ * The frame's inventories and its `model` are deliberately not carried: every string on it is claude-authored,
+ * and this type holds numbers only.
+ *
+ * `data` is load-bearing: structural equality is what the repository's `distinctUntilChanged` relies on.
+ */
+data class ContextUsage(
+    val totalTokens: Long,
+    val maxTokens: Long,
+    val percentage: Int,
+    val asOf: Instant?,
 )
 
 /**

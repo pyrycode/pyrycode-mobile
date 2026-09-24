@@ -1,6 +1,7 @@
 package de.pyryco.mobile
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -50,6 +51,7 @@ import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.di.ThreadDestinationFactory
+import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
@@ -86,6 +88,7 @@ import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.settings.documentArchiveDestination
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
@@ -95,6 +98,9 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // #685: a notification tap's target, read once. A recreated activity keeps its intent, so reading
+        // it again after a rotation would re-open the thread over wherever the operator went since.
+        val openTarget = if (savedInstanceState == null) NotificationTap.target(intent) else null
         setContent {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
@@ -137,6 +143,7 @@ class MainActivity : ComponentActivity() {
                             PyryNavHost(
                                 startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
                                 modifier = Modifier.padding(innerPadding),
+                                openTarget = openTarget.takeIf { v },
                             )
                     }
                 }
@@ -150,8 +157,10 @@ internal fun PyryNavHost(
     startDestination: String,
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
+    openTarget: HostConversationTarget? = null,
 ) {
     val destinations = koinInject<ThreadDestinationFactory>()
+    val appPreferences = koinInject<AppPreferences>()
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -307,6 +316,19 @@ internal fun PyryNavHost(
         composable(Routes.CHANNEL_LIST) {
             val vm = koinViewModel<ChannelListViewModel>()
             val hostState by vm.hostState.collectAsStateWithLifecycle()
+            val context = LocalContext.current
+            val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
+            // #685: asked at most once from here, and only while the Settings switch is on.
+            LaunchedEffect(Unit) {
+                if (shouldAskNotificationPermission(
+                        enabled = appPreferences.notificationsEnabled.first(),
+                        granted = notificationsPermitted(context),
+                        asked = appPreferences.notificationPermissionAsked.first(),
+                    )
+                ) {
+                    requestNotifications()
+                }
+            }
             LaunchedEffect(vm) {
                 vm.hostNavigationEvents.collect { navController.openThread(it) }
             }
@@ -376,6 +398,15 @@ internal fun PyryNavHost(
                         ChannelListEvent.WorkspaceArchiveRequested -> vm.requestWorkspaceArchive()
                         ChannelListEvent.WorkspaceArchiveConfirmed -> vm.confirmWorkspaceArchive()
                         ChannelListEvent.WorkspaceArchiveDeclined -> vm.declineWorkspaceArchive()
+                        // And for creating a channel (#958): the plus's own host and exact cwd.
+                        is ChannelListEvent.TreeWorkspaceAddTapped -> vm.openCreateChannel(event.serverId, event.cwd)
+                        is ChannelListEvent.CreateChannelSubmitted -> vm.submitCreateChannel(event.name, event.systemPrompt)
+                        ChannelListEvent.CreateChannelDismissed -> vm.dismissCreateChannel()
+                        // And for editing a channel (#667): the pen's own host and conversation.
+                        is ChannelListEvent.TreeChannelEditTapped -> vm.openChannelEditor(event.target)
+                        is ChannelListEvent.ChannelEditSubmitted -> vm.submitChannelEdit(event.name, event.systemPrompt)
+                        ChannelListEvent.ChannelArchiveRequested -> vm.archiveChannel()
+                        ChannelListEvent.ChannelEditDismissed -> vm.dismissChannelEditor()
                     }
                 },
             )
@@ -545,6 +576,7 @@ internal fun PyryNavHost(
             // name and media type are fixed constants no daemon field can influence.
             val logData by vm.logDataDownload.collectAsStateWithLifecycle()
             val resolver = LocalContext.current.contentResolver
+            val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
             val archiveLauncher =
                 rememberLauncherForActivityResult(
                     ActivityResultContracts.CreateDocument(DEBUG_BUNDLE_MEDIA_TYPE),
@@ -572,7 +604,10 @@ internal fun PyryNavHost(
                     onSelectDefaultModel = vm::onSelectDefaultModel,
                     onSelectDefaultEffort = vm::onSelectDefaultEffort,
                     onToggleDefaultYolo = vm::onToggleDefaultYolo,
-                    onTogglePushNotifications = vm::onTogglePushNotifications,
+                    onTogglePushNotifications = { enabled ->
+                        vm.onTogglePushNotifications(enabled)
+                        if (enabled) requestNotifications()
+                    },
                     onDefaultWorkspaceTapped = vm::onDefaultWorkspaceTapped,
                     onSelectDefaultWorkspace = vm::onSelectDefaultWorkspace,
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
@@ -637,6 +672,48 @@ internal fun PyryNavHost(
         }
         composable(Routes.ABOUT) {
             AboutScreen(onBack = { navController.popBackStack() })
+        }
+    }
+    // #685: the tap opens the thread above the channel list, so a conversation deleted since the alert
+    // still ends one Back away from a usable list. Only a saved host is accepted: the activity is
+    // exported, and anything can start it with these extras. Navigating is all a tap ever does.
+    LaunchedEffect(openTarget) {
+        val target = openTarget ?: return@LaunchedEffect
+        if (destinations.isSavedHost(target.serverId)) {
+            RelayLog.d { "event=notification_tap_accepted" }
+            navController.openThread(target)
+        } else {
+            RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
+        }
+    }
+}
+
+/** Ask only while alerts are on, only without the permission, and only if the app never asked (#685). */
+internal fun shouldAskNotificationPermission(
+    enabled: Boolean,
+    granted: Boolean,
+    asked: Boolean,
+): Boolean = enabled && !granted && !asked
+
+private fun notificationsPermitted(context: Context) =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+/**
+ * Shows Android's notification-permission prompt unless it is already granted, recording that the app
+ * asked. The answer changes nothing: a denial keeps the saved switch, and foreground use is the same.
+ */
+@Composable
+internal fun rememberNotificationPermissionRequest(preferences: AppPreferences): () -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val launcher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            RelayLog.d { "event=notification_permission_answered granted=$granted" }
+        }
+    return {
+        if (!notificationsPermitted(context)) {
+            scope.launch { preferences.setNotificationPermissionAsked() }
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }

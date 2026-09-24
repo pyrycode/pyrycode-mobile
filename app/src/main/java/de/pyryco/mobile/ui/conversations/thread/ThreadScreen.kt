@@ -566,14 +566,25 @@ fun ThreadScreen(
         )
     }
     state.saveAsChannelDialog?.let { dialogState ->
+        // #957: the thread stays open behind the modal; the failure strings are generic because the
+        // shell announces them aloud, and no daemon message reaches this screen.
         SaveAsChannelDialog(
+            conversationId = state.conversationId,
             initialName = dialogState.initialName,
-            onSubmit = { name, workspace ->
+            onSubmit = { name, systemPrompt ->
                 onOverflowEvent(
-                    ThreadEvent.SaveAsChannelSubmit(name = name, workspace = workspace),
+                    ThreadEvent.SaveAsChannelSubmit(name = name, systemPrompt = systemPrompt),
                 )
             },
-            onDismiss = { onOverflowEvent(ThreadEvent.SaveAsChannelDismiss) },
+            onDismissRequest = { onOverflowEvent(ThreadEvent.SaveAsChannelDismiss) },
+            nameEditable = !dialogState.promoted,
+            loading = dialogState.saving,
+            error =
+                when (dialogState.failure) {
+                    SaveAsChannelFailure.Promote -> stringResource(R.string.save_as_channel_failed)
+                    SaveAsChannelFailure.SystemPrompt -> stringResource(R.string.save_as_channel_prompt_failed)
+                    null -> null
+                },
         )
     }
     if (sheetVisible) {
@@ -600,6 +611,7 @@ fun ThreadScreen(
             onDismiss = { sheetVisible = false },
             effortNote = state.runConfig.effortNote?.let { stringResource(it.textRes()) },
             running = state.runConfig.running,
+            contextPercent = state.runConfig.contextPercent,
         )
     }
     if (state.channelInfoOpen) {

@@ -1,10 +1,12 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
+import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
@@ -12,14 +14,19 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -34,7 +41,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 /**
  * #650: the composer's permission control. The label follows only the confirmed reading, a write sends
@@ -42,6 +51,9 @@ import org.junit.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModelPermissionTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
     private val logs = mutableListOf<String>()
     private val oldSink = RelayLog.sink
     private val oldEnabled = RelayLog.enabled
@@ -327,11 +339,61 @@ class ThreadViewModelPermissionTest {
             assertEquals("Auto-approve edits", permissionModeLabel(vm.state.value.runConfig))
         }
 
+    /**
+     * #687: the current daemon acknowledges a `default` write without touching a child whose stored mode is
+     * already `default`, even when that child runs in operator bypass. The ack is not a reading, so every
+     * re-read still reports bypass, and the label ends where it started once the settle window runs out.
+     */
+    @Test
+    fun aNoOpDefaultAck_leavesTheConfirmedBypass_withNoPendingMark() =
+        runTest {
+            val repo = ScriptedRepo()
+            val vm = collectedVm(repo, reading("bypassPermissions", yolo = true))
+            repo.onRefresh = { reading("bypassPermissions", yolo = true) }
+
+            vm.onPermissionModeSelected("default")
+            advanceTimeBy(PERMISSION_SETTLE_WINDOW_MS + 1)
+            runCurrent()
+
+            assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, permissionMode = "default")), repo.calls)
+            assertTrue("event=permission_write outcome=acked" in logs)
+            assertTrue(logs.any { it.startsWith("event=permission_settle outcome=expired") })
+            assertEquals("bypassPermissions", vm.state.value.runConfig.permissionMode)
+            assertEquals("Bypass approvals", permissionModeLabel(vm.state.value.runConfig))
+            assertNull(vm.state.value.runConfig.pendingPermission)
+        }
+
+    /**
+     * #687: a reading with a session but no confirmation (`""`, `yolo=false`) shows no control, even beside
+     * claude's own `session_facts` claim of `default` and with Settings → Default YOLO on. The preferences
+     * reach the view model the way production passes them, through [asRememberedEffortStore].
+     */
+    @Test
+    fun anUnknownReading_showsNoControl_despiteAFactsClaimAndDefaultYolo() =
+        runTest {
+            val storeScope = CoroutineScope(Dispatchers.IO + Job())
+            val file = tmp.root.resolve("prefs.preferences_pb")
+            val preferences = AppPreferences(PreferenceDataStoreFactory.create(scope = storeScope, produceFile = { file }))
+            preferences.setDefaultYolo(true)
+            assertTrue("Default YOLO is on", preferences.defaultYolo.first())
+            val repo = ScriptedRepo()
+            repo.facts.value = SessionFacts(claudeCodeVersion = "2.1.0", permissionMode = "default", truncatedFields = null)
+            val vm = collectedVm(repo, reading("", yolo = false), preferences.asRememberedEffortStore())
+
+            assertEquals(SESSION, vm.state.value.runConfig.sessionId)
+            assertEquals("", vm.state.value.runConfig.permissionMode)
+            assertNull(permissionModeLabel(vm.state.value.runConfig))
+            PermissionModeOption.entries.forEach { vm.onPermissionModeSelected(it.wire) }
+            assertTrue("a hidden control sends nothing", repo.calls.isEmpty())
+            storeScope.cancel()
+        }
+
     // ---- fixtures -------------------------------------------------------------------------------
 
     private fun TestScope.collectedVm(
         repo: ScriptedRepo,
         initial: SessionSettings? = null,
+        rememberedEffort: RememberedEffortStore = RememberedEffortStore.None,
     ): ThreadViewModel {
         val vm =
             ThreadViewModel(
@@ -339,6 +401,7 @@ class ThreadViewModelPermissionTest {
                 repo,
                 FakeConnectionStateSource(),
                 ComposerDraftStore(),
+                rememberedEffort = rememberedEffort,
             )
         backgroundScope.launch { vm.state.collect {} }
         runCurrent()
@@ -382,6 +445,7 @@ class ThreadViewModelPermissionTest {
     ) : ConversationRepository by backing {
         val readings = MutableSharedFlow<SessionSettings?>(replay = 1, extraBufferCapacity = 64)
         val liveSession = MutableStateFlow(SESSION)
+        val facts = MutableStateFlow<SessionFacts?>(null)
         val calls = mutableListOf<SetSessionSettingsPayloadDto>()
         var refreshes = 0
         var onRefresh: (Int) -> SessionSettings? = { null }
@@ -389,6 +453,8 @@ class ThreadViewModelPermissionTest {
         var failWith: Throwable? = null
 
         override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> = readings
+
+        override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = facts
 
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
             combine(backing.observeConversations(filter), liveSession) { list, session ->
