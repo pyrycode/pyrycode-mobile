@@ -9,7 +9,12 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.AttentionAlert
+import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -17,7 +22,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -43,6 +50,7 @@ class AttentionNotifierTest {
     private val alerts = MutableSharedFlow<AttentionAlert>(extraBufferCapacity = 16)
     private val enabled = MutableStateFlow(true)
     private var foreground = false
+    private val muted = mutableSetOf<Pair<String, String>>()
     private lateinit var ledger: File
 
     @Before
@@ -92,6 +100,55 @@ class AttentionNotifierTest {
 
             assertEquals(emptyList<Notification>(), posted())
         }
+
+    @Test
+    fun aMutedConversationPostsNothingForATurnOrAPrompt() =
+        withNotifier {
+            muted += "host-a" to "conv"
+            alerts.emit(TURN)
+            alerts.emit(AttentionAlert("host-a", "conv", AttentionAlert.Kind.Prompt, "modal:m"))
+
+            assertEquals(emptyList<Notification>(), posted())
+        }
+
+    @Test
+    fun aMutedAlertIsSpentAndNeverPostsAfterUnmuting() =
+        withNotifier {
+            muted += "host-a" to "conv"
+            alerts.emit(TURN)
+            muted.clear()
+            alerts.emit(TURN)
+
+            assertEquals(emptyList<Notification>(), posted())
+        }
+
+    @Test
+    fun theSameConversationIdUnmutedOnAnotherHostStillAlerts() =
+        withNotifier {
+            muted += "host-a" to "conv"
+            alerts.emit(TURN)
+            alerts.emit(TURN.copy(serverId = "host-b"))
+
+            val target = NotificationTap.target(shadowOf(posted().single().contentIntent).savedIntent)
+            assertEquals(HostConversationTarget("host-b", "conv"), target)
+        }
+
+    @Test
+    fun theMuteLookupReadsOnlyTheAlertsOwnHostAndFailsOpen() {
+        val hosts =
+            listOf(
+                host("host-a", channels = listOf(row("chan", muted = true)), chats = listOf(row("chat", muted = true), row("loud"))),
+                host("host-b", chats = listOf(row("conv"))),
+            )
+
+        assertTrue(hosts.isMuted("host-a", "chan"))
+        assertTrue(hosts.isMuted("host-a", "chat"))
+        assertFalse(hosts.isMuted("host-a", "loud"))
+        assertFalse(hosts.isMuted("host-a", "missing"))
+        assertFalse(hosts.isMuted("host-b", "chan"))
+        assertFalse(hosts.isMuted("host-c", "chan"))
+        assertFalse(emptyList<HostConversationSnapshot>().isMuted("host-a", "chan"))
+    }
 
     @Test
     fun anAlertSuppressedByAGateIsSpentAndNeverPostsLater() =
@@ -174,7 +231,15 @@ class AttentionNotifierTest {
     private fun withNotifier(block: suspend TestScope.() -> Unit) =
         runTest {
             val notifier =
-                AttentionNotifier(app, alerts, enabled, { foreground }, ledger, UnconfinedTestDispatcher(testScheduler))
+                AttentionNotifier(
+                    app,
+                    alerts,
+                    enabled,
+                    { server, conversation -> (server to conversation) in muted },
+                    { foreground },
+                    ledger,
+                    UnconfinedTestDispatcher(testScheduler),
+                )
             try {
                 block()
             } finally {
@@ -184,5 +249,22 @@ class AttentionNotifierTest {
 
     private companion object {
         val TURN = AttentionAlert("host-a", "conv", AttentionAlert.Kind.TurnCompleted, "t1")
+
+        fun row(
+            id: String,
+            muted: Boolean = false,
+        ) = Conversation(id, null, "~", "s", emptyList(), isPromoted = false, lastUsedAt = Instant.fromEpochSeconds(0), muted = muted)
+
+        fun host(
+            serverId: String,
+            channels: List<Conversation> = emptyList(),
+            chats: List<Conversation> = emptyList(),
+        ) = HostConversationSnapshot(
+            serverId,
+            null,
+            ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
+            channels,
+            chats,
+        )
     }
 }

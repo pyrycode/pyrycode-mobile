@@ -39,6 +39,7 @@ import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.notifications.AttentionNotifier
+import de.pyryco.mobile.notifications.isMuted
 import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
@@ -144,10 +145,13 @@ val appModule =
         // and the publisher must already be subscribed when the wake's hosts connect. The ledger sits
         // in noBackupFilesDir beside the conversation cache: it holds digests only, and never travels.
         single(createdAtStart = true) {
+            // #1022: mute reads the alert's own host's rows, not the selected host's repository.
+            val source = get<HostConversationSource>()
             AttentionNotifier(
                 context = androidContext(),
-                alerts = get<HostConversationSource>().alerts,
+                alerts = source.alerts,
                 notificationsEnabled = get<AppPreferences>().notificationsEnabled,
+                isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
                 isForeground = {
                     ProcessLifecycleOwner
                         .get()
