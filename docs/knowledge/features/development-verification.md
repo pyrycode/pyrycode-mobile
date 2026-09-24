@@ -257,6 +257,22 @@ located the hang inside `waitForIdle`). The fix is
 `NestedScrollSource.UserInput` through the nested-scroll chain, so a test
 asserting scroll-yield or auto-follow behavior is unaffected.
 
+`captureToImage()` → `forceRedraw` waits 2000 ms for a fresh frame and throws
+`ComposeTimeoutException` on a loaded emulator, independently of whether the
+layout assertions around it already passed — seen four times against
+`ScannerFrameTest` and `PairCodeScreenTest` (#1038), including once after
+`PairCodeScreenTest`'s existing leading `rule.waitForIdle()`, so waiting for idle
+first is not sufficient on its own. The screenshot PNG is a review artifact, not
+part of the contract under test, so a capture-only helper should retry
+(`ComposeTestRule.saveScreenshot` in
+`app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/ScreenshotCapture.kt`
+retries up to three times with `waitForIdle()` before each retry) and log +
+skip the PNG rather than fail the test when every attempt still times out. Catch
+only `ComposeTimeoutException`; any other exception from the capture should still
+fail the test. The retry cannot be proven on a healthy emulator because the
+timeout does not reproduce on demand — the focused device run only proves the
+PNGs are still written when capture succeeds, not that the skip path fires.
+
 ## Test scheduling and harnesses
 
 The routine UI gate excludes `de.pyryco.mobile.e2e` through the instrumentation

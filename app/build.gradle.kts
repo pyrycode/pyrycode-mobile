@@ -40,6 +40,36 @@ abstract class GitShaValueSource : ValueSource<String, ValueSourceParameters.Non
         }
 }
 
+// Play rejects an upload whose version code is not above the last one (#1025). The commit count
+// rises with every commit on main; it needs a full clone. Falls back to 1 so builds without git work.
+abstract class GitCommitCountValueSource : ValueSource<Int, ValueSourceParameters.None> {
+    @get:Inject
+    abstract val execOperations: ExecOperations
+
+    override fun obtain(): Int =
+        try {
+            val stdout = ByteArrayOutputStream()
+            val result =
+                execOperations.exec {
+                    commandLine("git", "rev-list", "--count", "HEAD")
+                    standardOutput = stdout
+                    isIgnoreExitValue = true
+                }
+            val count = stdout.toString(Charsets.UTF_8).trim().toIntOrNull()
+            if (result.exitValue == 0 && count != null && count > 0) count else 1
+        } catch (_: Throwable) {
+            1
+        }
+}
+
+// Release upload key (#1025). The four properties can come from -P, ~/.gradle/gradle.properties or
+// ORG_GRADLE_PROJECT_-prefixed environment variables; the keystore and passwords never enter the repo.
+// Any missing: release stays debug-signed so local release builds work, and bundleRelease fails.
+val uploadSigningPropertyNames =
+    listOf("pyry.upload.storeFile", "pyry.upload.storePassword", "pyry.upload.keyAlias", "pyry.upload.keyPassword")
+val uploadSigningProperties = uploadSigningPropertyNames.associateWith { providers.gradleProperty(it).orNull?.takeIf(String::isNotBlank) }
+val missingUploadSigningProperties = uploadSigningProperties.filterValues { it == null }.keys.toList()
+
 android {
     namespace = "de.pyryco.mobile"
     compileSdk {
@@ -53,7 +83,13 @@ android {
         applicationId = "de.pyryco.mobile"
         minSdk = 33
         targetSdk = 36
-        versionCode = 1
+        // -PversionCode=N overrides the commit count.
+        versionCode =
+            providers
+                .gradleProperty("versionCode")
+                .map { it.toInt() }
+                .orElse(providers.of(GitCommitCountValueSource::class.java) {})
+                .get()
         versionName = "1.0.0"
 
         val gitSha = providers.of(GitShaValueSource::class.java) {}
@@ -71,11 +107,22 @@ android {
         testInstrumentationRunner = "de.pyryco.mobile.e2e.E2eInstrumentationRunner"
     }
 
+    if (missingUploadSigningProperties.isEmpty()) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(uploadSigningProperties.getValue("pyry.upload.storeFile").orEmpty())
+                storePassword = uploadSigningProperties.getValue("pyry.upload.storePassword")
+                keyAlias = uploadSigningProperties.getValue("pyry.upload.keyAlias")
+                keyPassword = uploadSigningProperties.getValue("pyry.upload.keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -124,6 +171,25 @@ android {
             }
         }
     }
+}
+
+// A bundle is only built for Play upload, so it must carry the upload key. bundleRelease is a
+// lifecycle task, so the guard gates packageReleaseBundle, which runs before any .aab is written.
+val checkReleaseUploadSigning =
+    tasks.register("checkReleaseUploadSigning") {
+        val missing = missingUploadSigningProperties
+        doLast {
+            if (missing.isNotEmpty()) {
+                throw GradleException(
+                    "Release bundles must be signed with the upload key. Missing Gradle properties: " +
+                        missing.joinToString(", "),
+                )
+            }
+        }
+    }
+// tasks.named fails configuration if an AGP upgrade renames the task, so the guard cannot silently lapse.
+afterEvaluate {
+    tasks.named("packageReleaseBundle") { dependsOn(checkReleaseUploadSigning) }
 }
 
 dependencies {
