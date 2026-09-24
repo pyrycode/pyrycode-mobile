@@ -2367,13 +2367,16 @@ class InteractiveStreamE2ETest {
             assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissed, "source"))
             assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissed, "outcome"))
             awaitTurnEnd(peer, chatA, 1, "A's allowed turn")
+            assertBashRan(peer, chatA, 0, "A's allowed turn")
             assertTrue("A's reply does not carry the command's output", ANSWER_PERMISSION_TOKEN in assistantText(peer, chatA))
             awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
 
-            // 5. AC-2: the same command in A runs again with no second prompt.
+            // 5. AC-2: the same command in A runs again with no second prompt. Claude could repeat the number
+            //    from context, so the proof is a successful Bash call in this turn, not the reply alone.
             val mark = peer.recorded(chatA).size
             sendFromPhone(ANSWER_PERMISSION_PROMPT)
             awaitTurnEnd(peer, chatA, 2, "A's repeat")
+            assertBashRan(peer, chatA, mark, "A's repeat")
             assertEquals("prompts raised in A", 1, peer.recorded(chatA).count { it.type == "modal_shown" })
             assertTrue("A's repeat reply does not carry the command's output", ANSWER_PERMISSION_TOKEN in assistantText(peer, chatA, mark))
 
@@ -2609,6 +2612,37 @@ class InteractiveStreamE2ETest {
                         ).text
                 }.getOrNull()
             }.joinToString("")
+
+    /**
+     * Assert that claude ran a command in [conversationId]'s turn from the [from]th recorded frame on: the
+     * peer recorded a `Bash` `tool_use` there and a `tool_result` for that call with `is_error` false. The
+     * failure names counts and booleans only.
+     */
+    private fun assertBashRan(
+        peer: SecondClientPeer,
+        conversationId: String,
+        from: Int,
+        what: String,
+    ) {
+        val frames = peer.recorded(conversationId).drop(from)
+        val bashIds =
+            frames
+                .filter { it.type == "tool_use" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolUsePayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.name == TOOL_NAME }
+                .map { it.toolUseId }
+                .toSet()
+        val results =
+            frames
+                .filter { it.type == "tool_result" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolResultPayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.toolUseId in bashIds }
+        assertTrue(
+            "$what ran no successful Bash call (Bash calls: ${bashIds.size}, their results: ${results.size}, " +
+                "any error: ${results.any { it.isError }})",
+            results.any { !it.isError },
+        )
+    }
 
     /**
      * Wait until the open thread shows a permission prompt that names this Read: a node in the prompt's
@@ -3622,7 +3656,8 @@ class InteractiveStreamE2ETest {
         const val ANSWER_CHAT_NAME_PREFIX = "e2e966-"
 
         // A `python3` command, so it needs permission (see WAIT_PROMPT). The token is its output, which no
-        // prompt contains, so only a command that ran puts it in claude's reply.
+        // prompt contains; claude could still compute it, so the tests prove the run by a successful Bash
+        // tool_result (assertBashRan) and the token only shows the reply reports it.
         const val ANSWER_PERMISSION_PROMPT =
             "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
                 "with exactly the number it printed and nothing else. Command: python3 -c \"print(966 * 7)\""

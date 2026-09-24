@@ -184,7 +184,8 @@ class SecondClientPeer(
     /**
      * Answer question [questionIndex] of [batchId] with [value] as this device, and wait for the daemon's
      * `question_dismissed` for it (#966). As with `modal_answer`, the daemon replies nothing and ignores an
-     * answer from a device paired without `--allow-remote-permissions`, so that case times out.
+     * answer from a device paired without `--allow-remote-permissions`, so that case surfaces as a bare
+     * `TimeoutCancellationException` naming no cause; a caller that watches the phone fails clearer first.
      */
     internal suspend fun answerQuestion(
         batchId: String,
