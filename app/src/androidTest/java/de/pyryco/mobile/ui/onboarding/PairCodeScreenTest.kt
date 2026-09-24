@@ -44,6 +44,7 @@ import de.pyryco.mobile.PyryNavHost
 import de.pyryco.mobile.Routes
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
+import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.ui.components.MobileModalTestIme
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.runBlocking
@@ -141,6 +142,8 @@ class PairCodeScreenTest {
     }
 
     @Test fun cancelToolbarAndAndroidBackReturnToCallerWithoutSaving() {
+        // The CHANNEL_LIST caller would otherwise raise the one-time notification prompt (#685).
+        grantNotificationPermission()
         val store = GlobalContext.get().get<PairedServerCollectionStore>()
         val before = runBlocking { store.list() }
         lateinit var nav: NavHostController

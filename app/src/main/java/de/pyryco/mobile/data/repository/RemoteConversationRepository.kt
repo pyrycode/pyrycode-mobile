@@ -159,6 +159,19 @@ class RemoteConversationRepository(
     private val attachmentOfferProjection = AttachmentOfferProjection()
 
     /**
+     * The context-usage reading of every conversation (#945) and the `request_context_usage` ask that keeps a
+     * watched one fresh. Wired like [modelMenuProjection], with its envelope ids read through a lambda for the
+     * same initialisation-order reason. [onInbound] hands it `context_usage` behind the `interactive` gate and
+     * the `session_transition` clear-and-ask.
+     */
+    private val contextUsageProjection =
+        ContextUsageProjection(
+            send = pump::send,
+            negotiatedCapabilities = negotiatedCapabilities,
+            nextRequestId = { relayRequests.nextRequestId() },
+        )
+
+    /**
      * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
      * with every write that folds a thread row. [onInbound] hands it the thread frames behind the
      * `interactive` gate, and [sendMessage], [dropQueuedMessage] and [requestHistory] record into it.
@@ -219,6 +232,17 @@ class RemoteConversationRepository(
             conversationList = conversationListProjection,
             threadProjection = threadProjection,
             queueProjection = queueProjection,
+        )
+
+    /**
+     * The attachment retrievals of this connection (#899): one `request_attachment` at a time, answered by chunks
+     * or an `error` naming it. [onInbound] offers each frame to it after the upload, and the [init] collector's
+     * `finally` ends it beside the upload.
+     */
+    private val attachmentRetrievals =
+        AttachmentRetrievals(
+            nextRequestId = { relayRequests.nextRequestId() },
+            send = pump::send,
         )
 
     /**
@@ -336,6 +360,7 @@ class RemoteConversationRepository(
             } finally {
                 endDebugBundle()
                 messageCommands.endAttachmentUploads()
+                attachmentRetrievals.end()
                 relayRequests.failAllPending()
             }
         }
@@ -344,6 +369,7 @@ class RemoteConversationRepository(
     private fun onInbound(envelope: Envelope) {
         if (messageCommands.routeDebugBundle(envelope)) return
         if (messageCommands.routeAttachmentUpload(envelope)) return
+        if (attachmentRetrievals.route(envelope)) return
         recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS ->
@@ -624,6 +650,13 @@ class RemoteConversationRepository(
                     sessionFactsProjection.apply(envelope)
                 }
             }
+            TYPE_CONTEXT_USAGE -> {
+                // How full this conversation's context window is, pushed after a turn or answering the phone's own
+                // ask (#945): see [ContextUsageProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    contextUsageProjection.apply(envelope)
+                }
+            }
             TYPE_SESSION_TRANSITION -> {
                 // A session boundary (#336, pyrycode#656/#657/#740). Same `interactive` gate as the
                 // live-session / `stall` / `queue_state` siblings: a non-interactive phone never decodes a
@@ -667,6 +700,9 @@ class RemoteConversationRepository(
                         // an absent key.
                         announcedModelProjection.clear(conversationId)
                         sessionFactsProjection.clear(conversationId)
+                        // Eighth write since #945: the context reading described the replaced session, so it is
+                        // dropped, and a watched conversation is asked for the new session's figure. Same routing.
+                        contextUsageProjection.onSessionTransition(conversationId)
                     }
                 }
             }
@@ -1029,6 +1065,8 @@ class RemoteConversationRepository(
 
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 
+    override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsageProjection.observe(conversationId)
+
     override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> =
         attachmentOfferProjection.observe(conversationId)
 
@@ -1072,6 +1110,12 @@ class RemoteConversationRepository(
         filename: String,
         mimeType: String,
     ): AttachmentUploadResult = messageCommands.uploadAttachment(conversationId, bytes, filename, mimeType)
+
+    /** Fetch one stored file over `request_attachment` (#899); see [AttachmentRetrievals.fetch]. */
+    override suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult = attachmentRetrievals.fetch(conversationId, attachmentId)
 
     /** Request the rendered claude screen (#375); see [MessageCommands.requestScreenSnapshot]. */
     override suspend fun requestScreenSnapshot(conversationId: String): String = messageCommands.requestScreenSnapshot(conversationId)
@@ -1478,6 +1522,22 @@ class RemoteConversationRepository(
         const val TYPE_SESSION_FACTS = "session_facts"
 
         /**
+         * Capability-gated status event: how full a conversation's context window is, `{conversation_id, model,
+         * total_tokens, max_tokens, percentage, <inventories>, as_of?}` (#945, pyrycode#2371) — pyrycode
+         * `docs/protocol-mobile.md` § `context_usage`. Pushed after every completed turn, and also the correlated
+         * answer to [TYPE_REQUEST_CONTEXT_USAGE]. Only the scalars are decoded. Opens, closes and alters no turn.
+         */
+        const val TYPE_CONTEXT_USAGE = "context_usage"
+
+        /**
+         * Phone → daemon: ask for a fresh [TYPE_CONTEXT_USAGE] reading of one conversation (#945, pyrycode#2431).
+         * Payload is the single `conversation_id` key; the reply is a [TYPE_CONTEXT_USAGE] correlated by
+         * `in_reply_to`, or an `error` carrying [ERROR_CONVERSATION_NOT_FOUND] or [ERROR_CONTEXT_USAGE_UNAVAILABLE].
+         * Interactive-gated: a conn without it is answered with nothing at all.
+         */
+        const val TYPE_REQUEST_CONTEXT_USAGE = "request_context_usage"
+
+        /**
          * Capability-gated thread event: a session transition `{conversation_id, previous_session_id,
          * new_session_id, reason, occurred_at, workspace_cwd}` (#336, pyrycode#656/#657/#740) — folds a
          * [ThreadItem.SessionBoundary] into the conversation thread (keyed by `conversation_id`) in
@@ -1645,6 +1705,14 @@ class RemoteConversationRepository(
          * two are branched on rather than merged.
          */
         const val ERROR_MODEL_LIST_UNAVAILABLE = "model_list.unavailable"
+
+        /**
+         * Server `error.code` refusing a [TYPE_REQUEST_CONTEXT_USAGE] because the daemon hosts the conversation but
+         * has neither a fresh nor a remembered reading (#945, pyrycode#2431/#2461). Retryable after a backoff, but
+         * the phone does not retry: the reading stays absent until the next turn-end frame, so nothing branches on
+         * this code and [ContextUsageProjection] handles no refusal at all.
+         */
+        const val ERROR_CONTEXT_USAGE_UNAVAILABLE = "context_usage.unavailable"
 
         /** Client-side synthetic code for an undecodable `error` payload (#346 fallback, never hangs). */
         const val ERROR_MALFORMED_REPLY = "error.malformed_reply"

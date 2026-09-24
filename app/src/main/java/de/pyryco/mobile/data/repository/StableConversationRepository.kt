@@ -97,6 +97,14 @@ class StableConversationRepository(
         switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
+     * The context-usage reading for [conversationId] (#945), cleared across connections as [observeAnnouncedModel]
+     * is. The switch is also the reconnect ask: [flatMapLatest] ends the old repository's subscription and starts
+     * one on the new repository, and that subscription is what sends the new connection's `request_context_usage`.
+     */
+    override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
+        switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
+
+    /**
      * The files offered in [conversationId] on the owner host's live connection (#898). The switch is what
      * makes offers live-only across connections: a reconnect or a host switch drops the previous
      * connection's offers rather than carrying one host's files over to the next.
@@ -291,6 +299,13 @@ class StableConversationRepository(
                 }
         return repository.uploadAttachment(conversationId, bytes, filename, mimeType)
     }
+
+    /** Fetches on the repository live at call entry (#899), like [uploadAttachment]; none live is a retryable failure. */
+    override suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult =
+        currentRepository.value?.fetchAttachment(conversationId, attachmentId) ?: AttachmentRetrievalResult.Unavailable
 
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"

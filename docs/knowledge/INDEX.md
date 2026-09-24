@@ -11,6 +11,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Pairing](features/scanner-screen.md): camera scanner, [pair with code](features/paste-code-dialog.md), [fingerprint confirmation](features/pairing-confirm-gate.md), and [paired-server storage](features/paired-server-store.md).
 - [Channels and discussions](features/channel-list-screen.md): list surfaces, promotion and archive flows.
 - [Conversation thread](features/thread-screen.md): messages, live turns, status rows and thread actions.
+- [Slash-command type-ahead](features/slash-command-type-ahead.md): composer suggestions from the conversation's published slash-command menu, filtering, completion and dismissal.
 - [Banner notice row](features/banner-notice-row.md): claude's `banner` frame surfaced as an inert thread row, live and on history reload.
 - [Model refusal row](features/model-refusal-row.md): a model refusal or fallback explained in the thread, live and on history reload.
 - [Settings](features/settings-screen.md): settings UI, storage and diagnostics.

@@ -178,6 +178,10 @@ it live.
 ## Related
 
 - Ticket: `docs/specs/architecture/829-attachment-upload.md` — design, security review, revisions.
+- Sibling leg: [Attachment retrieval](attachment-retrieval.md) (#899) — the opposite correlation
+  direction (by the request's own envelope id, since every answering frame names it), the phone-side
+  512-chunk/23,040,000-byte retrieval bound, and the host-keyed `AttachmentStore` this leg has no
+  equivalent of.
 - Nearest shape: [Host diagnostic archive transfer](relay-debug-bundle-transfer.md) — the other
   connection-bound, settle-once transfer sharing the sole inbound consumer.
 - Contract: [Conversation repository](conversation-repository.md) — the default-throwing member idiom.

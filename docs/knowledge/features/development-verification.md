@@ -82,6 +82,15 @@ cannot give it:
 - work on a background dispatcher that Robolectric's paused main clock does not
   drive, like `ScriptedUnrecognizedMessageTest`.
 
+A Compose test goes in plain `app/src/test`, not `sharedTest`, when it must never run
+on a real device even though it drives a Composable: `sharedTest` also runs on the
+emulator in the in-depth run, and a test that exercises a real system surface — like
+Android's own permission dialog — would trigger that surface for real there instead
+of hitting Robolectric's shadow. `NotificationPermissionPromptTest` (#685, driving
+`rememberNotificationPermissionRequest` under `createAndroidComposeRule<ComponentActivity>()`)
+is the first such case — see
+[Push messaging service § Testing](push-messaging-service.md#testing-685).
+
 A test in the wrong folder fails safe. A device-only test placed in `sharedTest`
 fails in `./gradlew test`. A Robolectric-capable test placed in `androidTest` still
 runs on every verifier pass, only slower.
@@ -228,7 +237,17 @@ A plain-Kotlin controller constructed with `runTest`'s `backgroundScope` as its 
 than the `TestScope` itself) never leaves its initial state under `advanceUntilIdle()` —
 `backgroundScope` coroutines are not what that call drains, so every assertion fails on the test's own
 setup, not on the code under test (#824). Pass the `TestScope` as the owner scope, or call
-`runCurrent()` after launching in `backgroundScope`.
+`runCurrent()` after launching in `backgroundScope`. The same gap bit a DataStore built with
+`PreferenceDataStoreFactory.create(scope = backgroundScope, ...)` in a test (#953): its write actor
+never ran under `advanceUntilIdle()`, so a read straight after saw the old value. Give the store its
+own `CoroutineScope(StandardTestDispatcher(testScheduler) + Job())` instead and cancel it at the end —
+see [Push messaging service § Testing](push-messaging-service.md#testing) for the full case. More
+generally, a `first { predicate }` wrapped in `withTimeout` against a live DataStore or other
+in-memory `StateFlow` is not a safe "wait a bit": if the collector's first read overlaps the write it
+is waiting for, the read returns the pre-write value and the emission it needed is never replayed, so
+the wait times out no matter how high the timeout is. Prefer owning every coroutine the write uses and
+reading once with a plain `first()` after draining the scheduler, over racing a wall clock against
+writer code the test does not control.
 
 A JVM unit test that constructs or resolves a component backed by `Dispatchers.Default` — a Koin
 singleton reached without an injected test dispatcher, for example — must stop it before that test

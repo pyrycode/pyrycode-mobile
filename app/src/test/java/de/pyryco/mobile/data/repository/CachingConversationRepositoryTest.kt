@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ConversationCacheException
 import de.pyryco.mobile.data.cache.FileConversationCache
@@ -233,6 +234,44 @@ class CachingConversationRepositoryTest {
             assertEquals(0, cache.reads)
         }
 
+    // #899: a retrieval is kept under this wrapper's own host, fetched through the delegate's connection.
+    @Test
+    fun `a retrieved attachment is fetched through the delegate and kept for this host`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val fetches = mutableListOf<Pair<String, String>>()
+            val fetching =
+                object : ConversationRepository by delegate {
+                    override suspend fun fetchAttachment(
+                        conversationId: String,
+                        attachmentId: String,
+                    ): AttachmentFetchResult {
+                        fetches += conversationId to attachmentId
+                        return AttachmentFetchResult.Fetched(AttachmentContent(listOf(byteArrayOf(1, 2, 3))), "a.txt", "text/plain")
+                    }
+                }
+            val store = AttachmentStore(tmp.newFolder("attachments"), UnconfinedTestDispatcher(testScheduler))
+            val repository = CachingConversationRepository(fetching, RecordingCache(emptyList()), "server-a", store)
+
+            val first = repository.retrieveAttachment(CONVERSATION_ID, ATTACHMENT_ID) as AttachmentRetrievalResult.Retrieved
+            val again =
+                CachingConversationRepository(
+                    fetching,
+                    RecordingCache(emptyList()),
+                    "server-a",
+                    store,
+                ).retrieveAttachment(CONVERSATION_ID, ATTACHMENT_ID)
+            CachingConversationRepository(
+                fetching,
+                RecordingCache(emptyList()),
+                "server-b",
+                store,
+            ).retrieveAttachment(CONVERSATION_ID, ATTACHMENT_ID)
+
+            assertEquals(listOf(1, 2, 3), first.file.readBytes().map { it.toInt() })
+            assertEquals(first, again)
+            assertEquals("one fetch per host", listOf(CONVERSATION_ID to ATTACHMENT_ID, CONVERSATION_ID to ATTACHMENT_ID), fetches)
+        }
+
     @Test
     fun `a permanent delete removes that conversation's cached content and nothing else`() =
         runTest(UnconfinedTestDispatcher()) {
@@ -381,3 +420,6 @@ class CachingConversationRepositoryTest {
         }
     }
 }
+
+private const val CONVERSATION_ID = "9d4e7a21-8c05-4f3b-b6e2-1a7c9e30d5f4"
+private const val ATTACHMENT_ID = "7c1d5e92-4a30-4b8f-9e21-6d4c3b0a8f55"
