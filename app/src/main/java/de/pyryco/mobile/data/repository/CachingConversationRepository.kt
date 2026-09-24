@@ -19,11 +19,12 @@ import java.util.concurrent.ConcurrentHashMap
  * queue, API retry, compaction, thinking, usage limit, modals, one-shots — is plain delegation, so
  * nothing restored can reopen a prompt or restart an indicator. That live state is not thread state.
  *
- * The drawn thread is `live.mergeHistoryRows(restored)`: the restore is the history merge from the
- * other side, with the live projection as receiver and the cached rows as the older set. That is the
- * one dedup — one join key per row kind — so a restored row the daemon re-delivers is never drawn
- * twice, and merging into an empty live projection returns the restored rows verbatim, which is the
- * disconnected case with no branch of its own. The history walk is untouched: it reads only a page's
+ * The drawn thread is `live.mergeCachedRows(restored)`: the history merge's join from the other side,
+ * with the live projection as receiver and the cached rows as the older set. That is the one dedup —
+ * one join key per row kind — so a restored row the daemon re-delivers is never drawn twice, and
+ * merging into an empty live projection returns the restored rows verbatim, which is the disconnected
+ * case with no branch of its own. A row only the cache holds, such as an attachment offer the daemon
+ * never replays, stays beside the cached row above it (#983). The history walk is untouched: it reads only a page's
  * cursor and `atStart`, so restored rows cannot tell it the log has started.
  *
  * The restored set is read **once per collection**, so a later failed read cannot blank rows already
@@ -72,7 +73,7 @@ class CachingConversationRepository(
             var lastDrawn = base
             delegate.observeMessages(conversationId).collect { live ->
                 if (live.isEmpty()) base = settledThreadRows(lastDrawn)
-                val drawn = live.mergeHistoryRows(base)
+                val drawn = live.mergeCachedRows(base)
                 lastDrawn = drawn
                 emit(drawn)
                 val cacheable = cacheableThreadRows(drawn)

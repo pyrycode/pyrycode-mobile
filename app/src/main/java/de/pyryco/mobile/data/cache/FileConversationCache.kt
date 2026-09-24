@@ -418,7 +418,9 @@ private data class CachedAttachment(
     val attachmentId: String,
     val displayName: String? = null,
     val mimeType: String? = null,
-)
+) {
+    override fun toString(): String = "CachedAttachment(attachmentId=$attachmentId)"
+}
 
 @Serializable
 private data class CachedToolCall(

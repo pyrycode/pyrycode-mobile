@@ -126,3 +126,19 @@ None named by the ticket. Pending for the documentation stage: the thread/cache 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+### 2026-09-24 — offer rows keep their place across a reconnect or restore (verifier rework 1)
+
+**Finding.** Verifier MUST FIX on PR #987: an offer row is the first row only the cache holds, because the daemon never replays `attachment_offered`. `CachingConversationRepository` drew `live.mergeHistoryRows(base)`, which prepends every row the live side lacks. So after a restart or a dropped connection, cache `[m1, a1, offer, a2]` under a page `[m1, a1, a2]` drew `[offer, m1, a1, a2]`, and the cache write made that permanent. That broke AC 3's "in arrival order" on the reload path the ticket names.
+
+**New contract.** The cache merge is its own function, `mergeCachedRows`, in `HistoryPageReducer.kt` beside `mergeHistoryRows`. It uses the same per-kind join (`alreadyHolds`) and the same hint fill (`withAttachmentHintsFrom`). Differs in one way: a cached row the live side does not hold goes directly after the live copy of the nearest row above it in the cache that the live side does hold. It goes in front of everything only when no such row exists. That covers the older rows a newest page does not reach, and a page that does not overlap the cache at all. Several cache-only rows after one anchor keep their cached order. `CachingConversationRepository.observeMessages` calls `mergeCachedRows`; nothing else in it changes.
+
+**Unchanged.** The history walk still uses `mergeHistoryRows` and keeps skip-and-prepend, its answer to the ask-versus-answer race. For the rows the cache path already handled, the result is the same as before. Older rows and a non-overlapping page still go in front, and a merge with an empty live projection still returns the cached rows unchanged. A cached row that the live projection deliberately drops is still drawn from the base as before, now beside its anchor instead of at the top.
+
+**Size.** This adds `CachingConversationRepository.kt` as a tenth production file (a one-call change plus its KDoc). The floor-over-ceiling reasoning in § Context still applies.
+
+**Tests.** New `CachingConversationRepositoryTest` cases cover four things: a cold restore (cache `[m1, a1, offer, a2]`, page `[m1, a1, a2]`, then a new row, drawn and written in order), an empty-then-page reconnect, cache-only rows with no anchor still drawn in front, and the cache path giving a history-reduced sent row its names back.
+
+**Security review, [Logs].** The verifier NIT was right: `CachedAttachment` was a plain data class whose generated `toString` included both hints. It now overrides `toString` to print only the attachment id, the same way `MessageAttachment` does. The [Logs] finding above is accurate as of this revision.

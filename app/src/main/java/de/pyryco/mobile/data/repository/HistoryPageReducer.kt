@@ -529,6 +529,44 @@ internal fun List<ThreadItem>.mergeHistoryRows(rows: List<ThreadItem>): List<Thr
 }
 
 /**
+ * Put [cached] — the thread cache's rows — under this live thread (#797), keeping each row only the cache
+ * holds beside its neighbours (#983).
+ *
+ * The join and the hint fill are [mergeHistoryRows]'s. What differs is where a cache-only row goes: after
+ * the live copy of the nearest row above it in [cached] that this thread holds, or in front of everything
+ * when there is no such row — the older rows a reconnect's newest page does not reach, and every row when
+ * the page does not overlap the cache at all. An attachment offer needs this: the daemon never replays it,
+ * so after a reconnect or a restart it is a cache-only row in the middle of a page the live side re-delivers,
+ * and a prepend would move the file above the message that asked for it, then write that order back.
+ *
+ * The history walk keeps [mergeHistoryRows]: its skip-and-prepend is the deliberate answer to the
+ * ask-versus-answer race described there.
+ */
+internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<ThreadItem> {
+    if (cached.isEmpty()) return this
+    val kept = withAttachmentHintsFrom(cached)
+    val leading = mutableListOf<ThreadItem>()
+    val anchored = mutableMapOf<Int, MutableList<ThreadItem>>()
+    var anchor = -1
+    for (row in cached) {
+        val held = indexOfFirst { listOf(it).alreadyHolds(row) }
+        when {
+            held >= 0 -> anchor = held
+            anchor < 0 -> leading += row
+            else -> anchored.getOrPut(anchor) { mutableListOf() } += row
+        }
+    }
+    if (leading.isEmpty() && anchored.isEmpty()) return kept
+    return buildList {
+        addAll(leading)
+        kept.forEachIndexed { index, row ->
+            add(row)
+            anchored[index]?.let(::addAll)
+        }
+    }
+}
+
+/**
  * This thread with each attachment reference's missing hints filled from a skipped twin (#983), or this very
  * list when there is nothing to fill. A twin is a message in [rows] with the same `message_id`; a hint is
  * taken only from its reference with the same attachment id, and only where this thread's hint is `null`, so
