@@ -159,17 +159,10 @@ class RemoteConversationRepository(
     private val attachmentOfferProjection = AttachmentOfferProjection()
 
     /**
-     * The context-usage reading of every conversation (#945) and the `request_context_usage` ask that keeps a
-     * watched one fresh. Wired like [modelMenuProjection], with its envelope ids read through a lambda for the
-     * same initialisation-order reason. [onInbound] hands it `context_usage` behind the `interactive` gate and
-     * the `session_transition` clear-and-ask.
+     * The context-usage reading of every conversation (#945). [onInbound] hands it `context_usage` behind the
+     * `interactive` gate and the `session_transition` clear. It sends nothing: see [ContextUsageProjection].
      */
-    private val contextUsageProjection =
-        ContextUsageProjection(
-            send = pump::send,
-            negotiatedCapabilities = negotiatedCapabilities,
-            nextRequestId = { relayRequests.nextRequestId() },
-        )
+    private val contextUsageProjection = ContextUsageProjection()
 
     /**
      * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
@@ -701,7 +694,7 @@ class RemoteConversationRepository(
                         announcedModelProjection.clear(conversationId)
                         sessionFactsProjection.clear(conversationId)
                         // Eighth write since #945: the context reading described the replaced session, so it is
-                        // dropped, and a watched conversation is asked for the new session's figure. Same routing.
+                        // dropped until the new session's first turn ends. Same routing.
                         contextUsageProjection.onSessionTransition(conversationId)
                     }
                 }
@@ -1539,7 +1532,8 @@ class RemoteConversationRepository(
          * Phone → daemon: ask for a fresh [TYPE_CONTEXT_USAGE] reading of one conversation (#945, pyrycode#2431).
          * Payload is the single `conversation_id` key; the reply is a [TYPE_CONTEXT_USAGE] correlated by
          * `in_reply_to`, or an `error` carrying [ERROR_CONVERSATION_NOT_FOUND] or [ERROR_CONTEXT_USAGE_UNAVAILABLE].
-         * Interactive-gated: a conn without it is answered with nothing at all.
+         * Interactive-gated: a conn without it is answered with nothing at all. The phone does not send it until
+         * pyrycode#2563 stops a mid-turn ask from holding up the connection's later frames (#946).
          */
         const val TYPE_REQUEST_CONTEXT_USAGE = "request_context_usage"
 

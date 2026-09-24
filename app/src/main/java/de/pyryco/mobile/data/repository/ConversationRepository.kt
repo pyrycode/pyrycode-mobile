@@ -133,10 +133,9 @@ interface ConversationRepository {
     /**
      * Emits the context-window reading Claude last reported for [conversationId] (#945), or **`null` while
      * there is none**, which reads as "unavailable", never as zero. Cold flow; re-emits on every change. Each
-     * `context_usage` frame replaces the reading, whether the daemon pushed it after a turn or sent it as the
-     * answer to the phone's own ask. Subscribing is wanting a fresh figure, so while at least one collector
-     * watches, the implementation asks once on subscription and again after the conversation's session
-     * transition, which also clears the old reading. A reconnect or host switch starts from nothing and asks again.
+     * `context_usage` frame the daemon pushes after a turn replaces the reading. The conversation's session
+     * transition clears it, and a reconnect or host switch starts from nothing, so it stays absent until the next
+     * turn ends. The implementation sends no `request_context_usage` until pyrycode#2563 (#946).
      *
      * **Not [SessionSettings.usedTokens] / [SessionSettings.windowTokens].** Those are transcript-derived; this is
      * Claude's own arithmetic, and neither stands in for the other.
