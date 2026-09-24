@@ -313,6 +313,27 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
+    fun createChannel_isPromoted_withVerbatimName_andWorkspace() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val c = repo.createChannel(name = "  Weekly planning ", workspace = "/work/wp")
+            assertEquals(true, c.isPromoted)
+            assertEquals("  Weekly planning ", c.name)
+            assertEquals("/work/wp", c.cwd)
+        }
+
+    @Test
+    fun createChannel_appearsIn_Channels_filter_butNotIn_Discussions() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val created = repo.createChannel(name = "Weekly planning", workspace = "/work/wp")
+            val channels = repo.observeConversations(ConversationFilter.Channels).first()
+            assertEquals(created, channels.single { it.id == created.id })
+            val discussions = repo.observeConversations(ConversationFilter.Discussions).first()
+            assertTrue(discussions.none { it.id == created.id })
+        }
+
+    @Test
     fun promote_flipsIsPromoted_andApplies_name_and_workspace() =
         runBlocking {
             val repo = FakeConversationRepository()
