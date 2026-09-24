@@ -39,7 +39,9 @@ import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -133,6 +135,8 @@ class ThreadViewModel(
     // #686: the phone's one remembered effort level, recalled once per opening by [effortRecall].
     // Defaulted to a store that remembers nothing, so the demo path and existing tests stay inert.
     rememberedEffort: RememberedEffortStore = RememberedEffortStore.None,
+    // #1027: where a markdown attachment's kept file is read before the reader opens.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -852,6 +856,17 @@ class ThreadViewModel(
      */
     val archiveErrors: Flow<Unit> = archiveErrorChannel.receiveAsFlow()
 
+    private val markdownOpenFailureChannel = Channel<Unit>(capacity = Channel.BUFFERED)
+
+    /**
+     * One-shot "this markdown file cannot be read" signal (#1027), the [archiveErrors] idiom: no payload, so
+     * the screen shows the fixed open-failed sentence and nothing from the file.
+     */
+    val markdownOpenFailures: Flow<Unit> = markdownOpenFailureChannel.receiveAsFlow()
+
+    // #1027: the open in flight, so a double tap cannot buffer a second navigation that fires on return.
+    private var markdownOpenJob: Job? = null
+
     private val changeWorkspaceErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
 
     /**
@@ -1311,6 +1326,25 @@ class ThreadViewModel(
             AttachmentRetrievalResult.Unavailable,
             -> AttachmentViewState.Failed to "failed"
         }
+
+    /**
+     * A ready markdown attachment was tapped (#1027): read and strictly decode its kept file first, so a file
+     * that cannot be shown leaves the operator here with the open-failed notice, and only a readable one opens
+     * the reader, by id alone. Ignored while an earlier open is still reading. Logs the id and a static outcome.
+     */
+    fun onOpenMarkdownAttachment(attachmentId: String) {
+        if (markdownOpenJob?.isActive == true) return
+        markdownOpenJob =
+            viewModelScope.launch {
+                val document = readMarkdownAttachment(repository, conversationId, attachmentId, ioDispatcher)
+                RelayLog.d { "event=thread_attachment_open id=$attachmentId outcome=${if (document != null) "reader" else "failed"}" }
+                if (document != null) {
+                    navigationChannel.send(ThreadNavigation.OpenMarkdown(attachmentId))
+                } else {
+                    markdownOpenFailureChannel.send(Unit)
+                }
+            }
+    }
 
     /** Remove one pending attachment from this chat (#932), leaving the rest in order. */
     fun removeAttachment(key: Long) {
