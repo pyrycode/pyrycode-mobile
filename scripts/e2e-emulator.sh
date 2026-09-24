@@ -6,7 +6,7 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated set of rung-3 scenarios (twenty-three methods, twenty-two real claude turns — listed at the LIVE
+#     curated set of rung-3 scenarios (twenty-four methods, twenty-four real claude turns — listed at the LIVE
 #     TEST_TARGET below) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
