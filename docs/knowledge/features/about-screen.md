@@ -36,6 +36,23 @@ fun AboutScreen(
 
 Two ids added to `strings.xml` in #271: `about_title` = "About" (TopAppBar) and `about_settings_row` = "About" (the Settings entry-row headline — a separate id from `about_title` so the two surfaces can diverge). `cd_back` reused. The four content rows keep their hardcoded Kotlin literals — verbatim extraction; routing them through `strings.xml` would be an unrequested content change (same scaffolding-placeholder rule the rest of Settings follows).
 
+## Versioning
+
+`versionName` (`app/build.gradle.kts`) is `MAJOR.MINOR.PATCH` — exactly three
+decimal parts, no leading zeros, no suffix — and is bumped on each release
+([#1007](../../specs/architecture/1007-client-version-format.md)). The format
+matters beyond this screen: `AppModule.mobileClientVersion()` sends
+`pyrycode-mobile/$versionName` as both the [Noise `hello`'s
+`client_version`](noise-ik-session.md) and the [relay socket's
+`User-Agent`](relay-ws-transport.md). Hosted daemons compare `client_version`
+against a configured minimum and reject a version they cannot parse (pyrycode's
+`docs/protocol-mobile.md` § `hello`, "`client_version` format", pyrycode#2576) —
+which is why the format is strict rather than free text. This screen keeps
+showing the bare `versionName` with no prefix; only the wire value carries
+`pyrycode-mobile/`. `ClientVersionTest` (`di/`) checks the bound value against
+the spec's format rules directly, rather than trusting `versionName`'s literal
+by inspection.
+
 ## Configuration / usage
 
 Mounted at `Routes.ABOUT` (`"about"`) in [`PyryNavHost`](navigation.md):
@@ -84,5 +101,6 @@ The first four ported verbatim out of `SettingsScreenTest` (where they tested th
 - Navigation: [Navigation](navigation.md) — route `about`
 - Sibling sub-screen (chrome this mirrors): [Archived discussions screen](archived-discussions-screen.md)
 - About-row history this extraction preserves: #90 (Version + Open source), #163 (License row text-only + `LicenseScreen` deletion), #165 (Version supporting line → `BuildConfig.GIT_SHA`)
+- Versioning: `versionName`'s `MAJOR.MINOR.PATCH` format and its use in the `hello`/`User-Agent` — [#1007 spec](../../specs/architecture/1007-client-version-format.md), [Noise session](noise-ik-session.md), [relay transport](relay-ws-transport.md)
 - Figma: no dedicated frame — content specced inside the Settings frame `17:2` (https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=17-2); sub-screen chrome follows the Archive frame `18:2`
 - Follow-up: #270 (a11y pass — covers this screen once it exists); wiring the Privacy policy row is unscheduled

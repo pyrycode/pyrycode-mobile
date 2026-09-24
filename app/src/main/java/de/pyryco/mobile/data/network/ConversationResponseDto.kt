@@ -48,6 +48,9 @@ data class ConversationResponseDto(
     // (create/promote) correctly decodes to `false`, and the real value folds when present. Field
     // order mirrors the server struct (kotlinx decodes by key name; order has no wire effect).
     @SerialName("is_archived") val isArchived: Boolean = false,
+    // Defaulted like `is_archived`: a record without the key (an older daemon, or a create reply)
+    // reads as not muted and keeps notifying; the record's value folds whenever it is present.
+    @SerialName("is_muted") val isMuted: Boolean = false,
     val cwd: String,
     @SerialName("last_used_at")
     @Serializable(with = InstantIso8601Serializer::class)
@@ -79,4 +82,5 @@ fun ConversationResponseDto.toConversation(): Conversation =
         sessionHistory = emptyList(),
         isSleeping = false,
         archived = isArchived,
+        muted = isMuted,
     )

@@ -177,6 +177,35 @@ itself logs nothing here; the caller,
 [`forgetRemovedHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost), logs the static
 `event=host_attachments_remove_failed` on failure and does not surface it.
 
+**Served to other apps (#985), never the store as a whole.** A kept file's bytes reach another app only
+through a `FileProvider` declared in the manifest as `android:authorities="${applicationId}.attachments"`,
+`android:exported="false"`, `android:grantUriPermissions="true"`. Its one root is
+`res/xml/attachment_paths.xml`'s single `<files-path name="attachments" path="../no_backup/attachments/" />`
+— androidx.core 1.16's `FileProvider` has no `no-backup-path` tag, so the root is reached the only other way
+available: `files` and `no_backup` are sibling directories under the app's data directory, and `../no_backup/`
+from the `files-path` root lands exactly on `File(noBackupFilesDir, "attachments")`, the directory this store
+already is. `FileProvider` canonicalises whatever path it is given, so a wider entry (`../no_backup/`, no
+`attachments` suffix) would have served the store's *parent* — `AttachmentActionsTest.filesOutsideTheStoreRoot_areNeverServed`
+is the test that catches that mistake, by asserting a file directly under `noBackupFilesDir`, under `filesDir`,
+under `filesDir/attachments`, and under `cacheDir` are all refused a URI. `ui/conversations/thread/AttachmentActions.kt`'s
+`attachmentContentUri` is the only caller: it builds the URI with `FileProvider.getUriForFile(context, authority, file)`
+from the store's own `File`, never from a display name, and returns `null` on the `IllegalArgumentException`
+that call throws for anything outside this one root. The intent that carries the resulting URI grants
+`FLAG_GRANT_READ_URI_PERMISSION` only — never write, never persistable, never a whole-tree prefix — so a
+receiving app can read exactly the one file the user opened or saved, nothing else in the store, and nothing
+in `noBackupFilesDir` or `filesDir` at large. See [MessageBubble — attachment slot §
+Open and save](message-bubble-attachment-slot.md#open-and-save-since-985) for the tap/long-press wiring above
+this provider, and `docs/specs/architecture/985-open-and-save-message-attachment.md` for the intent and save
+mechanics `AttachmentActions.kt` owns.
+
+**Lesson: `FileProvider` caches each authority's canonical roots in a static map for the process's life.**
+On a device the data directory never moves, so this is invisible; Robolectric gives every test a fresh one,
+so a root resolved by an earlier test in the same JVM points at a directory that test run has already
+deleted, and every later `getUriForFile` call for that authority silently refuses every file. `AttachmentActionsTest`
+clears `FileProvider`'s private `sCache` field with reflection in a `@Before`, and says why in a comment —
+the fix belongs on the test, not on the production path, since the cache is exactly what makes `FileProvider`
+cheap to call on every open.
+
 ## Wiring — `CachingConversationRepository` + `AppModule`
 
 `CachingConversationRepository` takes a fourth constructor param, `attachments: AttachmentStore? = null`:
@@ -274,16 +303,17 @@ the digest, the MIME type, the daemon's error code text, an exception message, o
   which throws on plain JVM with no Robolectric — the same capturing-sink requirement documented at
   [Relay diagnostic log § Testing](relay-log.md#testing) and [Attachment upload §
   Testing](attachment-upload.md#testing) applies to every test here that reaches a `RelayLog.d` call.
-- No Compose surface and no operator-facing flow of its own — the UI is [#984](message-bubble.md#attachment-slot-since-984), which maps this leg's four failure members onto `AttachmentViewState` (`Retrieved → Ready`, `NotFound → NotFound`, `TooLarge`/`Invalid`/`Unavailable` → `Failed`) — so no rung-3/4 scenario here either; #674 proves the live exchange.
+- No Compose surface and no operator-facing flow of its own — the UI is [#984](message-bubble-attachment-slot.md#attachment-slot-since-984), which maps this leg's four failure members onto `AttachmentViewState` (`Retrieved → Ready`, `NotFound → NotFound`, `TooLarge`/`Invalid`/`Unavailable` → `Failed`) — so no rung-3/4 scenario here either; [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016) (split from #674) proves `request_attachment` live from the peer's side (retrieving the phone's own upload) and from the phone's side (retrieving a file claude offers with `send_file`), each matching the fixture's SHA-256; see `docs/e2e-interactive-stream.md`. The remaining leg — another client's upload, named on a message, retrieved after a history reload — is blocked on [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020): the daemon drops a message's `attachment_ids` from history entirely, so that section's claim that `request_attachment` is answered says nothing about whether a client can ever learn the id to ask for after a reload.
 
 ## Related
 
-- UI consumer: [MessageBubble § Attachment slot](message-bubble.md#attachment-slot-since-984) (#984) —
+- UI consumer: [MessageBubble — attachment slot § Attachment slot](message-bubble-attachment-slot.md#attachment-slot-since-984) (#984) —
   renders each reference in its bubble and starts a `retrieveAttachment` call when its row is first shown
   on screen, falling back first to a still-readable original of a file this phone sent in the same app
   session (`ComposerDraftStore.sentOriginal`, [Thread screen — composer drafts and
   attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)). Opening or
-  saving the kept file is #985, not yet built.
+  saving the kept file is [#985](message-bubble-attachment-slot.md#open-and-save-since-985), through the
+  non-exported `FileProvider` documented in [§ Host store](#host-store--datacacheattachmentstorekt) below.
 - Ticket: `docs/specs/architecture/899-attachment-retrieval.md` — design, the bound's reasoning, security
   review, revisions (the settle-wake fix and the `InertAttachmentStore` rework).
 - Sibling leg: [Attachment upload](attachment-upload.md) (#829) — the opposite correlation direction, the

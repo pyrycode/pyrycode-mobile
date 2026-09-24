@@ -50,6 +50,8 @@ data class ConversationSummaryDto(
     @Serializable(with = InstantIso8601Serializer::class)
     val lastUsedAt: Instant,
     @SerialName("is_archived") val isArchived: Boolean = false,
+    // Defaulted so a row from a daemon without mute support reads as not muted and keeps notifying.
+    @SerialName("is_muted") val isMuted: Boolean = false,
     @SerialName("workspace_label") val workspaceLabel: String? = null,
 )
 
@@ -79,4 +81,5 @@ private fun ConversationSummaryDto.toConversation(): Conversation =
         sessionHistory = emptyList(),
         isSleeping = false,
         archived = isArchived,
+        muted = isMuted,
     )

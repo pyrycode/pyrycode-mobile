@@ -166,12 +166,16 @@ internal class PairCodeViewModel(
                     (it?.relay == RelayLinkStatus.Connected && it.pyrycode == PyrycodeLinkStatus.Connected) ||
                         it?.relay == RelayLinkStatus.DaemonAbsent ||
                         it?.relay == RelayLinkStatus.PairingRejected ||
+                        it?.relay is RelayLinkStatus.UpdateRequired ||
                         it?.relay == RelayLinkStatus.Offline
                 }
             }
         if (terminal?.relay == RelayLinkStatus.Connected && terminal.pyrycode == PyrycodeLinkStatus.Connected) {
             mutableState.value = state.value.copy(phase = PairCodePhase.Complete)
             RelayLog.d { "event=pair_code_connected" }
+        } else if (terminal?.relay is RelayLinkStatus.UpdateRequired) {
+            // A retry cannot help until the app is updated (#1008); the host's minimum is not shown here.
+            fail("Pairing saved. This app is too old for this host. Update the app, then retry.", "update_required")
         } else {
             fail("Pairing saved. Host unavailable. Retry or cancel.", if (terminal == null) "deadline" else "unavailable")
         }

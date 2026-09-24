@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import java.util.concurrent.atomic.AtomicBoolean
@@ -54,6 +55,7 @@ class NoiseSessionPump(
     private val handshakeTimeoutMs: Long = HANDSHAKE_TIMEOUT_MS,
     private val rekeyIntervalMs: Long = REKEY_INTERVAL_MS,
     private val rekeyRespTimeoutMs: Long = REKEY_RESP_TIMEOUT_MS,
+    private val onClientMinimum: (String) -> Unit = {},
 ) : ManagedSessionPump {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
@@ -203,6 +205,7 @@ class NoiseSessionPump(
                     // `type` alone makes an unknown/absent/extra `reason` impossible to crash on (AC 2).
                     scope.launch { initiateRekey() }
                 } else {
+                    if (envelope.type == TYPE_ERROR) captureClientMinimum(envelope)
                     inboundChannel.send(envelope)
                 }
             }
@@ -220,6 +223,25 @@ class NoiseSessionPump(
             // session down rather than dropping it.
             else -> throw NoiseSessionException("unexpected open-state frame type")
         }
+    }
+
+    /**
+     * The app-too-old rejection (#1008): hands a sealed `client.update_required` error's raw
+     * `min_client_version` to [onClientMinimum], whose owner validates it. The envelope is forwarded
+     * regardless. A payload that is not an [ErrorPayload] is ignored rather than thrown, since a throw here
+     * would tear down a session the frame did not otherwise fault. No log: the value is daemon-authored.
+     */
+    private fun captureClientMinimum(envelope: Envelope) {
+        val error =
+            try {
+                MobileJson.decodeFromJsonElement(ErrorPayload.serializer(), envelope.payload)
+            } catch (e: SerializationException) {
+                return
+            } catch (e: IllegalArgumentException) {
+                return
+            }
+        if (error.code != ERROR_CLIENT_UPDATE_REQUIRED) return
+        error.minClientVersion?.let(onClientMinimum)
     }
 
     /** Cancels any armed re-key timer and arms a fresh one-shot delay. Drive-coroutine-only (no race). */
@@ -307,6 +329,9 @@ class NoiseSessionPump(
         const val TYPE_NOISE_INIT = "noise_init"
         const val TYPE_NOISE_RESP = "noise_resp"
         const val TYPE_NOISE_MSG = "noise_msg"
+
+        /** The inbound failure envelope (`Envelope.type`); only the app-too-old code is read here. */
+        const val TYPE_ERROR = "error"
 
         /** The inbound control envelope by which the server nudges a re-key (`Envelope.type`). */
         const val TYPE_REKEY_REQUEST = "rekey_request"

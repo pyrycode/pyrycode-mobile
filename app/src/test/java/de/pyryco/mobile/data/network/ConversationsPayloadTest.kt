@@ -87,6 +87,16 @@ class ConversationsPayloadTest {
     }
 
     @Test
+    fun mutedListRows_carryTheServerFlagAndAbsentKeyReadsAsNotMuted() {
+        // Row A carries is_muted:true; row B omits the key, as an older daemon does, and stays notifying.
+        val fixture = twoRowFixture.replace("\"is_promoted\":true", "\"is_promoted\":true,\"is_muted\":true")
+        val rows = MobileJson.decodeFromJsonElement<ConversationsPayload>(MobileJson.parseToJsonElement(fixture)).toConversations()
+
+        assertTrue(rows[0].muted)
+        assertFalse(rows[1].muted)
+    }
+
+    @Test
     fun scratchCwd_isPreservedVerbatim() {
         val element = MobileJson.parseToJsonElement(twoRowFixture)
         val result = MobileJson.decodeFromJsonElement<ConversationsPayload>(element).toConversations()

@@ -9,13 +9,14 @@ Phase-2 `FakeConnectionStateSource` in the Koin graph.
 > **Since [#391](../codebase/391.md): the source of truth is the relay-leg model, not
 > `ConnectionState`.** The supervisor's single hot state is now a `MutableStateFlow<RelayLinkStatus>`
 > (the [relay link status](relay-link-status.md) — the four `ConnectionState` cases **plus**
-> `DaemonAbsent` (#391), `Idle` (#499) and `PairingRejected` (#841)), exposed read-only as
-> `val relayStatus: StateFlow<RelayLinkStatus>`. The legacy 4-case
+> `DaemonAbsent` (#391), `Idle` (#499), `PairingRejected` (#841) and `UpdateRequired` (#1008)), exposed
+> read-only as `val relayStatus: StateFlow<RelayLinkStatus>`. The legacy 4-case
 > [`ConnectionState`](connection-state.md) surface is **derived per-collector** from it, so every
 > existing consumer is untouched. The `#308 seam` Down arm branches the relay's `4404 "no server"`
-> close into `DaemonAbsent` (relay reachable, no daemon registered), and a `4401`/`4426` close into
-> `PairingRejected` (a rejected pairing — the redial halts), while every other code retries as before.
-> This doc describes the post-#841 state.
+> close into `DaemonAbsent` (relay reachable, no daemon registered), a `4401`/`4426` close into
+> `PairingRejected` (a rejected pairing — the redial halts), and a `4412` close into `UpdateRequired`
+> (the app build is too old — the redial halts), while every other code retries as before.
+> This doc describes the post-#1008 state.
 
 Package: `de.pyryco.mobile.data.network` (`RelayConnectionSupervisor` + `RelayTransportFactory`),
 co-located with the [transport](relay-ws-transport.md) it supervises; it implements the
@@ -107,18 +108,20 @@ while active:
              launch stability timer (delay 60 s → stableReached = true)
       Down → daemonAbsent = (event.code == 4404)          // #308 seam: read-only, never logged; else false
              pairingRejected = (event.code == 4401 || event.code == 4426)   // #841: same read-only comparison
+             updateRequired = (event.code == 4412)        // #1008: same read-only comparison
   finally: cancel stability timer (before reading the flag); currentConnection = null IFF still this loop's own transport (#496 identity compare-and-clear); transport.close() (always)
   if (sawUp && stableReached) attempt = 0     // ≥60 s stable → reset escalation
   attempt += 1
-  if (pairingRejected) haltUntilRetry()       // #841: suspend with no timeout until retry()/connect() wakes it
+  if (pairingRejected) haltUntilRetry { PairingRejected }             // #841: suspend with no timeout until retry()/connect() wakes it
+  else if (updateRequired) haltUntilRetry { UpdateRequired(dialMinimum) }  // #1008: same halt, carries this dial's latched minimum
   else backoff(attempt, daemonAbsent)         // drains a stale pre-drop retry signal FIRST (#498), then: DaemonAbsent | Reconnecting countdown | Offline; each wait collapsible by retry()
 ```
 
-`daemonAbsent` and `pairingRejected` are per-dial-iteration `var`s (same closure-capture pattern as
-`sawUp`), set from the relay's WS close code in the `#308 seam` Down arm. `daemonAbsent` is threaded
-into `backoff()`; `pairingRejected` instead routes to `haltUntilRetry()`, so a rejected dial still
-increments `attempt` (the anti-storm property holds if the redial then fails on the network) but never
-enters the jittered-backoff wait.
+`daemonAbsent`, `pairingRejected` and `updateRequired` are per-dial-iteration `var`s (same
+closure-capture pattern as `sawUp`), set from the relay's WS close code in the `#308 seam` Down arm.
+`daemonAbsent` is threaded into `backoff()`; `pairingRejected` and `updateRequired` instead route to
+`haltUntilRetry()`, so a rejected or too-old dial still increments `attempt` (the anti-storm property
+holds if the redial then fails on the network) but never enters the jittered-backoff wait.
 
 > **Since [#489](../codebase/489.md): the `load()` is per-dial, not once at loop start.** The
 > `pairedServerStore.load()` + `null → Idle; return` guard (`Idle` since #499) moved from **before** `while (isActive)`
@@ -132,7 +135,7 @@ enters the jittered-backoff wait.
 > second `connect()` no-ops); an *immediate* teardown-and-reconnect on re-pair is out of scope (a PO
 > follow-up). See [`codebase/489.md`](../codebase/489.md).
 
-**Relay-leg → banner mapping** (the leg has 6 cases; `observe()` derives the legacy `ConnectionState`):
+**Relay-leg → banner mapping** (the leg has 7 cases; `observe()` derives the legacy `ConnectionState`):
 
 | `RelayLinkStatus` | When | Derived `ConnectionState` | Banner |
 |---|---|---|---|
@@ -142,6 +145,7 @@ enters the jittered-backoff wait.
 | `Reconnecting(secondsRemaining)` | counting down a **sub-cap** backoff interval (per-second) | `Reconnecting(secondsRemaining)` | `"Reconnecting in Ns"` |
 | `DaemonAbsent` | a `4404` close: **relay reachable, no daemon registered** (steady, no countdown) | `Offline` | `"Offline — tap to retry"` (until #392's combined banner) |
 | `PairingRejected` | a `4401`/`4426` close: **host refused the credential** — redial halted (#841) | `Offline` | `"Offline — tap to retry"` (Settings line, host row and — since #843 — the open thread's composer status area carry the distinct label/action; see below) |
+| `UpdateRequired(minClientVersion)` | a `4412` close: **host refused this app build as too old** — redial halted (#1008) | `Offline` | `"Offline — tap to retry"` (Settings line reads "Update required"; the host row keeps the disconnected treatment and its plug control still dispatches a retry — the follow-up UI ticket changes that) |
 | `Offline` | backoff escalated to the **30 s cap** (sustained unavailability) | `Offline` | `"Offline — tap to retry"` |
 
 `Idle` derives to `Connected` **for the banner only** (idle is not an error, so it stays hidden) — but
@@ -180,24 +184,26 @@ The wire-spec cadence (`protocol-mobile.md` § Reconnect, mirrored from the Go s
 - **Stability reset:** `attempt` resets to 0 only after a connection has been **stable ≥ 60 s** (a child
   `stabilityTimer` flips an `AtomicBoolean`). A connection that flaps in < 60 s keeps escalating.
 
-## Halt on a rejected pairing (#841)
+## Halt on a rejected pairing (#841) or an app-too-old rejection (#1008)
 
 A `4401` (invalid/expired/revoked token) or `4426` (stale saved server key) close cannot recover by
-redialling — the host will refuse the same credential again. Instead of `backoff()`, the loop calls a
-sibling function that halts indefinitely:
+redialling — the host will refuse the same credential again. Neither can a `4412` close (the app build
+is below the host's configured minimum, pyrycode#2576's `client.update_required` rejection) — only an
+app update recovers. Instead of `backoff()`, the loop calls a sibling function that halts indefinitely,
+parameterised by which terminal state to publish:
 
 ```kotlin
-private suspend fun haltUntilRetry() {
+private suspend fun haltUntilRetry(halted: () -> RelayLinkStatus) {
     drainStaleRetrySignals()             // same #498 drain backoff() uses, extracted to a shared helper
-    state.value = RelayLinkStatus.PairingRejected
+    synchronized(dialLock) { state.value = halted() }   // dialLock: see the minimum latch below
     retrySignal.receive()                // no timeout — suspends until retry() or a fresh loop wakes it
 }
 ```
 
 It consumes no `Random`, so the jitter sequence for later, unrelated backoffs is unaffected. `attempt`
-was already incremented before the branch, so a rejected drop still counts toward escalation — if the
-resumed dial fails on the network instead of being rejected again, `backoff()` picks up from the
-already-escalated `attempt` rather than restarting at 1 s.
+was already incremented before the branch, so a rejected or too-old drop still counts toward escalation
+— if the resumed dial fails on the network instead of being rejected again, `backoff()` picks up from
+the already-escalated `attempt` rather than restarting at 1 s.
 
 **Resume paths:**
 
@@ -215,6 +221,42 @@ already-escalated `attempt` rather than restarting at 1 s.
 The halt holds no socket: the `finally` block has already released the transport and
 compare-and-cleared `liveConnection` (#496) before `haltUntilRetry()` runs, so a halted host's `finally`
 semantics are identical to any other drop's.
+
+### The per-dial minimum latch (#1008)
+
+The `4412` close and the sealed `client.update_required` error that precedes it travel over **different**
+paths that race each other: the close reaches `runLoop` as `TransportEvent.Down`, while the error is
+decrypted by [`NoiseSessionPump`](noise-session-pump.md#capturing-the-update-required-minimum-1008) as it
+consumes `inbound` on its own coroutine. Either can arrive first. The supervisor latches the value per
+dial instead of reading it inline:
+
+```kotlin
+private val dialLock = Any()
+private var dialTransport: RelayTransport? = null   // this dial's transport, set right after transportFactory.create
+private var dialMinimum: String? = null              // this dial's latched, already-validated minimum
+
+internal fun recordClientMinimum(transport: RelayTransport, minClientVersion: String) {
+    val valid = validMinClientVersion(minClientVersion) ?: return
+    synchronized(dialLock) {
+        if (transport !== dialTransport) return              // a stale dial's late error can't write here
+        dialMinimum = valid
+        if (state.value is RelayLinkStatus.UpdateRequired) state.value = RelayLinkStatus.UpdateRequired(valid)
+    }
+}
+```
+
+`dialTransport`/`dialMinimum` reset to `(the fresh transport, null)` at the top of every dial, so a
+minimum from a previous dial's error can never leak into this one — enforced by an identity check, the
+same `===`-not-`==` discipline as `currentConnection`'s #496 compare-and-clear. `NoiseSessionPump` never
+validates; `recordClientMinimum` is the **only** production call that builds `UpdateRequired` with a
+non-null minimum, so `validMinClientVersion` runs in exactly one place. Both orders resolve correctly:
+if the error decrypts **before** the `4412` `Down`, the halt reads the already-latched `dialMinimum`; if
+it decrypts **after**, `recordClientMinimum` finds `state.value is UpdateRequired` and upgrades it in
+place. The halt's own state write and `recordClientMinimum`'s upgrade both run under `dialLock`, so the
+two can never interleave into a torn read. A minimum that never arrives (the daemon's seal failed, or
+the pump never reached `Open` — see [`RelayLinkStatus` § `UpdateRequired`](relay-link-status.md#updaterequired--an-app-too-old-rejection-halts-redial-1008))
+leaves `UpdateRequired(null)`: correct, just less informative — best-effort by contract, not a bug to
+chase.
 
 ## `retry()` — collapse the pending backoff
 
@@ -248,7 +290,7 @@ property, see § Security posture).
 > same-class edge, non-reproducing on the single-threaded test dispatcher. See
 > [`codebase/498.md`](../codebase/498.md).
 >
-> **Since [#841](#halt-on-a-rejected-pairing-841): the drain is a shared `drainStaleRetrySignals()`
+> **Since [#841](#halt-on-a-rejected-pairing-841-or-an-app-too-old-rejection-1008): the drain is a shared `drainStaleRetrySignals()`
 > helper, called at the top of both `backoff()` and `haltUntilRetry()`.** The halt needs the same
 > protection `backoff()` does — a `retry()` tapped while `Connected` leaves a `Unit` sitting in the
 > CONFLATED channel, and an undrained `haltUntilRetry()` would consume it immediately, turning one
@@ -321,9 +363,12 @@ untrusted-relay boundary:
   (and its derived 4-case `ConnectionState`) — no strings beyond `secondsRemaining: Int`, and
   `DaemonAbsent`/`PairingRejected` are static `data object`s carrying **no** relay-supplied text.
   `PairedServer`, `relayUrl`, the transport, and `Down`'s `code`/`reason`/`cause` are **never** logged;
-  the #391 `4404` branch and the #841 `4401`/`4426` branch each read `Down.code` **only to compare it**
-  against a constant, never to log it (mirrors #306's posture; code-review confirmed zero
-  `Log`/`Timber`/`println`).
+  the #391 `4404` branch, the #841 `4401`/`4426` branch and the #1008 `4412` branch each read
+  `Down.code` **only to compare it** against a constant, never to log it, and no branch reads the close
+  **reason** (mirrors #306's posture; code-review confirmed zero `Log`/`Timber`/`println`). `UpdateRequired`'s
+  `minClientVersion` is the one non-static field this leg ever carries — it is never logged either, and
+  `recordClientMinimum` is the sole production path that can populate it (see § The per-dial minimum
+  latch above).
 - **Anti-reconnect-storm (security-positive).** Capped-exponential backoff + `retry()` **not** resetting
   `attempt` + escalation-only-after-genuine-stability (the ≥60 s reset) + a CONFLATED retry channel
   (`retry()`-spam collapses to one wakeup) together prevent a client-side reconnect storm /
@@ -334,15 +379,19 @@ untrusted-relay boundary:
   (backoff-timing) use.
 - **Close-code branching at the `#308 seam`.** Since [#391](../codebase/391.md) the `Down` arm branches
   the relay's `4404 "no server"` close into `DaemonAbsent` (relay reachable, no daemon) via a single
-  integer comparison; since [#841](#halt-on-a-rejected-pairing-841) it also branches `4401`
-  (invalid/expired/revoked token) and `4426` (stale saved server key) into `PairingRejected`, which
-  halts redial instead of backing off. Three integer comparisons total — the only points where the
-  untrusted relay-controlled code crosses into trusted state; `null` (dial failure / malformed data) and
-  every other code cannot masquerade as either. Every non-`4404`/`4401`/`4426` code still retries
-  uniformly. A hostile relay forging `4401`/`4426` can only halt redial for the affected host until the
-  next explicit retry or foreground — it can already deny service by refusing connections outright, and
-  the design never mutates or deletes the saved pairing on rejection, so a forged code cannot destroy a
-  credential (accepted risk; see the #841 plan's security review, verdict PASS).
+  integer comparison; since [#841](#halt-on-a-rejected-pairing-841-or-an-app-too-old-rejection-1008) it
+  also branches `4401` (invalid/expired/revoked token) and `4426` (stale saved server key) into
+  `PairingRejected`, and since [#1008](#halt-on-a-rejected-pairing-841-or-an-app-too-old-rejection-1008)
+  it branches `4412` (app build too old) into `UpdateRequired` — both halt redial instead of backing off.
+  Four integer comparisons total — the only points where the untrusted relay-controlled code crosses
+  into trusted state; `null` (dial failure / malformed data) and every other code cannot masquerade as
+  any of them. Every non-`4404`/`4401`/`4426`/`4412` code still retries uniformly. A hostile relay
+  forging `4401`/`4426`/`4412` can only halt redial for the affected host until the next explicit retry
+  or foreground — it can already deny service by refusing connections outright, and the design never
+  mutates or deletes the saved pairing on rejection, so a forged code cannot destroy a credential
+  (accepted risk; see the #841 and #1008 plans' security reviews, both verdict PASS). A hostile relay
+  **cannot** forge `UpdateRequired`'s minimum: it only arrives inside the AEAD-authenticated Noise
+  session, so forging the close alone yields `UpdateRequired(null)`, never a fabricated version string.
 
 ## Edge cases & limitations
 
@@ -360,6 +409,11 @@ untrusted-relay boundary:
   other state above, the loop does not keep retrying on its own; it halts until an explicit `retry()` or
   the next foreground `connect()`. This is deliberate: a refused credential cannot succeed on a redial,
   so redialling forever would only re-present it and hide the real cause behind "Offline".
+- **`UpdateRequired` is terminal for the same reason** (#1008) — an app build the host has already
+  refused cannot succeed on a redial either; the halt and resume paths are identical to
+  `PairingRejected`'s. Unlike `PairingRejected`, the minimum it carries can arrive **after** the halt
+  already published (see § The per-dial minimum latch) — the state stays `UpdateRequired`, only the
+  `minClientVersion` field upgrades from `null`.
 - **Process death mid-loop** leaves nothing partial — no durable state (the #306 non-resumable contract);
   on relaunch, #302 drives a fresh `connect()`. A halted loop dies with the process like any other; the
   fresh `connect()` dials once and can be rejected again.
@@ -422,6 +476,26 @@ proving the halt is per-host. `nonDaemonClose_followsExistingReconnectPath_never
 reconnect (guards the boundary of the new comparison). A direct `toConnectionState()` test covers
 `PairingRejected → Offline`.
 
+**#1008 added** (spec: `docs/specs/architecture/1008-update-required-halt.md`): a `4412` close →
+`relayStatus == UpdateRequired(null)`, legacy `state() == Offline`, no further transport created past
+10 minutes (proves the halt). `recordClientMinimum` called for the live dial's transport **before** the
+`4412` `Down` → the halt reads the latched value, publishing `UpdateRequired("1.4.0")` directly; called
+**after** the halt already published `UpdateRequired(null)` → the state upgrades in place to carry the
+minimum. Called for a **previous** dial's transport (by identity, not equality) → ignored, proving the
+per-dial latch can't leak across reconnects. Called with a non-`4412` close in play → the loop still
+reconnects normally (the error alone never halts — only the close does). Called with an invalid value
+(`"1.4"`, wrong part count) → `UpdateRequired(null)`, the validator rejection proven at the supervisor
+boundary. `retry()` while halted → exactly one new dial with the latch cleared (no carry-over minimum
+from the previous rejection); a repeat `4412` halts again. `close()` then `connect()` while halted →
+exactly one new dial. Two supervisors, one `UpdateRequired`-halted and the other on `1006`, are asserted
+independently — the second keeps its normal reconnect countdown, proving the halt is per-host, the same
+shape as #841's equivalent test. A direct `toConnectionState()` test covers `UpdateRequired → Offline`.
+`RelayConnectionFactoryTest.appTooOldRejectionHaltsOnlyItsOwnHostAndCarriesTheSealedMinimum` proves the
+full wiring (pump → `onClientMinimum` → `recordClientMinimum`) through two real-Noise-session bundles
+rather than "by composition": host A's sealed error then `4412` → `UpdateRequired("1.4.0")`, host B
+unaffected and still dialling, an explicit retry on A dials once, and a bare `4412` with no error halts
+with no minimum (see the plan's Revisions).
+
 ## Related
 
 - Ticket notes: [`../codebase/307.md`](../codebase/307.md) (original supervisor) ·
@@ -432,15 +506,17 @@ reconnect (guards the boundary of the new comparison). A direct `toConnectionSta
   (drains a stale `retrySignal` at the top of `backoff()` — a retry while healthy no longer pre-collapses the
   next drop's first wait) · [`../codebase/499.md`](../codebase/499.md) (the `Idle` case — the three idle
   sites stop overloading `Connected`, so the Settings relay leg no longer reads a false green while
-  unpaired/idle) — files/line refs, patterns, lessons. #841 (`PairingRejected` + the halt) landed after
-  the per-ticket archive was frozen (2026-09-05); its spec is below instead.
+  unpaired/idle) — files/line refs, patterns, lessons. #841 (`PairingRejected` + the halt) and #1008
+  (`UpdateRequired` + the per-dial minimum latch) landed after the per-ticket archive was frozen
+  (2026-09-05); their specs are below instead.
 - Relay-leg model: [Relay link status](relay-link-status.md) ([#391](../codebase/391.md), extended by
-  #841) — the `RelayLinkStatus` source of truth this supervisor produces (`relayStatus`) and derives
-  `ConnectionState` from.
+  #841 and #1008) — the `RelayLinkStatus` source of truth this supervisor produces (`relayStatus`) and
+  derives `ConnectionState` from.
 - Specs: `docs/specs/architecture/307-relay-reconnect-supervisor-connectionstatesource.md` (§ Design,
   § State + concurrency model, § Cross-sibling decisions A/B, § Security review — Verdict PASS) ·
   `docs/specs/architecture/841-rejected-pairing-relay-state.md` (the halt/resume design, § Security
-  review — Verdict PASS).
+  review — Verdict PASS) · `docs/specs/architecture/1008-update-required-halt.md` (the sealed-error
+  capture + per-dial minimum latch, § Security review — Verdict PASS).
 - Sits on: [Relay WebSocket transport](relay-ws-transport.md) ([#306](../codebase/306.md)) — drives
   `connect()`/`close()`, collects `events`; never `inbound`. Implements [Connection state](connection-state.md)
   ([#196](../codebase/196.md)) `ConnectionStateSource`; swaps its `FakeConnectionStateSource` binding.
@@ -452,15 +528,21 @@ reconnect (guards the boundary of the new comparison). A direct `toConnectionSta
   not this class), the first UI surface to bypass the legacy derived `ConnectionState` and distinguish
   `PairingRejected` from every other `Offline`-deriving case. See
   [Thread screen § Sourced by `serverId` through the registry](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643).
-- Siblings: **#309** (Noise session pump — collects the same connection's `inbound` via `currentConnection`;
-  no blocker), **[#351](../codebase/351.md)** ([`RelayRepositoryCoordinator`](relay-repository-coordinator.md),
+- Siblings: **[#309](noise-session-pump.md)** (Noise session pump — collects the same connection's
+  `inbound` via `currentConnection`; no blocker, but since #1008 `di/RelayConnectionFactory.kt`'s
+  `RelayConnectionBundle` wires each pump's `onClientMinimum` callback to close over that dial's
+  transport and call back into this supervisor's `recordClientMinimum`, see
+  [NoiseSessionPump § Capturing the update-required minimum](noise-session-pump.md#capturing-the-update-required-minimum-1008)),
+  **[#351](../codebase/351.md)** ([`RelayRepositoryCoordinator`](relay-repository-coordinator.md),
   **landed** — the consumer of `currentConnection`: starts a #309 pump + builds a remote repository per
   live connection), **[#302](../codebase/302.md)** ([lifecycle connection driver](lifecycle-connection-driver.md),
   **landed** — drives `connect()`/`close()` across foreground/background edges via the new
   `RelayConnectionController` seam), **#308** (relay auth-gate — the `#308 seam`'s namesake ticket;
-  #391 branched `4404`, #841 branched `4401`/`4426`, both **landed**), **[#391](../codebase/391.md)**
-  (relay-leg `RelayLinkStatus` + the `4404` → `DaemonAbsent` branch — **landed**), **#841** (split from
-  #675 — `4401`/`4426` → `PairingRejected` + the redial halt — **landed**, see § Halt on a rejected
+  #391 branched `4404`, #841 branched `4401`/`4426`, #1008 branched `4412`, all **landed**),
+  **[#391](../codebase/391.md)** (relay-leg `RelayLinkStatus` + the `4404` → `DaemonAbsent` branch —
+  **landed**), **#841** (split from #675 — `4401`/`4426` → `PairingRejected` + the redial halt —
+  **landed**, see § Halt on a rejected pairing above), **#1008** (split from #1004 — `4412` →
+  `UpdateRequired` + the sealed-error minimum + the redial halt — **landed**, see § Halt on a rejected
   pairing above), **#392** (pyrycode-leg readiness +
   the combined `{relay, pyrycode}` model that zips `relayStatus`, `blockedBy #391`), **#278**
   (`RemoteConversationRepository`).

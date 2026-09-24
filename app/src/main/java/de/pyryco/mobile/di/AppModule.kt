@@ -39,6 +39,7 @@ import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.notifications.AttentionNotifier
+import de.pyryco.mobile.notifications.isMuted
 import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
@@ -102,7 +103,7 @@ val appModule =
         single {
             ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }, lazy { get() }))
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
-        single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
+        single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = mobileClientVersion()) }
         single {
             RelayConnectionFactory(
                 get(),
@@ -144,10 +145,13 @@ val appModule =
         // and the publisher must already be subscribed when the wake's hosts connect. The ledger sits
         // in noBackupFilesDir beside the conversation cache: it holds digests only, and never travels.
         single(createdAtStart = true) {
+            // #1022: mute reads the alert's own host's rows, not the selected host's repository.
+            val source = get<HostConversationSource>()
             AttentionNotifier(
                 context = androidContext(),
-                alerts = get<HostConversationSource>().alerts,
+                alerts = source.alerts,
                 notificationsEnabled = get<AppPreferences>().notificationsEnabled,
+                isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
                 isForeground = {
                     ProcessLifecycleOwner
                         .get()
@@ -270,6 +274,14 @@ internal fun pairingRejected(
         .distinctUntilChanged()
         .flatMapLatest { host -> host?.status?.map { it.relay == RelayLinkStatus.PairingRejected } ?: flowOf(false) }
         .distinctUntilChanged()
+
+/**
+ * The `hello`'s `client_version` (#1007), also the relay socket's `User-Agent`: `pyrycode-mobile/`
+ * followed by [versionName], which must be `MAJOR.MINOR.PATCH` per the "`client_version` format
+ * (#2576)" rules in pyrycode's `docs/protocol-mobile.md`. A daemon with a configured minimum rejects
+ * a version it cannot parse. The About screen shows the bare `versionName`.
+ */
+internal fun mobileClientVersion(versionName: String = BuildConfig.VERSION_NAME): String = "pyrycode-mobile/$versionName"
 
 /** Destination ownership is captured once; compatibility selection is only a flat-list adapter. */
 internal class ThreadDestinationFactory(

@@ -140,6 +140,21 @@ mirroring `StoredPairings`. The cache-local record type — not `@Serializable` 
 is stored as `Instant.toString()` / parsed back with `Instant.parse(...)`, not epoch millis, so
 the round-trip is exact to the nanosecond rather than truncated to millisecond precision.
 
+### The cache-local record must mirror every `Conversation` field (#999)
+
+Being cache-local cuts both ways: nothing forces `CachedConversation` to track a field added to
+`Conversation`, so a new domain field silently stops surviving a restart unless someone remembers
+to extend the record by hand. `CachedConversation`/`Conversation.toRecord()`/
+`CachedConversation.toDomain()` carry `muted: Boolean = false` beside `archived` for this reason —
+[data model § `Conversation`](data-model.md#conversation)'s first pass mirrored `archived` through
+the wire DTOs and missed this cache, and `HostConversationSource` publishes
+`store.readConversations(...)` as the host's rows on start, before any live list arrives, so a
+restored muted channel would have read `muted = false` and alerted on cold start. The `= false`
+default keeps a document written before this field existed readable, the same reasoning as every
+other additive field in this cache (see `CachedAttachment` above). Adding a boolean like this to
+`Conversation` means updating this record and both mapping functions, not only the DTOs — check
+here first, before the wire layer, since a cache miss is the harder failure to notice.
+
 The thread document is the same shape, file-private to `FileConversationCache.kt`:
 `CachedThread(version: Int, rows: List<CachedThreadRow>)`, `CachedThreadRow(message:
 CachedMessage? = null, boundary: CachedBoundary? = null)` — exactly one of the two is set, mapping
