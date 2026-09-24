@@ -145,3 +145,8 @@ The adversary here is another app: whichever documents provider backs the pick c
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- 2026-09-24, during implementation: the remove icon reuses the existing `ic_modal_close` drawable. It is the same circle-x glyph as Figma 390:7188, exported earlier from node 533:2369. So only two new drawables land: `ic_attach_file` for the paperclip and `ic_attachment_file` for the file outline. `AttachmentRefusal` lives in `AttachmentPicker.kt` beside `PickedAttachment`, so the production file count stays at seven.
+- Open question resolved: the strip keeps the order `OpenMultipleDocuments` returns. `ComposerAttachmentStripTest` pins that `onAttachmentsPicked` receives the picks in the returned order.

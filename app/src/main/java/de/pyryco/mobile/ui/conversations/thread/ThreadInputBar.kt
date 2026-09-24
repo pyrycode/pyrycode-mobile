@@ -65,6 +65,9 @@ private val ButtonGlyphSize = 28.dp
  * now lives in [ComposerDraftStore], keyed per host and conversation, and reaches here through
  * [ThreadScreen]'s `draft` / `onDraftChange`.
  *
+ * [hasAttachments] and [sending] come from the chat's pending attachments (#933): attachments alone are
+ * enough to send, and while [sending] the button stays disabled so a second tap cannot resend them.
+ *
  * [onAnchorChanged] reports the field's window bounds with the left edge moved in to where the typed text
  * starts, which the screen uses to place the slash-command suggestions above the field (#885).
  */
@@ -77,6 +80,8 @@ fun ThreadInputBar(
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
     onAnchorChanged: (Rect) -> Unit = {},
+    hasAttachments: Boolean = false,
+    sending: Boolean = false,
 ) {
     val textInset = with(LocalDensity.current) { FieldLeadingInset.toPx() }
     // One button, two jobs (#643) — the placement desktop's #678 settled, replacing the standalone
@@ -84,8 +89,8 @@ fun ThreadInputBar(
     // while the agent is busy is a shipped path (the daemon queues it and QueuedBacklog renders it,
     // #461), so a stop variant that pre-empted a typed message would remove the only tap that reaches
     // it. Stop therefore owns the button exactly when the composer is empty — the state anyone
-    // reaching for stop is in.
-    val stopping = isBusy && text.isBlank()
+    // reaching for stop is in. Pending attachments (#933) are something to send, so they count as not empty.
+    val stopping = isBusy && text.isBlank() && !hasAttachments
     // #885: the field keeps its own cursor, and text replaced from outside (a slash-command completion, a
     // cleared send) puts the cursor at the end. A String-valued field would keep the old offset, so an
     // argument typed after picking `/model` from `/mo` would land inside the name. The draft returns
@@ -161,7 +166,7 @@ fun ThreadInputBar(
             )
             IconButton(
                 onClick = if (stopping) onInterrupt else onSend,
-                enabled = stopping || text.isNotBlank(),
+                enabled = stopping || (!sending && (text.isNotBlank() || hasAttachments)),
                 modifier = Modifier.size(ButtonTouchSize),
             ) {
                 Icon(

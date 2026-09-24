@@ -344,4 +344,17 @@
     <string name="notification_channel_attention_description">When claude finishes a reply or needs your answer</string>
     <string name="notification_turn_completed">claude finished a reply</string>
     <string name="notification_prompt">claude is waiting for your answer</string>
+    <!-- #933: the composer's attachment picker and strip. -->
+    <string name="cd_attach_files">Attach files</string>
+    <string name="cd_remove_attachment">Remove %1$s</string>
+    <string name="thread_attachment_file">File</string>
+    <string name="thread_attachments_sending">Sending</string>
+    <plurals name="thread_attachments_too_large">
+        <item quantity="one">%1$d file is over the 8 MB limit and was not added</item>
+        <item quantity="other">%1$d files are over the 8 MB limit and were not added</item>
+    </plurals>
+    <plurals name="thread_attachments_too_many">
+        <item quantity="one">%1$d file was not added: a message holds at most 32 files</item>
+        <item quantity="other">%1$d files were not added: a message holds at most 32 files</item>
+    </plurals>
 </resources>

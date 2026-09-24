@@ -461,6 +461,8 @@ internal fun PyryNavHost(
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
                 val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
+                val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
+                val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
@@ -508,6 +510,12 @@ internal fun PyryNavHost(
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
+                    // #933: the composer's attachment picker and strip, over the same per-chat draft store.
+                    attachments = pendingAttachments,
+                    attachmentsSending = attachmentsSending,
+                    onAttachmentsPicked = vm::addPickedAttachments,
+                    onRemoveAttachment = vm::removeAttachment,
+                    attachmentRefusals = vm.attachmentRefusals,
                     // #843: the tree row's re-pair route (#842), keyed by this destination's own host. The
                     // thread stays on the back stack beneath it, so Cancel returns to the cached history.
                     showRePair = rePairAvailable,
