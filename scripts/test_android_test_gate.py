@@ -96,8 +96,10 @@ class AndroidGateTest(unittest.TestCase):
         # #848: the floor is the curated list's size, so a method dropped from the list reddens the gate.
         script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
         live = script[script.index('elif [ -n "${LIVE}" ]; then\n  # LIVE curates'):]
-        target = live[live.index('TEST_TARGET="'):].split("\n", 1)[0]
-        self.assertEqual(gate.LIVE_MINIMUM, target.count("#interactiveTurn_"))
+        # The LIVE branch may build the list over several assignments, so count across all of them.
+        branch = live[: live.index("\nelse\n")]
+        targets = [line for line in branch.split("\n") if line.lstrip().startswith('TEST_TARGET="')]
+        self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))
             with self.assertRaises(ValueError):

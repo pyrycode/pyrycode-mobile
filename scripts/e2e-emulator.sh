@@ -6,7 +6,7 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated set of rung-3 scenarios (twenty methods, sixteen real claude turns — listed at the LIVE
+#     curated set of rung-3 scenarios (twenty-one methods, seventeen real claude turns — listed at the LIVE
 #     TEST_TARGET below) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
@@ -936,7 +936,7 @@ fi
 # running-tool label, 17 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
 # list-archive-entry arrival is pure navigation, and the two-host scenario (#847) is pairing, navigation,
 # rename and link cycling, none of them claude turns) via a comma-separated class list — the full class' #481 tool-use test would spend an extra turn, so it stays
-# excluded.
+# excluded. The #965 stop method is added on top, spending two turns: the stopped turn and its follow-up ping.
 if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
 elif [ -n "${LIVE}" ]; then
@@ -952,7 +952,14 @@ elif [ -n "${LIVE}" ]; then
   # list-archive-entry, two-host and the #545 model round trip spend none), passed as a comma-separated
   # class#method list. The class' #481 tool-use test stays excluded from LIVE for cost (it runs only in the
   # default whole-class rung-3 run).
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
+  # #977: the #687 operator-bypass method is out of the list below until #981 fixes the missing reply,
+  # so the list holds 20 methods and 15 turns for now. #981 puts it back and raises LIVE_MINIMUM to 21.
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
+  # #965: the stop method joins the list, so it holds 21 methods and 17 turns while #687 stays out.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain"
+  # #981: the thread now shows the allowed Read's reply, so the #687 operator-bypass method is back on top:
+  # 22 methods and 19 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
