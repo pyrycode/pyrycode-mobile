@@ -573,6 +573,19 @@ interface ConversationRepository {
     ): AttachmentFetchResult = error("fetchAttachment is not implemented for this ConversationRepository")
 
     /**
+     * Read [path] live from [conversationId]'s workspace over this repository's connection (#1049): one
+     * `read_workspace_file` per call, and the verified bytes in memory, or one [AttachmentRetrievalResult.Failed]
+     * with the same meanings as [fetchAttachment]'s. Nothing is cached or kept: two calls send two requests.
+     * [path] is sent as given; the daemon confines it. Never throws except on cancellation.
+     *
+     * Default throws, like [requestSystemPrompt].
+     */
+    suspend fun readWorkspaceFile(
+        conversationId: String,
+        path: String,
+    ): AttachmentFetchResult = error("readWorkspaceFile is not implemented for this ConversationRepository")
+
+    /**
      * The file [attachmentId] of [conversationId], kept in app-private storage for this repository's host
      * (#899). A file kept earlier is returned without sending anything; otherwise it is fetched once, however
      * many callers ask at the same time. The id may come from an offer or from an upload: the request is the
