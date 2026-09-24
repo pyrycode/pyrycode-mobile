@@ -184,7 +184,7 @@ val appModule =
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
         viewModel {
             val handle = get<SavedStateHandle>()
-            get<ThreadDestinationFactory>().thread(handle, get(), get(), get()).also { thread ->
+            get<ThreadDestinationFactory>().thread(handle, get(), get()).also { thread ->
                 // #877: the thread is what knows its conversation is being viewed. The view opens the
                 // conversation on its own host and holds it read until this view model is cleared.
                 val viewing =
@@ -235,6 +235,9 @@ fun hostConversationModule(
                 decorateRepository,
                 cache = if (useRelay) get() else null,
                 attachments = if (useRelay) get() else null,
+                // #932: resolved when a thread is built, not with the factory, so a container without a
+                // ContentResolver can still build the factory for its other destinations.
+                attachmentReader = inject(),
             )
         }
         // #877: one viewing tracker per app, shared by the thread destinations and the host source.
@@ -275,6 +278,7 @@ internal class ThreadDestinationFactory(
     private val decorateRepository: (ConversationRepository) -> ConversationRepository,
     private val cache: ConversationCache? = null,
     private val attachments: AttachmentStore? = null,
+    private val attachmentReader: Lazy<AttachmentReader>,
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -318,7 +322,6 @@ internal class ThreadDestinationFactory(
         // the `AppPreferences` that used to sit beside it: the thread's model and effort come from the
         // daemon's session settings now, and no other thread state reads a device preference.
         draftStore: ComposerDraftStore,
-        attachmentReader: AttachmentReader,
         // #686: the one exception — the remembered effort a successful write sets and an opening
         // recalls. It never touches `defaultEffort`. The demo host stays inert.
         preferences: AppPreferences,
@@ -328,7 +331,7 @@ internal class ThreadDestinationFactory(
         val repository = repository(serverId, bundle)
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
-            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore, attachmentReader = attachmentReader)
+            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore, attachmentReader = attachmentReader.value)
         }
         val connection =
             object : ConnectionStateSource {
@@ -360,7 +363,7 @@ internal class ThreadDestinationFactory(
             // #843: read through the registry by id, not off the captured bundle — a successful re-pair
             // replaces that bundle, and the thread must see the replacement to take the action away.
             pairingRejected = pairingRejected(registry.hostConnections, serverId),
-            attachmentReader = attachmentReader,
+            attachmentReader = attachmentReader.value,
             rememberedEffort = preferences.asRememberedEffortStore(),
         )
     }

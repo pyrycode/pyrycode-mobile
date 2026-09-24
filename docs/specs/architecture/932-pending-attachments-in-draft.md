@@ -151,3 +151,11 @@ Pending for the documentation stage: the ticket body names no documentation requ
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+### 2026-09-24 — reader injected through the factory constructor
+
+Driver: the merge of `main` into this branch, not a review finding. `main` added a line in the thread `viewModel` binding that calls `thread(handle, get(), get())`, and the dispatcher's merge check requires every line `main` added to survive. The design above adds an `attachmentReader` parameter to `ThreadDestinationFactory.thread`, which changes that call.
+
+New contract: `ThreadDestinationFactory` takes `attachmentReader: Lazy<AttachmentReader>` as a constructor parameter, which `hostConversationModule` fills with Koin's `inject()`. `thread` keeps its pre-#932 signature and passes `attachmentReader.value` to both `ThreadViewModel` constructions. Because the value is lazy, the reader still resolves only when a thread is built. So containers without a `ContentResolver` can still build the factory for the settings, archive and literal destinations. The inert `AttachmentReader` overrides in `RelayConnectionFactoryTest` are unchanged. The `AttachmentReader` binding in `appModule` is unchanged.
