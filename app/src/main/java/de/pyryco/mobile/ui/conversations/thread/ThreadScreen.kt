@@ -86,6 +86,8 @@ import de.pyryco.mobile.ui.conversations.components.UsageLimitIndicator
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -484,7 +486,19 @@ fun ThreadScreen(
                     LaunchedEffect(listState) {
                         snapshotFlow { newestRowKey }
                             .drop(1)
-                            .collect { if (!userScrolledAway) listState.scrollToItem(0) }
+                            .collect {
+                                if (!userScrolledAway) {
+                                    // A finger resting at the newest end holds the list at UserInput priority,
+                                    // which refuses this scroll with a CancellationException. Unlike the
+                                    // streaming pin, this effect never relaunches, so the refusal costs this one
+                                    // scroll only; a real cancellation of the effect still ends it.
+                                    try {
+                                        listState.scrollToItem(0)
+                                    } catch (e: CancellationException) {
+                                        ensureActive()
+                                    }
+                                }
+                            }
                     }
                     LazyColumn(
                         state = listState,

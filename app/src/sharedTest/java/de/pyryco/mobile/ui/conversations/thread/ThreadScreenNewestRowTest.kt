@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -66,6 +67,43 @@ class ThreadScreenNewestRowTest {
 
         composeRule.onNodeWithText("Row 30.").assertDoesNotExist()
         composeRule.onNodeWithText(REPLY, substring = true).assertDoesNotExist()
+    }
+
+    /**
+     * A finger resting at the newest end holds the list's scroll at `UserInput` priority with the yield
+     * flag cleared, so a row arriving then has its pin scroll refused. The refusal must cost that one
+     * scroll, not the pin: the next arrival after the finger lifts is followed again.
+     */
+    @Test
+    fun a_scroll_refused_under_a_resting_finger_does_not_stop_later_rows_being_followed() {
+        var state by mutableStateOf(threadState(rows(count = 30)))
+        setScreen { state }
+        val list = composeRule.onNode(hasScrollAction())
+        list.performTouchInput {
+            down(center)
+            repeat(10) { moveBy(Offset(0f, 150f)) }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Row 30.").assertDoesNotExist()
+        // The last move crosses the newest edge in one event, so the at-bottom reset is the flag's final
+        // write; further moves past the edge would set it again.
+        list.performTouchInput {
+            repeat(9) { moveBy(Offset(0f, -150f)) }
+            moveBy(Offset(0f, -600f))
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Row 30.").assertIsDisplayed()
+
+        composeRule.runOnIdle { state = state.copy(items = state.items + message("refused", "Refused row.", isStreaming = false)) }
+        composeRule.waitForIdle()
+        // The finger rests before lifting, so the lift carries no fling that would reveal the rows itself.
+        list.performTouchInput {
+            advanceEventTime(1_000)
+            up()
+        }
+        composeRule.runOnIdle { state = state.copy(items = state.items + message("reply", REPLY, isStreaming = false)) }
+
+        composeRule.onNodeWithText(REPLY).assertIsDisplayed()
     }
 
     /**
