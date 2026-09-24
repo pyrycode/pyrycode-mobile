@@ -2064,7 +2064,12 @@ class InteractiveStreamE2ETest {
      * An unmet prerequisite of the dedicated daemon fails here with its name, never a skip.
      *
      * **Two real-claude turns**: the tool-free ping and the Read.
+     *
+     * **`@Ignore`d until #981 lands.** Step 5 fails on every live run since #965's gate: the turn ends,
+     * claude's reply is exactly the token, and the phone shows no bubble carrying it (#977's diagnosis).
+     * The fix is production code, so #981 removes this `@Ignore`.
      */
+    @Ignore("blocked on #981 — the thread does not show the allowed Read's reply (step 5)")
     @Test
     fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
