@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -80,6 +81,10 @@ data class ThreadUiState(
     // #884: the Actions menu's commands this conversation's published slash-command menu proves absent,
     // greyed out in the menu.
     val absentActions: Set<ComposerAction> = emptySet(),
+    // #678: this conversation's background-task roster on the open host — `null` when nothing has been
+    // reported — and its live count (unfinished tasks plus dropped ones), which the Actions row shows.
+    val backgroundTasks: BackgroundTaskRoster? = null,
+    val backgroundTaskCount: Int = 0,
     // #885: this conversation's published slash commands, verbatim and in daemon order, or null while no
     // menu has been received. The composer's type-ahead reads them. They are workspace-authored, so they
     // reach the screen only through slashCommandOptions' inert display text, and a pick inserts the name.

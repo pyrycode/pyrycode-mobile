@@ -289,13 +289,17 @@ class FooterMenuTest {
         assertNull(runConfig.effortNote)
     }
 
-    // #884: the Actions menu is the three client-owned rows in order, and never a radio choice.
+    // #884: the Actions menu is the client-owned rows in order, and never a radio choice. #678 added the
+    // background-tasks row last, with the live count in its label.
     @Test
-    fun actions_listsTheThreeRowsInOrder_withNothingSelected() {
+    fun actions_listsTheRowsInOrder_withNothingSelected() {
         val menu = footerMenu(FooterControl.Actions, config())
 
-        assertEquals(listOf("Reset session", "Compact session", "Knowledge capture"), menu?.options?.map { it.label })
-        assertEquals(listOf("reset", "compact", "knowledge-capture"), menu?.options?.map { it.value })
+        assertEquals(
+            listOf("Reset session", "Compact session", "Knowledge capture", "Background tasks (0)"),
+            menu?.options?.map { it.label },
+        )
+        assertEquals(listOf("reset", "compact", "knowledge-capture", "background-tasks"), menu?.options?.map { it.value })
         assertTrue(menu?.options.orEmpty().all { it.enabled })
         assertEquals("", menu?.selectedValue)
         assertEquals(0, menu?.notListed)
@@ -307,7 +311,7 @@ class FooterMenuTest {
     fun actions_withoutMutations_omitsResetSession() {
         val menu = footerMenu(FooterControl.Actions, config(), mutationsSupported = false)
 
-        assertEquals(listOf("Compact session", "Knowledge capture"), menu?.options?.map { it.label })
+        assertEquals(listOf("Compact session", "Knowledge capture", "Background tasks (0)"), menu?.options?.map { it.label })
     }
 
     // #884: a command the published menu proves absent is greyed out, and the other rows are not.
@@ -315,7 +319,23 @@ class FooterMenuTest {
     fun actions_absentCommand_isDisabled_andTheOthersStayEnabled() {
         val menu = footerMenu(FooterControl.Actions, config(), absentActions = setOf(ComposerAction.CompactSession))
 
-        assertEquals(listOf(true, false, true), menu?.options?.map { it.enabled })
+        assertEquals(listOf(true, false, true, true), menu?.options?.map { it.enabled })
+    }
+
+    // #678: the background-tasks row carries the live count, and stays enabled when every command is absent.
+    @Test
+    fun actions_backgroundTasksRow_carriesTheCount_andStaysEnabled() {
+        val menu =
+            footerMenu(
+                FooterControl.Actions,
+                config(),
+                absentActions = setOf(ComposerAction.CompactSession, ComposerAction.KnowledgeCapture),
+                backgroundTaskCount = 3,
+            )
+        val row = menu?.options?.single { it.value == "background-tasks" }
+
+        assertEquals("Background tasks (3)", row?.label)
+        assertTrue(row?.enabled == true)
     }
 
     // #884: a command send needs no session to address and no idle run configuration.

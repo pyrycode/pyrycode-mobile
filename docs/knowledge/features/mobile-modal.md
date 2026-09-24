@@ -29,6 +29,11 @@ shell's private structure. Its first caller is the
 [#661](question-batch-modal.md) [`QuestionBatchModal`](question-batch-modal.md) is its second, adding the
 optional submit/sending/error parameters described below.
 
+Since [#678](#the-read-only-panel-mobilereadonlymodal), the same file also exposes
+[`MobileReadOnlyModal`](#the-read-only-panel-mobilereadonlymodal), a plain read-only variant of the editing
+shell with no submit action, sharing the same private `MobileModalShell`. Its first caller is
+[`BackgroundTaskPanel`](#callers).
+
 ## Caller contract
 
 ```kotlin
@@ -118,6 +123,27 @@ does not depend on a caller-owned string resource.
 the gate, absent on the plain shell — replacing what used to be a code-review-only guarantee. See
 [Permission-modal overlay § Security](permission-modal-overlay.md#security--the-render-time-obligations-deferred-to-this-surface)
 for the gate's own security rationale.
+
+## The read-only panel: `MobileReadOnlyModal`
+
+```kotlin
+@Composable
+internal fun MobileReadOnlyModal(
+    title: String,
+    closeLabel: String,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+)
+```
+
+Added in #678 for [`BackgroundTaskPanel`](#callers), the shell's third entry point — `MobileModal` calls
+`MobileModalShell` with its own Cancel/OK footer, `MobileGateModal` with a decision-gate footer, and this
+one with a footer of a single `ModalCancelButton(label = closeLabel, onClick = dismiss)`, all three on the
+same private `MobileModalShell(gate = false, error = null)` call for the two non-gate variants. The close
+glyph, that one footer button and Back all route to `onDismissRequest`, exactly as `MobileModal`'s Cancel
+does — there is no submit action, so a caller with nothing to send never inherits an unused OK button.
+Outside taps still do not dismiss, matching every other entry point on this shell.
 
 ## Layout and theme
 
@@ -377,3 +403,21 @@ draws its own gate call inline in `ThreadScreen.kt`, this caller is drawn direct
 beside `ThreadScreen` rather than inside it — `MobileGateModal` opens its own `Dialog` window, so its place
 in the composition tree does not affect what it draws over. See
 [Question batch modal](question-batch-modal.md) for the full caller contract.
+
+[`BackgroundTaskPanel`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/BackgroundTaskPanel.kt)
+(#678) is [`MobileReadOnlyModal`](#the-read-only-panel-mobilereadonlymodal)'s first and so far only caller.
+Unlike `PermissionModalOverlay` and `QuestionBatchModal`, which use `MobileGateModal`, it draws inside
+`ThreadScreen` itself, behind screen-local `remember(state.conversationId)` visibility the Actions menu's
+background-tasks row flips — see [Thread composer footer § Actions
+menu](thread-composer-footer.md#actions-menu-884) for the row and its live-count label, and [Thread screen —
+overlays § Background-tasks panel placement](thread-screen-how-it-works-overlays-and-app-bar.md#background-tasks-panel-placement-post-678)
+for where it mounts. It lists the open conversation's `BackgroundTaskRoster?` (#677) read-only: a different
+sentence for no report yet (`null`) and an empty roster, one row per task, a partial-list notice when
+`droppedTasks > 0`, and a "Truncated by the daemon" marker after each field the daemon's own
+`truncatedFields` names — the task's own list (`description`/`task_type`) and an update's own list
+(`patch`/`summary`) are read independently and never crossed. Every field is claude-authored and reaches
+only a plain `Text`: control characters are dropped and length is bounded at render
+(`MAX_PANEL_TEXT_CHARS = 4096`, above the daemon's own byte caps) before either list draws, and a field this
+client cuts for display is marked exactly like one the daemon cut — the marker means "this text was cut,"
+not "the daemon cut it." Closing the panel — any of the three routes above — sends nothing and changes no
+task or conversation state.
