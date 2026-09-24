@@ -569,6 +569,43 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, sessionFacts, null), facts)
         }
 
+    // ---- #945: observeContextUsage delegates, and a switch drops the previous connection's reading ------
+
+    // Absent reads as unavailable, never as a zero reading.
+    @Test
+    fun observeContextUsage_whileAbsent_emitsNull() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { facade.observeContextUsage("c1").collect { readings += it } }
+            runCurrent()
+
+            assertEquals(listOf<ContextUsage?>(null), readings)
+        }
+
+    @Test
+    fun observeContextUsage_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { facade.observeContextUsage("c1").collect { readings += it } }
+            runCurrent()
+
+            val reading = ContextUsage(totalTokens = 50_000, maxTokens = 200_000, percentage = 25, asOf = null)
+            repoA.pushContextUsage(reading)
+            runCurrent()
+            assertEquals(listOf(null, reading), readings)
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, reading, null), readings)
+        }
+
     // ---- #898: observeAttachmentOffers delegates and tracks connection churn ---------------------
 
     @Test
@@ -953,6 +990,14 @@ class StableConversationRepositoryTest {
         }
 
         override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFacts
+
+        private val contextUsage = MutableStateFlow<ContextUsage?>(null)
+
+        fun pushContextUsage(value: ContextUsage?) {
+            contextUsage.value = value
+        }
+
+        override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsage
 
         private val attachmentOffers = MutableStateFlow<List<AttachmentOffer>>(emptyList())
 
