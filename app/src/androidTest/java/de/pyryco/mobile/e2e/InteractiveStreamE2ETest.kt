@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.SystemClock
 import android.util.Log
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
@@ -47,6 +48,11 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ToolResultPayloadDto
+import de.pyryco.mobile.data.network.ToolUsePayloadDto
+import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -85,6 +91,9 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -642,7 +651,12 @@ class InteractiveStreamE2ETest {
      * turn moves on — the delimiter is a **durable** artifact that survives the turn, so it belongs in the
      * always-on gate, matching #481's durable tool-name row.
      *
-     * Real-claude cost: the ping turn plus the daemon's reset wrap-up turn when handoff notes are enabled.
+     * **The wrapping-up phase (#965).** Before the delimiter, the status area names the wrapping-up phase, and
+     * it clears once the reset is over. The daemon holds that phase for its whole wrap-up turn, which it runs
+     * for any live child whether or not handoff notes are stored. The restarting phase is not asserted: it
+     * lasts only the respawn, with nothing holding it open, so `ScriptedResettingTest` alone proves it.
+     *
+     * Real-claude cost: the ping turn plus the daemon's reset wrap-up turn.
      */
     @Test
     fun interactiveTurn_newSession_rendersSessionBoundaryDelimiter() {
@@ -680,7 +694,31 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
 
-        // 7. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
+        // 7. #965: the status area names the wrapping-up phase before any delimiter. The daemon lowers it only
+        //    once its wrap-up turn — a real claude turn writing the handoff note — has ended, so the phase is
+        //    held by that turn, not caught on timing. Restarting spans only the respawn and nothing holds it,
+        //    so it is left to ScriptedResettingTest.
+        val wrappingUp = string(R.string.thread_resetting_wrapping_up)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(wrappingUp)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
+            .assertCountEquals(0)
+
+        // 8. The phase clears: no resetting label of either phase is left in the status area.
+        val resettingLabels =
+            listOf(
+                R.string.thread_resetting_wrapping_up,
+                R.string.thread_resetting_restarting,
+                R.string.thread_resetting_restarting_written,
+                R.string.thread_resetting_restarting_skipped,
+            ).map(::string)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            resettingLabels.all { label -> composeTestRule.onAllNodes(hasContentDescription(label)).fetchSemanticsNodes().isEmpty() }
+        }
+
+        // 9. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
         //    before session_transition appends the delimiter. The explanation must still be displayed.
         composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
     }
@@ -1691,6 +1729,88 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * The composer's Stop control stops a real running turn, and the conversation carries on (#965, rung 3).
+     * The phone's own turn runs [STOP_HOLD_PROMPT]: a command that waits on an event nothing sets, so it
+     * never returns on its own and the turn stays open until it is stopped, with no timing involved. The
+     * command first raises a permission prompt, which the phone draws as a dialog over the composer; the
+     * [SecondClientPeer], paired with `--allow-remote-permissions`, allows it once so the dialog is gone and
+     * the Stop control is reachable the way an operator would reach it.
+     *
+     * After the tap the turn ends as cancelled (the peer's `turn_end`), the status area shows the Interrupted
+     * outcome, and a ping sent in the same thread gets claude's real reply. The held turn's reply token is
+     * never drawn, because the stopped turn never finished.
+     *
+     * **Two real-claude turns**: the stopped turn and the ping.
+     */
+    @Test
+    fun interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
+        try {
+            // 1. A fresh chat on the selected host, its id read off the host's repository as #849 does.
+            awaitChannelList()
+            awaitConnected()
+            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId =
+                runBlocking {
+                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+                }.single()
+
+            // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
+            //    the permission dialog leaves the composer.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            sendFromPhone(STOP_HOLD_PROMPT)
+            runBlocking {
+                val modalId = peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS)
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+            }
+
+            // 3. Tap the composer's Stop control once no dialog covers it.
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(modalCancel)).fetchSemanticsNodes().isEmpty() &&
+                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(stopControl).performClick()
+
+            // 4. AC-1: the turn ends as cancelled, the Stop control goes, and the status area says Interrupted.
+            val turnEnd = runBlocking { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
+            assertEquals(
+                "stopped turn's stop_reason",
+                "cancelled",
+                (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
+            )
+            val interrupted = hasContentDescription(string(R.string.thread_turn_outcome_interrupted), substring = true)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(interrupted).fetchSemanticsNodes().isNotEmpty() &&
+                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+            }
+
+            // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
+            //    conversation's second; the stopped turn's own reply was never drawn.
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            runBlocking { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
+            composeTestRule.onAllNodes(hasText(STOP_HOLD_REPLY, ignoreCase = true), useUnmergedTree = true).assertCountEquals(0)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
      * A loaded conversation stays readable offline and catches up on reconnect (#850, rung 3; the live
      * proof #795–#798 deferred). The phone loads a chat's history with one ping turn, then cuts its own
      * link to the host as [setHostLink] does. With the connection-scoped repository gone, readability can
@@ -2058,7 +2178,12 @@ class InteractiveStreamE2ETest {
      * An unmet prerequisite of the dedicated daemon fails here with its name, never a skip.
      *
      * **Two real-claude turns**: the tool-free ping and the Read.
+     *
+     * **`@Ignore`d until #981 lands.** Step 5 fails on every live run since #965's gate: the turn ends,
+     * claude's reply is exactly the token, and the phone shows no bubble carrying it (#977's diagnosis).
+     * The fix is production code, so #981 removes this `@Ignore`.
      */
+    @Ignore("blocked on #981 — the thread does not show the allowed Read's reply (step 5)")
     @Test
     fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -2126,17 +2251,34 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             sendFromPhone(prompt)
             awaitReadPrompt(tokenFile.substringAfterLast('/'))
+            // #977: the turn must end before the phone is judged, and a missing token says why.
+            val mark = peer.recorded(chat.id).size
             runBlocking {
                 val modalId = peer.awaitPermissionModal(chat.id, REPLY_TIMEOUT_MS)
                 peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
             }
+            val allowedAt = SystemClock.elapsedRealtime()
+            val turnEnd =
+                try {
+                    runBlocking { peer.awaitFrame(chat.id, "turn_end", REPLY_TIMEOUT_MS) }
+                } catch (e: TimeoutCancellationException) {
+                    throw AssertionError(
+                        "the allowed Read's turn never ended: no turn_end for the chat within $REPLY_TIMEOUT_MS ms of the allow",
+                        e,
+                    )
+                }
+            val endedAfterMs = SystemClock.elapsedRealtime() - allowedAt
             val reply = hasText(token, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
             try {
-                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.waitUntil(PHONE_TRAIL_MS) {
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
                 }
             } catch (e: ComposeTimeoutException) {
-                throw AssertionError("the allowed Read's reply never carried the file's token", e)
+                throw AssertionError(
+                    "the allowed Read's reply never carried the file's token: " +
+                        readReplyDiagnosis(peer.recorded(chat.id), mark, token, turnEnd, endedAfterMs),
+                    e,
+                )
             }
         } finally {
             peer.close()
@@ -2169,6 +2311,58 @@ class InteractiveStreamE2ETest {
             throw AssertionError("no permission prompt naming the Read appeared on the phone (prompts with Cancel: $shown)", e)
         }
     }
+
+    /**
+     * Why the ended Read turn left no token on the phone (#977): the phone's bubbles, the peer's [frames]
+     * for the chat (opened just before the Read was sent, so all of them are this turn's; the allow was
+     * sent at index [mark]), and the [turnEnd] that ended it [endedAfterMs] after the allow. Counts,
+     * booleans and the turn's bounded enum-like fields only; never bubble text, payload text or [token].
+     */
+    private fun readReplyDiagnosis(
+        frames: List<Envelope>,
+        mark: Int,
+        token: String,
+        turnEnd: Envelope,
+        endedAfterMs: Long,
+    ): String {
+        val bubbles =
+            composeTestRule
+                .onAllNodes(hasTestTag(MESSAGE_BUBBLE_TEST_TAG), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .map { it.textOfTree() }
+        val afterAllow = frames.drop(mark)
+        val readIds =
+            frames
+                .filter { it.type == "tool_use" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolUsePayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.name == "Read" }
+                .map { it.toolUseId }
+                .toSet()
+        val readResults =
+            frames
+                .filter { it.type == "tool_result" }
+                .map { runCatching { MobileJson.decodeFromJsonElement(ToolResultPayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it == null || it.toolUseId in readIds }
+        val readResultIsError =
+            when {
+                readResults.isEmpty() -> "absent"
+                readResults.any { it == null } -> "undecodable"
+                else -> readResults.map { it?.isError }.distinct().joinToString("/")
+            }
+        val end = runCatching { MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), turnEnd.payload) }.getOrNull()
+        val endFields =
+            end?.let { "stop_reason=${it.stopReason.inert()} outcome=${it.outcome.inert()} is_error=${it.isError}" }
+                ?: "turn_end undecodable"
+        return "bubbles=${bubbles.size} bubbleLengths=${bubbles.map { it.length }} " +
+            "anyBlocked=${bubbles.any { it.trim().equals(BLOCKED_REPLY, ignoreCase = true) }} " +
+            "readResultIsError=$readResultIsError $endFields endedAfterMs=$endedAfterMs " +
+            "peerFramesAfterAllow=${afterAllow.size} peerFramesWithToken=${afterAllow.any { token in it.payload.toString() }}"
+    }
+
+    /** The concatenated `Text` of this node and its descendants, in tree order. */
+    private fun SemanticsNode.textOfTree(): String =
+        config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString("") { it.text } +
+            children.joinToString("") { it.textOfTree() }
 
     /**
      * Poll fresh readings for [conversationId] on [serverId] until one reports [mode], and return it. The
@@ -3006,6 +3200,15 @@ class InteractiveStreamE2ETest {
         const val OFFLINE_REPLY = "pyryoffline"
         const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
 
+        // #965 stop scenario. The command waits on an event nothing sets, so only the phone's Stop (or, far
+        // outside the test's step, claude's own Bash timeout) ends it; no time value is involved. It is a
+        // `python3` command, so it needs permission, which the peer grants — see WAIT_PROMPT for why it is not
+        // a `sleep`. STOP_HOLD_REPLY is a token no other prompt asks for; neither text contains "ping".
+        const val STOP_HOLD_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, and without " +
+                "a timeout, then reply with exactly: pyryheld. Command: python3 -c \"import threading; threading.Event().wait()\""
+        const val STOP_HOLD_REPLY = "pyryheld"
+
         // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is
         // the common tail of all three scanner states' paste links — "Trouble scanning? Paste the pairing
         // code instead", "Paste the pairing code instead", "Paste code instead" — matched as a substring so
@@ -3077,6 +3280,11 @@ class InteractiveStreamE2ETest {
             "Use the Read tool once to read the file at %s, then reply with its exact contents and nothing else. " +
                 "Do not use any other tool. If the read is denied or fails, do not retry it and reply with the single word blocked."
         val READ_TOOL_WORD = Regex("""\bRead\b""")
+
+        // #977: the word the template asks for on a failed Read, and how long the phone may trail the
+        // peer's turn_end before the missing token is diagnosed.
+        const val BLOCKED_REPLY = "blocked"
+        const val PHONE_TRAIL_MS = 15_000L
 
         // How long a fresh reading may take to report a mode, how often it is re-asked, and how early a
         // settle may end and still count as having run its window.

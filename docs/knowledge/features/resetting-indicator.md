@@ -169,8 +169,13 @@ one rendered case.
   layer. The render-side mitigation is structural, not temporal: the composer and the interrupt control
   both stay live regardless, so the arm can mask only compaction, turn outcome and thinking (the three
   arms below it), never block interaction.
-- **Rung 2 only; live behaviour is [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)'s**, per
-  the ticket's acceptance criteria. `ScriptedResettingTest` drives the three-frame sequence
+- **Wrapping-up has live proof; restarting stays rung-2 only.**
+  [#965](https://github.com/pyrycode/pyrycode-mobile/issues/965) extended the curated `LIVE=1`
+  `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` to wait for the wrapping-up label live,
+  with the delimiter's explanation still absent, before every resetting label clears — causally held by
+  the daemon's own real-claude wrap-up turn, not raced on timing. The **restarting** phase spans only the
+  kill and respawn in the daemon's `startFreshRunner`, with no lever to hold it open against a real
+  daemon, so it stays proven only by `ScriptedResettingTest`, which drives the three-frame sequence
   (`wrapping_up`/`pending` → `restarting`/`written` → falling edge), the `skipped` outcome, a
   `session_transition` clear, the other-conversation case, and both ladder edges (wins over compaction and
   thinking; loses to api-retry) through the real `#871` repository fold. **Negative scoping assertions
