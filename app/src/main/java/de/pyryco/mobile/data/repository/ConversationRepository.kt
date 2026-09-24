@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -332,17 +333,20 @@ interface ConversationRepository {
     /**
      * [sendMessage] naming the uploaded attachments the message references (#830), each id once in the
      * caller's order, over the same connection and to the same conversation as the message. An empty
-     * [attachmentIds] sends exactly what the two-argument form sends. More than
+     * [attachments] sends exactly what the two-argument form sends. More than
      * [de.pyryco.mobile.data.network.MessageAttachmentIds.MAX] distinct ids throws
      * [IllegalArgumentException] before anything is sent. A daemon refusal such as `attachment.not_found`
      * fails as the two-argument send fails, and an `ack` adds the message to the thread as it does.
+     *
+     * Only each [MessageAttachment.attachmentId] goes on the wire. The name and MIME hints go only on the
+     * thread row the `ack` adds (#983), one reference per distinct id in caller order.
      *
      * Default throws, like [setSessionSettings], so the inline test doubles need no override.
      */
     suspend fun sendMessage(
         conversationId: String,
         text: String,
-        attachmentIds: List<String>,
+        attachments: List<MessageAttachment>,
     ): Message = error("sendMessage with attachments is not implemented for this ConversationRepository")
 
     /**

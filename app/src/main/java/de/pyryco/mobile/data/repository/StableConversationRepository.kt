@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -236,8 +237,8 @@ class StableConversationRepository(
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
-        attachmentIds: List<String>,
-    ): Message = live.sendMessage(conversationId, text, attachmentIds)
+        attachments: List<MessageAttachment>,
+    ): Message = live.sendMessage(conversationId, text, attachments)
 
     override suspend fun createWorkspaceFolder(name: String): String = live.createWorkspaceFolder(name)
 

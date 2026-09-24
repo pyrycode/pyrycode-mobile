@@ -45,7 +45,7 @@ interface ConversationRepository {
     suspend fun startNewSession(conversationId: String, workspace: String? = null): Session
     suspend fun changeWorkspace(conversationId: String, workspace: String): Session
     suspend fun sendMessage(conversationId: String, text: String): Message
-    suspend fun sendMessage(conversationId: String, text: String, attachmentIds: List<String>): Message =  // #830 — names uploaded attachment ids in caller order, deduped, capped by MessageAttachmentIds.MAX (32)
+    suspend fun sendMessage(conversationId: String, text: String, attachments: List<MessageAttachment>): Message =  // #830/#983 — only each MessageAttachment.attachmentId goes on the wire, in caller order, deduped, capped by MessageAttachmentIds.MAX (32); the confirmed row carries one reference per distinct id with the name/MIME hint used for the send
         error("sendMessage with attachments is not implemented for this ConversationRepository")
 
     fun recentWorkspaces(): Flow<List<String>> = flowOf(emptyList())
@@ -152,6 +152,8 @@ data class ContextUsage(  // #945 — return element of observeContextUsage; per
 
 data class AttachmentOffer(val attachmentId: String, val displayName: String)  // #898 — return element of observeAttachmentOffers; attachmentId is a validated lowercase UUIDv4, displayName is claude-authored even after cleaning — render as inert text only, never a path
 ```
+
+The first `AttachmentOffer` of each attachment id also becomes a `Message.attachments` thread row (#983), since the wire never replays `attachment_offered` and the thread cache is its only retention — see [Remote conversation repository § Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event).
 
 `QueuedMessage` (#460) is the element type of `observeQueue`'s return, **co-located with the interface** (like `ThreadItem` / `ConversationFilter` / `BoundaryReason`) rather than in `data/model/` — a contract's element type lives beside the contract, which also keeps the ktlint single-class-filename rule satisfied (the file already has multiple public top-level types) and avoids a needless extra file. `messageId: String = ""` (#781) is the daemon-relayed `send_message` client id (pyrycode#2092), added last and defaulted so the existing positional `QueuedMessage(1L, "…", t0)` preview literals in `QueuedBacklog` and `ThreadScreen` stay untouched. It is a correlation key only — compared for equality, never rendered, never a list key (client-chosen, unique nowhere), never logged — and `""` is the value meaning "correlates with nothing". See [Queued backlog](queued-backlog.md).
 

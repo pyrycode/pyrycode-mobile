@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -286,10 +287,10 @@ class ThreadViewModelAppliedEffortTest {
         override suspend fun sendMessage(
             conversationId: String,
             text: String,
-            attachmentIds: List<String>,
+            attachments: List<MessageAttachment>,
         ): Message {
             sentMessages++
-            return backing.sendMessage(conversationId, text, attachmentIds)
+            return backing.sendMessage(conversationId, text, attachments)
         }
 
         override suspend fun setSessionSettings(

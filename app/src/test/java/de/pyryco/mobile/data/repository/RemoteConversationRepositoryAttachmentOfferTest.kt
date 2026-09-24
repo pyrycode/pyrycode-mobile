@@ -1,5 +1,7 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.MessageAttachment
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
@@ -15,6 +17,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -61,6 +64,62 @@ class RemoteConversationRepositoryAttachmentOfferTest {
                 ),
                 offers,
             )
+        }
+
+    // #983: each offer is also an assistant-side thread row, so the thread cache can keep what the wire won't replay.
+    @Test
+    fun offers_becomeAssistantRowsInArrivalOrder_eachCarryingTheSanitisedName() =
+        runTest {
+            val (pump, repo) = repo()
+            val thread = collect(repo.observeMessages(CONV_A))
+            runCurrent()
+
+            pump.push(offered(CONV_A, FILE_1, "report\u202E.png", id = 1L))
+            runCurrent()
+            pump.push(offered(CONV_A, FILE_2, "data.csv", id = 2L))
+            runCurrent()
+
+            val rows = thread.last().map { (it as ThreadItem.MessageItem).message }
+            assertEquals(listOf("attachment-offer-$FILE_1", "attachment-offer-$FILE_2"), rows.map { it.id })
+            assertEquals(listOf(Role.Assistant, Role.Assistant), rows.map { it.role })
+            assertEquals(listOf("", ""), rows.map { it.content })
+            assertTrue(rows.none { it.isStreaming })
+            assertEquals(
+                listOf(listOf(MessageAttachment(FILE_1, "report.png")), listOf(MessageAttachment(FILE_2, "data.csv"))),
+                rows.map { it.attachments },
+            )
+        }
+
+    @Test
+    fun offers_aRepeatedAttachmentId_addsNoSecondRowAndKeepsTheFirstName() =
+        runTest {
+            val (pump, repo) = repo()
+            val thread = collect(repo.observeMessages(CONV_A))
+            runCurrent()
+
+            pump.push(offered(CONV_A, FILE_1, "first.png", id = 1L))
+            runCurrent()
+            pump.push(offered(CONV_A, FILE_1, "renamed.png", id = 2L))
+            runCurrent()
+
+            val row = (thread.last().single() as ThreadItem.MessageItem).message
+            assertEquals(listOf(MessageAttachment(FILE_1, "first.png")), row.attachments)
+        }
+
+    @Test
+    fun offers_rowOnlyInTheOfferedConversationsThread_andNotForADroppedFrame() =
+        runTest {
+            val (pump, repo) = repo()
+            val threadA = collect(repo.observeMessages(CONV_A))
+            val threadB = collect(repo.observeMessages(CONV_B))
+            runCurrent()
+
+            pump.push(offered(CONV_A, FILE_1.uppercase(), "bad-id.png", id = 1L))
+            pump.push(offered(CONV_B, FILE_2, "b.png", id = 2L))
+            runCurrent()
+
+            assertTrue(threadA.all { it.isEmpty() })
+            assertEquals(listOf("attachment-offer-$FILE_2"), threadB.last().map { (it as ThreadItem.MessageItem).message.id })
         }
 
     // One entry per attachment id: a re-announcement neither moves nor renames the first arrival, and

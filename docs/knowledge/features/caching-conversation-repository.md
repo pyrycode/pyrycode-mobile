@@ -62,21 +62,38 @@ bound, single-flight and failure handling; this file only covers the wiring.
 
 ## How the restore merges with live rows
 
-`observeMessages` reuses the one dedup the codebase already has for this shape —
-[`mergeHistoryRows`](remote-conversation-repository-reads-and-thread-store-history-paging.md)
-(`HistoryPageReducer.kt`) — from the other side of its usual direction. Paging normally prepends
-an *older* page onto what is on screen; here the
+`observeMessages` merges through
+[`mergeCachedRows`](remote-conversation-repository-reads-and-thread-store-history-paging.md)
+(`HistoryPageReducer.kt`), a sibling of the history walk's `mergeHistoryRows` built for this
+wrapper's own direction: paging normally prepends an *older* page onto what is on screen; here the
 restored rows are the older set and the live projection is the receiver:
 
 ```
-drawn = live.mergeHistoryRows(restored)
+drawn = live.mergeCachedRows(restored)
 ```
 
-One join key per row kind (`message_id` for a message, covering a `tool_use_id` and a `turn_id`;
-the `(previousSessionId, newSessionId)` pair for a boundary), and a prepend rather than a re-sort,
-because a thread is in arrival order by deliberate choice. Merging into an empty live projection
-returns the restored rows verbatim — the disconnected case needs no branch of its own, it falls
-out of the same merge that handles a reconnect.
+`mergeCachedRows` shares `mergeHistoryRows`'s join (`message_id` for a message, covering a
+`tool_use_id` and a `turn_id`; the `(previousSessionId, newSessionId, occurredAt)` triple for a
+boundary) and its [attachment-reference hint fill](remote-conversation-repository-reads-and-thread-store-history-paging.md),
+so a restored row the daemon re-delivers is never drawn twice and a sent row's names come back even
+when the live side's replayed copy has none. Merging into an empty live projection returns the
+restored rows verbatim — the disconnected case needs no branch of its own, it falls out of the same
+merge that handles a reconnect. Where it differs from `mergeHistoryRows`: a row *only* the cache
+holds does not always go to the front. It goes right after the live copy of the nearest cached row
+above it that the live side also holds, and only goes in front when it has no such anchor — the
+older rows a reconnect's newest page does not reach, or a page that does not overlap the cache at
+all. Several cache-only rows sharing one anchor keep their cached relative order.
+
+**Why a plain prepend broke on a row only the cache holds (PR #987, verifier rework).** An attachment
+offer (#983) is the first kind of row the daemon never replays — the cache is its only retention —
+so after a reconnect or a cold restart it is the one row in a turn the live side's newest page does
+not re-deliver. `mergeHistoryRows`'s `fresh + kept` puts every such row **above the whole live page**,
+not back beside the message that produced it: cache `[m1, a1, attachment-offer-X, a2]` under a fresh
+page `[m1, a1, a2]` drew `[attachment-offer-X, m1, a1, a2]`, and the write-when-changed rule then
+made that reordering permanent on disk. `mergeCachedRows` exists so this wrapper's restore, and only
+this wrapper's restore, can anchor a cache-only row where it belongs; the history walk keeps
+`mergeHistoryRows` and its skip-and-prepend unchanged, since that is the deliberate answer to the
+ask-versus-answer race its own KDoc describes, not a general rule about row position.
 
 The restored snapshot (`cache.readThread(serverId, conversationId)`) is read **once per
 collection**. A later failed read therefore cannot blank rows already drawn, and the read is the
@@ -105,7 +122,7 @@ var lastWritten = base
 var lastDrawn = base
 delegate.observeMessages(conversationId).collect { live ->
     if (live.isEmpty()) base = settledThreadRows(lastDrawn)
-    val drawn = live.mergeHistoryRows(base)
+    val drawn = live.mergeCachedRows(base)
     lastDrawn = drawn
     emit(drawn)
     val cacheable = cacheableThreadRows(drawn)
@@ -137,10 +154,10 @@ base can also carry a previous connection's `ThreadItem.UnrecognizedMessage` row
 (`RemoteConversationRepository.unrecognizedRowId`) is a per-connection counter
 (`"unrecognized-<n>"`). That id's KDoc assumes no reader ever observes rows from two connection
 instances merged — an assumption the rebase breaks. After a reconnect, the new connection's first
-unrecognized frame can collide on id with a rebased row from the old connection, and
-`mergeHistoryRows` drops the older one in its usual fail-safe direction. The only effect is an
-earlier diagnostic row silently disappearing; this cannot produce a duplicate key or a crash.
-Deferred, not fixed.
+unrecognized frame can collide on id with a rebased row from the old connection, and the merge
+(`mergeCachedRows` since #983, `mergeHistoryRows` before it — both share the same `alreadyHolds` join)
+drops the older one in its usual fail-safe direction. The only effect is an earlier diagnostic row
+silently disappearing; this cannot produce a duplicate key or a crash. Deferred, not fixed.
 
 ## What is written, and when
 
@@ -268,7 +285,16 @@ JVM unit tests against a fake `ConversationCache` and a `MutableStateFlow`-backe
 - **a reconnect after a disconnect merges over everything drawn so far** — covers the connection
   that follows a rebase;
 - non-thread flows are pure delegation (e.g. `observeStall` / `observeQueue` untouched by the
-  cache).
+  cache);
+- **a cold restore keeps a cache-only row in place (#983):** cache `[m1, a1, offer, a2]` under a
+  live page `[m1, a1, a2]` draws, and writes back, `[m1, a1, offer, a2]` — both the drawn thread and
+  the cache write-back are asserted, since the write-when-changed rule would otherwise persist the
+  regression it was written to catch;
+- an empty-then-page reconnect (disconnect, then a fresh page) keeps the same anchoring;
+- a cache-only row with no anchor above it (an older row a newest page does not reach) still goes in
+  front, matching the pre-#983 behaviour for that case;
+- a sent row's names, dropped by the live side's history-replayed copy, come back through the cache
+  merge's hint fill.
 
 Six further cases (#798), added on a real `FileConversationCache` (`TemporaryFolder`) so "the rest is
 readable" is proved against the real hashed-directory layout rather than a fake: a permanent delete
@@ -304,7 +330,11 @@ per the dispatcher gate on PR #837's re-review.
   wrapper's rebase depends on
 - [Remote conversation repository — reads and thread store history
   paging](remote-conversation-repository-reads-and-thread-store-history-paging.md) —
-  `mergeHistoryRows`, the one dedup this restore reuses from the other side
+  `mergeHistoryRows` and `mergeCachedRows`, the join and hint fill this restore shares with the
+  history walk, and where the two merges' position rules diverge
+- [Remote conversation repository § Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event) —
+  `AttachmentOfferProjection`, the source of the cache-only offer row `mergeCachedRows` exists to keep
+  in place (#983)
 - [Dependency injection](dependency-injection.md) — `ThreadDestinationFactory.repository` wiring,
   `decorateRepository`, and the `useRelay` cache/attachments gates
 - [Attachment retrieval](attachment-retrieval.md) (#899) — `AttachmentStore`, the host-keyed store this

@@ -66,9 +66,17 @@ data class Message(
     val isStreaming: Boolean,
     /** Non-null iff [role] is [Role.Tool]. */
     val toolCall: ToolCall? = null,
+    /** The files this message references (#983): sent, replayed from history, or offered. */
+    val attachments: List<MessageAttachment> = emptyList(),
 )
 
 enum class Role { User, Assistant, Tool }
+
+data class MessageAttachment(
+    val attachmentId: String,
+    val displayName: String? = null,
+    val mimeType: String? = null,
+)   // #983 — toString() prints only attachmentId
 
 enum class ToolCallStatus { Running, Done, Failed, Denied }   // Denied: #811
 
@@ -96,6 +104,8 @@ data class ToolCall(
 
 `elapsedSeconds` (#812) is claude's latest `tool_progress` reading, retained **verbatim** — zero, negative and non-monotonic values included, no clamping or subtraction. It is non-null only while `status == Running`: closing the row (`Done`, `Failed`, or `Denied`) clears it, and a `tool_progress` for a row that is not `Running` is ignored. `null` does not mean the call is stalled — a call can finish before claude's first heartbeat, and a later frame can be lost independently of the lifecycle frames — so absence is never timing evidence. Formatting and display are [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658)'s; see [`live-tool-call.md` § Progress](live-tool-call.md#progress-812).
 
+`attachments` (#983) names the files a message references: one entry per file the operator sent with it (in send order), per id a replayed `send_message` named (in wire order, names unset), or the one file an `attachment_offered` row carries. It is **trailing defaulted** (`emptyList()`), the same cascade-avoidance lever as `toolCall`. `MessageAttachment.attachmentId` is the id to fetch the bytes by; `displayName`/`mimeType` are hints, `null` when not known (a bare history reference) and `""` when known but cleaned to nothing (an offer whose name sanitized empty) — the same three-state convention as everywhere else in this model that "unknown" and "known-empty" are distinct. **Both hints are untrusted display text even after cleaning through `attachmentDisplayName`** (a local file's name is authored by whichever app supplied the document, exactly as an offer's name is authored by claude): render as inert text only, never a path, a cache key, a log field, or a handler choice. `MessageAttachment.toString()` omits both hints so an accidental log call cannot leak one. See [Attachment upload](attachment-upload.md) and [Remote conversation repository — send, create, promote, rename](remote-conversation-repository-send-create-promote-rename.md) (§ Naming a message's attachments) for the send path, [Remote conversation repository — reads and thread store history paging](remote-conversation-repository-reads-and-thread-store-history-paging.md) for history reduction, and [Remote conversation repository § Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event) for the offer row `AttachmentOfferProjection` appends.
+
 ## Why `kotlinx.datetime.Instant`
 
 CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. `java.time.Instant` is JVM-only; `kotlinx.datetime.Instant` works on every Kotlin target. The data layer must stay portable, so every timestamp in this package uses the kotlinx type. See `../decisions/0001-kotlinx-datetime-for-data-layer.md`.
@@ -117,7 +127,7 @@ CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. 
 ## Related
 
 - Ticket notes: `../codebase/2.md` (skeleton), `../codebase/191.md` (`Message.toolCall: ToolCall? = null` + new `ToolCall(toolName, input, output)` type), `../codebase/387.md` (`ToolCallStatus` + the `status` field — live tool-call correlation)
-- Feature: [`live-tool-call.md`](live-tool-call.md) (#387 — the correlation + status model; #811 — `Denied` + `ToolDenial`; #812 — `elapsedSeconds`)
-- Spec: `docs/specs/architecture/2-conversation-session-message-data-classes.md`, `docs/specs/architecture/191-tool-message-structured-payload.md`, `docs/specs/architecture/720-retain-workspace-labels.md` (`workspaceLabel` retention)
+- Feature: [`live-tool-call.md`](live-tool-call.md) (#387 — the correlation + status model; #811 — `Denied` + `ToolDenial`; #812 — `elapsedSeconds`); [`attachment-upload.md`](attachment-upload.md) and [`remote-conversation-repository-send-create-promote-rename.md`](remote-conversation-repository-send-create-promote-rename.md) (#983 — `Message.attachments` / `MessageAttachment`)
+- Spec: `docs/specs/architecture/2-conversation-session-message-data-classes.md`, `docs/specs/architecture/191-tool-message-structured-payload.md`, `docs/specs/architecture/720-retain-workspace-labels.md` (`workspaceLabel` retention), `docs/specs/architecture/983-message-attachment-references.md` (`Message.attachments` + `MessageAttachment`)
 - Decision: `../decisions/0001-kotlinx-datetime-for-data-layer.md`
 - Downstream: `conversation-repository.md` (#3 contract — also propagates `toolCall` through `SeedMessage`/`seedMsg(...)` since #191), conversation list + thread UI (the eventual `ToolCallRow` consumer in #131).

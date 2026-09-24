@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -112,6 +113,51 @@ class FileConversationCacheThreadTest {
             assertTrue(cache().writeThread("server-a", "conv-1", rows).isSuccess)
 
             assertEquals(rows, cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `attachment references round-trip with ids names and mime hints unchanged`() =
+        runTest {
+            fun withAttachments(
+                row: ThreadItem.MessageItem,
+                content: String,
+                vararg attachments: MessageAttachment,
+            ) = row.copy(message = row.message.copy(content = content, attachments = attachments.toList()))
+            val rows =
+                listOf(
+                    // Sent: every hint known, one of them an unusual but legal name.
+                    withAttachments(
+                        message("sent", role = Role.User),
+                        "two files",
+                        MessageAttachment(ID_A, "photo \"1\".jpg", "image/jpeg"),
+                        MessageAttachment(ID_B, "notes.txt", "text/plain"),
+                    ),
+                    // Attachment-only history row: ids with no hints.
+                    withAttachments(message("history", role = Role.User), "", MessageAttachment(ID_A), MessageAttachment(ID_B)),
+                    // Offer row: a name, known empty, and no MIME.
+                    withAttachments(message("attachment-offer-$ID_A"), "", MessageAttachment(ID_A, "", null)),
+                    message("plain"),
+                )
+            assertTrue(cache().writeThread("server-a", "conv-1", rows).isSuccess)
+
+            assertEquals(rows, cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a thread document written before attachment references still loads`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            val document = threadFiles().single()
+            // The pre-#983 record shape, verbatim: no attachments key at all.
+            document.writeText(
+                """{"version":1,"rows":[{"message":{"id":"m0","sessionId":"session-1","role":"User","content":"hi",""" +
+                    """"timestamp":"2026-09-22T10:11:12.123456789Z"}}]}""",
+            )
+
+            val restored = cache().readThread("server-a", "conv-1")
+
+            val expected = message("m0", role = Role.User).let { it.copy(message = it.message.copy(content = "hi")) }
+            assertEquals(listOf(expected), restored)
         }
 
     @Test
@@ -375,4 +421,9 @@ class FileConversationCacheThreadTest {
             isPromoted = true,
             lastUsedAt = Instant.parse("2026-09-22T10:11:12Z"),
         )
+
+    private companion object {
+        const val ID_A = "0f4c8a52-3d1e-4b7a-9c6d-2e5f8a1b3c4d"
+        const val ID_B = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+    }
 }

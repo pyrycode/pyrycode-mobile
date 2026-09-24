@@ -52,6 +52,32 @@ stored `ts`. Skipping this would stamp a replayed tool call with the moment it w
 the moment it happened — and nothing would fail to prove it, since thread order is arrival order and
 never a timestamp sort (see `withToolUse`'s KDoc in the reducer file).
 
+**A stored `send_message` reduces its `attachment_ids` to nameless references (#983).** The
+`TYPE_SEND_MESSAGE` arm builds `attachments = dto.attachmentIds.orEmpty().filter(::isAttachmentIdShape)
+.distinct().take(MessageAttachmentIds.MAX).map { MessageAttachment(it) }` — the same id-shape check and
+the same `MAX = 32` bound the send path enforces, reused here against a daemon that could otherwise replay
+a stored entry naming thousands of ids or a key-colliding list. A `null`/empty `attachment_ids` yields
+`emptyList()`, so a text-only entry reduces exactly as it did before this ticket, and an id that fails the
+shape check is dropped silently while the rest of the entry — its text and its other ids — is kept, the
+same fail-open posture every other per-entry decode failure in this reducer already has. These references
+carry no name or MIME hint: the wire's `attachment_ids` is bare ids, so `displayName`/`mimeType` stay
+`null` until a merge (below) fills them from a twin that has one.
+
+**A `message_id` join now also fills a missing attachment hint from its twin, in both merge
+directions (#983).** `mergeHistoryRows` and [`mergeCachedRows`](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)
+share one hint-fill, `withAttachmentHintsFrom`: when a kept `MessageItem` has a reference with a `null`
+`displayName`/`mimeType` and a twin sharing the same `message_id` and the same `attachmentId` carries one,
+the kept row adopts it — position and every other row untouched, and the function returns `this` verbatim
+when nothing needs filling. It never overwrites a hint the kept row already has, so a replayed history row
+can never rename a file the operator sent. Both directions need this because the two entries a `message_id`
+join can encounter have opposite hint availability: the **history walk** joins a local echo (has names,
+from `ThreadViewModel`'s own send) against a page row for the same send (has none, per the paragraph
+above) — the echo already keeps its names via the existing skip-and-prepend, so this direction is a no-op
+in practice. The **cache merge** is where it matters: after a reconnect, the live projection's row for a
+sent message comes back from `requestHistory`'s replay with no names (the same page-side reduction), while
+the cached twin still has them from before the disconnect — without the fill, a round-trip test against
+the cache alone would pass while the thread the screen actually draws loses its names.
+
 **A `HistoryEntry` reaches no `Envelope`, so `MessagePayloadDto.toMessage` gained a payload-level twin.**
 Five of the six per-type decode arms (`ToolUsePayloadDto.toEvent`, `ToolResultPayloadDto.toEvent`,
 `AssistantDeltaPayloadDto.toEvent`, `TurnEndPayloadDto.toEvent`, `UnrecognizedMessagePayloadDto.toRow`)

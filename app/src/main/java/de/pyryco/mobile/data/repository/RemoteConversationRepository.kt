@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
@@ -155,9 +156,6 @@ class RemoteConversationRepository(
     private val announcedModelProjection = AnnouncedModelProjection()
     private val sessionFactsProjection = SessionFactsProjection()
 
-    /** The files the daemon offered in each conversation on this connection (#898). */
-    private val attachmentOfferProjection = AttachmentOfferProjection()
-
     /**
      * The context-usage reading of every conversation (#945). [onInbound] hands it `context_usage` behind the
      * `interactive` gate and the `session_transition` clear. It sends nothing: see [ContextUsageProjection].
@@ -170,6 +168,12 @@ class RemoteConversationRepository(
      * `interactive` gate, and [sendMessage], [dropQueuedMessage] and [requestHistory] record into it.
      */
     private val threadProjection = ThreadProjection()
+
+    /**
+     * The files the daemon offered in each conversation on this connection (#898), each also appended to
+     * [threadProjection] as a row the first time it arrives (#983). Declared after it for that reason.
+     */
+    private val attachmentOfferProjection = AttachmentOfferProjection(threadProjection)
 
     /**
      * The model menu of every conversation (#913): the retained menus, the one-shot `request_model_list`
@@ -785,7 +789,8 @@ class RemoteConversationRepository(
                 // A file claude produced (#898): see [AttachmentOfferProjection.apply]. Deliberately NOT behind
                 // the `interactive` gate: the daemon delivers it to every attached client, outside the
                 // interactive family, like the upload leg's `attachment_stored`. The daemon routes nothing, so
-                // the projection filters on the payload's conversation_id. Not a thread row, no stall touched.
+                // the projection filters on the payload's conversation_id. A first offer of an id is also a
+                // thread row (#983); no stall touched.
                 attachmentOfferProjection.apply(envelope)
             TYPE_BACKGROUND_TASK_STARTED, TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER -> {
                 // Background work claude left running past its turn (#677): see [BackgroundTaskProjection.apply].
@@ -1093,12 +1098,12 @@ class RemoteConversationRepository(
         text: String,
     ): Message = messageCommands.sendMessage(conversationId, text)
 
-    /** The same send naming [attachmentIds] (#830); see [MessageCommands.sendMessage]. */
+    /** The same send naming [attachments] (#830, #983); see [MessageCommands.sendMessage]. */
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
-        attachmentIds: List<String>,
-    ): Message = messageCommands.sendMessage(conversationId, text, attachmentIds)
+        attachments: List<MessageAttachment>,
+    ): Message = messageCommands.sendMessage(conversationId, text, attachments)
 
     /** Upload [bytes] as `attachment_chunk` frames (#829); see [MessageCommands.uploadAttachment]. */
     override suspend fun uploadAttachment(

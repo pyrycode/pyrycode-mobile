@@ -31,6 +31,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -38,6 +39,7 @@ import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
+import de.pyryco.mobile.data.network.MessageAttachmentIds
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModelRefusalFallbackPayloadDto
@@ -50,6 +52,7 @@ import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
+import de.pyryco.mobile.data.network.isAttachmentIdShape
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toEvent
@@ -329,7 +332,8 @@ private fun List<ThreadItem>.withHistoryEntry(
                 )
             // A stored inbound `send_message` — the operator's own turn, which the live lane never
             // echoes back (the ack carries nothing), so the log is its only retention. `role` is not a
-            // wire field on this payload: the sender is the operator by construction.
+            // wire field on this payload: the sender is the operator by construction. Its `attachment_ids`
+            // become references with no hints (#983): the wire names no file for them.
             TYPE_SEND_MESSAGE ->
                 MobileJson.decodeFromJsonElement<SendMessagePayloadDto>(entry.payload).let { dto ->
                     withMessage(
@@ -340,6 +344,7 @@ private fun List<ThreadItem>.withHistoryEntry(
                             content = dto.text,
                             timestamp = entry.timestamp,
                             isStreaming = false,
+                            attachments = storedAttachmentReferences(dto.attachmentIds),
                         ),
                     )
                 }
@@ -445,6 +450,20 @@ private fun List<ThreadItem>.withHistoryEntry(
     }
 
 /**
+ * The references a stored `send_message` names (#983), in wire order: every id that is not the published
+ * lowercase-UUIDv4 shape is dropped and the rest kept, a repeat keeps its first position, and at most
+ * [MessageAttachmentIds.MAX] survive, the bound the daemon enforced on the send. A replayed entry is not
+ * re-validated by the daemon, so this is the only check between it and the thread.
+ */
+private fun storedAttachmentReferences(ids: List<String>?): List<MessageAttachment> =
+    ids
+        .orEmpty()
+        .filter(::isAttachmentIdShape)
+        .distinct()
+        .take(MessageAttachmentIds.MAX)
+        .map { MessageAttachment(it) }
+
+/**
  * Decode one turn-scoped structured entry to its typed [LiveSessionEvent] through the **same** per-type
  * DTO + `toEvent()` arms the live lane uses. Throws on a malformed payload; the single `try` in
  * [withHistoryEntry] owns the drop, exactly as `onInbound`'s arms own theirs.
@@ -495,7 +514,9 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  *
  * A duplicate is **skipped, not merged in place.** The only overlap a walk can produce is the narrow
  * ask-versus-answer race the protocol names, and in that window the live lane owns the newer state and
- * will finish the row itself; updating in place would also break the existing rows' relative order.
+ * will finish the row itself; updating in place would also break the existing rows' relative order. The
+ * one exception is an attachment reference's missing hints, which a skipped twin fills without moving
+ * anything (#983, see [withAttachmentHintsFrom]).
  *
  * Never joins a [HistoryEntry.id] to an `event_id` — they are different sequences that both look like
  * small integers, and neither appears here at all.
@@ -503,7 +524,84 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
 internal fun List<ThreadItem>.mergeHistoryRows(rows: List<ThreadItem>): List<ThreadItem> {
     if (rows.isEmpty()) return this
     val fresh = rows.filterNot { alreadyHolds(it) }
-    return if (fresh.isEmpty()) this else fresh + this
+    val kept = withAttachmentHintsFrom(rows)
+    return if (fresh.isEmpty()) kept else fresh + kept
+}
+
+/**
+ * Put [cached] — the thread cache's rows — under this live thread (#797), keeping each row only the cache
+ * holds beside its neighbours (#983).
+ *
+ * The join and the hint fill are [mergeHistoryRows]'s. What differs is where a cache-only row goes: after
+ * the live copy of the nearest row above it in [cached] that this thread holds, or in front of everything
+ * when there is no such row — the older rows a reconnect's newest page does not reach, and every row when
+ * the page does not overlap the cache at all. An attachment offer needs this: the daemon never replays it,
+ * so after a reconnect or a restart it is a cache-only row in the middle of a page the live side re-delivers,
+ * and a prepend would move the file above the message that asked for it, then write that order back.
+ *
+ * The history walk keeps [mergeHistoryRows]: its skip-and-prepend is the deliberate answer to the
+ * ask-versus-answer race described there.
+ */
+internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<ThreadItem> {
+    if (cached.isEmpty()) return this
+    val kept = withAttachmentHintsFrom(cached)
+    val leading = mutableListOf<ThreadItem>()
+    val anchored = mutableMapOf<Int, MutableList<ThreadItem>>()
+    var anchor = -1
+    for (row in cached) {
+        val held = indexOfFirst { listOf(it).alreadyHolds(row) }
+        when {
+            held >= 0 -> anchor = held
+            anchor < 0 -> leading += row
+            else -> anchored.getOrPut(anchor) { mutableListOf() } += row
+        }
+    }
+    if (leading.isEmpty() && anchored.isEmpty()) return kept
+    return buildList {
+        addAll(leading)
+        kept.forEachIndexed { index, row ->
+            add(row)
+            anchored[index]?.let(::addAll)
+        }
+    }
+}
+
+/**
+ * This thread with each attachment reference's missing hints filled from a skipped twin (#983), or this very
+ * list when there is nothing to fill. A twin is a message in [rows] with the same `message_id`; a hint is
+ * taken only from its reference with the same attachment id, and only where this thread's hint is `null`, so
+ * a known name is never replaced. Rows keep their positions.
+ *
+ * The merge runs in both directions, which is why this is needed: a history page merged into a thread
+ * holding the local echo finds nothing to fill, but the cache's rows merged under a reconnected live
+ * thread — whose copy of a sent message came back from history without names — give those names back.
+ */
+private fun List<ThreadItem>.withAttachmentHintsFrom(rows: List<ThreadItem>): List<ThreadItem> {
+    val twins =
+        rows
+            .filterIsInstance<ThreadItem.MessageItem>()
+            .filter { it.message.attachments.isNotEmpty() }
+            .associate { it.message.id to it.message.attachments }
+    if (twins.isEmpty()) return this
+    var changed = false
+    val filled =
+        map { row ->
+            val twin = (row as? ThreadItem.MessageItem)?.let { twins[it.message.id] } ?: return@map row
+            val attachments = row.message.attachments.map { it.withHintsFrom(twin) }
+            if (attachments == row.message.attachments) {
+                row
+            } else {
+                changed = true
+                ThreadItem.MessageItem(row.message.copy(attachments = attachments))
+            }
+        }
+    return if (changed) filled else this
+}
+
+private fun MessageAttachment.withHintsFrom(twin: List<MessageAttachment>): MessageAttachment {
+    if (displayName != null && mimeType != null) return this
+    val source = twin.firstOrNull { it.attachmentId == attachmentId } ?: return this
+    return copy(displayName = displayName ?: source.displayName, mimeType = mimeType ?: source.mimeType)
 }
 
 private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
