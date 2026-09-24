@@ -133,7 +133,7 @@ code until something claims it — flagged in review as worth a follow-up to eit
 record what still keeps it alive. If you're looking for the live control, it's the button in
 [`ThreadInputBar`](thread-input-bar.md#the-message-input-button--one-control-two-actions), not this file.
 
-The flag + action reach `ThreadScreen` as **defaulted** hoisted params, sibling to `isThinking`/`isStalled` — this part is unchanged by #643:
+The flag + action reach `ThreadScreen` as **defaulted** hoisted params, sibling to `isThinking` (and, until [#883](../../specs/architecture/883-retire-literal-screen.md) retired it, `isStalled`) — this part is unchanged by #643:
 
 - **`ThreadScreen`** has `isBusy: Boolean = false` and `onInterrupt: () -> Unit = {}` as defaulted
   parameters (`ThreadScreen.kt:123-124`, unchanged in position since #459). Defaults keep the in-file
@@ -141,7 +141,7 @@ The flag + action reach `ThreadScreen` as **defaulted** hoisted params, sibling 
   #643 changed which composable inside `ThreadScreen` receives them (`ThreadInputBar` instead of
   `InterruptAffordance`), not the parameters themselves.
 - **`MainActivity`** collects `val isBusy by vm.isBusy.collectAsStateWithLifecycle()` in the thread route
-  (beside `isThinking`/`isStalled`) and passes `isBusy = isBusy` + `onInterrupt = vm::onInterrupt`. The
+  (beside `isThinking`) and passes `isBusy = isBusy` + `onInterrupt = vm::onInterrupt`. The
   `vm::onInterrupt` bound method-ref is recomposition-stable (the `onModalCancel = vm::onModalCancel`
   idiom).
 - **No DI change** — `interrupt = coordinator::interrupt` was already wired into the VM factory in #458.
@@ -242,8 +242,8 @@ Test-first, mirroring the `isThinking` coverage.
   ([#406](../codebase/406.md)) — `isThinking`, the `thinking`-only flag `isBusy` mirrors and broadens.
 - Component template + foot-of-list sibling: [Thinking indicator](thinking-indicator.md)
   ([#407](../codebase/407.md)). Other foot/transient affordances:
-  [Stall promotion banner](stall-promotion-banner.md) ([#396](../codebase/396.md)),
   [Queued backlog section](queued-backlog-section.md) ([#461](../codebase/461.md)/[#467](../codebase/467.md)).
+  The stall promotion banner ([#396](../codebase/396.md)) was another until [#883](../../specs/architecture/883-retire-literal-screen.md) retired it.
 - Upstream seam: [Live-session events](live-session-events.md) ([#385](../codebase/385.md)) →
   [Relay repository coordinator](relay-repository-coordinator.md) `liveSessionEvents`.
 - Host: [Thread screen](thread-screen.md) — `isBusy` is the fifth hoisted sibling `StateFlow`. Until

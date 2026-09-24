@@ -44,18 +44,19 @@ Declared in `ThreadUiState.kt` with the other thread state types; until the 2026
 
 ## What it does
 
-Renders one M3 `DropdownMenu` containing the five common `DropdownMenuItem`s, wrapped by two mutually-exclusive context-aware items ([#204](../codebase/204.md)) and preceded by the unconditional **Show the literal screen** item ([#382](../codebase/382.md)). Each item's `onClick` calls `onDismiss()` **before** its action — `onEvent(ThreadEvent.X)`, or `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (install-memory-plugin), or `onShowLiteralScreen()` (show-literal-screen):
+Renders one M3 `DropdownMenu` containing the five common `DropdownMenuItem`s, wrapped by two mutually-exclusive context-aware items ([#204](../codebase/204.md)). Each item's `onClick` calls `onDismiss()` **before** its action — `onEvent(ThreadEvent.X)`, or `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (install-memory-plugin):
 
 | Order             | When                | String resource                            | Label              | Side effect                                                |
 | ----------------- | ------------------- | ------------------------------------------ | ------------------ | ---------------------------------------------------------- |
-| 1 (always)        | —                   | `R.string.thread_overflow_show_literal_screen` | Show the literal screen | `onShowLiteralScreen()` (no event — pure navigation, #382) |
-| 2 (discussion)    | `!isPromoted`       | `R.string.save_as_channel_action`          | Save as channel…   | `onEvent(ThreadEvent.SaveAsChannel)`                       |
-| 3 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_new_session`     | Reset session      | `onEvent(ThreadEvent.NewSession)`                          |
-| 4 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_rename`          | Rename             | `onEvent(ThreadEvent.Rename)`                              |
-| 5 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_change_workspace`| Change workspace…  | `onEvent(ThreadEvent.ChangeWorkspace)`                     |
-| 6 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_archive`         | Archive            | `onEvent(ThreadEvent.Archive)`                             |
-| 7 (always)        | —                   | `R.string.thread_overflow_channel_info`    | Channel info       | `onEvent(ThreadEvent.ChannelInfo)`                         |
-| 8 (channel)       | `isPromoted`        | `R.string.thread_overflow_install_memory_plugin` | Install memory plugin | `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (no event)    |
+| 1 (discussion)    | `!isPromoted`       | `R.string.save_as_channel_action`          | Save as channel…   | `onEvent(ThreadEvent.SaveAsChannel)`                       |
+| 2 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_new_session`     | Reset session      | `onEvent(ThreadEvent.NewSession)`                          |
+| 3 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_rename`          | Rename             | `onEvent(ThreadEvent.Rename)`                              |
+| 4 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_change_workspace`| Change workspace…  | `onEvent(ThreadEvent.ChangeWorkspace)`                     |
+| 5 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_archive`         | Archive            | `onEvent(ThreadEvent.Archive)`                             |
+| 6 (always)        | —                   | `R.string.thread_overflow_channel_info`    | Channel info       | `onEvent(ThreadEvent.ChannelInfo)`                         |
+| 7 (channel)       | `isPromoted`        | `R.string.thread_overflow_install_memory_plugin` | Install memory plugin | `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (no event)    |
+
+[#382](../codebase/382.md) had added an eighth, leading, unconditional **Show the literal screen** item, purely navigating via `onShowLiteralScreen()`. [#883](../../specs/architecture/883-retire-literal-screen.md) removed it along with the server-side render path it opened; the table above reflects the current, post-#883 order.
 
 The four mutation items — Reset session, Rename, Change workspace…, Archive
 (orders 3–6) — share `if (mutationsSupported)`. Both the remote repository and the
@@ -64,13 +65,13 @@ is not a reset prerequisite.
 
 With mutations supported, the final orders are:
 
-- **Discussion:** Show the literal screen → Save as channel… → Reset session → Rename → Change workspace… → Archive → Channel info.
-- **Channel:** Show the literal screen → Reset session → Rename → Change workspace… → Archive → Channel info → Install memory plugin.
+- **Discussion:** Save as channel… → Reset session → Rename → Change workspace… → Archive → Channel info.
+- **Channel:** Reset session → Rename → Change workspace… → Archive → Channel info → Install memory plugin.
 
 When `mutationsSupported == false`, the four mutation items are hidden; the other
 items retain their order.
 
-The **Show the literal screen** item is an unconditional `DropdownMenuItem` at the **top** of the `DropdownMenu` body, before the conditionals; the two context-aware items render as two `if` blocks below it — `if (!isPromoted) { ... }` prepended; `if (isPromoted) { ... }` appended. A `when (isPromoted)` over the entire menu body was considered and rejected — it would either duplicate the five common items in both branches or collapse to the same `if` pair around two extra items, and the `if`-pair shape directly expresses the AC wording ([per-ticket rationale](../codebase/204.md#patterns-established)).
+The two context-aware items render as two `if` blocks around the five common items — `if (!isPromoted) { ... }` prepended; `if (isPromoted) { ... }` appended. A `when (isPromoted)` over the entire menu body was considered and rejected — it would either duplicate the five common items in both branches or collapse to the same `if` pair around two extra items, and the `if`-pair shape directly expresses the AC wording ([per-ticket rationale](../codebase/204.md#patterns-established)).
 
 **`save_as_channel_action` is reused, not duplicated** ([#204](../codebase/204.md)). The same `strings.xml:11` key serves [`DiscussionListScreen`](discussion-list-screen.md)'s long-press promote menu ([#25](../codebase/25.md)) and this menu's first item — same English copy, same semantic action, one localization entry.
 

@@ -22,9 +22,9 @@ parked, gone the moment delivery removes it from the next snapshot.
 The signal it renders is still the **data half** — [`observeQueue(conversationId)`](queued-backlog.md)
 ([#460](../codebase/460.md)), surfaced onto [`ThreadViewModel`'s `ThreadUiState.queuedMessages`](thread-screen-how-it-works-state.md).
 This component still adds **no data access** and **no new data path** — the fold and the row together are
-the render-after-decode consumer, the same relationship `ThinkingIndicator` (#407) and
-`StallPromotionBanner` (#396) have to their own signals, except the queue rides `ThreadUiState` rather
-than a sibling `StateFlow` (see [Wiring](#wiring)).
+the render-after-decode consumer, the same relationship `ThinkingIndicator` (#407) has to its own signal
+(and the stall promotion banner, #396, had to its own before [#883](../../specs/architecture/883-retire-literal-screen.md)
+retired it), except the queue rides `ThreadUiState` rather than a sibling `StateFlow` (see [Wiring](#wiring)).
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`QueuedMessageRow.kt`, the promoted row) and
 `de.pyryco.mobile.ui.conversations.thread` (`ThreadRow.kt`, the fold — both under
@@ -206,7 +206,8 @@ Why this is the right seam, and what it changes about the list the row now sits 
 ## Wiring
 
 The queue is still threaded as a **`ThreadUiState` field** — **not** a sibling `StateFlow` like
-[`isStalled`](stall-promotion-banner.md) / `isThinking`. #782 does not change this: the fold reads two
+`isThinking` (or, before [#883](../../specs/architecture/883-retire-literal-screen.md) retired it,
+[`isStalled`](stall-state.md)). #782 does not change this: the fold reads two
 already-hoisted `ThreadUiState` fields and produces rows the screen renders; no new `ViewModel` state, no
 new constructor param.
 
@@ -311,9 +312,9 @@ matches nothing this device minted (renders after the thread rows, unmatched).
   consumed from there directly — see [Constants](#constants) above).
 - Fold twin: `pyrycode-desktop`'s `foldQueuedRows.ts` (its #1214) — the same five-rule correlation
   contract, authored so the two clients agree on one join.
-- Render twins (same signal shape, opposite hoisting decision): [Thinking indicator](thinking-indicator.md)
-  (#407 — foot-of-list, sibling `StateFlow`), [Stall promotion banner](stall-promotion-banner.md) (#396 —
-  top banner, sibling `StateFlow`).
+- Render twin (same signal shape, opposite hoisting decision): [Thinking indicator](thinking-indicator.md)
+  (#407 — foot-of-list, sibling `StateFlow`). The stall promotion banner (#396 — top banner, sibling
+  `StateFlow`) was another until [#883](../../specs/architecture/883-retire-literal-screen.md) retired it.
 - Parent: split from [#429](https://github.com/pyrycode/pyrycode-mobile/issues/429); epic pyrycode#597
   Phase 3. Drop loop **complete** since [#466](../codebase/466.md)/[#467](../codebase/467.md); #782 fixed
   the double-draw without changing the drop loop itself.
