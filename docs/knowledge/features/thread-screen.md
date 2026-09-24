@@ -112,6 +112,48 @@ Unsent composer text is owned by `ComposerDraftStore` ([#789](https://github.com
 
 Both draft evictions are synchronous `MutableStateFlow.update` calls with no coroutine of their own; `ThreadViewModel.draft` picks up an eviction the same way it picks up any other emission, and a `StateFlow` dropping equal consecutive values means evicting one host's bucket cannot recompose another host's composer. No log line on either path carries draft text — a draft is private message content, and neither `ObservablePairedServerStore` nor `ComposerDraftStore` is a `data class`, so a bound `onHostRemoved` receiver can't render into a crash trace via a generated `toString()`.
 
+### Composer pending attachments
+
+Beside the text map, `ComposerDraftStore` keeps a second `(serverId, conversationId)`-keyed map of
+`PendingAttachment` entries ([#932](https://github.com/pyrycode/pyrycode-mobile/issues/932)) — a content
+URI plus display name, MIME type, size and, once uploaded, an acknowledged id. Same nesting, same
+"empty entries and buckets are absent" rule, same eviction: `clearHost` / `clearConversation` drop a
+pair's attachments together with its text (see § Composer draft ownership above).
+`ThreadViewModel.pendingAttachments` mirrors `draft`'s shape — mapped from the store, seeded
+synchronously, `Eagerly`. `addAttachment` refuses an entry over `AttachmentUploadLimit.MAX_BYTES` or one
+that would push the pair past `MessageAttachmentIds.MAX` (32), checked inside the store's own
+`update {}` so two concurrent adds can't both pass at 31.
+
+`sendMessage` snapshots the pair's attachment list at tap time. An entry that already carries an
+`attachmentId` is skipped; the rest are read through `AttachmentReader` — bytes only at send time, one
+file's at once, the store itself never holds file bytes — and uploaded via
+[`ConversationRepository.uploadAttachment`](attachment-upload.md), in order. Any read or upload failure
+stops the send: text and every entry stay, and ids already acknowledged are kept so a retry does not
+re-upload them. On success `uploadAttachment`'s ids are named to `sendMessage`, then text and the sent
+snapshot's attachments clear together — an entry added after the snapshot survives, the same
+"the message is what was tapped" guarantee the text draft's in-flight guard already gives.
+
+**Reading a content URI is a trust boundary.** `ContentResolver.openInputStream` opens `file://`,
+`android.resource://` and this app's own non-exported providers with the app's identity, so a URI handed
+back by another app's picker could otherwise make the app upload its own private files.
+`ContentResolverAttachmentReader.isForeignContentUri` refuses everything but a `content` URI whose
+provider authority is neither this app's package nor a dotted sub-authority of it, checked before the
+resolver is touched. `Uri.getAuthority()` keeps a `userId@` prefix — the form a pick from another Android
+profile carries — and the resolver strips that prefix before choosing a provider, so comparing the raw
+authority against the package name let `content://0@de.pyryco.mobile.fileprovider/…` through as
+"foreign". The guard compares `authority.substringAfterLast('@')` instead, which still accepts a
+genuinely foreign authority behind a user-id prefix.
+
+`AttachmentReader` is bound as a `Lazy<AttachmentReader>` constructor parameter on
+`ThreadDestinationFactory`, not resolved eagerly — the real reader needs `androidContext()`, and several
+test containers build the factory without one. Resolving lazily means only a container that actually
+builds a thread destination pays for it; one that does (`NotificationTapNavigationTest`,
+`LiteralScreenNavigationTest`) must bind an inert `AttachmentReader { AttachmentRead.Unreadable }`, the
+posture `RelayConnectionFactoryTest` already used for its own inert override.
+
+This is a data path only — no picker, no attachment strip yet. See
+[Attachment upload](attachment-upload.md) for the upload/send contract it wires into.
+
 ## Configuration
 
 - **Dependencies:** no new entries. `ConversationRepository` was already on classpath; `kotlinx.coroutines.flow.stateIn` rides in via the existing `kotlinx-coroutines-core` (catalog: `libs.coroutines.core`). No `gradle/libs.versions.toml` edits.

@@ -1,9 +1,12 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.network.MessageAttachmentIds
+import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Unsent composer text, held per `(serverId, conversationId)` pair for the life of the app process
@@ -27,9 +30,21 @@ import kotlinx.coroutines.flow.update
  *
  * **Never logged.** A draft is private user message content. Nothing here logs, and no draft text may
  * reach a log line, an exception message or a crash report.
+ *
+ * **Pending attachments (#932)** ride beside the text under the same pair key, in their own map with
+ * the same rules: exact-pair isolation, in memory only, empty entries and buckets absent, every write a
+ * compare-and-set [update]. They hold URIs and metadata ([PendingAttachment]), never file bytes, and
+ * [clearHost] / [clearConversation] drop them together with the text.
  */
 class ComposerDraftStore {
     private val _drafts = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
+
+    private val _attachments = MutableStateFlow<Map<String, Map<String, List<PendingAttachment>>>>(emptyMap())
+
+    private val nextAttachmentKey = AtomicLong()
+
+    /** Every live pair's pending attachments, host to conversation to entries in the order added. */
+    val attachments: StateFlow<Map<String, Map<String, List<PendingAttachment>>>> = _attachments.asStateFlow()
 
     /** Every live draft, host to conversation to exact text. Empty entries and buckets are absent. */
     val drafts: StateFlow<Map<String, Map<String, String>>> = _drafts.asStateFlow()
@@ -83,6 +98,7 @@ class ComposerDraftStore {
      */
     fun clearHost(serverId: String) {
         _drafts.update { it - serverId }
+        _attachments.update { it - serverId }
     }
 
     /**
@@ -97,5 +113,101 @@ class ComposerDraftStore {
         conversationId: String,
     ) {
         setDraft(serverId, conversationId, "")
+        editAttachments(serverId, conversationId) { emptyList() }
+    }
+
+    /** This pair's pending attachments in the order added, or empty when it has none (#932). */
+    fun attachmentsFor(
+        serverId: String,
+        conversationId: String,
+    ): List<PendingAttachment> = _attachments.value[serverId]?.get(conversationId).orEmpty()
+
+    /**
+     * Append a pending attachment to this pair's draft (#932), unless it is refused.
+     *
+     * [AttachmentAddOutcome.TOO_LARGE] when [size] is known and over [AttachmentUploadLimit.MAX_BYTES];
+     * an unknown size is accepted, because the read at send time bounds the bytes anyway.
+     * [AttachmentAddOutcome.TOO_MANY] when the pair already holds [MessageAttachmentIds.MAX] entries. The
+     * count is checked inside the [update] lambda, so two concurrent adds at one below the limit cannot
+     * both land. The provider's name and type are clamped by [clampProviderText].
+     */
+    fun addAttachment(
+        serverId: String,
+        conversationId: String,
+        uri: String,
+        displayName: String,
+        mimeType: String,
+        size: Long?,
+    ): AttachmentAddOutcome {
+        if (size != null && size > AttachmentUploadLimit.MAX_BYTES) return AttachmentAddOutcome.TOO_LARGE
+        val entry =
+            PendingAttachment(
+                key = nextAttachmentKey.incrementAndGet(),
+                uri = uri,
+                displayName = clampProviderText(displayName),
+                mimeType = clampProviderText(mimeType),
+                size = size,
+            )
+        var outcome = AttachmentAddOutcome.ADDED
+        editAttachments(serverId, conversationId) { current ->
+            if (current.size >= MessageAttachmentIds.MAX) {
+                outcome = AttachmentAddOutcome.TOO_MANY
+                current
+            } else {
+                outcome = AttachmentAddOutcome.ADDED
+                current + entry
+            }
+        }
+        return outcome
+    }
+
+    /** Drop the entry [key] from this pair's draft (#932), the rest kept in order. Unknown is a no-op. */
+    fun removeAttachment(
+        serverId: String,
+        conversationId: String,
+        key: Long,
+    ) {
+        removeAttachments(serverId, conversationId, setOf(key))
+    }
+
+    /**
+     * Drop exactly the entries named by [keys] (#932) — the post-send clear. Entries added while a send
+     * was in flight are not in its snapshot, so they survive it.
+     */
+    fun removeAttachments(
+        serverId: String,
+        conversationId: String,
+        keys: Set<Long>,
+    ) {
+        editAttachments(serverId, conversationId) { current -> current.filterNot { it.key in keys } }
+    }
+
+    /**
+     * Record that the daemon acknowledged entry [key]'s upload as [attachmentId] (#932), so a retry after
+     * a later failure names it instead of uploading it again. An entry that is gone stays gone.
+     */
+    fun markUploaded(
+        serverId: String,
+        conversationId: String,
+        key: Long,
+        attachmentId: String,
+    ) {
+        editAttachments(serverId, conversationId) { current ->
+            current.map { if (it.key == key) it.copy(attachmentId = attachmentId) else it }
+        }
+    }
+
+    /** Rewrite one pair's list through [update], dropping the entry and host bucket once they are empty. */
+    private fun editAttachments(
+        serverId: String,
+        conversationId: String,
+        edit: (List<PendingAttachment>) -> List<PendingAttachment>,
+    ) {
+        _attachments.update { hosts ->
+            val conversations = hosts[serverId].orEmpty()
+            val updated = edit(conversations[conversationId].orEmpty())
+            val next = if (updated.isEmpty()) conversations - conversationId else conversations + (conversationId to updated)
+            if (next.isEmpty()) hosts - serverId else hosts + (serverId to next)
+        }
     }
 }
