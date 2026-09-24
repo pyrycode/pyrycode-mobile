@@ -324,12 +324,19 @@ private fun List<ThreadItem>.withHistoryEntry(
 ): List<ThreadItem> =
     try {
         when (entry.type) {
+            // A user turn the daemon logged itself, the peer's among them, names its files as a send does
+            // (#1020). The ids mean something only on a user turn, so an assistant row never takes them.
             TYPE_MESSAGE ->
-                withMessage(
-                    MobileJson
-                        .decodeFromJsonElement<MessagePayloadDto>(entry.payload)
-                        .toMessage(timestamp = entry.timestamp, sessionId = ""),
-                )
+                MobileJson.decodeFromJsonElement<MessagePayloadDto>(entry.payload).let { dto ->
+                    val message = dto.toMessage(timestamp = entry.timestamp, sessionId = "")
+                    withMessage(
+                        if (message.role == Role.User) {
+                            message.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
+                        } else {
+                            message
+                        },
+                    )
+                }
             // A stored inbound `send_message` — the operator's own turn, which the live lane never
             // echoes back (the ack carries nothing), so the log is its only retention. `role` is not a
             // wire field on this payload: the sender is the operator by construction. Its `attachment_ids`
@@ -450,7 +457,7 @@ private fun List<ThreadItem>.withHistoryEntry(
     }
 
 /**
- * The references a stored `send_message` names (#983), in wire order: every id that is not the published
+ * The references a stored user turn names, a `send_message` (#983) or a user `message` (#1020), in wire order: every id that is not the published
  * lowercase-UUIDv4 shape is dropped and the rest kept, a repeat keeps its first position, and at most
  * [MessageAttachmentIds.MAX] survive, the bound the daemon enforced on the send. A replayed entry is not
  * re-validated by the daemon, so this is the only check between it and the thread.
