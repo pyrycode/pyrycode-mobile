@@ -9,6 +9,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.BuildConfig
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
@@ -87,6 +88,9 @@ val appModule =
         // excluded from both paths by definition, keeping the cache exactly as transferable as the
         // credentials it belongs to. ConversationCacheBindingInstrumentedTest holds this.
         single<ConversationCache> { FileConversationCache(File(androidContext().noBackupFilesDir, "conversations")) }
+        // #899: retrieved attachments, kept per host under noBackupFilesDir for the reason above. A `single`
+        // because its one-fetch-per-file bookkeeping is per instance.
+        single { AttachmentStore(File(androidContext().noBackupFilesDir, "attachments")) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
         // #790: a removed pairing takes its host's unsent composer text with it, and (#798) its cached
         // conversation content. Bound here rather than in the unpair controller so neither screen that
@@ -218,7 +222,17 @@ fun hostConversationModule(
 ): Module =
     module {
         // #797: the demo branch resolves no cache, as HostConversationSource's does below.
-        single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository, cache = if (useRelay) get() else null) }
+        single {
+            ThreadDestinationFactory(
+                useRelay,
+                get(),
+                get(),
+                get(),
+                decorateRepository,
+                cache = if (useRelay) get() else null,
+                attachments = if (useRelay) get() else null,
+            )
+        }
         // #877: one viewing tracker per app, shared by the thread destinations and the host source.
         single { ConversationViewing() }
         single {
@@ -256,6 +270,7 @@ internal class ThreadDestinationFactory(
     private val store: PairedServerCollectionStore,
     private val decorateRepository: (ConversationRepository) -> ConversationRepository,
     private val cache: ConversationCache? = null,
+    private val attachments: AttachmentStore? = null,
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -288,7 +303,7 @@ internal class ThreadDestinationFactory(
             // (E2eTestApplication's TappingConversationRepository) observes the restored thread too. A
             // blank owner gets no cache, so no rows are ever filed under the empty id.
             decorateRepository(
-                if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId) else stable,
+                if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId, attachments) else stable,
             )
         }
 

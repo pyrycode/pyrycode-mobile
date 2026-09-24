@@ -6,12 +6,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
@@ -26,6 +28,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -36,6 +39,7 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.EDIT_CHAT_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostReconnectTestTag
@@ -761,6 +765,114 @@ class ChannelListScreenTest {
 
         state.value = state.value.copy(chatEditor = openChat(saving = true))
         composeTestRule.onNode(archive).assertIsNotEnabled()
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun workspaceRowPencil_inBothSections_namesItsWorkspace_andOpensItsOwnHostAndCwdWithoutFolding() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                chats = listOf(conversation("d1", "bravo chat", "/w/two", false)),
+            ),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                chats = listOf(conversation("d2", "charlie chat", "/w/two", false)),
+            ),
+        )
+
+        val one = hasContentDescription(string(R.string.cd_tree_workspace_edit, "one"))
+        composeTestRule.onAllNodes(one).assertCountEquals(1)
+        composeTestRule
+            .onNode(one)
+            .assertWidthIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(48.dp)
+            .performClick()
+        // The pencil's own node took the tap: the workspace's conversation is still drawn, nothing folded.
+        composeTestRule.onNode(hasText("alpha channel")).assertExists()
+
+        // Two hosts show a workspace called "two"; each pencil addresses its own host.
+        val two = hasContentDescription(string(R.string.cd_tree_workspace_edit, "two"))
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("charlie chat"))
+        composeTestRule.onAllNodes(two).assertCountEquals(2)
+        composeTestRule.onAllNodes(two)[1].performClick()
+        composeTestRule.onNode(hasText("charlie chat")).assertExists()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.TreeWorkspaceEditTapped("pyrybox", "/w/one"),
+                ChannelListEvent.TreeWorkspaceEditTapped("macbook", "/w/two"),
+            ),
+            events,
+        )
+    }
+
+    private fun openWorkspace(
+        confirmingArchive: Boolean = false,
+        failed: Boolean = false,
+        archiveFailed: Boolean = false,
+    ) = WorkspaceEditorState(
+        serverId = "pyrybox",
+        cwd = "/w/two",
+        initialName = "two",
+        confirmingArchive = confirmingArchive,
+        failed = failed,
+        archiveFailed = archiveFailed,
+    )
+
+    @Test
+    fun editWorkspaceModal_isSeeded_reportsTheNameAndTheArchiveSteps() {
+        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), workspaceEditor = openWorkspace()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).assertTextContains("two")
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).performTextReplacement("  Renamed  ")
+        composeTestRule.onNode(hasText("OK")).performClick()
+        composeTestRule.onNode(hasText(string(R.string.edit_workspace_archive))).performScrollTo().performClick()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+
+        state.value = state.value.copy(workspaceEditor = openWorkspace(confirmingArchive = true))
+        composeTestRule.onNode(hasText(string(R.string.edit_workspace_archive_confirm_body, "two"))).assertIsDisplayed()
+        composeTestRule.onNode(hasText("OK")).performClick()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.WorkspaceEditNameSubmitted("Renamed"),
+                ChannelListEvent.WorkspaceArchiveRequested,
+                ChannelListEvent.WorkspaceEditDismissed,
+                ChannelListEvent.WorkspaceArchiveConfirmed,
+                ChannelListEvent.WorkspaceArchiveDeclined,
+            ),
+            events,
+        )
+    }
+
+    @Test
+    fun editWorkspaceModal_failuresAreStaticAndTheTypedNameSurvives_andOkFollowsItsOwnHost() {
+        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), workspaceEditor = openWorkspace()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).performTextReplacement("Typed")
+
+        state.value = state.value.copy(workspaceEditor = openWorkspace(failed = true))
+        composeTestRule.onNode(hasText(string(R.string.edit_workspace_save_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).assertTextContains("Typed")
+
+        state.value = state.value.copy(hosts = listOf(chatHost(PyrycodeLinkStatus.Down)))
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).assertTextContains("Typed")
+
+        state.value =
+            HostChannelListState(listOf(chatHost()), workspaceEditor = openWorkspace(confirmingArchive = true, archiveFailed = true))
+        composeTestRule.onNode(hasText(string(R.string.edit_workspace_archive_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(string(R.string.edit_workspace_save_failed))).assertCountEquals(0)
         assertTrue(events.isEmpty())
     }
 

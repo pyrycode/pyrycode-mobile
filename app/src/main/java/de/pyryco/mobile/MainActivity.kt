@@ -392,6 +392,12 @@ internal fun PyryNavHost(
                         is ChannelListEvent.AddWorkspaceFolderCreateRequested -> vm.createAddWorkspaceFolder(event.name)
                         ChannelListEvent.AddWorkspaceSubmitted -> vm.submitAddWorkspace()
                         ChannelListEvent.AddWorkspaceDismissed -> vm.dismissAddWorkspace()
+                        is ChannelListEvent.TreeWorkspaceEditTapped -> vm.openWorkspaceEditor(event.serverId, event.cwd)
+                        is ChannelListEvent.WorkspaceEditNameSubmitted -> vm.submitWorkspaceName(event.name)
+                        ChannelListEvent.WorkspaceEditDismissed -> vm.dismissWorkspaceEditor()
+                        ChannelListEvent.WorkspaceArchiveRequested -> vm.requestWorkspaceArchive()
+                        ChannelListEvent.WorkspaceArchiveConfirmed -> vm.confirmWorkspaceArchive()
+                        ChannelListEvent.WorkspaceArchiveDeclined -> vm.declineWorkspaceArchive()
                     }
                 },
             )
