@@ -2704,6 +2704,7 @@ class InteractiveStreamE2ETest {
         val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
         val ruleActivity = composeTestRule.activity
         val peer = runningToolPeer()
+        var held: Pair<String, String>? = null
         try {
             cancelAlerts()
             // 1. A named chat with a real turn held on a permission prompt, while the phone is in front.
@@ -2715,12 +2716,14 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             sendFromPhone(RUNNING_TOOL_PROMPT)
             val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            held = chatId to modalId
             awaitPushRegistered(serverId, connectedAt)
 
             // 2. The app goes to the background; the turn ends while the phone is absent.
             val woke = sendAppToBackground(serverId)
             runBlocking {
                 peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                held = null
                 peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
             }
 
@@ -2739,6 +2742,15 @@ class InteractiveStreamE2ETest {
                 throw AssertionError("the alert's tap did not open the conversation's thread", e)
             }
         } finally {
+            // A failure before the allow must not leave a claude turn waiting on the prompt for later scenarios.
+            held?.let { (chatId, modalId) ->
+                runBlocking {
+                    runCatching {
+                        peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                        peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                    }
+                }
+            }
             peer.close()
             cancelAlerts()
             finishActivitiesBesides(ruleActivity)
@@ -2847,20 +2859,22 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Put another app's activity in front, as the operator does when leaving the app, and wait until the
-     * app's host link closes. The headless test image may have no launcher, so Home could be a no-op, but
-     * it always has Settings. `ActivityScenario.moveToState` would put an androidx.test activity in
-     * front, in this process, and the process would still count as started. Returns a flag that turns
-     * true once a wake reopens the link.
+     * Go Home, as the operator does when leaving the app, and wait until the app's host link closes. The
+     * `google-atd` image has a Home activity but no Settings activity. `ActivityScenario.moveToState`
+     * would put an androidx.test activity in front, in this process, and the process would still count
+     * as started. Returns a flag that turns true once a wake reopens the link.
      */
     private fun sendAppToBackground(serverId: String): AtomicBoolean {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("am start -W -a android.settings.SETTINGS")).use {
-            it.readBytes()
-        }
+        val home = "am start -W -a android.intent.action.MAIN -c android.intent.category.HOME"
+        val started =
+            ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(home)).use {
+                it.readBytes().decodeToString()
+            }
+        if (started.contains("Error")) throw AssertionError("Home did not start: $started")
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
         runBlocking { withTimeoutOrNull(CONNECT_TIMEOUT_MS) { bundle.coordinator.currentRepository.first { it == null } } }
-            ?: throw AssertionError("the app did not go to the background: its host link stayed open")
+            ?: throw AssertionError("the app did not go to the background: its host link stayed open ($started)")
         val woke = AtomicBoolean(false)
         CoroutineScope(Dispatchers.Default).launch {
             withTimeoutOrNull(PUSH_TIMEOUT_MS + WAIT_TURN_TIMEOUT_MS) {

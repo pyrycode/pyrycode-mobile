@@ -213,3 +213,21 @@ Pending for the documentation stage:
 AC1's chat is created and named through `answerChat` and opened with `openChatRow`, the #967 shape, rather
 than through `holdToolOnPermission` followed by a rename. This gives the same held prompt with one fewer
 step. `awaitPushRegistered` waits out a 32 s coalescing window, not 31 s, to allow for clock skew.
+
+**2026-09-24, rework after the live gate failed (5 of 29).**
+
+- **Background goes Home, not to Settings. This reverses Revision 1.** Both push scenarios failed with
+  "the app did not go to the background: its host link stayed open". On the `google-atd` AVD,
+  `am start -a android.settings.SETTINGS` returns `unable to resolve Intent`, because that image has no
+  Settings activity. It does have a Home activity, `com.android.fakesystemapp/.launcher.EmptyHomeActivity`.
+  `sendAppToBackground` now starts the HOME intent with `am start -W`. It fails at once, with the shell
+  output, when `am` reports an error, rather than discarding the output.
+  A throwaway instrumented probe on `pixel2Api33Atd` passed and was not committed. It showed that Home
+  moves `ProcessLifecycleOwner` below STARTED. It also showed that `NotificationTap.pendingIntent(...).send()`
+  from the backgrounded process brings the process back to STARTED, so a background activity start is
+  allowed under instrumentation.
+- **AC1 answers its held prompt on failure.** The `finally` block now allows the prompt and waits for
+  `turn_end` if the test failed before the peer allowed it, as AC2 already did. Otherwise a failed run
+  leaves a claude turn held on the daemon while the later scenarios run. The other three failures in that
+  run came after it: `reconnect_slashCommands`, `rememberedEffort` and `stopRunningTurn`. All three passed
+  on #1002's live run at 13:48 the same day.
