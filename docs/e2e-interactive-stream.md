@@ -565,12 +565,16 @@ inversions. It rides a new fixture, `SecondClientPeer` (`app/src/androidTest/...
 token — `peerToken`, minted on host A by `scripts/e2e-emulator.sh`'s `pair_token` alongside the existing
 two-host pairing, never logged. The peer's `PairedServerStore` and `DeviceStaticKeyStore` are
 file-private in-memory test doubles whose mutating members error, so the peer never writes the phone's
-credential store, host list or registry selection. A scenario opens one peer (`open()` — connect, await
-`TransportEvent.Up`, start the `NoiseSessionPump`, await `PumpState.Open`), sends through it
-(`sendMessage()` — a `send_message` envelope, awaiting the `ack` by `in_reply_to`), reads its frames
-(`awaitFrame()` — the first recorded envelope of a type naming the conversation id, findable even if it
-arrived before the wait began, since every inbound frame is recorded from `open()` onward), and closes it
-in `finally` (`close()` — tears down the pump's session keys and the transport; idempotent).
+credential store, host list or registry selection. A scenario opens one peer (`open()` — dial through a
+`RedialingLink` until a link *settles* by answering a `list_conversations` probe, and keep redialing
+automatically whenever the live link ends, the way the app's own supervisor does; hardened by #1036 after
+a fresh relay connection was found ending within about 50 ms of its handshake — see [Coverage —
+hardened](#follow-ups-to-ticket)), sends through it (`sendMessage()` — a `send_message` envelope, awaiting
+the `ack` by `in_reply_to`; never resent on a redial, since the daemon does not dedupe it), reads its
+frames (`awaitFrame()` — the first recorded envelope of a type naming the conversation id, findable even
+if it arrived before the wait began, since every inbound frame is recorded from `open()` onward, and a
+prompt the daemon re-sends to a new link is recorded only once), and closes it in `finally` (`close()` —
+stops redialing and tears down the live session's keys and transport; idempotent).
 
 The scenario: the phone creates a chat and resolves its id as the one not in a pre-create snapshot, then
 renames it to a run-unique name (`"e2e848-" + System.currentTimeMillis()`) **before** any message is
@@ -1635,6 +1639,16 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #1036 (2026-09-24):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/1036` at `f2e1ecc3b7` merged with
+  `origin/main` at `afc5b3cde4` (0 commits behind before the merge), executing all twenty-nine curated
+  scenarios: 27 passed outright, and 2 failed once then passed on an immediate re-run of the same merged
+  tree (nondeterministic, not attributed to this branch) — `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`,
+  this ticket's own target, and `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` (#1016's,
+  also seen flaking on #1016's own run below) — exit 0 on the re-run, wall clock 406.5s.
+  `interactiveTurn_peerStartedTurn_continuesOnPhone`, this ticket's other target, passed outright. The
+  gate's per-test XML carries no failure message text, so which wait `stopRunningTurn` hit on this run is
+  not established; see [Coverage — hardened](#follow-ups-to-ticket) for the fix and this run's caveat.
 - **LIVE verified for #1016 (2026-09-24):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/1016` at `c51aea6481` merged with
   `origin/main` at `31234eccda` (0 commits behind before the merge), against a daemon carrying
@@ -2020,6 +2034,36 @@ The remaining checks here are specific to a real relay or real Claude execution:
   same drop; reuse these helpers there if they flake. See [Relay repository coordinator § Edge cases /
   limitations](knowledge/features/relay-repository-coordinator.md#edge-cases--limitations) for the underlying
   contract.
+
+- **Coverage — hardened:** [#1036](https://github.com/pyrycode/pyrycode-mobile/issues/1036) fixed the
+  intermittent 30 s/90 s timeouts in `interactiveTurn_peerStartedTurn_continuesOnPhone` (#848) and
+  `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` (#965). The kept `daemon.log` from
+  #1029's own 2026-09-24T21:17Z gate run showed the `SecondClientPeer`'s relay connection closing 39–48 ms
+  after its handshake, with no `send_message` reaching the daemon; a #1021 gate run's kept log showed the
+  same silent-peer shape independently. This is the same drop
+  [#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039) tracks on the phone's own connections —
+  and the peer, unlike the app, never redialled: `SecondClientPeer.open` dialled
+  once, so a peer whose first link died stayed dead for the rest of the scenario. `SecondClientPeer` now
+  dials through a new `RedialingLink` (`app/src/sharedTest/.../e2e/RedialingLink.kt`, JVM-tested): a link
+  counts as up only once it answers a `list_conversations` probe, and a link that ends is redialled behind
+  the scenario's own timeout. `request_history`, the settle probe, and prompt answers (`modal_answer` /
+  `question_answer`, keyed by their `answer_token`, which the daemon deduplicates) resend on the
+  replacement link; `send_message` never does, because the daemon does not deduplicate it — a request that
+  is not safe to resend fails with a named `AssertionError` instead of a bare timeout. A prompt the daemon
+  re-sends to a new connection (`modal_shown` / `question_shown`, reconciled by the daemon on every new
+  interactive connection) is recorded once, so the existing "one prompt raised" counts stay true across a
+  redial. Both scenarios now name the peer step that timed out and the peer's link state
+  (`SecondClientPeer.linkState()`) instead of a bare `TimeoutCancellationException`; `hostConversationIds`
+  and the new `newHostConversationId` follow the host's own redial through `firstOnLive` (#1029's helper),
+  naming the phone-side read on a timeout. No assertion changed. **Known gap:** the peer sends no resume
+  cursor, so a `turn_end` that arrives while it is between links is not replayed — unobserved in any kept
+  log, and now surfaced as a named timeout rather than a silent one if it happens. The post-fix live gate
+  (2026-09-24) executed all 29 curated scenarios with `peerStartedTurn` passing outright; `stopRunningTurn`
+  failed once with no captured failure message and passed on an immediate re-run of the same merged tree,
+  so the dispatcher treated it as the suite's nondeterminism rather than this branch's — see [Verification
+  status](#verification-status) for the run. Whether that was the same closed-link race the fix targets or
+  a different wait is not established; a repeat should be read against `SecondClientPeer.linkState()` in
+  the failure message before assuming the old cause.
 
 - **Coverage — pending:** [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020) owns the daemon
   fix that lets a message's `attachment_ids` survive into history, which

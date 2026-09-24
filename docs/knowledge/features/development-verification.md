@@ -303,7 +303,10 @@ setup, not on the code under test (#824). Pass the `TestScope` as the owner scop
 `PreferenceDataStoreFactory.create(scope = backgroundScope, ...)` in a test (#953): its write actor
 never ran under `advanceUntilIdle()`, so a read straight after saw the old value. Give the store its
 own `CoroutineScope(StandardTestDispatcher(testScheduler) + Job())` instead and cancel it at the end —
-see [Push messaging service § Testing](push-messaging-service.md#testing) for the full case. More
+see [Push messaging service § Testing](push-messaging-service.md#testing) for the full case. A third
+instance: `RedialingLinkTest` (#1036) supervises its redial loop in `backgroundScope` by default, so a
+case that needs the loop to have redialed drives `advanceTimeBy(...)` past the backoff plus
+`runCurrent()`, not `advanceUntilIdle()`, for the same reason. More
 generally, a `first { predicate }` wrapped in `withTimeout` against a live DataStore or other
 in-memory `StateFlow` is not a safe "wait a bit": if the collector's first read overlaps the write it
 is waiting for, the read returns the pre-write value and the emission it needed is never replayed, so
