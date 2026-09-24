@@ -192,6 +192,13 @@ class SecondClientPeer(
                 .filter { it.isFor(conversationId, type) }[occurrence - 1]
         }
 
+    /**
+     * The frames recorded so far that name [conversationId], in arrival order (#977). A snapshot: frames
+     * that arrive later are not in it. Callers report counts and booleans from it, never payload text.
+     */
+    internal fun recorded(conversationId: String): List<Envelope> =
+        received.value.filter { it.payloadField("conversation_id") == conversationId }
+
     /** Tear down the session (wiping its keys), the socket and the recorder. Idempotent. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
