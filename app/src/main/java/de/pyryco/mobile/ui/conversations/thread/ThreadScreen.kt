@@ -600,6 +600,7 @@ fun ThreadScreen(
             onDismiss = { sheetVisible = false },
             effortNote = state.runConfig.effortNote?.let { stringResource(it.textRes()) },
             running = state.runConfig.running,
+            contextPercent = state.runConfig.contextPercent,
         )
     }
     if (state.channelInfoOpen) {

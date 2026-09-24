@@ -14,10 +14,13 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -427,5 +430,50 @@ class ThreadComposerFooterTest {
 
         assertTrue(overflowEvents.isEmpty())
         assertTrue(composerCommands.isEmpty())
+    }
+
+    private fun contextSegment() = composeTestRule.onNode(hasTestTag(CONTEXT_USAGE_TEST_TAG))
+
+    // #946 AC#1: with a reading, the footer shows Claude's percentage after the buttons, and the Status sheet
+    // one tap away shows the same figure.
+    @Test
+    fun contextSegment_showsTheReportedPercentage_andTheSheetAgrees() {
+        setThread(baseConfig.copy(contextPercent = 84))
+
+        contextSegment()
+            .assertTextEquals("Cxt: 84%")
+            .assert(hasContentDescription("Context usage 84%"))
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
+        composeTestRule.onNodeWithText("84% used").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Context usage unavailable").assertDoesNotExist()
+    }
+
+    // #946 AC#2: no reading is an explicit unavailable state on both surfaces, never a number.
+    @Test
+    fun contextSegment_withoutAReading_saysUnavailable_andShowsNoNumber() {
+        setThread(baseConfig.copy(contextPercent = null))
+
+        contextSegment()
+            .assertTextEquals("Cxt: n/a")
+            .assert(hasContentDescription("Context usage unavailable"))
+        composeTestRule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
+
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
+        composeTestRule.onNodeWithText("Context usage unavailable").assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
+    }
+
+    // #946 AC#3: a newer reading replaces the shown one; the segment is a display and opens nothing.
+    @Test
+    fun contextSegment_showsAReplacedReading_andOpensNoOverlay() {
+        setThread(baseConfig.copy(contextPercent = 12))
+        contextSegment().assertTextEquals("Cxt: 12%").assert(!hasClickAction())
+
+        state = state(runConfig = baseConfig.copy(contextPercent = 37))
+
+        contextSegment().assertTextEquals("Cxt: 37%")
+        composeTestRule.onNodeWithText("Cxt: 12%").assertDoesNotExist()
+        overlay().assertDoesNotExist()
     }
 }

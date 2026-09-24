@@ -71,3 +71,9 @@ No new failure modes. Absent, rejected, cleared by a transition, or dropped by a
 ## Documentation handoff
 
 The ticket has no Documentation handoff section. Suggested, pending for the documentation stage: `docs/knowledge/features/thread-composer-footer.md` (the `Cxt:` segment, its unavailable state, the weighted-slot layout), `docs/knowledge/features/status-sheet.md` (Context-window section now shows the reading), `docs/e2e-interactive-stream.md` coverage list (the new rung-3 scenario).
+
+## Revisions
+
+### 2026-09-24 — Phase B
+
+- **Open question resolved, no design change.** On the 320dp Robolectric screen the weighted `ContextSegment` still shows `Cxt: 84%` beside Actions, the model and the effort buttons (`assertIsDisplayed` passes), so no `ForcedSize` override was needed.

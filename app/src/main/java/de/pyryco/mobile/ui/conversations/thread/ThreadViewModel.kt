@@ -254,7 +254,8 @@ class ThreadViewModel(
     /**
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
-     * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine.
+     * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine, and
+     * Claude's reported context usage (#946) by a third; the repository clears that reading itself.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -266,6 +267,9 @@ class ThreadViewModel(
         ) { settings, menu, model, effort, permission ->
             runConfig(settings, menu, model, effort, permission)
         }.combine(runningModel) { config, running -> config.copy(running = running) }
+            .combine(repository.observeContextUsage(conversationId)) { config, usage ->
+                config.copy(contextPercent = usage?.percentage)
+            }
 
     /**
      * This conversation's published slash-command menu (#882), feeding both the Actions menu's absent
