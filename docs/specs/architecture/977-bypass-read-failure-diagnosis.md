@@ -82,3 +82,7 @@ Pending for the documentation stage: in `docs/e2e-interactive-stream.md`, where 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- 2026-09-24 (build): `readResultIsError` looks up the Read's `tool_use` and `tool_result` across every frame the peer recorded for the chat, not only those after the mark. The `tool_use` is emitted before the permission prompt, so it can precede the mark; restricting it to after the mark would report `absent` for a Read that did run. The peer opens just before the Read is sent, so every recorded frame is that turn's. `peerFramesWithToken` still counts only frames after the mark. `readReplyDiagnosis` takes the chat's frames and the mark instead of the after-mark slice.

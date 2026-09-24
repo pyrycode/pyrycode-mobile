@@ -394,6 +394,17 @@ sys.exit("could not find the base64url pairing payload line in the peer's `pyry 
 PY
 }
 
+# Copy claude's session transcripts from the operator-bypass HOME (#687) into WORK_DIR/bypass-transcripts,
+# keeping their relative paths. `find -type f` skips symlinks.
+keep_bypass_transcripts() {
+  local src="${BYPASS_HOME}/.claude/projects" dst="${WORK_DIR}/bypass-transcripts" rel
+  [ -d "${src}" ] || return 0
+  while IFS= read -r -d '' rel; do
+    mkdir -p "${dst}/$(dirname "${rel}")" && cp "${src}/${rel}" "${dst}/${rel}"
+  done < <(cd "${src}" && find . -type f -name '*.jsonl' -print0)
+  [ ! -d "${dst}" ] || log "claude transcripts from the operator-bypass HOME kept at ${dst}"
+}
+
 cleanup() {
   local code=$?
   log "tearing down…"
@@ -405,7 +416,12 @@ cleanup() {
   wait 2>/dev/null || true
   # The operator-bypass HOME (#687) goes whatever the exit code: it holds a copy of ~/.claude.json and the
   # witness file. Only a path this script minted is removed. Its daemon log stays in WORK_DIR as the rest do.
+  # A failed run first keeps claude's session transcripts (#977): regular *.jsonl files under
+  # .claude/projects only, so no credential file and no symlink out of the HOME is ever copied.
   if [[ "${BYPASS_HOME:-}" == /tmp/pyry-e2e-byp.* ]]; then
+    if [ "${code}" -ne 0 ]; then
+      keep_bypass_transcripts || true
+    fi
     [ -z "${BYPASS_TOKEN_FILE}" ] || rm -f "${BYPASS_TOKEN_FILE}"
     rm -rf "${BYPASS_HOME}"
   fi
