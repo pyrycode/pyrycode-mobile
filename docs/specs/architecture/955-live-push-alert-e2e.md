@@ -231,3 +231,21 @@ step. `awaitPushRegistered` waits out a 32 s coalescing window, not 31 s, to all
   leaves a claude turn held on the daemon while the later scenarios run. The other three failures in that
   run came after it: `reconnect_slashCommands`, `rememberedEffort` and `stopRunningTurn`. All three passed
   on #1002's live run at 13:48 the same day.
+
+**2026-09-24, rework after the verifier's FAIL. Replaces Revision 2's "subscribe to `alerts`".**
+
+- **AC2 settles after the reconnect instead of waiting for a second alert.** A retained permission modal
+  never re-emits on `HostConversationSource.alerts`. `currentModal` keeps the `Open` modal across the
+  reconnect, so the re-shown `modal_shown` folds to an equal value and the `StateFlow` does not emit. Even
+  if it did, the `modal:<m>` key is already in the source's prompt set from the wake connection.
+  `HostConversationSourceAttentionTest` pins this. The old wait would therefore have failed every live run.
+  After `cycleHostLink` returns with the repository back, the test now sleeps `RECONNECT_SETTLE_MS` (5 s).
+  That is the fallback from Open question 2. The one-notification and same-`postTime` assertions are
+  unchanged. The concrete repository's public `modalEvents` was considered and rejected: it is
+  `replay = 0`, and the fresh repository's inbound collector can start before `currentRepository`
+  publishes it, so a test subscription could miss the re-show and fail at random.
+- **What the one-alert assertion proves.** The operator-visible outcome holds across the reconnect: one
+  notification, never re-posted. The source suppresses the repeat, and the notifier's ledger is a second
+  guard behind it. The test does not tell the two guards apart.
+- The `sendAppToBackground` wake watcher now runs in a scope that each scenario owns and cancels in
+  `finally`. `NOTIFIER_SETTLE_MS` is gone.

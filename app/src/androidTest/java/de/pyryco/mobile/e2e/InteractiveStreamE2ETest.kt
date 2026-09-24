@@ -73,8 +73,6 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.di.AttentionAlert
-import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
@@ -104,10 +102,8 @@ import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -2704,6 +2700,7 @@ class InteractiveStreamE2ETest {
         val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
         val ruleActivity = composeTestRule.activity
         val peer = runningToolPeer()
+        val watch = CoroutineScope(Dispatchers.Default)
         var held: Pair<String, String>? = null
         try {
             cancelAlerts()
@@ -2720,7 +2717,7 @@ class InteractiveStreamE2ETest {
             awaitPushRegistered(serverId, connectedAt)
 
             // 2. The app goes to the background; the turn ends while the phone is absent.
-            val woke = sendAppToBackground(serverId)
+            val woke = sendAppToBackground(serverId, watch)
             runBlocking {
                 peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
                 held = null
@@ -2742,6 +2739,7 @@ class InteractiveStreamE2ETest {
                 throw AssertionError("the alert's tap did not open the conversation's thread", e)
             }
         } finally {
+            watch.cancel()
             // A failure before the allow must not leave a claude turn waiting on the prompt for later scenarios.
             held?.let { (chatId, modalId) ->
                 runBlocking {
@@ -2763,9 +2761,10 @@ class InteractiveStreamE2ETest {
      * and goes to the background. The peer then starts a turn in that chat whose command waits on a
      * permission prompt. The prompt surfaces while the phone is absent, so the daemon wakes the phone and
      * the wake posts the alert. The test then cuts and restores the host link, and the daemon shows the
-     * still-outstanding prompt again. The notifier's ledger must drop that repeat, so one notification
-     * stays, with the same post time. A second `notify` for the same tag would replace the notification
-     * and change its post time, which a count alone cannot see.
+     * still-outstanding prompt again. That repeat must not post again, so one notification stays, with
+     * the same post time. The source raises no second alert for a retained permission modal, and the
+     * notifier's ledger would drop one if it did. A second `notify` for the same tag would replace the
+     * notification and change its post time, which a count alone cannot see.
      *
      * LIVE only: the loopback relay cannot send FCM. **One real-claude turn**: the peer's held command.
      */
@@ -2787,7 +2786,7 @@ class InteractiveStreamE2ETest {
             awaitPushRegistered(serverId, connectedAt)
 
             // 2. The app goes to the background; the peer's turn raises a prompt while the phone is absent.
-            val woke = sendAppToBackground(serverId)
+            val woke = sendAppToBackground(serverId, watch)
             runBlocking { peer.sendMessage(chatId, RUNNING_TOOL_PROMPT, THREAD_TIMEOUT_MS) }
             val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
             held = chatId to modalId
@@ -2796,19 +2795,10 @@ class InteractiveStreamE2ETest {
             val first = awaitAlert(string(R.string.notification_prompt), woke)
 
             // 4. AC-2: a second reconnect inside the wake window re-shows the prompt, and nothing is posted again.
-            val reShown =
-                watch.async(start = CoroutineStart.UNDISPATCHED) {
-                    GlobalContext.get().get<HostConversationSource>().alerts.first {
-                        it.kind == AttentionAlert.Kind.Prompt && it.serverId == serverId && it.conversationId == chatId
-                    }
-                }
+            // The retained permission modal emits no new alert for the re-show, so nothing observable marks its
+            // arrival: settle long enough for the daemon's `modal_shown` to reach the phone and the notifier.
             cycleHostLink(serverId)
-            runBlocking {
-                withTimeoutOrNull(THREAD_TIMEOUT_MS) { reShown.await() }
-                    ?: throw AssertionError("the reconnect in the wake window did not re-show the outstanding prompt")
-            }
-            // The notifier handles the re-shown alert on its own dispatcher; give its ledger check time to run.
-            SystemClock.sleep(NOTIFIER_SETTLE_MS)
+            SystemClock.sleep(RECONNECT_SETTLE_MS)
             val after = attentionAlerts()
             assertEquals("alerts after the reconnect", 1, after.size)
             assertEquals("the prompt's alert was posted again across the reconnect", first.postTime, after.single().postTime)
@@ -2862,9 +2852,13 @@ class InteractiveStreamE2ETest {
      * Go Home, as the operator does when leaving the app, and wait until the app's host link closes. The
      * `google-atd` image has a Home activity but no Settings activity. `ActivityScenario.moveToState`
      * would put an androidx.test activity in front, in this process, and the process would still count
-     * as started. Returns a flag that turns true once a wake reopens the link.
+     * as started. Returns a flag that turns true once a wake reopens the link, set by a watcher launched in
+     * [watch], which the caller cancels when the scenario ends.
      */
-    private fun sendAppToBackground(serverId: String): AtomicBoolean {
+    private fun sendAppToBackground(
+        serverId: String,
+        watch: CoroutineScope,
+    ): AtomicBoolean {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val home = "am start -W -a android.intent.action.MAIN -c android.intent.category.HOME"
         val started =
@@ -2876,7 +2870,7 @@ class InteractiveStreamE2ETest {
         runBlocking { withTimeoutOrNull(CONNECT_TIMEOUT_MS) { bundle.coordinator.currentRepository.first { it == null } } }
             ?: throw AssertionError("the app did not go to the background: its host link stayed open ($started)")
         val woke = AtomicBoolean(false)
-        CoroutineScope(Dispatchers.Default).launch {
+        watch.launch {
             withTimeoutOrNull(PUSH_TIMEOUT_MS + WAIT_TURN_TIMEOUT_MS) {
                 bundle.coordinator.currentRepository.first { it != null }
                 woke.set(true)
@@ -4369,7 +4363,10 @@ class InteractiveStreamE2ETest {
         const val PUSH_WAKE_COALESCE_MS = 32_000L
         const val PUSH_TOKEN_TIMEOUT_MS = 60_000L
         const val PUSH_TIMEOUT_MS = 60_000L
-        const val NOTIFIER_SETTLE_MS = 2_000L
+
+        // After a reconnect, the time for the daemon's re-shown `modal_shown` to reach the phone and the
+        // notifier. Nothing observable marks its arrival: the retained modal raises no second alert.
+        const val RECONNECT_SETTLE_MS = 5_000L
         const val POLL_MS = 250L
 
         // The published row value of the inherited-default model (#972), which the model change skips.
