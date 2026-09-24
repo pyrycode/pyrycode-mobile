@@ -127,7 +127,19 @@ class FakeConversationRepository(
         return result
     }
 
-    override suspend fun createDiscussion(workspace: String?): Conversation {
+    override suspend fun createDiscussion(workspace: String?): Conversation =
+        insertNew(name = null, cwd = workspace ?: "", isPromoted = false)
+
+    override suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = insertNew(name = name, cwd = workspace, isPromoted = true)
+
+    private fun insertNew(
+        name: String?,
+        cwd: String,
+        isPromoted: Boolean,
+    ): Conversation {
         val now = Clock.System.now()
         val conversationId = UUID.randomUUID().toString()
         val sessionId = UUID.randomUUID().toString()
@@ -143,11 +155,11 @@ class FakeConversationRepository(
         val conversation =
             Conversation(
                 id = conversationId,
-                name = null,
-                cwd = workspace ?: "",
+                name = name,
+                cwd = cwd,
                 currentSessionId = sessionId,
                 sessionHistory = listOf(sessionId),
-                isPromoted = false,
+                isPromoted = isPromoted,
                 lastUsedAt = now,
             )
         val record = ConversationRecord(conversation, mapOf(sessionId to session))
@@ -333,6 +345,23 @@ class FakeConversationRepository(
     }
 
     override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenus.map { it[conversationId] }.distinctUntilChanged()
+
+    private val slashCommandMenus = MutableStateFlow<Map<String, SlashCommandMenu>>(emptyMap())
+
+    /**
+     * Seed or clear one conversation's slash-command menu (#882) — the test/preview seam for the composer's
+     * command offers. The Fake has no wire, so a menu exists only because a caller put it there; an unseeded
+     * conversation reads `null`.
+     */
+    fun setSlashCommandMenu(
+        conversationId: String,
+        menu: SlashCommandMenu?,
+    ) {
+        slashCommandMenus.update { if (menu == null) it - conversationId else it + (conversationId to menu) }
+    }
+
+    override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> =
+        slashCommandMenus.map { it[conversationId] }.distinctUntilChanged()
 
     /**
      * Records the ask and re-emits nothing: the Fake has no wire to re-read, so a seeded reading is

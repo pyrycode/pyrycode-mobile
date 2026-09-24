@@ -1,18 +1,19 @@
 package de.pyryco.mobile.ui.conversations.list
 
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
@@ -22,9 +23,12 @@ import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -32,11 +36,14 @@ import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
-import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.SessionPromptStatus
+import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_CHAT_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
-import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
+import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostReconnectTestTag
@@ -625,7 +632,7 @@ class ChannelListScreenTest {
     }
 
     @Test
-    fun chatRowPencil_namesItsChat_opensItsOwnTarget_andChannelRowsDrawNone() {
+    fun chatRowPencil_namesItsChat_opensItsOwnTarget_andChannelRowsNameThemselvesAsChannels() {
         setTree(
             entry(
                 serverId = "pyrybox",
@@ -640,9 +647,10 @@ class ChannelListScreenTest {
             ),
         )
 
-        // One pencil per chat, each naming its own chat; the channel draws none (#667 owns channels).
+        // One pencil per chat, each naming its own chat; the channel's pen is an Edit channel pen (#667).
         composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_chat_edit, "bravo chat"))).assertCountEquals(1)
         composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_chat_edit, "alpha channel"))).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_channel_edit, "alpha channel"))).assertCountEquals(1)
         // Lower rows compose lazily, so the nameless chat's pencil is reached by scrolling to it.
         val untitled = hasContentDescription(string(R.string.cd_tree_chat_edit, string(R.string.untitled_discussion)))
         composeTestRule.onNode(hasScrollAction()).performScrollToNode(untitled)
@@ -766,6 +774,316 @@ class ChannelListScreenTest {
     }
 
     @Test
+    fun workspaceRowPencil_inBothSections_namesItsWorkspace_andOpensItsOwnHostAndCwdWithoutFolding() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                chats = listOf(conversation("d1", "bravo chat", "/w/two", false)),
+            ),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                chats = listOf(conversation("d2", "charlie chat", "/w/two", false)),
+            ),
+        )
+
+        val one = hasContentDescription(string(R.string.cd_tree_workspace_edit, "one"))
+        composeTestRule.onAllNodes(one).assertCountEquals(1)
+        composeTestRule
+            .onNode(one)
+            .assertWidthIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(48.dp)
+            .performClick()
+        // The pencil's own node took the tap: the workspace's conversation is still drawn, nothing folded.
+        composeTestRule.onNode(hasText("alpha channel")).assertExists()
+
+        // Two hosts show a workspace called "two"; each pencil addresses its own host.
+        val two = hasContentDescription(string(R.string.cd_tree_workspace_edit, "two"))
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("charlie chat"))
+        composeTestRule.onAllNodes(two).assertCountEquals(2)
+        composeTestRule.onAllNodes(two)[1].performClick()
+        composeTestRule.onNode(hasText("charlie chat")).assertExists()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.TreeWorkspaceEditTapped("pyrybox", "/w/one"),
+                ChannelListEvent.TreeWorkspaceEditTapped("macbook", "/w/two"),
+            ),
+            events,
+        )
+    }
+
+    @Test
+    fun workspaceRowPlus_onChannelsRowsOnly_namesItsWorkspace_andOpensItsOwnHostAndCwdWithoutFolding() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                chats = listOf(conversation("d1", "bravo chat", "/w/chats", false)),
+            ),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                channels = listOf(conversation("c2", "charlie channel", "/w/one", true)),
+            ),
+        )
+
+        // Two hosts show a Channels workspace called "one"; the Chats workspace has no plus.
+        val one = hasContentDescription(string(R.string.cd_tree_workspace_new_channel, "one"))
+        composeTestRule.onAllNodes(one).assertCountEquals(2)
+        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_workspace_new_channel, "chats"))).assertCountEquals(0)
+        composeTestRule
+            .onAllNodes(one)[0]
+            .assertWidthIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(48.dp)
+            .performClick()
+        // The plus's own node took the tap: the workspace's channel is still drawn, nothing folded.
+        composeTestRule.onNode(hasText("alpha channel")).assertExists()
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("charlie channel"))
+        composeTestRule.onAllNodes(one)[1].performClick()
+        composeTestRule.onNode(hasText("charlie channel")).assertExists()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.TreeWorkspaceAddTapped("pyrybox", "/w/one"),
+                ChannelListEvent.TreeWorkspaceAddTapped("macbook", "/w/one"),
+            ),
+            events,
+        )
+    }
+
+    private fun channelHost(pyrycode: PyrycodeLinkStatus = PyrycodeLinkStatus.Connected) =
+        entry(serverId = "pyrybox", displayName = "Pyrybox", channels = listOf(conversation("c1", "alpha channel", "/w/one", true)))
+            .let { it.copy(host = it.host.copy(connectionStatus = ConnectionStatus(RelayLinkStatus.Connected, pyrycode))) }
+
+    @Test
+    fun createChannelModal_reportsTheTypedValues_failuresAreStatic_andOkFollowsItsOwnHost() {
+        val state =
+            mutableStateOf(HostChannelListState(listOf(channelHost()), createChannel = CreateChannelState("pyrybox", "/w/one")))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextInput("  Ops  ")
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput("Be brief.")
+        composeTestRule.onNode(hasText("OK")).performClick()
+
+        state.value = state.value.copy(createChannel = CreateChannelState("pyrybox", "/w/one", createFailed = true))
+        composeTestRule.onNode(hasText(string(R.string.create_channel_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertTextContains("  Ops  ")
+
+        state.value =
+            state.value.copy(
+                createChannel = CreateChannelState("pyrybox", "/w/one", createdConversationId = "c9", promptFailed = true),
+            )
+        composeTestRule.onNode(hasText(string(R.string.create_channel_prompt_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(string(R.string.create_channel_failed))).assertCountEquals(0)
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertIsNotEnabled()
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertTextContains("Be brief.")
+
+        state.value = state.value.copy(hosts = listOf(channelHost(PyrycodeLinkStatus.Down)))
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.CreateChannelSubmitted("Ops", "Be brief."),
+                ChannelListEvent.CreateChannelDismissed,
+            ),
+            events,
+        )
+        assertFalse(events.first().toString().contains("Be brief."))
+    }
+
+    @Test
+    fun channelRowPen_namesItsChannel_andOpensItsOwnTargetWithoutSelecting() {
+        setTree(
+            entry(serverId = "pyrybox", displayName = "Pyrybox", channels = listOf(conversation("same", "alpha channel", "/w/one", true))),
+            entry(serverId = "macbook", displayName = "Macbook", channels = listOf(conversation("same", "bravo channel", "/w/one", true))),
+        )
+
+        val bravo = hasContentDescription(string(R.string.cd_tree_channel_edit, "bravo channel"))
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(bravo)
+        composeTestRule
+            .onNode(bravo)
+            .assertWidthIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(48.dp)
+            .performClick()
+
+        // The pen's own node took the tap: it opens neither the thread nor the highlight.
+        assertEquals(listOf(ChannelListEvent.TreeChannelEditTapped(HostConversationTarget("macbook", "same"))), events)
+        composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).onFirst().assertIsNotSelected()
+    }
+
+    private fun openChannel(
+        prompt: ChannelPromptReading = ChannelPromptReading.Reading,
+        saving: Boolean = false,
+        failed: Boolean = false,
+        archiveFailed: Boolean = false,
+    ) = ChannelEditorState("pyrybox", "c1", "alpha channel", prompt, saving, failed, archiveFailed)
+
+    @Test
+    fun editChannelModal_readsThenShowsThePromptVerbatim_andReportsTheTrimmedNameAndPrompt() {
+        val state = mutableStateOf(HostChannelListState(listOf(channelHost()), channelEditor = openChannel()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+
+        // Prefilled name; the prompt is locked behind a static reading line until it arrives.
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertTextContains("alpha channel")
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertIsNotEnabled()
+        composeTestRule.onNode(hasText(string(R.string.edit_channel_prompt_reading))).assertExists()
+
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextReplacement("  Ops  ")
+        state.value =
+            state.value.copy(channelEditor = openChannel(ChannelPromptReading.Read("  Be brief.\n", SessionPromptStatus.Differs)))
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertIsEnabled().assertTextContains("  Be brief.\n")
+        composeTestRule.onAllNodes(hasText(string(R.string.edit_channel_prompt_reading))).assertCountEquals(0)
+        composeTestRule.onNode(hasText(string(R.string.edit_channel_prompt_next_session))).assertExists()
+        // The typed name survived the reading's arrival.
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertTextContains("  Ops  ")
+
+        composeTestRule.onNode(hasText("OK")).performClick()
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement("Shorter.")
+        composeTestRule.onNode(hasText("OK")).performClick()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.ChannelEditSubmitted("Ops", "  Be brief.\n"),
+                ChannelListEvent.ChannelEditSubmitted("Ops", "Shorter."),
+                ChannelListEvent.ChannelEditDismissed,
+            ),
+            events,
+        )
+        assertFalse(events.first().toString().contains("Be brief."))
+    }
+
+    @Test
+    fun editChannelModal_anUnreadPromptIsNeverReported_andArchiveIgnoresTheFields() {
+        val state =
+            mutableStateOf(HostChannelListState(listOf(channelHost()), channelEditor = openChannel(ChannelPromptReading.Unavailable)))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+
+        composeTestRule.onNode(hasText(string(R.string.edit_channel_prompt_unavailable))).assertExists()
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertIsNotEnabled()
+        composeTestRule.onNode(hasText("OK")).performClick()
+
+        // A blank name disables OK but not Archive.
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextReplacement("   ")
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
+        composeTestRule.onNode(hasText(string(R.string.edit_channel_archive))).performScrollTo().performClick()
+
+        assertEquals(
+            listOf(ChannelListEvent.ChannelEditSubmitted("alpha channel", null), ChannelListEvent.ChannelArchiveRequested),
+            events,
+        )
+    }
+
+    @Test
+    fun editChannelModal_failuresAreStatic_andOkAndArchiveFollowItsOwnHostAndTheByteLimit() {
+        val read = ChannelPromptReading.Read(null, SessionPromptStatus.Matches)
+        val state = mutableStateOf(HostChannelListState(listOf(channelHost()), channelEditor = openChannel(read)))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput("Typed")
+
+        state.value = state.value.copy(channelEditor = openChannel(read, failed = true))
+        composeTestRule.onNode(hasText(string(R.string.edit_channel_save_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertTextContains("Typed")
+
+        state.value = state.value.copy(channelEditor = openChannel(read, archiveFailed = true))
+        composeTestRule.onNode(hasText(string(R.string.archive_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(string(R.string.edit_channel_save_failed))).assertCountEquals(0)
+
+        val archive = hasText(string(R.string.edit_channel_archive))
+        state.value = state.value.copy(channelEditor = openChannel(read, saving = true))
+        composeTestRule.onNode(archive).assertIsNotEnabled()
+
+        state.value = state.value.copy(hosts = listOf(channelHost(PyrycodeLinkStatus.Down)), channelEditor = openChannel(read))
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
+        composeTestRule.onNode(archive).assertIsNotEnabled()
+
+        state.value = state.value.copy(hosts = listOf(channelHost()))
+        composeTestRule.onNode(hasText("OK")).assertIsEnabled()
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement("é".repeat(SystemPromptLimit.MAX_BYTES / 2 + 1))
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
+        assertTrue(events.isEmpty())
+    }
+
+    private fun openWorkspace(
+        confirmingArchive: Boolean = false,
+        failed: Boolean = false,
+        archiveFailed: Boolean = false,
+    ) = WorkspaceEditorState(
+        serverId = "pyrybox",
+        cwd = "/w/two",
+        initialName = "two",
+        confirmingArchive = confirmingArchive,
+        failed = failed,
+        archiveFailed = archiveFailed,
+    )
+
+    @Test
+    fun editWorkspaceModal_isSeeded_reportsTheNameAndTheArchiveSteps() {
+        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), workspaceEditor = openWorkspace()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).assertTextContains("two")
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).performTextReplacement("  Renamed  ")
+        composeTestRule.onNode(hasText("OK")).performClick()
+        composeTestRule.onNode(hasText(string(R.string.edit_workspace_archive))).performScrollTo().performClick()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+
+        state.value = state.value.copy(workspaceEditor = openWorkspace(confirmingArchive = true))
+        composeTestRule.onNode(hasText(string(R.string.edit_workspace_archive_confirm_body, "two"))).assertIsDisplayed()
+        composeTestRule.onNode(hasText("OK")).performClick()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.WorkspaceEditNameSubmitted("Renamed"),
+                ChannelListEvent.WorkspaceArchiveRequested,
+                ChannelListEvent.WorkspaceEditDismissed,
+                ChannelListEvent.WorkspaceArchiveConfirmed,
+                ChannelListEvent.WorkspaceArchiveDeclined,
+            ),
+            events,
+        )
+    }
+
+    @Test
+    fun editWorkspaceModal_failuresAreStaticAndTheTypedNameSurvives_andOkFollowsItsOwnHost() {
+        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), workspaceEditor = openWorkspace()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).performTextReplacement("Typed")
+
+        state.value = state.value.copy(workspaceEditor = openWorkspace(failed = true))
+        composeTestRule.onNode(hasText(string(R.string.edit_workspace_save_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).assertTextContains("Typed")
+
+        state.value = state.value.copy(hosts = listOf(chatHost(PyrycodeLinkStatus.Down)))
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
+        composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).assertTextContains("Typed")
+
+        state.value =
+            HostChannelListState(listOf(chatHost()), workspaceEditor = openWorkspace(confirmingArchive = true, archiveFailed = true))
+        composeTestRule.onNode(hasText(string(R.string.edit_workspace_archive_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(string(R.string.edit_workspace_save_failed))).assertCountEquals(0)
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
     fun settingsGear_emitsSettingsTapped() {
         setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"))
 
@@ -843,37 +1161,91 @@ class ChannelListScreenTest {
     }
 
     /**
-     * The picker's visibility reads `workspacePickerServerId` straight off the tree's own state now that the
-     * route has no flat state to copy it into (#738), so a non-null target must be all it takes to draw —
-     * and a null one must still draw nothing.
+     * Add workspace (#904) draws exactly while its state is set; OK waits for a selection and for the
+     * modal's own host to be connected; a row reports its raw path, not the clamped text it displays.
      */
     @Test
-    fun workspacePicker_drawsExactlyWhenItsTargetIsSet() {
-        var target: String? by mutableStateOf(null)
+    fun addWorkspaceModal_drawsOnItsStateAndGatesOkOnSelectionAndItsHost() {
+        val longPath = "/w/" + "x".repeat(600)
+        var state: HostChannelListState by mutableStateOf(
+            HostChannelListState(hosts = listOf(entry(serverId = "pyrybox", displayName = "Pyrybox"))),
+        )
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                CompositionLocalProvider(LocalWorkspacePickerRepository provides FakeConversationRepository()) {
-                    ChannelListScreen(
-                        hostState =
-                            HostChannelListState(
-                                hosts = listOf(entry(serverId = "pyrybox", displayName = "Pyrybox")),
-                                workspacePickerServerId = target,
-                            ),
-                        onEvent = { events += it },
-                    )
-                }
+                ChannelListScreen(hostState = state, onEvent = { events += it })
             }
         }
+        composeTestRule.onNode(hasText(CREATE_FOLDER_ENTRY, substring = true)).assertDoesNotExist()
 
-        composeTestRule.onNode(hasText(PICKER_CREATE_ROW, substring = true)).assertDoesNotExist()
+        composeTestRule.runOnIdle {
+            state = state.copy(addWorkspace = AddWorkspaceState("pyrybox"), addWorkspaceRecent = listOf("/w/one", longPath))
+        }
+        composeTestRule.onNode(hasText(string(R.string.add_workspace_title))).assertIsDisplayed()
+        composeTestRule.onNode(hasText(string(R.string.add_workspace_recent))).assertIsDisplayed()
+        composeTestRule.onNode(hasText(CREATE_FOLDER_ENTRY, substring = true)).assertIsDisplayed()
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
 
-        composeTestRule.runOnIdle { target = "pyrybox" }
-        composeTestRule.onNode(hasText(PICKER_CREATE_ROW, substring = true)).assertIsDisplayed()
+        composeTestRule.onNode(hasText("/w/" + "x".repeat(509))).performScrollTo().performClick()
+        assertEquals(listOf<ChannelListEvent>(ChannelListEvent.AddWorkspaceSelected(longPath)), events)
+
+        // Selected, but its host is down: OK stays disabled; up again, OK submits and carries no ids.
+        composeTestRule.runOnIdle {
+            state =
+                state.copy(
+                    hosts = listOf(entry(serverId = "pyrybox", displayName = "Pyrybox", relay = RelayLinkStatus.Offline)),
+                    addWorkspace = AddWorkspaceState("pyrybox", selected = "/w/one"),
+                )
+        }
+        composeTestRule.onNode(hasText("/w/one")).assertIsSelected()
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
+        composeTestRule.runOnIdle { state = state.copy(hosts = listOf(entry(serverId = "pyrybox", displayName = "Pyrybox"))) }
+        events.clear()
+        composeTestRule.onNode(hasText("OK")).assertIsEnabled().performClick()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+        assertEquals(listOf(ChannelListEvent.AddWorkspaceSubmitted, ChannelListEvent.AddWorkspaceDismissed), events)
+
+        composeTestRule.runOnIdle { state = state.copy(addWorkspace = null) }
+        composeTestRule.onNode(hasText(string(R.string.add_workspace_title))).assertDoesNotExist()
+    }
+
+    /**
+     * A created folder absent from the recents is still drawn as the selection. The new-folder entry
+     * reports the trimmed name and leaves the selection alone, and a failure shows a static sentence.
+     */
+    @Test
+    fun addWorkspaceModal_showsACreatedSelectionAndReportsANewFolderAndStaticFailures() {
+        var state: HostChannelListState by mutableStateOf(
+            HostChannelListState(
+                hosts = listOf(entry(serverId = "pyrybox", displayName = "Pyrybox")),
+                addWorkspace = AddWorkspaceState("pyrybox", selected = "/w/created"),
+                addWorkspaceRecent = listOf("/w/one"),
+            ),
+        )
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ChannelListScreen(hostState = state, onEvent = { events += it })
+            }
+        }
+        composeTestRule.onNode(hasText(string(R.string.add_workspace_new_folder))).assertIsDisplayed()
+        composeTestRule.onNode(hasText("/w/created")).assertIsSelected()
+        composeTestRule.onNode(hasText("/w/one")).assertIsNotSelected()
+
+        composeTestRule.onNode(hasText(CREATE_FOLDER_ENTRY, substring = true)).performScrollTo().performClick()
+        composeTestRule.onNode(hasText("What should this workspace be called?")).performTextInput("  fresh  ")
+        composeTestRule.onNode(hasText("Create")).performClick()
+        assertEquals(listOf<ChannelListEvent>(ChannelListEvent.AddWorkspaceFolderCreateRequested("fresh")), events)
+        composeTestRule.onNode(hasText("/w/created")).assertIsSelected()
+
+        composeTestRule.runOnIdle { state = state.copy(addWorkspace = state.addWorkspace?.copy(createFailed = true)) }
+        composeTestRule.onNode(hasText(string(R.string.add_workspace_create_failed))).assertIsDisplayed()
+        composeTestRule.runOnIdle { state = state.copy(addWorkspace = state.addWorkspace?.copy(createFailed = false, startFailed = true)) }
+        composeTestRule.onNode(hasText(string(R.string.add_workspace_start_failed))).assertIsDisplayed()
+        composeTestRule.onNode(hasText("/w/created")).assertIsSelected()
     }
 
     private companion object {
-        // The picker sheet's own create row, matched as a substring so its trailing ellipsis need not be
+        // Add workspace's new-folder entry, matched as a substring so its trailing ellipsis need not be
         // reproduced — the same handle the rung-3 create-workspace scenario holds it by.
-        const val PICKER_CREATE_ROW = "Create new folder under pyry-workspace"
+        const val CREATE_FOLDER_ENTRY = "Create new folder under pyry-workspace"
     }
 }

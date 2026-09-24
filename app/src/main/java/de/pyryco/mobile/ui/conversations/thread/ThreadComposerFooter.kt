@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -24,8 +23,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
@@ -36,10 +37,34 @@ import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 /**
- * The composer footer's option controls (#808). [Permission] joined at #650; the Actions control (#655)
- * joins as a further entry, with its own [footerMenu] branch.
+ * The composer footer's option controls (#808). [Permission] joined at #650 and [Actions] at #884, each
+ * with its own [footerMenu] branch.
  */
-enum class FooterControl { Model, Effort, Permission }
+enum class FooterControl { Model, Effort, Permission, Actions }
+
+/**
+ * The Actions menu's rows (#884), in menu order, after desktop's `ComposerActionsMenu`. Every field is a
+ * client-owned constant: nothing a server publishes is ever shown, handed back or sent through this menu.
+ *
+ * [value] identifies the row in the overlay. [command] is the text a command row sends as an ordinary
+ * message; [ResetSession] has none, because it runs the overflow menu's Reset session path instead, and
+ * [BackgroundTasks] (#678) has none because it only opens the read-only task panel.
+ */
+enum class ComposerAction(
+    val value: String,
+    val label: String,
+    val command: String?,
+) {
+    ResetSession("reset", "Reset session", null),
+    CompactSession("compact", "Compact session", "/compact"),
+    KnowledgeCapture("knowledge-capture", "Knowledge capture", "/knowledge-capture"),
+    BackgroundTasks("background-tasks", "Background tasks", null),
+    ;
+
+    companion object {
+        fun fromValue(value: String): ComposerAction? = entries.firstOrNull { it.value == value }
+    }
+}
 
 /**
  * The six permission modes the footer names (#650), in menu order, with desktop #1546's labels.
@@ -84,12 +109,14 @@ internal fun EffortNote.textRes(): Int =
 
 /**
  * What a footer control offers when its overlay opens. [notListed] is how many entries the list leaves
- * out. It is never derived from the length of [options].
+ * out. It is never derived from the length of [options]. [actions] marks a menu of actions rather than a
+ * choice of one value (#884), so the overlay draws buttons instead of a radio group.
  */
 data class FooterMenu(
     val options: List<OptionsOverlayOption>,
     val selectedValue: String,
     val notListed: Int,
+    val actions: Boolean = false,
 )
 
 /**
@@ -99,10 +126,18 @@ data class FooterMenu(
  * The model list's [FooterMenu.notListed] is the producer's `droppedModels` plus this client's
  * `hiddenChoices`, summed for display exactly as the Status sheet sums them. Each figure keeps its own
  * field on [ThreadRunConfig], and neither is recomputed from the row count.
+ *
+ * The Actions menu (#884) reads only [mutationsSupported], which gates Reset session exactly as it gates
+ * the overflow menu's item, and [absentActions], the commands the published menu proves absent, which are
+ * greyed out. It is never `null`. The background-tasks row (#678) carries [backgroundTaskCount], the open
+ * conversation's live count, in its label: a number, never a task string.
  */
 internal fun footerMenu(
     control: FooterControl,
     runConfig: ThreadRunConfig,
+    mutationsSupported: Boolean = true,
+    absentActions: Set<ComposerAction> = emptySet(),
+    backgroundTaskCount: Int = 0,
 ): FooterMenu? =
     when (control) {
         FooterControl.Model ->
@@ -135,18 +170,33 @@ internal fun footerMenu(
                     notListed = 0,
                 )
             }
+        FooterControl.Actions ->
+            FooterMenu(
+                options =
+                    ComposerAction.entries
+                        .filter { it != ComposerAction.ResetSession || mutationsSupported }
+                        .map {
+                            val label = if (it == ComposerAction.BackgroundTasks) "${it.label} ($backgroundTaskCount)" else it.label
+                            OptionsOverlayOption(value = it.value, label = label, enabled = it !in absentActions)
+                        },
+                selectedValue = "",
+                notListed = 0,
+                actions = true,
+            )
     }
 
 /**
  * Whether [control]'s button opens its overlay. This mirrors the Status sheet's `enabled && !pending`:
  * no write while one is outstanding, and none without a session to address. It adds one rule of its
  * own: a control with nothing to offer does not open an empty overlay. The permission control has its
- * own outstanding write, so a model or effort tap does not block it and it does not block them.
+ * own outstanding write, so a model or effort tap does not block it and it does not block them. The
+ * Actions control (#884) is always enabled: a command send addresses no session and writes no setting.
  */
 internal fun footerControlEnabled(
     control: FooterControl,
     runConfig: ThreadRunConfig,
 ): Boolean {
+    if (control == FooterControl.Actions) return true
     val outstanding = if (control == FooterControl.Permission) runConfig.pendingPermission != null else runConfig.pending
     return runConfig.writable && !outstanding && footerMenu(control, runConfig) != null
 }
@@ -165,12 +215,13 @@ private val StatusOpenerIconSize = 16.dp
 private const val PENDING_ALPHA = 0.55f
 
 /**
- * Figma `16:8`'s `Input footer` (#808): the permission, model and effort buttons under the input field,
- * followed by the Status sheet opener.
+ * Figma `16:8`'s `Input footer` (#808): the actions, permission, model and effort buttons under the input
+ * field, followed by the Status sheet opener.
  *
  * It replaces #602's single monospace `model · effort` line (`ThreadStatusRow`). The design has no
  * footer affordance for the Status sheet, so a trailing icon keeps it one tap away. The design's
- * `Actions` (#655), `Cxt:` (#591) and attachment segments belong to other tickets.
+ * attachment segment belongs to another ticket. The Actions button (#884) leads the row, as in the design,
+ * and always opens its menu. The `Cxt:` segment (#946) follows the buttons as plain text, not a control.
  *
  * Stateless. The model and effort buttons show [ThreadRunConfig.modelLabel] / [ThreadRunConfig.effortLabel].
  * Those labels read the pending tap first and the confirmed reading after it; for effort that reading is
@@ -194,6 +245,14 @@ fun ThreadComposerFooter(
         horizontalArrangement = Arrangement.spacedBy(FooterButtonGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        FooterButton(
+            label = stringResource(R.string.thread_footer_actions),
+            clickLabel = stringResource(R.string.thread_footer_open_actions),
+            enabled = true,
+            pending = false,
+            onClick = { onOpen(FooterControl.Actions) },
+            onBounds = { onAnchorChanged(FooterControl.Actions, it) },
+        )
         permissionModeLabel(runConfig)?.let { label ->
             FooterButton(
                 label = label,
@@ -221,7 +280,9 @@ fun ThreadComposerFooter(
             onClick = { onOpen(FooterControl.Effort) },
             onBounds = { onAnchorChanged(FooterControl.Effort, it) },
         )
-        Spacer(modifier = Modifier.weight(1f))
+        // The segment takes the row's leftover width in place of a spacer, so the Status opener keeps the end.
+        // As a weighted child it is measured last: on a narrow row it ellipsizes rather than squeeze the opener.
+        ContextSegment(percent = runConfig.contextPercent, modifier = Modifier.weight(1f))
         Box(
             modifier =
                 Modifier
@@ -238,6 +299,39 @@ fun ThreadComposerFooter(
         }
     }
 }
+
+/**
+ * Figma's `Cxt: 84%` text (110:3497): Claude's reported [percent] as sent, in the footer's body-small style.
+ * `null` is the unavailable state, dimmed like a disabled button and described as unavailable — never `0%`.
+ */
+@Composable
+private fun ContextSegment(
+    percent: Int?,
+    modifier: Modifier = Modifier,
+) {
+    val description =
+        if (percent != null) {
+            stringResource(R.string.cd_context_usage, percent)
+        } else {
+            stringResource(R.string.cd_context_usage_unavailable)
+        }
+    Text(
+        text =
+            if (percent != null) {
+                stringResource(R.string.thread_footer_context, percent)
+            } else {
+                stringResource(R.string.thread_footer_context_unavailable)
+            },
+        style = MaterialTheme.typography.bodySmall,
+        color = if (percent != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier.testTag(CONTEXT_USAGE_TEST_TAG).semantics { contentDescription = description },
+    )
+}
+
+/** Marks the footer's context-usage segment for the rung-3 scenario (#946). A static tag; never daemon text. */
+const val CONTEXT_USAGE_TEST_TAG = "thread_footer_context_usage"
 
 /** Figma's `Input footer button`. A disabled button still shows its value, without the chevron that
  *  promises a menu. [note] explains the value in the state description when no write is pending (#889). */
@@ -301,6 +395,7 @@ private val previewRunConfig =
         savedEffort = "max",
         permissionMode = "plan",
         sessionId = "s1",
+        contextPercent = 84,
     )
 
 @Preview(name = "ComposerFooter — Dark", showBackground = true, widthDp = 372)
@@ -316,7 +411,7 @@ private fun ThreadComposerFooterDarkPreview() {
 private fun ThreadComposerFooterLightPendingPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ThreadComposerFooter(
-            runConfig = previewRunConfig.copy(pendingEffort = "high", pendingPermission = "default"),
+            runConfig = previewRunConfig.copy(pendingEffort = "high", pendingPermission = "default", contextPercent = null),
             onOpen = {},
             onStatusClick = {},
             onAnchorChanged = { _, _ -> },

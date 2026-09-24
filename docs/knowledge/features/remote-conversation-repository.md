@@ -65,7 +65,11 @@ bytes. It shares the sole inbound consumer and exposes a separate
 outside `ConversationRepository` and screen state. `AttachmentUploadTransfer` (#829) is its upload-leg
 sibling — also connection-owned, also routed first in `onInbound`, but **on** the
 `ConversationRepository` surface (`uploadAttachment`) rather than beside it, since the destination is a
-conversation, not the whole host. See [Attachment upload](attachment-upload.md).
+conversation, not the whole host. See [Attachment upload](attachment-upload.md). `AttachmentRetrievals`
+(#899) is the retrieval-leg driver, routed immediately after the upload leg in `onInbound` and ended
+beside it in the collector's `finally`; it correlates by the request's own envelope id rather than the
+chunk's, since every answering frame — chunk or `error` — names the request. See [Attachment
+retrieval](attachment-retrieval.md).
 
 ## Status projections: one file per status event
 
@@ -83,6 +87,17 @@ needs no hook on another event's arm the way the stall/thinking-progress clears 
 `AnnouncedModelProjection` and `SessionFactsProjection` are each cleared only by the
 `session_transition` arm, the same `ResettingProjection` shape, since neither `model_announced` nor
 `session_facts` carries a falling edge of its own.
+
+`AttachmentOfferProjection` (#898) holds the files the daemon offered per conversation on this
+connection — state, decoder and read in the same one-class-per-event shape — but sits outside this
+gated family: its `onInbound` arm calls `apply(envelope)` **unconditionally**, with no
+`CAPABILITY_INTERACTIVE in negotiatedCapabilities()` check. The protocol delivers `attachment_offered`
+to every attached client, outside the interactive family, the same posture as the upload leg's
+`attachment_stored` (see `AttachmentUploadTransfer` below); the daemon routes nothing, so filtering on
+`conversation_id` happens inside `observe`, as every other arm's projection does. First arrival wins for
+a repeated attachment id. See [Conversation repository → `AttachmentOffer`](conversation-repository.md)
+for the domain type, the id-shape validation and the code-point-level display-name cleaning, and its
+SECURITY note.
 
 The repository keeps three things. Its `onInbound` arm checks the negotiated `interactive` capability
 and calls the projection's `apply(envelope)`. Its `observe…` override returns the projection's
@@ -130,15 +145,23 @@ What the repository still owns, after #916:
   and calls `workspaceCommands.malformedWorkspaceReply()` on a decode failure.
 - **Every status projection** the thread reads from: `ConversationListProjection`, `ThreadProjection`,
   `StallProjection`, `QueueProjection`, `ApiRetryProjection`, `CompactingProjection`, `UsageLimitProjection`,
-  `ThinkingProgressProjection`, `ResettingProjection`, `ModelMenuProjection`, `QuestionBatchProjection`,
-  `BackgroundTaskProjection`, `AnnouncedModelProjection` and `SessionFactsProjection` — each its own small
-  class, constructed once per repository instance, per the split described above in § Status projections.
+  `ThinkingProgressProjection`, `ResettingProjection`, `ModelMenuProjection`, `SlashCommandMenuProjection`,
+  `QuestionBatchProjection`,
+  `BackgroundTaskProjection`, `AnnouncedModelProjection`, `SessionFactsProjection` and
+  `AttachmentOfferProjection` — each its own small class, constructed once per repository instance, per
+  the split described above in § Status projections.
+  `SlashCommandMenuProjection` (#882) is the one member with no send and no capabilities supplier of its
+  own — the frame it retains declares no inbound verb, so it takes the `ApiRetryProjection` minimal shape,
+  not `ModelMenuProjection`'s (which also owns the `request_model_list` ask). `AttachmentOfferProjection`
+  (#898) is the one member whose `onInbound` arm ignores the negotiated capabilities entirely — see
+  § Status projections above.
 - **`RelayRequests`** — the one request-id counter and reply-waiter table every command class, and the
   repository's own remaining reads, share.
 - **The reads that fan out directly to a projection, with no command-class indirection**:
   `observeConversations`, `observeMessages`, `observeLastMessage`, `observeStall`, `observeQueue`,
   `observeApiRetry`, `observeCompacting`, `observeResetting`, `observeUsageLimit`,
-  `observeThinkingProgress`, `observeModelMenu`, `observeAnnouncedModel` and `observeSessionFacts`.
+  `observeThinkingProgress`, `observeModelMenu`, `observeSlashCommandMenu`, `observeAnnouncedModel`,
+  `observeSessionFacts` and `observeAttachmentOffers` (#898).
 - **`requestHistory`** — the on-disk history page read; kept here because it folds its page straight into
   `ThreadProjection`, and #916 explicitly left it in place.
 - **The v2 structured-stream and modal decode seams** — `liveSessionEvents`, `modalEvents`,
@@ -263,8 +286,10 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   `mapError` verbatim with **no** `onInbound` branch and **no** projection mutation, adds the
   `register_push_token` request encoder + the last/defaulted `deviceName` ctor param), [#365](../codebase/365.md)
   (`registerPushToken`'s **first live caller**, **landed** — the coordinator's connect-time hook re-sends it
-  once per connection and threads the live `deviceName`, closing #359's `device_name: ""` defer; still
-  dormant until Firebase #361 stores a token), [#395](../codebase/395.md) (`observeStall`, **landed** —
+  once per connection and threads the live `deviceName`, closing #359's `device_name: ""` defer; live since
+  [#361](../codebase/361.md) added the token origin (`PyryMessagingService.onNewToken`) and turned the
+  hook into a rotation-aware collector — see [push messaging service](push-messaging-service.md)),
+  [#395](../codebase/395.md) (`observeStall`, **landed** —
   the fourth projection `stalledConversations`; a `TYPE_STALL` onset arm + a clearing hook folded into
   #385's live-session arm; **on the interface with a `flowOf(false)` default** so it reaches the thread
   through the facade, the deliberate inverse of #385's concrete-only `liveSessionEvents` — see
@@ -329,6 +354,18 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   **landed**) — `uploadAttachment`, the `AttachmentUploadTransfer` upload-leg sibling of
   `DebugBundleTransfer`, the 8 MB local socket-queue bound, and the `StableConversationRepository`
   snapshot-or-result delegation it needed instead of the usual snapshot-or-throw.
+- Sibling transfer: [Attachment retrieval](attachment-retrieval.md) ([#899](https://github.com/pyrycode/pyrycode-mobile/issues/899),
+  **landed**) — `fetchAttachment`, the `AttachmentRetrievals`/`AttachmentRetrievalTransfer` retrieval-leg
+  driver correlating by the request's own envelope id, one retrieval per connection, the
+  512-chunk/23,040,000-byte phone-side bound, and the host-keyed `AttachmentStore` layer above this
+  repository that keeps the verified bytes.
+- Sibling observable: `observeAttachmentOffers` (#898, **landed**, PR
+  [#931](https://github.com/pyrycode/pyrycode-mobile/pull/931)) — the ninth status-family projection,
+  `AttachmentOfferProjection`, decoding `attachment_offered` into `AttachmentOffer`; the one arm in the
+  family that ignores the `interactive` capability check, matching `attachment_stored`'s delivery
+  posture above rather than its status-projection siblings'; standard `switchToLive(emptyList()) { … }`
+  facade delegation. Fetching the offered bytes and rendering the offer in the thread are the sibling
+  and follow-up tickets `#671`/`#672`.
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the

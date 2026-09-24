@@ -2,11 +2,41 @@
 
 `ui/conversations/components/SystemPromptEditor.kt` (`de.pyryco.mobile.ui.conversations.components`)
 holds one conversation's system-prompt editing state: what is stored, whether the running session
-already uses it, the operator's in-progress draft, and save/failure tracking. Added in #824 as the
-state the create/save-as channel (#666) and edit channel (#667) view models will both own — shaped
+already uses it, the operator's in-progress draft, and save/failure tracking. Added in #824, shaped
 like [`HostEditorController`](host-editor.md): a plain Kotlin object with no Compose or Android
-imports, constructed over the owning view model's `viewModelScope`. Nothing is wired or rendered yet;
-that is #666/#667's work.
+imports, constructed over the owning view model's `viewModelScope`. It is still unused, by three
+callers in a row now. #666 split into [Save as channel](save-as-channel-dialog.md) (#957) and
+[Create channel](mobile-modal.md#callers) (#958), and neither wired it in. Both flows write a system
+prompt only into a **new or freshly promoted** conversation, which has no stored prompt and no running
+session to read `appliedStatus` from, so there is nothing for this editor's read-then-track shape to do
+for them: they call `SystemPromptLimit.fits`/`utf8Bytes` directly for the byte-limit check and
+`setSystemPrompt` once, verbatim, after their own create/promote leg confirms — no `requestSystemPrompt`,
+no `draft`/`confirmed` distinction, no refresh read.
+
+[`EditChannelModal`](mobile-modal.md#callers) (#667) is exactly the caller this editor was described as
+remaining available for — an **existing** conversation's already-stored prompt, edited against a
+possibly-live session — and it still did not adopt it, for a reason specific to this class rather than
+to the create/save-as flows: **`SystemPromptEditor` binds one repository at construction.** A host's
+repository is per connection ([`HostConversationSource.repositoryFor`](dependency-injection-host-conversation-source.md)),
+[`LifecycleConnectionDriver`](lifecycle-connection-driver.md) closes it on background, and the foreground
+reconnect produces a new one. An operator who backgrounds the app mid-edit and returns would hold an
+editor whose every further `save()` goes to a retired repository and fails forever — the construction-time
+bind that makes this class simple for a caller with one stable repository (chat/thread editing, where
+`SystemPromptEditor` was designed in) is the same bind that breaks it for a list-screen modal that can
+outlive a reconnect. #667's `ChannelListViewModel` instead reads the prompt itself once (waiting for
+`repositoryFor(serverId)` to become non-null) and resolves the repository **again, at the OK press** —
+the same discipline every other write in that view model already followed
+([`submitChatName`](channel-list-viewmodel.md#wiring) and siblings) before this ticket gave the prompt a
+reason to need it too. It copies this editor's `changed` rule (an absent `confirmed` reads as `""`) and
+its redacted `toString()`, but keeps its own `ChannelPromptReading` sealed type rather than reusing
+`SystemPromptEditorState.Loaded` — the reading is kept in a state flow separate from the write's own
+`compareAndSet` target, which `SystemPromptEditorState.Loaded` conflates by design (see the Design section
+of `docs/specs/architecture/667-edit-channel-modal.md`).
+
+This class remains available for a caller with a genuinely construction-stable repository. A caller
+whose repository can retire out from under it — any list-screen modal reached through
+`HostConversationSource` — should follow #667's shape instead: read once through the repository
+resolved when available, write through the repository resolved at the press.
 
 ## Shape
 
@@ -130,4 +160,6 @@ No device test: nothing renders.
 
 - [Conversation repository](conversation-repository.md#823-requestsystemprompt--setsystemprompt--the-conversation-scoped-system-prompt-contract) — `requestSystemPrompt`/`setSystemPrompt`, `SystemPromptReading`, `SessionPromptStatus`, `SystemPromptLimit` (#823), the contract this state drives
 - [Host editor](host-editor.md) — the shape this state follows: plain-Kotlin controller, owner-scoped, `compareAndSet`-terminal transitions
+- [Mobile modal § Callers](mobile-modal.md#callers) — `EditChannelModal` (#667), the caller this class was built for and the reason it stays unclaimed: a per-connection repository bind that a background/foreground reconnect retires
+- [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) — `openChannelEditor`/`submitChannelEdit`, the repository-resolved-at-the-press shape this editor's would-be caller uses instead
 - Spec: `docs/specs/architecture/824-system-prompt-editor.md`, including the security review

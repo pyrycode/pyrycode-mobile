@@ -2,6 +2,8 @@ package de.pyryco.mobile.ui.workspace
 
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -67,5 +69,56 @@ class WorkspaceDisplayNameTest {
         // take() alone would end on the lone high half of the emoji, which renders as a replacement glyph.
         val kept = "n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1)
         assertEquals(kept, workspaceDisplayName(cwd = "/work/A", label = kept + "😀" + "tail"))
+    }
+
+    @Test
+    fun labelRule_blankInputClearsTheLabel() {
+        for (blank in listOf("", "   ", "\t\n")) {
+            assertNull(workspaceLabelFor(blank, folderName = "my-app"))
+        }
+    }
+
+    @Test
+    fun labelRule_theFoldersOwnNameClearsTheLabel_evenWithSurroundingSpace() {
+        assertNull(workspaceLabelFor("my-app", folderName = workspaceDisplayName("pyry-workspace/my-app", label = null)))
+        assertNull(workspaceLabelFor("  my-app  ", folderName = "my-app"))
+        // The scratch workspace's own name is the rule's "scratch", not its path.
+        assertNull(workspaceLabelFor("scratch", folderName = workspaceDisplayName(DEFAULT_SCRATCH_CWD, label = null)))
+        // Compared exactly: a case variant is a real label.
+        assertEquals("My-App", workspaceLabelFor("My-App", folderName = "my-app"))
+        // An uncut folder name is not trimmed for the comparison: "Path" is a label for folder "Path ".
+        assertEquals("Path", workspaceLabelFor("Path", folderName = "Path "))
+    }
+
+    @Test
+    fun labelRule_theModalsClampedSeedOfAnOverlongFolderNameClearsTheLabel() {
+        // The modal seeds a folder name past the clamp cut short; an untouched OK must not store that cut.
+        val folder = "n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1) + "😀" + "w".repeat(40)
+        val seed = clampWorkspaceText(folder)
+        assertEquals("n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1), seed)
+        assertNull(workspaceLabelFor(seed, folderName = folder))
+        assertNull(workspaceLabelFor(folder, folderName = folder))
+        // A shorter prefix is still a label the operator typed.
+        assertEquals("nnn", workspaceLabelFor("nnn", folderName = folder))
+        // A cut that ends in a space still clears, although the typed text is trimmed.
+        val spaced = "n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1) + " " + "w".repeat(40)
+        assertNull(workspaceLabelFor(clampWorkspaceText(spaced), folderName = spaced))
+    }
+
+    @Test
+    fun labelRule_anythingElseIsSentTrimmed() {
+        assertEquals("Design system", workspaceLabelFor("  Design system \n", folderName = "my-app"))
+        assertEquals("Työ 🛠", workspaceLabelFor("Työ 🛠", folderName = "my-app"))
+    }
+
+    @Test
+    fun labelBound_countsUtf8BytesNotCharacters() {
+        assertFalse(isWorkspaceLabelTooLong(null))
+        assertFalse(isWorkspaceLabelTooLong("w".repeat(MAX_WORKSPACE_LABEL_BYTES)))
+        assertTrue(isWorkspaceLabelTooLong("w".repeat(MAX_WORKSPACE_LABEL_BYTES + 1)))
+        // 64 two-byte characters sit exactly on the bound; a 65th is over it though it is far under 128 chars.
+        assertFalse(isWorkspaceLabelTooLong("ö".repeat(64)))
+        assertTrue(isWorkspaceLabelTooLong("ö".repeat(65)))
+        assertEquals(4, workspaceLabelByteCount("😀"))
     }
 }

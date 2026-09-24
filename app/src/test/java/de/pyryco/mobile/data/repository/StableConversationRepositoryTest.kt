@@ -172,6 +172,7 @@ class StableConversationRepositoryTest {
             val facade = StableConversationRepository(current)
 
             assertTrue(runCatching { facade.createDiscussion("/ws") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.createChannel("Chan", "/ws") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.sendMessage("c1", "hi") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.promote("c1", "Name", null) }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestScreenSnapshot("c1") }.exceptionOrNull() is IllegalStateException)
@@ -249,6 +250,15 @@ class StableConversationRepositoryTest {
             )
         }
 
+    // #899: a fetch with no live connection is a retryable failure, not a throw.
+    @Test
+    fun fetchAttachment_whileAbsent_isUnavailable() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            assertEquals(AttachmentRetrievalResult.Unavailable, facade.fetchAttachment("c1", "a1"))
+        }
+
     // #829: the upload runs on the connection live at entry; a later change of connection does not move it.
     @Test
     fun uploadAttachment_staysOnTheRepositoryLiveAtEntry() =
@@ -279,12 +289,15 @@ class StableConversationRepositoryTest {
             val created = conversation("created")
             val sent = message("m1")
             repoA.createDiscussionResult = created
+            val channel = conversation("channel")
+            repoA.createChannelResult = channel
             repoA.sendMessageResult = sent
             repoA.requestScreenSnapshotResult = "screen!"
             val current = MutableStateFlow<ConversationRepository?>(repoA)
             val facade = StableConversationRepository(current)
 
             val createResult = facade.createDiscussion("/ws")
+            val channelResult = facade.createChannel("  Chan ", "/ws/chan")
             val sendResult = facade.sendMessage("c1", "hi")
             val snapshotResult = facade.requestScreenSnapshot("c9")
             facade.dropQueuedMessage("c7", 99L)
@@ -293,11 +306,13 @@ class StableConversationRepositoryTest {
             val historyResult = facade.requestHistory("c8", cursor = "OPAQUE==", limit = 25)
 
             assertEquals(listOf<String?>("/ws"), repoA.createDiscussionCalls)
+            assertEquals(listOf("  Chan " to "/ws/chan"), repoA.createChannelCalls)
             assertEquals(listOf("c1" to "hi"), repoA.sendMessageCalls)
             assertEquals(listOf("c9"), repoA.requestScreenSnapshotCalls)
             assertEquals(listOf("c7" to 99L), repoA.dropQueuedMessageCalls)
             assertEquals(listOf(Triple("c8", "OPAQUE==", 25)), repoA.requestHistoryCalls)
             assertSame(created, createResult)
+            assertSame(channel, channelResult)
             assertSame(sent, sendResult)
             assertEquals("screen!", snapshotResult)
             assertSame(repoA.requestHistoryResult, historyResult)
@@ -560,6 +575,82 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, sessionFacts, null), facts)
         }
 
+    // ---- #945: observeContextUsage delegates, and a switch drops the previous connection's reading ------
+
+    // Absent reads as unavailable, never as a zero reading.
+    @Test
+    fun observeContextUsage_whileAbsent_emitsNull() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { facade.observeContextUsage("c1").collect { readings += it } }
+            runCurrent()
+
+            assertEquals(listOf<ContextUsage?>(null), readings)
+        }
+
+    @Test
+    fun observeContextUsage_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { facade.observeContextUsage("c1").collect { readings += it } }
+            runCurrent()
+
+            val reading = ContextUsage(totalTokens = 50_000, maxTokens = 200_000, percentage = 25, asOf = null)
+            repoA.pushContextUsage(reading)
+            runCurrent()
+            assertEquals(listOf(null, reading), readings)
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, reading, null), readings)
+        }
+
+    // ---- #898: observeAttachmentOffers delegates and tracks connection churn ---------------------
+
+    @Test
+    fun observeAttachmentOffers_whileAbsent_emitsEmpty() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val offers = mutableListOf<List<AttachmentOffer>>()
+            backgroundScope.launch { facade.observeAttachmentOffers("c1").collect { offers += it } }
+            runCurrent()
+
+            assertEquals(listOf(emptyList<AttachmentOffer>()), offers)
+        }
+
+    // Offers are live-only: a reconnect or a host switch publishes a fresh repository, and the switch drops
+    // the previous connection's offers, so one host's file is never offered as the next one's.
+    @Test
+    fun observeAttachmentOffers_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val offers = mutableListOf<List<AttachmentOffer>>()
+            backgroundScope.launch { facade.observeAttachmentOffers("c1").collect { offers += it } }
+            runCurrent()
+
+            val offer = AttachmentOffer("b8e0c374-2f61-4a95-8d0e-5c37a91b6e28", "report.png")
+            repoA.pushAttachmentOffers(listOf(offer))
+            runCurrent()
+            assertEquals(listOf(emptyList(), listOf(offer)), offers)
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(emptyList(), listOf(offer), emptyList()), offers)
+        }
+
     // ---- #802: observeUsageLimit delegates and tracks connection churn ---------------------------
 
     @Test
@@ -720,6 +811,43 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, MENU, null), menus)
         }
 
+    // ---- #882: observeSlashCommandMenu delegates, and a host switch drops the previous host's menu --
+
+    @Test
+    fun observeSlashCommandMenu_whileAbsent_emitsNull() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            val menus = mutableListOf<SlashCommandMenu?>()
+            backgroundScope.launch { facade.observeSlashCommandMenu("c1").collect { menus += it } }
+            runCurrent()
+
+            assertEquals(listOf<SlashCommandMenu?>(null), menus)
+        }
+
+    // The menu is per host: a host switch reads the new connection's repository, which starts empty, rather
+    // than leaving another machine's commands standing.
+    @Test
+    fun observeSlashCommandMenu_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val menus = mutableListOf<SlashCommandMenu?>()
+            backgroundScope.launch { facade.observeSlashCommandMenu("c1").collect { menus += it } }
+            runCurrent()
+
+            repoA.pushSlashCommandMenu(SLASH_MENU)
+            runCurrent()
+            assertEquals(SLASH_MENU, menus.last())
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, SLASH_MENU, null), menus)
+        }
+
     @Test
     fun refreshSessionSettings_delegatesToLiveRepo() =
         runTest {
@@ -792,12 +920,14 @@ class StableConversationRepositoryTest {
         private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
 
         val createDiscussionCalls = mutableListOf<String?>()
+        val createChannelCalls = mutableListOf<Pair<String, String>>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
         val requestScreenSnapshotCalls = mutableListOf<String>()
         val dropQueuedMessageCalls = mutableListOf<Pair<String, Long>>()
         val requestHistoryCalls = mutableListOf<Triple<String, String, Int>>()
 
         var createDiscussionResult: Conversation = conversation("created")
+        var createChannelResult: Conversation = conversation("created-channel")
         var sendMessageResult: Message = message("sent")
         var requestScreenSnapshotResult: String = "snapshot-text"
         var requestHistoryResult: HistoryPage = HistoryPage(entries = emptyList(), cursor = "", atStart = true)
@@ -869,6 +999,22 @@ class StableConversationRepositoryTest {
 
         override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFacts
 
+        private val contextUsage = MutableStateFlow<ContextUsage?>(null)
+
+        fun pushContextUsage(value: ContextUsage?) {
+            contextUsage.value = value
+        }
+
+        override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsage
+
+        private val attachmentOffers = MutableStateFlow<List<AttachmentOffer>>(emptyList())
+
+        fun pushAttachmentOffers(value: List<AttachmentOffer>) {
+            attachmentOffers.value = value
+        }
+
+        override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> = attachmentOffers
+
         override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimit
 
         private val thinkingProgress = MutableStateFlow<ThinkingProgress?>(null)
@@ -897,6 +1043,14 @@ class StableConversationRepositoryTest {
 
         override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenu
 
+        private val slashCommandMenu = MutableStateFlow<SlashCommandMenu?>(null)
+
+        fun pushSlashCommandMenu(value: SlashCommandMenu?) {
+            slashCommandMenu.value = value
+        }
+
+        override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> = slashCommandMenu
+
         override fun refreshSessionSettings(conversationId: String) {
             refreshSessionSettingsCalls += conversationId
         }
@@ -904,6 +1058,14 @@ class StableConversationRepositoryTest {
         override suspend fun createDiscussion(workspace: String?): Conversation {
             createDiscussionCalls += workspace
             return createDiscussionResult
+        }
+
+        override suspend fun createChannel(
+            name: String,
+            workspace: String,
+        ): Conversation {
+            createChannelCalls += name to workspace
+            return createChannelResult
         }
 
         override suspend fun promote(
@@ -1027,6 +1189,13 @@ class StableConversationRepositoryTest {
             ModelMenu(
                 rows = listOf(ModelMenuRow("claude-sonnet-5", "sonnet", "Sonnet 5", listOf("low", "high"), true, null)),
                 droppedModels = 4,
+            )
+
+        /** One retained slash-command menu (#882) — arbitrary values; only their survival is asserted. */
+        val SLASH_MENU =
+            SlashCommandMenu(
+                rows = listOf(SlashCommandMenuRow("usage", "", "Show session cost", listOf("cost", "stats"), null)),
+                droppedCommands = 1,
             )
 
         fun conversation(id: String): Conversation =

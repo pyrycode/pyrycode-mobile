@@ -30,13 +30,49 @@ fun workspaceDisplayName(
     label: String?,
 ): String {
     val chosen = label?.takeIf { it.isNotBlank() }
-    if (chosen != null) {
-        // A cut between the halves of a surrogate pair would leave a lone high surrogate: drop it.
-        return chosen.take(MAX_WORKSPACE_LABEL_CHARS).let { if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it }
-    }
+    if (chosen != null) return clampWorkspaceText(chosen)
     return if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) {
         "scratch"
     } else {
         cwd.substringAfterLast('/').ifEmpty { cwd }
     }
 }
+
+/**
+ * [text] cut to [MAX_WORKSPACE_LABEL_CHARS] UTF-16 units, the clamp daemon-authored workspace text gets
+ * before it reaches layout. A cut between the halves of a surrogate pair would leave a lone high
+ * surrogate, so that half is dropped too.
+ */
+internal fun clampWorkspaceText(text: String): String =
+    text.take(MAX_WORKSPACE_LABEL_CHARS).let { if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it }
+
+/** The daemon's bound on a stored workspace label, in UTF-8 bytes; it refuses anything longer. */
+internal const val MAX_WORKSPACE_LABEL_BYTES: Int = 128
+
+/**
+ * The label a `renameWorkspace` sends for the operator's typed [name] (#905) — the caller's half of
+ * that operation's contract.
+ *
+ * The input is trimmed. A blank result, or one equal to [folderName] — the text the workspace shows with
+ * no label, `workspaceDisplayName(cwd, label = null)` — is `null`, which clears the stored label rather
+ * than storing the folder's own name as one. So is [folderName] as the Edit workspace modal seeds it,
+ * cut by [clampWorkspaceText]: an untouched OK on a folder name past the clamp must clear, not store the
+ * cut as a label. That second comparison applies only when the clamp cut something, and it trims the cut
+ * because the input is trimmed; an uncut [folderName] is compared exactly, untrimmed. Anything else is
+ * sent trimmed.
+ */
+fun workspaceLabelFor(
+    name: String,
+    folderName: String,
+): String? {
+    val trimmed = name.trim()
+    val seed = clampWorkspaceText(folderName)
+    val ownName = trimmed == folderName || (seed != folderName && trimmed == seed.trim())
+    return if (trimmed.isEmpty() || ownName) null else trimmed
+}
+
+/** [label]'s size in UTF-8 bytes, the unit the daemon bounds it in. */
+fun workspaceLabelByteCount(label: String): Int = label.encodeToByteArray().size
+
+/** Whether the daemon would refuse [label] for its size. A clear (`null`) never is. */
+fun isWorkspaceLabelTooLong(label: String?): Boolean = label != null && workspaceLabelByteCount(label) > MAX_WORKSPACE_LABEL_BYTES

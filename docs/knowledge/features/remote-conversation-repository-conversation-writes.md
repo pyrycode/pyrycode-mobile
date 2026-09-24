@@ -380,8 +380,10 @@ suspend fun changeWorkspace(conversationId: String, workspace: String): Session 
 Reads and writes the system prompt a conversation stores over v2 `request_system_prompt` /
 `set_system_prompt` (server pyrycode#2152). Both name a **conversation**, never a session — the read
 works while nothing is running, and the write takes effect at the conversation's next session start;
-neither call restarts or resets a running one. No UI ships in this ticket; #824's shared editing state
-and, through it, the create-channel (#666) and edit-channel (#667) modals are the consumers. Both bodies
+neither call restarts or resets a running one. No UI ships in this ticket; [`SaveAsChannelDialog`](save-as-channel-dialog.md) (#957),
+[`CreateChannelModal`](mobile-modal.md#callers) (#958) and [`EditChannelModal`](mobile-modal.md#callers) (#667) are the consumers —
+each calls `SystemPromptLimit`/`setSystemPrompt` directly rather than through #824's shared editing state,
+which stays unclaimed (see [System prompt editor](system-prompt-editor.md)). Both bodies
 now live on `SessionSettingsCommands` (#916, `data/repository/SessionSettingsCommands.kt`, beside
 `setSessionSettings` above); the repository's `override suspend fun requestSystemPrompt` /
 `setSystemPrompt` are one-line hand-offs.
@@ -465,7 +467,7 @@ suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
   [ConversationRepository — Phase 1 fake implementation](conversation-repository-fake-implementation.md)
   for the two-step, non-atomic write this needed once the conversation records and the stored prompts
   turned out to live in two separate `StateFlow`s.
-- **No UI, no e2e.** Data-layer only; #824 (shared editing state) and, through it, #666/#667 (create/edit
-  channel) are the consumers that will render this text — as plain text only, per the plan's security
-  review, since it is operator-authored content that must not be trusted as markup or interpreted as
-  instructions.
+- **No UI, no e2e (at #823).** Data-layer only then; #957, #958 and #667 render this text now — as plain
+  text only, per the plan's security review, since it is operator-authored content that must not be
+  trusted as markup or interpreted as instructions. None of the three route through #824's shared editing
+  state.

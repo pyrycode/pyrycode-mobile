@@ -821,6 +821,7 @@ class RelayConnectionFactoryTest {
                             // double here. The subject is the shared source and its lookup, not the cache;
                             // ConversationCacheBindingInstrumentedTest owns the real binding's proof.
                             single<ConversationCache> { InertConversationCache }
+                            single { InertAttachmentStore }
                         },
                         conversationRepositoryModule(useRelay),
                     )
@@ -945,6 +946,7 @@ class RelayConnectionFactoryTest {
                         // The thread destination now wraps its repository in the thread cache (#797), whose
                         // real binding needs a Context this container does not have.
                         single<ConversationCache> { InertConversationCache }
+                        single { InertAttachmentStore }
                     },
                 )
             val vms = mutableListOf<androidx.lifecycle.ViewModel>()
@@ -1174,6 +1176,7 @@ class RelayConnectionFactoryTest {
                         // The thread destination now wraps its repository in the thread cache (#797), whose
                         // real binding needs a Context this container does not have.
                         single<ConversationCache> { InertConversationCache }
+                        single { InertAttachmentStore }
                     },
                 )
             val vms = mutableListOf<ThreadViewModel>()
@@ -1262,6 +1265,7 @@ class RelayConnectionFactoryTest {
                         // The thread destination now wraps its repository in the thread cache (#797), whose
                         // real binding needs a Context this container does not have.
                         single<ConversationCache> { InertConversationCache }
+                        single { InertAttachmentStore }
                     },
                 )
             var vm: ThreadViewModel? = null

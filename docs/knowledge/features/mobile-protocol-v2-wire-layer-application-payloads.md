@@ -200,7 +200,7 @@ droppedModels` is the menu's true size and nothing here may derive one from the 
 them but does not sanitize them — no control character or terminal escape is stripped anywhere on this
 path. Nothing on this path trims, folds, normalises, re-encodes or validates one, and nothing keys off
 them: the retention is keyed by `conversation_id` alone (see
-[the repository doc](remote-conversation-repository-live-stream-and-modals.md#the-model-list-inbound-arm--the-connection-scoped-retention-791)),
+[the repository doc](remote-conversation-repository-model-and-slash-command-menus.md#the-model-list-inbound-arm--the-connection-scoped-retention-791)),
 never by anything derived from row text. `value` in particular is **never parseable** — it is an alias
 (`sonnet`), a bracketed variant (`opus[1m]`) or `default`, so no family may be derived by splitting it and
 it must never be presented as a version. The obligation is stated as a KDoc on the **domain** type
@@ -250,5 +250,54 @@ sent on one.
 
 The triggering rule, the one-shot ledger, the split success/refusal reply paths and the no-retry
 discipline are a repository-layer concern, not a wire-decode one — see [Remote repository § The
-on-demand ask](remote-conversation-repository-live-stream-and-modals.md#the-on-demand-ask--request_model_list-792),
+on-demand ask](remote-conversation-repository-model-and-slash-command-menus.md#the-on-demand-ask--request_model_list-792),
 not duplicated here.
+
+### The slash-command-list retention (#882)
+
+New `SlashCommandListPayloads.kt` decodes the `slash_command_list` frame — the per-conversation menu of
+slash commands claude will accept, drawn from its `initialize` control reply — through
+`SlashCommandListPayloadDto` / `SlashCommandListRowDto`, both `internal` (the `ModelListPayloadDto`
+posture: only the domain [`SlashCommandMenu`](conversation-repository.md) crosses the package boundary).
+`internal fun SlashCommandListPayloadDto.toMenu(): SlashCommandMenu` is total and non-throwing, the
+`toMenu`/`toSessionSettings` discipline of one `MobileJson.decodeFromJsonElement` as the single validate
+boundary followed by a pure field copy. This frame has **no inbound verb** — the phone never sends one, and
+there is no `request_slash_command_list` sibling to `request_model_list` (#792) — so this section documents
+one DTO family, not two. Wire SSOT: `../pyrycode/docs/protocol-mobile.md` § `slash_command_list`.
+
+**Optionality matches `model_list`'s pattern, not its exact shape.** `commands` is a **required,
+non-nullable array** — an empty `[]` decodes into a present-but-empty menu, and an explicit wire `null`
+fails the whole frame. `name`, `argument_hint`, `description` and `aliases` are required on every row — a
+row missing one fails the frame, so there is no partial row. `truncated_fields` is the one **nullable**
+array on a row, the `model_list` `truncated_fields` pattern: `null` means nothing was cut, and omitted vs.
+explicit-`null` collapse to the same Kotlin `null` under `MobileJson`'s `explicitNulls = false`.
+
+`dropped_commands` is carried **verbatim** into `SlashCommandMenu.droppedCommands`, never recomputed from
+`commands.size` — the same rule `dropped_models` follows, but the consequence differs: the daemon feeds
+`dropped_commands` from **two** independent producer-side cuts (an entry cap and a byte bound), and the
+byte bound can fire before the entry cap does, so a non-zero count can arrive beside *any* row count, not
+only a short list the way a single-cause cut might suggest. A consumer must read `droppedCommands` and
+never infer completeness from `rows.size`.
+
+**Untrusted-string obligation, one trust hop lower than `model_list`.** `name`, `argumentHint`,
+`description` and every element of `aliases` are **workspace-authored** text — written by whoever authored
+the repository the session runs in, crossing the subprocess trust boundary one hop earlier than
+`model_list`'s claude-authored strings, since claude did not write them either. The daemon bounds them but
+does not sanitize them: embedded newlines occur in real descriptions, and nothing strips control characters
+or terminal escapes on this path. Nothing here trims, folds, normalises, re-encodes or validates one, and
+nothing keys off them — retention is keyed by `conversation_id` alone (see
+[the repository doc](remote-conversation-repository-model-and-slash-command-menus.md#the-slash-command-list-inbound-arm--the-connection-scoped-retention-882)).
+`name` in particular is **not an identifier** — one real captured name is `__remote-workflow` — so no
+character set may be assumed, and a decode test pins that padding and an embedded escape sequence survive a
+round trip unchanged, so a later "cleanup" cannot quietly start rejecting or rewriting real names. The
+obligation is stated as a KDoc on the **domain** type `SlashCommandMenuRow` in `ConversationRepository.kt`
+(a plan security-review finding), not only on the wire DTO. The render-side sanitization obligation itself
+belongs to the Actions control and slash-completion tickets split from
+[#655](https://github.com/pyrycode/pyrycode-mobile/issues/655); this slice renders nothing and holds the
+strings inert.
+
+**One retention-layer departure from `decodeModelList`, decided at the plan's Design section rather than
+here:** `SlashCommandMenuProjection`'s decoder also drops a frame whose `conversation_id` is empty (the
+daemon's `_zero` fixture shape), where `decodeModelList` would retain such a frame under the map key `""`.
+This is a routing decision on the decoded value, not a DTO-shape one, so it lives in the repository doc
+linked above rather than being duplicated on this wire-layer page.

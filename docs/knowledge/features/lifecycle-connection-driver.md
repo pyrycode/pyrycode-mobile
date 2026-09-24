@@ -1,10 +1,13 @@
 # Lifecycle connection driver — close on background, reconnect on foreground/push
 
-The stateless `LifecycleConnectionDriver` forwards whole-app foreground/background
-edges to `RelayConnectionRegistry`. The registry owns one retained connection
-bundle per saved host; each bundle's [reconnect supervisor](relay-reconnect-supervisor.md)
+`LifecycleConnectionDriver` forwards whole-app foreground/background edges to
+`RelayConnectionRegistry`. The registry owns one retained connection bundle per
+saved host; each bundle's [reconnect supervisor](relay-reconnect-supervisor.md)
 decides how to dial and recover from drops. Connection lifetime follows the pairing
-collection, independently of the host shown by the temporary compatibility UI.
+collection, independently of the host shown by the temporary compatibility UI. The
+driver itself holds only a foreground flag and an optional open push-wake window
+([#361](../codebase/361.md)) — which hosts exist and how each dials or recovers
+stays entirely the registry's and its supervisors'.
 
 Motivation is the mobile battery/privacy threat model: don't hold an authenticated relay socket open
 while the app is idle in the background, and always return over a **fresh** session (the Noise layer
@@ -70,34 +73,51 @@ A failed save neither notifies the registry nor proceeds to `connect()`.
 
 ### 2. `LifecycleConnectionDriver` — the driver
 
-The only new `androidx.lifecycle.*` site. **Stateless**: it forwards lifecycle edges to the controller
-and holds no connection state of its own (no `StateFlow`, no mutable fields beyond its two injected deps).
+The only new `androidx.lifecycle.*` site. It forwards `onStart`/`onStop` to the controller exactly as
+before; the only state it holds is whether the app is foregrounded and whether a push-wake window is
+open ([#361](../codebase/361.md)) — no `StateFlow`, no connection state, nothing the registry doesn't
+already own.
 
 ```kotlin
 // lifecycle/LifecycleConnectionDriver.kt
 class LifecycleConnectionDriver(
     private val controller: RelayConnectionController,
     private val lifecycle: Lifecycle,
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val wakeWindow: Duration = PUSH_WAKE_WINDOW,  // 30.seconds
 ) : DefaultLifecycleObserver {
     fun start()                                  // lifecycle.addObserver(this)
-    override fun onStart(owner: LifecycleOwner)  // foreground → controller.connect()
+    override fun onStart(owner: LifecycleOwner)  // foreground → cancel any open window, controller.connect()
     override fun onStop(owner: LifecycleOwner)   // background → controller.close()
-    fun onPushWake()                             // push-wake → controller.connect()
+    fun onPushWake()                             // backgrounded & no window open → connect() + start window
+    fun dispose()                                 // cancels the window-timer scope; Koin onClose
 }
 ```
 
 | Edge | Source | Action | Why |
 |---|---|---|---|
-| **Foreground** | `ON_START` (whole-app) | `connect()` | start every retained host's supervisor independently |
+| **Foreground** | `ON_START` (whole-app) | cancel any open window, `connect()` | start every retained host's supervisor independently; the foreground now owns the connections until the next `onStop` |
 | **Background** | `ON_STOP` (whole-app) | `close()` | close every socket and retry loop; retain bundles for resume |
-| **Push-wake** | `onPushWake()` (future FCM) | `connect()` | same reconnect path as foregrounding |
+| **Push-wake (backgrounded, no window open)** | `onPushWake()` (FCM, [#361](../codebase/361.md)) | `connect()`, then `close()` after `wakeWindow` unless foregrounded first | wake every saved host for a bounded background window, not indefinitely |
+| **Push-wake (foregrounded, or a window already open)** | `onPushWake()` | no-op | no duplicate connection, and a repeat wake never extends the window |
 
 - `onStart`/`onStop` map to `ProcessLifecycleOwner`'s `ON_START` / `ON_STOP` — the **whole-app**
-  foreground/background signal that (intentionally) does **not** fire on configuration changes.
-- **`onPushWake()` is identical to the foreground path (`connect()`).** Because `connect()` is idempotent,
-  it is correct whether the app is foreground (loop already running → no-op) or background (loop idle →
-  starts), so the driver needs **no foreground/background bookkeeping**. `onPushWake()` is **payload-free**
-  by design — the stable in-process entry point the future FCM service calls.
+  foreground/background signal that (intentionally) does **not** fire on configuration changes. A
+  process started by a push never reaches `ON_START`, so the driver begins in the background by
+  construction — no separate "cold start from push" case exists.
+- **`onPushWake()` opens a bounded background window, not an indefinite connection.** While
+  backgrounded with no window open it calls `connect()` and starts a `wakeWindow` (30 s) timer; when
+  the timer fires it calls `close()` **only if** this is still the current window and the app is
+  still backgrounded (a job-identity check under the same lock a foreground clears). A wake while
+  foregrounded, or while a window is already open, is a no-op: it neither opens a second connection
+  nor extends the current window. `onPushWake()` stays **payload-free** by design — the in-process
+  entry point the FCM service ([push messaging service](push-messaging-service.md)) calls, carrying
+  no data from the received message.
+- **All state changes are `@Synchronized`.** `onPushWake()` arrives on an FCM worker thread,
+  `onStart`/`onStop` on main, and the window's expiry on `dispatcher` — three different threads
+  writing `foreground`/`wakeJob`, serialized on the driver's own lock. The registry never calls back
+  into the driver, so driver → controller is the only lock order; there is no reverse path for a
+  deadlock to form on.
 
 ## Wiring — eager Koin singleton (no `PyryApp` change)
 
@@ -113,7 +133,9 @@ single(createdAtStart = true) {
         controller = get<RelayConnectionController>(),
         lifecycle = ProcessLifecycleOwner.get().lifecycle,
     ).also { it.start() }
-}
+} onClose { it?.dispose() }
+// #361: the FCM service resolves both directly, so the token write outlives the service instance.
+single { PushTokenSink(get()) } onClose { it?.dispose() }
 ```
 
 `appModule` eagerly constructs the registry and driver at application startup.
@@ -134,7 +156,9 @@ aliases resolve its retained selection for tests and diagnostics. See
 ## Guarantees (delegated, not re-implemented)
 
 The driver forwards each foreground to `connect()` and each background to
-`close()`. The registry and per-host supervisors enforce the remaining guarantees:
+`close()`, and owns only the push-wake window's own timing ([#361](../codebase/361.md)) — which host
+to dial and how a dial or close behaves stays entirely delegated. The registry and per-host
+supervisors enforce the remaining guarantees:
 
 - **Reconciliation preserves unchanged owners.** Identical credential records and
   display-name-only edits retain bundles. Removed or credential-changed records
@@ -164,32 +188,47 @@ The driver forwards each foreground to `connect()` and each background to
 **Threading.** The registry serializes snapshot reads on its worker scope and
 uses short, non-suspending `@Synchronized` sections for reconciliation, lifecycle
 and disposal. Supervisor starts launch independently; storage IO and network
-handshakes are never awaited under the registry lock. The driver remains
-stateless and receives process lifecycle callbacks on the main thread.
+handshakes are never awaited under the registry lock. The driver's own state (the
+foreground flag and the open wake window) is `@Synchronized` on itself; it still
+receives process lifecycle callbacks on the main thread and `onPushWake()` on an
+FCM worker thread.
 
 ## Edge cases & limitations
 
-- **Targeted push wake and its background lifetime remain [#361](https://github.com/pyrycode/pyrycode-mobile/issues/361).**
-  The existing payload-free `onPushWake()` forwards to the all-host `connect()`
-  path; it supplies neither a target host nor a completion signal to re-close
-  background connections.
+- **Push wakes every saved host, never a subset.** A push payload has no defined contract, so it
+  cannot choose a host: `onPushWake()` stays payload-free and `connect()` dials the same all-host set
+  a foreground would. Waking a single host from a payload needs a sender-defined contract that does
+  not exist yet ([#361](../codebase/361.md)).
+- **The background wake window is 30 s, fixed, and not extended by repeats.** A wake while
+  backgrounded with no window open connects every host and starts one `wakeWindow` timer
+  (`PUSH_WAKE_WINDOW`); at expiry it closes only if that timer is still current and the app is still
+  backgrounded. A wake while a window is already open, or while foregrounded, is a no-op — it never
+  opens a second connection and never pushes the close-time later. Foregrounding during an open
+  window cancels it outright; the connections then stay open under the normal foreground rule until
+  the next `onStop`.
 - **`onPushWake()` → `connect()` vs `retry()`.** `connect()` (idempotent loop start) is correct for the
   in-scope case (push from background-idle). If a future requirement needs "force-immediate even when a
   backoff wait is pending" (a push during an `Offline` backoff while foregrounded), switch the body to
-  `retry()`. For background-from-idle the two are equivalent. Flagged for the FCM ticket.
-- **FCM registration / token plumbing is a separate ticket** — this driver only needs the foreground/push
-  **wake** edge to trigger a reconnect.
+  `retry()`. For background-from-idle the two are equivalent.
+- **There is no push sender yet.** The daemon stores tokens
+  (`internal/relay/handlers/register_push_token.go`) but neither pyrycode nor pyrycode-relay has a
+  path that sends FCM, so notifications do not work end to end; see
+  [push messaging service](push-messaging-service.md).
 
 ## Security posture
 
-Spec § Security review verdict: **PASS** (architect self-review). The driver crosses no
-untrusted→trusted boundary: inputs are lifecycle events from the trusted Android framework and a
-**payload-free** `onPushWake()`. `RelayConnectionController` exposes only `connect()`/`close()` (no data
-parameters), so neither the driver nor any future caller can inject relay- or push-controlled data through
-this seam. Backgrounding closes every authenticated relay socket. The driver emits no
-logs; registry diagnostics use debug-gated [RelayLog](relay-log.md) with static
-lifecycle event names and host counts only, never ids, credentials, local names
-or payloads. Targeted push handling has its own lifetime contract under #361.
+Spec § Security review verdict: **PASS** (self-review, [#361](../codebase/361.md) revision). The driver
+crosses no untrusted→trusted boundary: inputs are lifecycle events from the trusted Android framework and a
+**payload-free** `onPushWake()` — the FCM service that calls it never reads the received message (see
+[push messaging service](push-messaging-service.md)). `RelayConnectionController` exposes only
+`connect()`/`close()` (no data parameters), so neither the driver nor any caller can inject relay- or
+push-controlled data through this seam. Backgrounding — deliberate or a wake window's expiry — closes
+every authenticated relay socket. The driver emits no logs. Whoever holds the project's FCM sender
+credentials can trigger a wake repeatedly, but each window is bounded at 30 s and not extended, so a
+flood costs at most one open window at a time, and connections only ever go to already-saved pairings
+(accepted, `security-sensitive`, SHOULD-FIX noted and not required). Registry diagnostics use
+debug-gated [RelayLog](relay-log.md) with static lifecycle event names and host counts only, never ids,
+credentials, local names or payloads.
 
 ## Testing
 
@@ -198,12 +237,21 @@ instrumentation, no Robolectric, no real network/transport** (AC 5). Two in-file
 idiom): a recording `FakeRelayConnectionController` (records an ordered `connect()`/`close()` list) and the
 lifecycle seam driven via `LifecycleRegistry.createUnsafe(owner)` + `handleLifecycleEvent(...)`
 (`createUnsafe` is the test-only factory that skips the main-thread check, so a real `ProcessLifecycleOwner`
-is unnecessary — **no new dependency**). The driver launches no coroutines, so there's no virtual clock:
-each event dispatches synchronously and the recorded call list is the full ordered assertion target.
+is unnecessary — **no new dependency**). Since [#361](../codebase/361.md) the wake window runs on a real
+timer, so the suite drives `StandardTestDispatcher(testScheduler)` and virtual time (`advanceTimeBy`/
+`runCurrent`) rather than asserting on synchronous dispatch alone.
 Scenarios: foreground → `[connect]`; background → `[connect, close]`; background-then-foreground →
-`[connect, close, connect]`; cold start → `[connect]`; push-wake-while-backgrounded → one extra `connect`,
-no extra `close`; rapid toggle ×3 → strictly alternating `[connect, close]×3`; `start()` is what registers
-the observer.
+`[connect, close, connect]`; cold start → `[connect]`; background wake → `[connect]` then, after the 30 s
+window with nothing else happening, `[connect, close]`; foreground wake → no extra call; repeated wakes
+inside an open window → one `connect` and the close still lands 30 s after the *first* wake, not extended
+by the repeats; foreground during an open window → no close at the window's end, the next `onStop` closes
+instead; a wake after a window has already expired → a fresh `connect`/`close` cycle; rapid toggle ×3 →
+strictly alternating `[connect, close]×3`; `start()` is what registers the observer.
+
+The wake timer is launched `CoroutineStart.LAZY` and assigned to `wakeJob` before `start()` runs — launched
+eagerly on an immediate test dispatcher it could expire before the assignment completed, and the job-identity
+check in `expireWake` would then find no job to compare against and leave the window open forever. Getting
+this test suite green first surfaced the ordering bug.
 
 `di/RelayConnectionFactoryTest.kt` exercises registry lifetime with real Noise
 peers. Its delayed-read case backgrounds the registry before releasing `list()`
@@ -219,6 +267,6 @@ transports must have zero active collectors, not just a closed-socket flag.
 - Ownership: [Active paired-host registry design (#634)](../../specs/architecture/634-active-host-registry.md); drives each [reconnect supervisor](relay-reconnect-supervisor.md) through the registry controller binding.
 - State surface: [Connection state](connection-state.md) ([#196](../codebase/196.md)) — unchanged; `close()` → `Connected` is **why** a background close is not `Offline`.
 - Consumer (UI): [`ConnectionBanner`](connection-banner.md) (#200) via `ThreadViewModel` (#201) — visuals unchanged; only *which* state is published across lifecycle edges changes.
-- Siblings: **#309** (Noise session pump — re-handshakes on each fresh socket this driver reopens), **#308** (relay auth-gate), **[#489](../codebase/489.md)** (the Scanner as a second `RelayConnectionController` caller — `connect()` on a fresh pairing; also added the explicit interface bind), **future FCM ticket** (push-token registration → calls `onPushWake()`; owns the push-opened-connection re-close decision).
-</content>
-</invoke>
+- Siblings: **#309** (Noise session pump — re-handshakes on each fresh socket this driver reopens), **#308** (relay auth-gate), **[#489](../codebase/489.md)** (the Scanner as a second `RelayConnectionController` caller — `connect()` on a fresh pairing; also added the explicit interface bind).
+- [Push messaging service](push-messaging-service.md) ([#361](../codebase/361.md)) — the FCM service that calls `onPushWake()`, and `PushTokenSink`, the collaborator that persists the token this driver's connections re-register (see [relay repository coordinator § Connect-time FCM push-token re-registration](relay-repository-coordinator-seams-and-passthroughs.md#connect-time-fcm-push-token-re-registration-365)).
+- Spec: `docs/specs/architecture/361-fcm-push-wake.md` (§ Design § Background wake window, § Security review — Verdict PASS, § Revisions).

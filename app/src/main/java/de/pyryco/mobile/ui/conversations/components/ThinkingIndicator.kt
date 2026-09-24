@@ -16,9 +16,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
@@ -68,6 +71,13 @@ private const val MAX_PLAUSIBLE_THINKING_TOKENS = 1_000_000L
  * identity stable across the transition. There is likewise no `remember`-cached label and no
  * `derivedStateOf`: either would freeze a changing reading (the [ApiRetryIndicator] rule).
  *
+ * **The running tool (#897).** While a turn runs and a tool call is open, [runningTool] is that call
+ * (see `openToolCall` beside the thread screen) and the label reads `Running <tool>…`, with claude's latest
+ * `tool_progress` reading appended in the tool row's elapsed format. It replaces both thinking labels
+ * and raises the row on its own, so a tool running in the `responding` phase is named too. It varies the
+ * same [Text] argument, so the spinner keeps its identity when a tool opens or closes. With no reading the
+ * label shows no time; nothing here counts seconds.
+ *
  * The design-owed Figma frame draws a static glyph and a `Schemes/Primary` label; the visual here
  * follows the app's existing Material 3 progress idiom until that retune lands, unchanged by this slice.
  */
@@ -76,21 +86,29 @@ fun ThinkingIndicator(
     isThinking: Boolean,
     modifier: Modifier = Modifier,
     progress: ThinkingProgress? = null,
+    runningTool: ToolCall? = null,
 ) {
-    if (!isThinking) return
+    if (!isThinking && runningTool == null) return
     // Null whenever the reading must not be shown: no frame yet, or one the sanity gate declines.
     val tokens = progress?.takeIf { it.isRenderableReading() }?.estimatedTokens
+    // #897: name and seconds come from the one open call. The seconds are claude's reading, never a timer.
+    val toolName = runningTool?.toolName
+    val elapsed = runningTool?.elapsedSeconds?.let(::formatToolElapsed)
     val description =
-        if (tokens != null) {
-            stringResource(R.string.cd_thread_thinking_progress, tokens)
-        } else {
-            stringResource(R.string.cd_thread_thinking)
+        when {
+            toolName != null && elapsed != null ->
+                stringResource(R.string.cd_thread_tool_running_elapsed, toolName, elapsed)
+            toolName != null -> stringResource(R.string.cd_thread_tool_running, toolName)
+            tokens != null -> stringResource(R.string.cd_thread_thinking_progress, tokens)
+            else -> stringResource(R.string.cd_thread_thinking)
         }
     val label =
-        if (tokens != null) {
-            stringResource(R.string.thread_thinking_progress_label, tokens)
-        } else {
-            stringResource(R.string.thread_thinking_label)
+        when {
+            toolName != null && elapsed != null ->
+                stringResource(R.string.thread_tool_running_elapsed_label, toolName, elapsed)
+            toolName != null -> stringResource(R.string.thread_tool_running_label, toolName)
+            tokens != null -> stringResource(R.string.thread_thinking_progress_label, tokens)
+            else -> stringResource(R.string.thread_thinking_label)
         }
     Row(
         modifier =
@@ -107,10 +125,14 @@ fun ThinkingIndicator(
             modifier = Modifier.size(SpinnerSize),
             strokeWidth = SpinnerStrokeWidth,
         )
+        // A tool name is daemon text from an open set: one ellipsized line bounds it, as on the tool row.
+        // The thinking labels keep their shipped wrapping.
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = if (toolName != null) 1 else Int.MAX_VALUE,
+            overflow = if (toolName != null) TextOverflow.Ellipsis else TextOverflow.Clip,
         )
     }
 }
@@ -160,6 +182,26 @@ private fun ThinkingIndicatorDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         Surface {
             ThinkingIndicator(isThinking = true)
+        }
+    }
+}
+
+@Preview(name = "ThinkingIndicator — Running tool", showBackground = true, widthDp = 412)
+@Composable
+private fun ThinkingIndicatorRunningToolPreview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        Surface {
+            ThinkingIndicator(
+                isThinking = false,
+                runningTool =
+                    ToolCall(
+                        toolName = "Bash",
+                        input = "",
+                        output = "",
+                        status = ToolCallStatus.Running,
+                        elapsedSeconds = 65,
+                    ),
+            )
         }
     }
 }

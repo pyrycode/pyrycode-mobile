@@ -168,6 +168,15 @@ class AppPreferencesTest {
         }
 
     @Test
+    fun notificationPermissionAsked_defaultsToFalseAndStaysSet() =
+        runBlocking {
+            assertEquals(false, prefs.notificationPermissionAsked.first())
+            prefs.setNotificationPermissionAsked()
+            assertEquals(true, prefs.notificationPermissionAsked.first())
+            assertEquals(true, prefs.notificationsEnabled.first())
+        }
+
+    @Test
     fun defaultWorkspace_defaultsToScratchCwd() =
         runBlocking {
             assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())
@@ -230,6 +239,19 @@ class AppPreferencesTest {
             assertTrue(prefs.setRememberedEffort("xhigh").isSuccess)
             assertEquals("xhigh", prefs.rememberedEffort.first())
             assertTrue("the level is never logged", synchronized(logs) { logs.none { "xhigh" in it } })
+        }
+
+    @Test
+    fun clearRememberedEffort_removesTheLevel_andReadsAbsent() =
+        runBlocking {
+            prefs.setRememberedEffort("xhigh")
+            prefs.setDefaultEffort(Effort.LOW)
+
+            assertTrue(prefs.clearRememberedEffort().isSuccess)
+
+            assertNull(prefs.rememberedEffort.first())
+            assertEquals(Effort.LOW, prefs.defaultEffort.first())
+            assertTrue("clearing an absent level succeeds", prefs.clearRememberedEffort().isSuccess)
         }
 
     @Test

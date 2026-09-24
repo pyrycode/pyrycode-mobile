@@ -1,6 +1,7 @@
 package de.pyryco.mobile
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -50,6 +51,7 @@ import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.di.ThreadDestinationFactory
+import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
@@ -84,6 +86,7 @@ import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.settings.documentArchiveDestination
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
@@ -93,6 +96,9 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // #685: a notification tap's target, read once. A recreated activity keeps its intent, so reading
+        // it again after a rotation would re-open the thread over wherever the operator went since.
+        val openTarget = if (savedInstanceState == null) NotificationTap.target(intent) else null
         setContent {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
@@ -135,6 +141,7 @@ class MainActivity : ComponentActivity() {
                             PyryNavHost(
                                 startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
                                 modifier = Modifier.padding(innerPadding),
+                                openTarget = openTarget.takeIf { v },
                             )
                     }
                 }
@@ -148,8 +155,10 @@ internal fun PyryNavHost(
     startDestination: String,
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
+    openTarget: HostConversationTarget? = null,
 ) {
     val destinations = koinInject<ThreadDestinationFactory>()
+    val appPreferences = koinInject<AppPreferences>()
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -305,71 +314,100 @@ internal fun PyryNavHost(
         composable(Routes.CHANNEL_LIST) {
             val vm = koinViewModel<ChannelListViewModel>()
             val hostState by vm.hostState.collectAsStateWithLifecycle()
+            val context = LocalContext.current
+            val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
+            // #685: asked at most once from here, and only while the Settings switch is on.
+            LaunchedEffect(Unit) {
+                if (shouldAskNotificationPermission(
+                        enabled = appPreferences.notificationsEnabled.first(),
+                        granted = notificationsPermitted(context),
+                        asked = appPreferences.notificationPermissionAsked.first(),
+                    )
+                ) {
+                    requestNotifications()
+                }
+            }
             LaunchedEffect(vm) {
                 vm.hostNavigationEvents.collect { navController.openThread(it) }
             }
-            HostWorkspaceRepository(hostState.workspacePickerServerId, destinations) {
-                ChannelListScreen(
-                    hostState = hostState,
-                    onEvent = { event ->
-                        when (event) {
-                            // The row carries its own host: the tree draws rows from every host, so the
-                            // selected-host adapter would open the wrong one (#731).
-                            is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)
-                            is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)
-                            // The gear captures the current host once, here, the way a row tap
-                            // captures its own (#749). The destination owns that exact id from then
-                            // on; a later selection change cannot re-aim what it describes.
-                            ChannelListEvent.SettingsTapped ->
-                                navController.navigate(Routes.settings(destinations.selectedServerId()))
-                            // One destination, two doors (#737), and since #715 both must open on an
-                            // owner: this one captures the current host exactly as the gear above it
-                            // does, where Settings' own row instead inherits the owner its destination
-                            // already holds. `Routes.ARCHIVED_DISCUSSIONS` is the route *pattern* now,
-                            // never a navigable route — navigating to it binds the literal text
-                            // `{serverId}` as the owner, which `HostDestination` then rejects as an
-                            // unknown host and bounces straight back here.
-                            //
-                            // No selected host means no archive to open, so the tap does nothing rather
-                            // than reaching for a blank id: `archived_discussions/` matches no
-                            // destination and Navigation throws on it.
-                            ChannelListEvent.ArchiveTapped ->
-                                destinations.selectedServerId()?.let {
-                                    navController.navigate(Routes.archive(it))
-                                }
-                            // Pairing's existing entry, reused rather than a second flow (#738): both of its
-                            // completions already land back here — the camera path pops SCANNER inclusive
-                            // onto this very entry, the paste-code path pops the graph.
-                            ChannelListEvent.PairHostTapped ->
-                                navController.navigate(Routes.SCANNER)
-                            // Same rule as a row tap, now for creation: the control's own host, never the
-                            // selected-host adapter the retired button resolved through (#738).
-                            is ChannelListEvent.TreeHostAddTapped -> vm.createHostDiscussion(event.serverId)
-                            is ChannelListEvent.TreeHostAddLongPressed -> vm.openHostWorkspacePicker(event.serverId)
-                            // Same rule again for editing (#744): the control's own host. The view model
-                            // reads that host's stored record and owns the modal's target and flags.
-                            is ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)
-                            // And for reconnecting (#840): the control's own host, retried alone.
-                            is ChannelListEvent.TreeHostReconnectTapped -> vm.reconnectHost(event.serverId)
-                            // Unless its pairing was rejected (#842): then the control re-pairs that host alone.
-                            is ChannelListEvent.TreeHostRePairTapped ->
-                                navController.navigate(Routes.pairCode(event.serverId))
-                            is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
-                            ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
-                            ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
-                            ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
-                            ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
-                            // And for renaming a chat (#827): the pencil's own host and conversation.
-                            is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)
-                            is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)
-                            ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()
-                            ChannelListEvent.ChatArchiveRequested -> vm.archiveChat()
-                            is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
-                            ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
-                        }
-                    },
-                )
-            }
+            ChannelListScreen(
+                hostState = hostState,
+                onEvent = { event ->
+                    when (event) {
+                        // The row carries its own host: the tree draws rows from every host, so the
+                        // selected-host adapter would open the wrong one (#731).
+                        is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)
+                        is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)
+                        // The gear captures the current host once, here, the way a row tap
+                        // captures its own (#749). The destination owns that exact id from then
+                        // on; a later selection change cannot re-aim what it describes.
+                        ChannelListEvent.SettingsTapped ->
+                            navController.navigate(Routes.settings(destinations.selectedServerId()))
+                        // One destination, two doors (#737), and since #715 both must open on an
+                        // owner: this one captures the current host exactly as the gear above it
+                        // does, where Settings' own row instead inherits the owner its destination
+                        // already holds. `Routes.ARCHIVED_DISCUSSIONS` is the route *pattern* now,
+                        // never a navigable route — navigating to it binds the literal text
+                        // `{serverId}` as the owner, which `HostDestination` then rejects as an
+                        // unknown host and bounces straight back here.
+                        //
+                        // No selected host means no archive to open, so the tap does nothing rather
+                        // than reaching for a blank id: `archived_discussions/` matches no
+                        // destination and Navigation throws on it.
+                        ChannelListEvent.ArchiveTapped ->
+                            destinations.selectedServerId()?.let {
+                                navController.navigate(Routes.archive(it))
+                            }
+                        // Pairing's existing entry, reused rather than a second flow (#738): both of its
+                        // completions already land back here — the camera path pops SCANNER inclusive
+                        // onto this very entry, the paste-code path pops the graph.
+                        ChannelListEvent.PairHostTapped ->
+                            navController.navigate(Routes.SCANNER)
+                        // Same rule as a row tap, now for creation: the control's own host, never the
+                        // selected-host adapter the retired button resolved through (#738).
+                        is ChannelListEvent.TreeHostAddTapped -> vm.createHostDiscussion(event.serverId)
+                        // Held, the same control opens Add workspace on its own host (#904).
+                        is ChannelListEvent.TreeHostAddLongPressed -> vm.openAddWorkspace(event.serverId)
+                        // Same rule again for editing (#744): the control's own host. The view model
+                        // reads that host's stored record and owns the modal's target and flags.
+                        is ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)
+                        // And for reconnecting (#840): the control's own host, retried alone.
+                        is ChannelListEvent.TreeHostReconnectTapped -> vm.reconnectHost(event.serverId)
+                        // Unless its pairing was rejected (#842): then the control re-pairs that host alone.
+                        is ChannelListEvent.TreeHostRePairTapped ->
+                            navController.navigate(Routes.pairCode(event.serverId))
+                        is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
+                        ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
+                        ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
+                        ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
+                        ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
+                        // And for renaming a chat (#827): the pencil's own host and conversation.
+                        is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)
+                        is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)
+                        ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()
+                        ChannelListEvent.ChatArchiveRequested -> vm.archiveChat()
+                        is ChannelListEvent.AddWorkspaceSelected -> vm.selectAddWorkspaceFolder(event.path)
+                        is ChannelListEvent.AddWorkspaceFolderCreateRequested -> vm.createAddWorkspaceFolder(event.name)
+                        ChannelListEvent.AddWorkspaceSubmitted -> vm.submitAddWorkspace()
+                        ChannelListEvent.AddWorkspaceDismissed -> vm.dismissAddWorkspace()
+                        is ChannelListEvent.TreeWorkspaceEditTapped -> vm.openWorkspaceEditor(event.serverId, event.cwd)
+                        is ChannelListEvent.WorkspaceEditNameSubmitted -> vm.submitWorkspaceName(event.name)
+                        ChannelListEvent.WorkspaceEditDismissed -> vm.dismissWorkspaceEditor()
+                        ChannelListEvent.WorkspaceArchiveRequested -> vm.requestWorkspaceArchive()
+                        ChannelListEvent.WorkspaceArchiveConfirmed -> vm.confirmWorkspaceArchive()
+                        ChannelListEvent.WorkspaceArchiveDeclined -> vm.declineWorkspaceArchive()
+                        // And for creating a channel (#958): the plus's own host and exact cwd.
+                        is ChannelListEvent.TreeWorkspaceAddTapped -> vm.openCreateChannel(event.serverId, event.cwd)
+                        is ChannelListEvent.CreateChannelSubmitted -> vm.submitCreateChannel(event.name, event.systemPrompt)
+                        ChannelListEvent.CreateChannelDismissed -> vm.dismissCreateChannel()
+                        // And for editing a channel (#667): the pen's own host and conversation.
+                        is ChannelListEvent.TreeChannelEditTapped -> vm.openChannelEditor(event.target)
+                        is ChannelListEvent.ChannelEditSubmitted -> vm.submitChannelEdit(event.name, event.systemPrompt)
+                        ChannelListEvent.ChannelArchiveRequested -> vm.archiveChannel()
+                        ChannelListEvent.ChannelEditDismissed -> vm.dismissChannelEditor()
+                    }
+                },
+            )
         }
         composable(Routes.DISCUSSION_LIST) {
             val vm = koinViewModel<DiscussionListViewModel>()
@@ -462,6 +500,7 @@ internal fun PyryNavHost(
                     onModelSelected = vm::onModelSelected,
                     onEffortSelected = vm::onEffortSelected,
                     onPermissionModeSelected = vm::onPermissionModeSelected,
+                    onComposerCommand = vm::onComposerCommand,
                     onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
                     onWorkspacePicked = vm::onWorkspacePicked,
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
@@ -518,6 +557,7 @@ internal fun PyryNavHost(
             // name and media type are fixed constants no daemon field can influence.
             val logData by vm.logDataDownload.collectAsStateWithLifecycle()
             val resolver = LocalContext.current.contentResolver
+            val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
             val archiveLauncher =
                 rememberLauncherForActivityResult(
                     ActivityResultContracts.CreateDocument(DEBUG_BUNDLE_MEDIA_TYPE),
@@ -545,7 +585,10 @@ internal fun PyryNavHost(
                     onSelectDefaultModel = vm::onSelectDefaultModel,
                     onSelectDefaultEffort = vm::onSelectDefaultEffort,
                     onToggleDefaultYolo = vm::onToggleDefaultYolo,
-                    onTogglePushNotifications = vm::onTogglePushNotifications,
+                    onTogglePushNotifications = { enabled ->
+                        vm.onTogglePushNotifications(enabled)
+                        if (enabled) requestNotifications()
+                    },
                     onDefaultWorkspaceTapped = vm::onDefaultWorkspaceTapped,
                     onSelectDefaultWorkspace = vm::onSelectDefaultWorkspace,
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
@@ -610,6 +653,48 @@ internal fun PyryNavHost(
         }
         composable(Routes.ABOUT) {
             AboutScreen(onBack = { navController.popBackStack() })
+        }
+    }
+    // #685: the tap opens the thread above the channel list, so a conversation deleted since the alert
+    // still ends one Back away from a usable list. Only a saved host is accepted: the activity is
+    // exported, and anything can start it with these extras. Navigating is all a tap ever does.
+    LaunchedEffect(openTarget) {
+        val target = openTarget ?: return@LaunchedEffect
+        if (destinations.isSavedHost(target.serverId)) {
+            RelayLog.d { "event=notification_tap_accepted" }
+            navController.openThread(target)
+        } else {
+            RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
+        }
+    }
+}
+
+/** Ask only while alerts are on, only without the permission, and only if the app never asked (#685). */
+internal fun shouldAskNotificationPermission(
+    enabled: Boolean,
+    granted: Boolean,
+    asked: Boolean,
+): Boolean = enabled && !granted && !asked
+
+private fun notificationsPermitted(context: Context) =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+/**
+ * Shows Android's notification-permission prompt unless it is already granted, recording that the app
+ * asked. The answer changes nothing: a denial keeps the saved switch, and foreground use is the same.
+ */
+@Composable
+internal fun rememberNotificationPermissionRequest(preferences: AppPreferences): () -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val launcher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            RelayLog.d { "event=notification_permission_answered granted=$granted" }
+        }
+    return {
+        if (!notificationsPermitted(context)) {
+            scope.launch { preferences.setNotificationPermissionAsked() }
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }

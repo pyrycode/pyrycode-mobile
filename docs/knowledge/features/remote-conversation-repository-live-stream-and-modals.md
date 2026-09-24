@@ -183,6 +183,71 @@ and `TYPE_SESSION_FACTS = "session_facts"` each get their own `onInbound` arm, g
   running" is a separate, not-yet-shipped ticket. See [`AnnouncedModel`/`SessionFacts`](conversation-repository.md#shape)
   for the domain types and their untrusted-text KDoc.
 
+## `context_usage` — the context-usage reading (#945)
+
+A per-conversation reading of how full claude's context window is, held in its own file
+`data/repository/ContextUsageProjection.kt` — the [status-projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+shape. `TYPE_CONTEXT_USAGE = "context_usage"` decodes the daemon's push, sent after every completed turn.
+Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`.
+
+- **Decode-or-drop, the sibling idiom, plus one value reject.** `ContextUsageProjection`'s private decoder wraps
+  `ContextUsagePayloadDto` decoding in the usual `try`/`catch (IllegalArgumentException) { null }`, discarding the
+  caught throwable. The four scalars (`conversation_id`, `total_tokens`, `max_tokens`, `percentage`) are
+  strict-required with no Kotlin default, so a missing one fails the structural decode rather than becoming a
+  zero reading — the contract's own point, that a client must not read "no data" as "empty context".
+  `ContextUsagePayloadDto.toReading()` then rejects a negative `percentage` (`null`, folded the same as a
+  structural failure), and a malformed `as_of` throws out of `Instant.parse` into the same catch. `model` and the
+  three inventories (`categories`, `mcp_tools`, `memory_files`) are not declared on the DTO at all, so
+  [`MobileJson`](mobile-protocol-v2-wire-layer.md)'s `ignoreUnknownKeys` discards them at the boundary — this
+  slice holds numbers only, and the desktop breakdown popover they feed has no mobile consumer yet.
+- **Latest always wins** — `apply` does the same plain `readingByConversation.update { it +
+  (id to reading) }` the #890 pair uses. Routing is the payload's own daemon-authored `conversation_id` — a
+  frame for one conversation never touches another's reading, pinned by a dedicated test.
+- **The phone sends no ask, since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946) Rework 1.**
+  `ContextUsageProjection` originally sent a fire-and-forget `request_context_usage` on a conversation's 0→1
+  subscriber edge (the `ModelMenuProjection` shape) and again after a `session_transition`, tracked by an
+  `observerCounts: ConcurrentHashMap<String, Int>`. [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946)
+  was that ask's first production subscriber (`ThreadViewModel.runConfigFlow`), and its scripted `reconnect`
+  scenario found that the daemon's `handleRequestContextUsage` answers a mid-turn ask only after the turn ends,
+  blocking every later frame on that connection's serial frame worker behind it — a reconnect mid-turn then
+  deadlocked, because the queued `send_message` that would end the turn was itself stuck behind the ask. The
+  phone cannot tell whether a turn is open when it subscribes (a fresh connection has seen no `turn_state`), so
+  asking only when believed-idle would still race the next queued turn. `ask`, `observerCounts`,
+  `negotiatedCapabilities`, `nextRequestId` and the constructor's `send` parameter were removed outright rather
+  than gated — `ContextUsageProjection` now takes no constructor arguments. `RequestContextUsagePayloadDto` and
+  `TYPE_REQUEST_CONTEXT_USAGE` stay as wire documentation, marked unsent. The daemon-side fix is
+  [pyrycode/pyrycode#2563](https://github.com/pyrycode/pyrycode/issues/2563) (open); once it lands, a future
+  mobile ticket can restore the ask from git history — none exists yet.
+- **`onSessionTransition` only clears, it no longer re-asks.** The conversation's old reading described a
+  session that is now gone, so it is dropped (`readingByConversation.update { it - conversationId }`) with no
+  follow-up request. A conversation therefore shows "unavailable" from a transition until its **next completed
+  turn** on the current connection pushes a fresh reading — the same is true of a brand-new idle conversation,
+  which the removed ask used to fill in immediately.
+- **The reconnect case needs no dedicated hook, only for a different reason than before.**
+  [`StableConversationRepository.observeContextUsage`](stable-conversation-repository.md) is
+  `switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }`, the `observeAnnouncedModel`
+  shape: a fresh connection publishes a fresh `RemoteConversationRepository`, and `flatMapLatest` cancels the old
+  subscription and subscribes the new one. State is connection-scoped by construction — one
+  `ContextUsageProjection` instance per repository, and a reconnect or host switch starts from an empty map with
+  nothing to carry over. Previously this 0→1 edge was also what sent a fresh connection's ask; now it sends
+  nothing, and the reading simply stays absent until the next turn-end push on that connection.
+- **Never writes `SessionSettings`, and is never derived from it.** `SessionSettings.usedTokens`/`.windowTokens`
+  are transcript-derived numbers on an unrelated read; `percentage` here is claude's own arithmetic, held
+  verbatim, and the two are never cross-checked or substituted for each other.
+- **Rendered since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946), split from
+  [#591](https://github.com/pyrycode/pyrycode-mobile/issues/591).** The composer footer's `Cxt:` segment and the
+  Status sheet's Context-window section both read the identical value off `ThreadRunConfig.contextPercent` — see
+  [Thread composer footer § Context usage segment](thread-composer-footer.md#context-usage-segment-946) and
+  [StatusSheet — running model and context window readings § `ContextWindowSection`](status-sheet-readings.md#contextwindowsection).
+  A rung-3 scenario, `interactiveTurn_pingPrompt_footerShowsContextUsage`, proves one live reading after a real
+  turn — see [e2e coverage](../../e2e-interactive-stream.md). See [`ContextUsage`](conversation-repository.md#shape)
+  for the domain type and its untrusted-text KDoc (there is none to carry — every string on the frame is left
+  undecoded).
+
+`security-sensitive`, the same posture as the sibling arms above: decode runs behind the authenticated Noise
+channel, and nothing on the arm, the projection or the ask logs a field — including `conversation_id`, the one
+value every branch treats purely as a routing/map key.
+
 ## `questionBatches` — the v2 clarification-batch decode+fold seam (#822)
 
 A **held `StateFlow<List<QuestionBatch>>`** (`QuestionBatchProjection.mutableQuestionBatches` /
@@ -296,141 +361,9 @@ Daemon state, not turn content: no thread row is folded and no stall is cleared.
 never parsed (`patch` included), never evaluated or executed, never used as a key besides `taskId`/
 `conversationId`, and never logged.
 
-## The model-list inbound arm — the connection-scoped retention (#791)
+## The model-list and slash-command-list menu retentions (#791, #792, #882)
 
-A new `TYPE_MODEL_LIST = "model_list"` arm joins the `onInbound` `when (envelope.type)` demux, byte-for-
-byte the `queue_state` / [`stall`](stall-state.md) sibling shape: gated identically on
-`CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the reused #385 supplier), calling
-`ModelMenuProjection.apply(envelope)` (#913), which decodes via a private `decodeModelList(envelope):
-Pair<String, ModelMenu>?` and folds the result into connection-scoped state. The frame carries the per-conversation menu of models claude will accept — identifiers, labels,
-per-row effort levels, auto-mode support and truncation metadata, drawn from claude's `initialize`
-control reply — arriving once per claude child spawn on the live lane (with an `event_id`) and again as a
-per-conversation burst on every (re)connect (without one); the payload is identical on both paths, so
-nothing here branches on delivery path. Decode boundary:
-[`ModelListPayloads.kt`](mobile-protocol-v2-wire-layer-application-payloads.md#the-model-list-retention-791).
-
-- **`decodeModelList`** copies the `decodeStall` / `decodeQueueState` `try { … } catch
-  (IllegalArgumentException) { null }` drop idiom — a malformed payload yields `null`, the one envelope is
-  dropped, the lone collector survives, and the conversation's previously retained menu stands because
-  nothing was written. **Nothing on this path logs**: every row string is claude-authored text that
-  crossed the subprocess trust boundary, and a logged `conversation_id` is a cross-conversation
-  correlation leak — the uniform rule across every `onInbound` arm. `toMenu()` is total and authors no
-  message at all, so the only throwables here are kotlinx-serialization's, caught and discarded rather
-  than surfaced.
-- **`ModelMenuProjection.modelMenusByConversation: MutableStateFlow<Map<String, ModelMenu>>`** (#913) is
-  connection-scoped, in-memory state written **only** from the single existing `init` inbound collector — single writer, so snapshots
-  never race, and the atomic `update {}` matches the sibling projections' memory-visibility posture. No
-  new coroutine, no new scope, no new dispatcher.
-- **Snapshot-replace, keyed by the frame's own `conversation_id` and nothing else.** The arm does one
-  `modelMenusByConversation.update { it + (conversationId to menu) }` — a `+` on the map replaces that one
-  key wholesale and leaves every other conversation untouched. Routing is **never** the envelope id (every
-  frame in the reconcile burst repeats the daemon's non-load-bearing envelope id) and **never** burst
-  position (the daemon walks its registry in an order that is not a contract). There is no element-level
-  merge or reconciliation within one row list either — a later frame for a conversation already held
-  fully replaces the prior rows, even when the new list is shorter.
-- **No clearing edge, anywhere.** Nothing removes a key, and no connection edge clears the map. Absence of
-  a frame is the wire's only "no list" signal, so a blanket clear on reconnect or on close would
-  manufacture an unavailable reading the daemon never stated. Unlike
-  [`queuedByConversation`](queued-backlog.md) and [`stalledConversations`](stall-state.md), which track a
-  transient "right now" condition, a published model menu is a standing fact about the connected host for
-  as long as the connection lives — the only reset this state ever gets is a fresh
-  `RemoteConversationRepository` per connection (#351), which is also where "per host" comes from: the
-  published vocabulary varies by machine and account, not by conversation.
-- **`observeModelMenu(conversationId): Flow<ModelMenu?>`** is a cold projection —
-  `modelMenusByConversation.map { it[conversationId] }.distinctUntilChanged()` — over the frames the
-  daemon sends unasked, plus (since #792, below) this connection's own on-demand ask when nothing has
-  arrived yet. `null` is **unavailable**: a
-  normal, permanent resting state covering no live connection, a connection without `interactive`, a
-  conversation this connection heard no frame for, and the window before the first frame lands — never an
-  error, never a spinner, never the device `Model`/`Effort` enums, and — because the lookup is by the
-  caller's own id — never another conversation's rows. The
-  [`ConversationRepository`](conversation-repository.md) default (`flowOf(null)`) gives the inline test
-  doubles the same reading for free, and [`StableConversationRepository`](stable-conversation-repository.md)
-  passes through via `switchToLive<ModelMenu?>(null) { it.observeModelMenu(id) }` — here the
-  `flatMapLatest` switch is the **host-isolation mechanism**: dropping the previous connection's
-  projection on a host swap is what stops one host's vocabulary being offered for another's conversation.
-
-**Renders nothing.** This slice adds no UI, no outbound verb, and does not retire the device `Model` /
-`Effort` enums — [#649](https://github.com/pyrycode/pyrycode-mobile/issues/649) reads what this retains
-when the composer's model/effort controls land.
-
-`security-sensitive`: the design mirrors `queue_state`'s posture exactly — decode runs behind the
-authenticated Noise channel, a hostile/buggy daemon can waste at most one envelope per malformed frame
-(fail-closed, no partial menu), and routing by the frame's own `conversation_id` alone forecloses
-cross-conversation injection structurally: a frame can only overwrite the menu of the conversation it
-names. The untrusted-string handling itself is documented on the domain type — see
-[Mobile Protocol v2 § the model-list retention](mobile-protocol-v2-wire-layer-application-payloads.md#the-model-list-retention-791).
-
-## The on-demand ask — `request_model_list` (#792)
-
-Closes the window #791's two unsolicited paths leave open: a conversation **created after the phone
-connected** crosses neither the live per-spawn frame nor the connect-time reconcile burst, so without an
-ask a new conversation's `observeModelMenu` reading stays `null` forever with nothing to trigger a
-change. `request_model_list` is the third and last way a client gets a menu and the only one it can
-trigger itself. Its answer is #791's own `model_list` frame, unchanged, correlated by `in_reply_to` —
-so it lands through the existing decode and retention with no second payload shape and no new render
-obligation. Wire request DTO: [Mobile Protocol v2 § the on-demand
-ask](mobile-protocol-v2-wire-layer-application-payloads.md#the-on-demand-ask--request_model_list-792).
-
-- **Triggered from the reading, not a new public method.** `observeModelMenu` gained an
-  `.onStart { askForModelMenu(conversationId) }` — subscribing to a conversation's menu *is* wanting it,
-  and this is the seam where the conversation to name is already known, the `observeSessionSettings`
-  precedent of a reading issuing its own request. The ask is not exposed on `ConversationRepository`, the
-  facade or the fake, so no consumer call site changes; `StableConversationRepository`'s host-swap
-  re-subscription (`switchToLive`) is what re-triggers it against a new connection.
-- **Fire-and-forget, the `requestDebugBundle` shape — not `sendAndAwaitReply`.** The verb's two replies
-  arrive on different arms and neither can complete a correlated waiter the usual way: a success is the
-  `model_list` frame #791's own arm applies by the payload's own `conversation_id`, and it must never
-  also settle a deferred — that would put a broadcast-shaped frame into a registry where a stale or
-  misrouted one could land in a slot it was never addressed to; a refusal is a separate `error`. Awaiting
-  the send would therefore suspend until connection teardown on the very outcome the verb exists to
-  produce, and a connection without `interactive` is answered with nothing at all, so there would be
-  nothing to await.
-- **Two ledgers, different lifetimes, both on `ModelMenuProjection`** (#913). `askedModelMenus:
-  MutableSet<String>` (a `ConcurrentHashMap` key
-  set) is the one-shot record — a conversation already holding a menu, or already asked, is not asked
-  again — connection-scoped like `modelMenusByConversation`, so "once" means once per connection; a fresh
-  connection's reconcile burst is the recovery path. `modelListAsks: ConcurrentHashMap<Long, String>`
-  (request envelope id → conversation id) is the refusal correlation, consumed by whichever reply
-  arrives first. It is **disjoint from `pendingRequests` by construction**, so an `in_reply_to` resolves
-  in at most one map and the two correlation paths cannot consume each other's reply.
-  `askedModelMenus.add` is an atomic test-and-set, not a read-then-write, so two collectors subscribing to
-  the same conversation at once still produce one ask; a send the transport refused rolls both ledger
-  entries back, which is not a retry (nothing re-sends) — it only declines to burn the one shot on a
-  frame that never left.
-- **The success arm consumes the correlation and discards it — it never becomes the retention's routing
-  key.** `envelope.inReplyTo?.let(modelListAsks::remove)` runs before the existing decode; the retention
-  write still routes on the payload's own `conversation_id`, never on what the correlation named. A
-  security-review finding named the tempting alternative explicitly: resolving the ask's conversation id
-  from `modelListAsks` and retaining under *that* id would let a daemon answer an ask for A with a
-  payload naming B and land B's rows under A — the cross-conversation injection #791's
-  routing-by-payload-only rule already forecloses, and this ask must not reopen it. The removal does
-  **not** release `askedModelMenus` — the ask was answered.
-- **The refusal arm reads only `ErrorPayload.code`, never reusing `mapError`** (which collapses
-  `conversation.not_found` into an `IllegalArgumentException` and would discard the very distinction this
-  branch exists to draw):
-  - `model_list.unavailable` — the daemon hosts the conversation but has nothing to answer with yet, so
-    the same request may succeed later. `askedModelMenus` is released so a **later subscription** may ask
-    again.
-  - `conversation.not_found` — the daemon does not host what was named. Terminal for that id on this
-    connection; the entry stands.
-  - any other code, or a payload that will not decode — fail closed, treated as terminal.
-
-  Neither branch writes `modelMenusByConversation`: a refusal never becomes an empty menu, and both leave
-  the reading at its existing `null`.
-- **No retry loop.** Releasing the one-shot on `model_list.unavailable` states the wire's own contract by
-  declining to suppress a future ask; nothing here schedules, backs off or re-sends, and only a **new**
-  subscription asks again — which nothing in this design creates. A reply that never arrives, or a
-  timeout, needs no handling: there is no waiter to expire. The conversation stays unavailable and the
-  next connect's reconcile burst is the recovery path.
-- **Never logs, on either arm.** The conversation id is a cross-conversation correlation key and a
-  refusal's `message` is daemon-authored prose; pairing them in one line is exactly what this ticket's
-  security note forbids, so the refusal branch reads `code` and discards the rest, and `askForModelMenu`
-  authors no message at all — deliberately not `interrupt`'s `check(pump.send(…)) { … }` idiom, so there
-  is no failure text to leak.
-
-**Renders nothing**, the same posture as #791 — the composer's model/effort controls are
-[#649](https://github.com/pyrycode/pyrycode-mobile/issues/649).
+Moved to [Remote conversation repository — the model-list and slash-command-list menu retentions](remote-conversation-repository-model-and-slash-command-menus.md) on 2026-09-24 to keep this document under the 50000-byte size cap the docs guard enforces: the `TYPE_MODEL_LIST` inbound arm and its connection-scoped retention (#791), the `request_model_list` on-demand ask (#792), and the `TYPE_SLASH_COMMAND_LIST` inbound arm (#882) it left room for.
 
 ## `answerModal` / `cancelModal` — the v2 modal answer/cancel control-send (#438)
 

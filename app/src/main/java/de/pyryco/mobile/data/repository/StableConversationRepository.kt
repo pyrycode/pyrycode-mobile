@@ -97,6 +97,21 @@ class StableConversationRepository(
         switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
+     * The context-usage reading for [conversationId] (#945), cleared across connections as [observeAnnouncedModel]
+     * is. After a reconnect it stays absent until the conversation's next turn ends on the new connection.
+     */
+    override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
+        switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
+
+    /**
+     * The files offered in [conversationId] on the owner host's live connection (#898). The switch is what
+     * makes offers live-only across connections: a reconnect or a host switch drops the previous
+     * connection's offers rather than carrying one host's files over to the next.
+     */
+    override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> =
+        switchToLive(emptyList()) { it.observeAttachmentOffers(conversationId) }
+
+    /**
      * The usage-limit reading for [conversationId] (#802), switched over the live connection like every
      * other cold read — and here the switch is the **account-isolation mechanism**, not just plumbing:
      * a usage-limit window belongs to an account rather than to a conversation, so [flatMapLatest]
@@ -141,6 +156,15 @@ class StableConversationRepository(
         switchToLive<ModelMenu?>(null) { it.observeModelMenu(conversationId) }
 
     /**
+     * The slash-command menu for [conversationId] (#882), switched over the live connection like
+     * [observeModelMenu]: [flatMapLatest] dropping the previous connection's projection is what stops one
+     * host's commands being offered for another's conversation. `null` while none is live is the same
+     * "no frame heard" value an unheard conversation produces.
+     */
+    override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> =
+        switchToLive<SlashCommandMenu?>(null) { it.observeSlashCommandMenu(conversationId) }
+
+    /**
      * Invalidate [conversationId]'s settings reading on the live repository (#590). Deliberately routed
      * through [currentRepository]`.value` rather than [live]: an invalidation with no connection is a
      * no-op, not an [IllegalStateException] — the caller has nothing to recover, and the next connection
@@ -163,6 +187,11 @@ class StableConversationRepository(
     override fun recentWorkspaces(): Flow<List<String>> = switchToLive(emptyList()) { it.recentWorkspaces() }
 
     override suspend fun createDiscussion(workspace: String?): Conversation = live.createDiscussion(workspace)
+
+    override suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = live.createChannel(name, workspace)
 
     override suspend fun promote(
         conversationId: String,
@@ -274,6 +303,13 @@ class StableConversationRepository(
                 }
         return repository.uploadAttachment(conversationId, bytes, filename, mimeType)
     }
+
+    /** Fetches on the repository live at call entry (#899), like [uploadAttachment]; none live is a retryable failure. */
+    override suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult =
+        currentRepository.value?.fetchAttachment(conversationId, attachmentId) ?: AttachmentRetrievalResult.Unavailable
 
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"

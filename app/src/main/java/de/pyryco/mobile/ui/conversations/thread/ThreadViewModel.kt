@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
@@ -23,6 +24,8 @@ import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionSettings
+import de.pyryco.mobile.data.repository.SlashCommandMenu
+import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
@@ -52,6 +55,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.scan
@@ -103,6 +107,10 @@ class ThreadViewModel(
     questionBatch: (conversationId: String) -> Flow<QuestionBatch?> = { flowOf(null) },
     private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
     private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
+    // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
+    // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
+    backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
+    backgroundTaskCount: (conversationId: String) -> Flow<Int> = { flowOf(0) },
     // #861: whether this thread's host has a live repository published — for a relay host, the
     // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
     // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
@@ -226,9 +234,29 @@ class ThreadViewModel(
     private val settingsReadings = MutableStateFlow(SettingsReading(0L, null))
 
     /**
+     * What claude says it runs (#891): the announced model and its build, each made inert here. Both #890
+     * readings are per conversation and cleared by the repository on a session transition, so nothing
+     * here tracks staleness. `SessionFacts.permissionMode` is claude's claim and is deliberately not read.
+     */
+    private val runningModel: Flow<ThreadRunningModel> =
+        combine(
+            repository.observeAnnouncedModel(conversationId),
+            repository.observeSessionFacts(conversationId),
+        ) { announced, facts ->
+            ThreadRunningModel(
+                model = announced?.let { reportedText(it.model, it.truncated) },
+                build =
+                    facts?.let {
+                        reportedText(it.claudeCodeVersion, CLAUDE_CODE_VERSION_FIELD in it.truncatedFields.orEmpty())
+                    },
+            )
+        }
+
+    /**
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
-     * or the sibling-[StateFlow] shape [draft] uses.
+     * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine, and
+     * Claude's reported context usage (#946) by a third; the repository clears that reading itself.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -239,7 +267,33 @@ class ThreadViewModel(
             pendingPermission,
         ) { settings, menu, model, effort, permission ->
             runConfig(settings, menu, model, effort, permission)
-        }
+        }.combine(runningModel) { config, running -> config.copy(running = running) }
+            .combine(repository.observeContextUsage(conversationId)) { config, usage ->
+                config.copy(contextPercent = usage?.percentage)
+            }
+
+    /**
+     * This conversation's published slash-command menu (#882), feeding both the Actions menu's absent
+     * commands (#884) and the composer's type-ahead (#885). Seeded `null` so a repository that never emits
+     * cannot stall [state].
+     */
+    private val slashCommandMenu: Flow<SlashCommandMenu?> =
+        repository
+            .observeSlashCommandMenu(conversationId)
+            .onStart { emit(null) }
+            .distinctUntilChanged()
+
+    /**
+     * This conversation's background-task roster and live count on this thread's host (#678). Each arm is
+     * seeded so a source that never emits cannot stall [state]. The task strings stay inside the roster:
+     * nothing here reads, logs or keys on them.
+     */
+    private val backgroundTaskReading: Flow<Pair<BackgroundTaskRoster?, Int>> =
+        combine(
+            backgroundTasks(conversationId).onStart { emit(null) },
+            backgroundTaskCount(conversationId).onStart { emit(0) },
+            ::Pair,
+        ).distinctUntilChanged()
 
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
@@ -319,6 +373,7 @@ class ThreadViewModel(
             ThreadUiState(
                 conversationId = conversationId,
                 displayName = conv?.displayName() ?: conversationId,
+                conversationName = conv?.name,
                 isPromoted = conv?.isPromoted ?: false,
                 hasMessages = content.items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = workspaceDisplayName(cwd = conv?.cwd ?: "", label = conv?.workspaceLabel),
@@ -336,6 +391,10 @@ class ThreadViewModel(
                 mutationsSupported = mutationsSupported,
                 historyTail = content.historyTail,
             )
+        }.combine(slashCommandMenu) { uiState, menu ->
+            uiState.copy(absentActions = absentComposerActions(menu), slashCommands = menu?.rows)
+        }.combine(backgroundTaskReading) { uiState, (roster, count) ->
+            uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -1037,6 +1096,26 @@ class ThreadViewModel(
         }
     }
 
+    /**
+     * Send the Actions menu's [action] command (#884) as an ordinary message to this conversation, through
+     * the same guarded send [sendMessage] runs, so a failed send is handled exactly as a composer message's.
+     * It leaves the typed draft alone, so there is no clear on success. A command the published menu proves
+     * absent is refused here too, behind the greyed-out row. Reset session carries no command and never
+     * comes this way. Logs static codes only.
+     */
+    fun onComposerCommand(action: ComposerAction) {
+        val command = action.command ?: return
+        if (action in state.value.absentActions) {
+            RelayLog.d { "event=composer_action action=${action.value} outcome=absent" }
+            return
+        }
+        launchGuardedRepoCall {
+            effortRecall.awaitWrite()
+            repository.sendMessage(conversationId, command)
+            RelayLog.d { "event=composer_action action=${action.value} outcome=sent" }
+        }
+    }
+
     fun retry() {
         viewModelScope.launch { connectionStateSource.retry() }
     }
@@ -1566,24 +1645,84 @@ class ThreadViewModel(
                 }
             }
             ThreadEvent.RenameDismiss -> pendingRenameDialog.value = false
-            ThreadEvent.SaveAsChannel ->
+            ThreadEvent.SaveAsChannel -> {
                 pendingSaveAsChannelDialog.value =
-                    SaveAsChannelDialogState(initialName = AUTO_SUGGESTED_CHANNEL_NAME)
-            is ThreadEvent.SaveAsChannelSubmit -> {
-                pendingSaveAsChannelDialog.value = null
-                launchGuardedRepoCall {
-                    repository.promote(
-                        state.value.conversationId,
-                        event.name,
-                        resolveWorkspace(event.name, event.workspace),
+                    SaveAsChannelDialogState(
+                        initialName = state.value.conversationName?.takeIf { it.isNotBlank() } ?: DEFAULT_CHANNEL_NAME,
                     )
-                }
+                RelayLog.d { "event=save_as_channel_opened" }
             }
-            ThreadEvent.SaveAsChannelDismiss -> pendingSaveAsChannelDialog.value = null
+            is ThreadEvent.SaveAsChannelSubmit -> submitSaveAsChannel(event.name, event.systemPrompt)
+            ThreadEvent.SaveAsChannelDismiss -> {
+                pendingSaveAsChannelDialog.value = null
+                RelayLog.d { "event=save_as_channel_dismissed" }
+            }
             ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true
             ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
+        }
+    }
+
+    /**
+     * Save as channel's OK (#957): promote this conversation **in place** under the trimmed [name] — the
+     * `workspace = null` promote keeps its `cwd`, id and history — then, once the promote is confirmed,
+     * store a non-blank [systemPrompt] verbatim. A blank prompt writes nothing, so a prompt the chat
+     * already stores is kept. The modal closes only when every write it asked for has been confirmed.
+     *
+     * A failure keeps the modal open with a [SaveAsChannelFailure] flag, never the exception's message.
+     * A confirmed promote is recorded as [SaveAsChannelDialogState.promoted], so OK after a failed prompt
+     * write retries only that write and never sends a second promote. Every terminal transition is a
+     * `compareAndSet` against the state published before it, so a result landing after Cancel cannot
+     * resurrect the modal; the writes themselves carry on, since the operator already pressed OK.
+     *
+     * Logs static event names only — never the name, the prompt, the id or an exception message.
+     */
+    private fun submitSaveAsChannel(
+        name: String,
+        systemPrompt: String,
+    ) {
+        val dialog = pendingSaveAsChannelDialog.value ?: return
+        if (dialog.saving) return
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || !SystemPromptLimit.fits(systemPrompt)) {
+            RelayLog.d { "event=save_as_channel_rejected" }
+            return
+        }
+        val pending = dialog.copy(saving = true, failure = null)
+        pendingSaveAsChannelDialog.value = pending
+        viewModelScope.launch {
+            if (!dialog.promoted) {
+                RelayLog.d { "event=save_as_channel_promote_started" }
+                try {
+                    repository.promote(conversationId, trimmed, null)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    RelayLog.d { "event=save_as_channel_promote_failed" }
+                    pendingSaveAsChannelDialog.compareAndSet(pending, pending.copy(saving = false, failure = SaveAsChannelFailure.Promote))
+                    return@launch
+                }
+            }
+            if (systemPrompt.isBlank()) {
+                pendingSaveAsChannelDialog.compareAndSet(pending, null)
+                RelayLog.d { "event=save_as_channel_saved" }
+                return@launch
+            }
+            val promoted = pending.copy(promoted = true)
+            pendingSaveAsChannelDialog.compareAndSet(pending, promoted)
+            try {
+                repository.setSystemPrompt(conversationId, systemPrompt)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                RelayLog.d { "event=save_as_channel_prompt_failed" }
+                pendingSaveAsChannelDialog.compareAndSet(
+                    promoted,
+                    promoted.copy(saving = false, failure = SaveAsChannelFailure.SystemPrompt),
+                )
+                return@launch
+            }
+            pendingSaveAsChannelDialog.compareAndSet(promoted, null)
+            RelayLog.d { "event=save_as_channel_saved" }
         }
     }
 
@@ -1652,29 +1791,34 @@ private fun usageLimitRereads(): Flow<Unit> =
         }
     }
 
-private const val AUTO_SUGGESTED_CHANNEL_NAME = "New channel"
-
-private fun resolveWorkspace(
-    name: String,
-    choice: WorkspaceChoice,
-): String? =
-    when (choice) {
-        WorkspaceChoice.DEDICATED -> "pyry-workspace/channels/${name.toChannelSlug()}"
-        WorkspaceChoice.SCRATCH -> null
-    }
-
-private fun String.toChannelSlug(): String =
-    lowercase()
-        .replace(Regex("\\s+"), "-")
-        .replace(Regex("[^a-z0-9-]"), "")
-        .trim('-')
-        .ifEmpty { "channel" }
+/** Save as channel's name seed for a conversation that has no name of its own (#957). */
+private const val DEFAULT_CHANNEL_NAME = "New channel"
 
 // ---- #544: Model / Effort → set_session_settings wire strings (file-private) ---------------------
 //
 // #807 deleted `Effort.wire()` / `Model.wire()`, the two enum-to-daemon-string mappers #544 added here.
 // Their premise was that the phone knows the server's vocabulary; it does not. Every argument sent now
 // comes from `ModelMenuRow.value` / `effortLevels` — the server's own strings, forwarded verbatim.
+
+/**
+ * The Actions menu's commands that [menu] proves absent (#884), after desktop's
+ * `composerActionAvailability`. Proof needs a menu, a dropped count of exactly 0, no row with a truncated
+ * `name` or `aliases`, and no row whose name or alias equals the command without its slash. Anything less
+ * proves nothing, and every row stays enabled. [ComposerAction.ResetSession] is never absent.
+ *
+ * The published strings are workspace-authored. They are only compared here, never returned, rendered,
+ * logged or sent.
+ */
+internal fun absentComposerActions(menu: SlashCommandMenu?): Set<ComposerAction> {
+    if (menu == null || menu.droppedCommands != 0) return emptySet()
+    val rows = menu.rows
+    if (rows.any { row -> row.truncatedFields.orEmpty().any { it == "name" || it == "aliases" } }) return emptySet()
+    return ComposerAction.entries
+        .filter { action ->
+            val name = action.command?.removePrefix("/") ?: return@filter false
+            rows.none { it.name == name || name in it.aliases }
+        }.toSet()
+}
 
 /**
  * The client's share of the #791 trust boundary: one daemon-authored string reduced to inert display
@@ -1697,6 +1841,23 @@ private fun String.toChannelSlug(): String =
 internal fun String.inert(): String = filterNot { it.isISOControl() }.take(MAX_RUN_CONFIG_LABEL_CHARS)
 
 private const val MAX_RUN_CONFIG_LABEL_CHARS = 128
+
+/**
+ * One claude-reported value (#891) through the [inert] path, or `null` when nothing printable is left —
+ * an all-control-character value is unavailable, not a blank row. [truncated] is the daemon's own flag,
+ * widened to also say when the inert bound cut characters, so cut text is never presented as whole.
+ */
+internal fun reportedText(
+    raw: String,
+    truncated: Boolean,
+): ThreadReportedText? {
+    val printable = raw.filterNot { it.isISOControl() }
+    if (printable.isEmpty()) return null
+    return ThreadReportedText(raw.inert(), truncated || printable.length > MAX_RUN_CONFIG_LABEL_CHARS)
+}
+
+/** The `session_facts.truncated_fields` entry that names the build (pyrycode `docs/protocol-mobile.md`). */
+private const val CLAUDE_CODE_VERSION_FIELD = "claude_code_version"
 
 /**
  * The most published models this client will lay out. `ModelMenu.rows` is bounded by the producer, but

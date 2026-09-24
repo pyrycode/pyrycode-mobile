@@ -29,12 +29,22 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.conversations.thread.ThreadEffortChoice
 import de.pyryco.mobile.ui.conversations.thread.ThreadModelChoice
+import de.pyryco.mobile.ui.conversations.thread.ThreadReportedText
+import de.pyryco.mobile.ui.conversations.thread.ThreadRunningModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 /**
@@ -63,6 +73,8 @@ fun StatusSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     effortNote: String? = null,
+    running: ThreadRunningModel = ThreadRunningModel(),
+    contextPercent: Int? = null,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 ) {
     ModalBottomSheet(
@@ -83,6 +95,8 @@ fun StatusSheet(
             enabled = enabled,
             onDismiss = onDismiss,
             effortNote = effortNote,
+            running = running,
+            contextPercent = contextPercent,
         )
     }
 }
@@ -101,6 +115,8 @@ internal fun StatusSheetContent(
     enabled: Boolean,
     onDismiss: () -> Unit,
     effortNote: String? = null,
+    running: ThreadRunningModel = ThreadRunningModel(),
+    contextPercent: Int? = null,
 ) {
     // The menu length is the daemon's, and its producer cap is not a wire constant — so the body scrolls
     // rather than clipping the Context-window section below a long Model section. #650 moved the
@@ -122,6 +138,9 @@ internal fun StatusSheetContent(
             onModelSelected = onModelSelected,
             enabled = enabled && !pending,
         )
+        // #891: what claude says it runs, labelled apart from the selection above and never filled from it.
+        SectionHeader(text = stringResource(R.string.status_sheet_running_model))
+        RunningModelSection(running = running)
         SectionHeader(text = sectionTitle("Effort", pending))
         EffortChipRow(
             effortChoices = effortChoices,
@@ -132,7 +151,7 @@ internal fun StatusSheetContent(
         // #889: why the selection is not Claude's applied effort — client-owned text, never daemon text.
         effortNote?.let { Caption(text = it) }
         SectionHeader(text = "Context window")
-        ContextWindowSection()
+        ContextWindowSection(contextPercent = contextPercent)
         Spacer(modifier = Modifier.height(24.dp))
     }
 }
@@ -307,6 +326,54 @@ private fun EffortChipRow(
     }
 }
 
+/**
+ * The model claude announced and its build (#891), both already inert. Neither `Text` sets `maxLines`: the
+ * inert bound caps the length, and an ellipsis would clip the very mark that says a value was cut.
+ */
+@Composable
+private fun RunningModelSection(running: ThreadRunningModel) {
+    val truncatedMark = stringResource(R.string.status_sheet_running_truncated)
+    val model = running.model
+    if (model == null) {
+        UnavailableNote(text = stringResource(R.string.status_sheet_running_model_unavailable))
+    } else {
+        Text(
+            text = withTruncationMark(model.text, model.truncated, truncatedMark),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .testTag(RUNNING_MODEL_TEST_TAG),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+    running.build?.let { build ->
+        Caption(
+            text =
+                withTruncationMark(
+                    stringResource(R.string.status_sheet_running_build, build.text),
+                    build.truncated,
+                    truncatedMark,
+                ),
+        )
+    }
+}
+
+/** [text] plus, when it was cut, the client-owned italic mark — text, so TalkBack reads it too. */
+private fun withTruncationMark(
+    text: String,
+    truncated: Boolean,
+    mark: String,
+): AnnotatedString =
+    buildAnnotatedString {
+        append(text)
+        if (truncated) withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(mark) }
+    }
+
+/** Marks the running-model line for the rung-3 scenario (#891). A static tag; never daemon text. */
+const val RUNNING_MODEL_TEST_TAG = "status_sheet_running_model"
+
 /** The honest-unavailable line #601 established for the Context-window section, reused wherever the
  *  daemon published nothing to choose from. */
 @Composable
@@ -321,6 +388,11 @@ private fun UnavailableNote(text: String) {
 
 @Composable
 private fun Caption(text: String) {
+    Caption(text = AnnotatedString(text))
+}
+
+@Composable
+private fun Caption(text: AnnotatedString) {
     Text(
         text = text,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -329,11 +401,11 @@ private fun Caption(text: String) {
     )
 }
 
-// Deliberate divergence from Figma node 20:151, which draws a populated figure and a
-// severity-coloured bar. The daemon does not serve mobile a real context figure yet (#591), so a
-// number here would always be a stub. Wording matches desktop; layout and typography are unchanged.
+// Figma node 20:151 reads "73% used (146K of 200K tokens)" over a severity-coloured bar. #946 shows only
+// Claude's reported percentage, verbatim, and no bar: the token figures and severity colours are a
+// deliberate divergence. With no reading the section says so, in desktop's wording, and never shows 0%.
 @Composable
-private fun ContextWindowSection() {
+private fun ContextWindowSection(contextPercent: Int?) {
     Column(
         modifier =
             Modifier
@@ -342,7 +414,12 @@ private fun ContextWindowSection() {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "Context usage unavailable",
+            text =
+                if (contextPercent != null) {
+                    stringResource(R.string.status_sheet_context_used, contextPercent)
+                } else {
+                    stringResource(R.string.status_sheet_context_unavailable)
+                },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -379,6 +456,12 @@ private val PreviewHaiku =
 
 private val PreviewChoices = listOf(PreviewOpus, PreviewSonnet, PreviewHaiku)
 
+private val PreviewRunning =
+    ThreadRunningModel(
+        model = ThreadReportedText("claude-opus-4-7", truncated = false),
+        build = ThreadReportedText("2.1.3", truncated = false),
+    )
+
 @Composable
 private fun PreviewSheet(
     choices: List<ThreadModelChoice> = PreviewChoices,
@@ -388,6 +471,8 @@ private fun PreviewSheet(
     selectedEffort: String = "high",
     pending: Boolean = false,
     enabled: Boolean = true,
+    running: ThreadRunningModel = PreviewRunning,
+    contextPercent: Int? = null,
     darkTheme: Boolean = false,
 ) {
     val selected = choices.firstOrNull { it.value == selectedModel }
@@ -409,6 +494,8 @@ private fun PreviewSheet(
                     pending = pending,
                     enabled = enabled,
                     onDismiss = {},
+                    running = running,
+                    contextPercent = contextPercent,
                 )
             }
         }
@@ -442,3 +529,23 @@ private fun StatusSheetPendingPreview() = PreviewSheet(pending = true)
 @Preview(name = "StatusSheet — read-only session", showBackground = true, widthDp = 412)
 @Composable
 private fun StatusSheetReadOnlyPreview() = PreviewSheet(enabled = false, selectedModel = "")
+
+@Preview(name = "StatusSheet — context usage reported", showBackground = true, widthDp = 412)
+@Composable
+private fun StatusSheetContextUsagePreview() = PreviewSheet(contextPercent = 84)
+
+@Preview(name = "StatusSheet — running model not announced", showBackground = true, widthDp = 412)
+@Composable
+private fun StatusSheetRunningUnavailablePreview() = PreviewSheet(running = ThreadRunningModel())
+
+@Preview(name = "StatusSheet — running model truncated, dark", showBackground = true, widthDp = 412)
+@Composable
+private fun StatusSheetRunningTruncatedDarkPreview() =
+    PreviewSheet(
+        running =
+            ThreadRunningModel(
+                model = ThreadReportedText("claude-opus-4-7-with-a-very-long-suffix", truncated = true),
+                build = ThreadReportedText("2.1", truncated = true),
+            ),
+        darkTheme = true,
+    )
