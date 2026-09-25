@@ -22,11 +22,14 @@ Package: `de.pyryco.mobile.ui.conversations.components`
 fun CompactingIndicator(
     isCompacting: Boolean,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 )
 ```
 
-Pure function of `isCompacting`: no `ViewModel` reference, no flow collection, no `remember`, no
-`LaunchedEffect`, no `ThreadUiState` field.
+`agent` ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114)) is a trailing default of
+`Claude`, so every pre-#1114 call site and preview keeps compiling and rendering unchanged. Pure function of
+`isCompacting`/`agent`: no `ViewModel` reference, no flow collection, no `remember`, no `LaunchedEffect`, no
+`ThreadUiState` field.
 
 ## What it does
 
@@ -41,7 +44,9 @@ Pure function of `isCompacting`: no `ViewModel` reference, no flow collection, n
   (`size(16.dp)`, `strokeWidth = 2.dp`) and an adjacent `Text` (`bodySmall` / `onSurfaceVariant`) — the
   identical M3 shape as `ThinkingIndicator` and `ApiRetryIndicator`.
 - **Accessibility** — `Modifier.semantics(mergeDescendants = true) { contentDescription = … }` on the
-  `Row` so it reads as **one** merged TalkBack node (AC #1), sourced from `cd_thread_compacting`.
+  `Row` so it reads as **one** merged TalkBack node (AC #1), sourced from `cd_thread_compacting` or, when
+  `agent == Codex` ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114)),
+  `cd_thread_compacting_codex`.
 - **Indeterminate, deliberately.** No progress bar: the upstream detector streams no compaction
   progress (no counter, percent, or ETA on the wire), so an indeterminate spinner is the honest
   rendering and a progress bar would invent data.
@@ -67,17 +72,22 @@ and the inserted (or, for #1002, removed) arm are new:
 ```kotlin
 when {
     apiRetry != ApiRetryStatus.NotRetrying ->
-        ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
+        ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth(), agent = agent) // #1114
     resetting != null ->
-        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth())
+        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth(), agent = agent) // #1112
     isCompacting ->
-        CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
+        CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth(), agent = agent) // #1114
     turnOutcome != null ->
         TurnOutcomeIndicator(report = turnOutcome, modifier = Modifier.fillMaxWidth())
     else ->
-        ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
+        ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth(), agent = agent) // #1114
 }
 ```
+
+`resetting` gained `agent` in #1112, closing the gap #1114 left on this one arm — see [Resetting
+indicator § The agent name](resetting-indicator.md#the-agent-name-1112). `turnOutcome` still has not — see
+[Thinking indicator § Edge cases](thinking-indicator.md#edge-cases--limitations) for the remaining
+partial-rollout note.
 
 **Exactly one affordance renders; the arms never stack.** Two things about the ordering:
 
@@ -132,6 +142,13 @@ Threaded exactly like `isStalled` / `apiRetry` — a **defaulted hoisted value**
 - **`MainActivity`** collects it via `vm.isCompacting.collectAsStateWithLifecycle()` beside `isStalled`
   / `apiRetry`, and passes it through — two lines, mirroring the `apiRetry` wiring.
 
+`agent` ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114)) is wired differently from
+`isCompacting`: it comes from `state.agent` on `ThreadUiState` (set inside `ThreadViewModel`'s existing
+conversations `combine`, alongside `displayName`/`isPromoted`), not a new sibling `StateFlow`/`MainActivity`
+collection line — the agent is a slow-changing conversation property already resolved there, unlike the
+per-turn `compacting` signal. See [Thinking indicator § The agent name](thinking-indicator.md#the-agent-name-1114)
+for the shared rationale, which all three agent-aware indicators follow identically.
+
 See [Compacting state](compacting-state.md) for the upstream data path (#596's `compacting` decode →
 `observeCompacting` projection) that produces this value.
 
@@ -162,6 +179,14 @@ case).
   |---|---|
   | `thread_compacting_label` | `Compacting conversation` |
   | `cd_thread_compacting` | `Claude is compacting the conversation` |
+
+  **One more ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114))**, a whole Codex-naming
+  sibling rather than a shared format with an agent-name argument, so the row above stays byte-identical
+  and existing tests keep passing unmodified:
+
+  | Name | Value |
+  |---|---|
+  | `cd_thread_compacting_codex` | `Codex is compacting the conversation` |
 
 ## Edge cases / limitations
 
@@ -203,8 +228,10 @@ case).
 ## Related
 
 - Ticket notes: [`../codebase/597.md`](../codebase/597.md) (this component) ·
-  [`../codebase/596.md`](../codebase/596.md) (the data/repository half it consumes).
-- Spec: `docs/specs/architecture/597-compacting-status-render.md`.
+  [`../codebase/596.md`](../codebase/596.md) (the data/repository half it consumes). #1114 postdates the
+  2026-09-05 codebase-archive freeze and has no per-ticket note.
+- Specs: `docs/specs/architecture/597-compacting-status-render.md` ·
+  `docs/specs/architecture/1114-agent-status-screen-reader-labels.md` (the `agent` param).
 - Upstream signal: [Compacting state](compacting-state.md) — `ThreadViewModel.isCompacting` /
   `observeCompacting`, the `compacting` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `isCompacting` as another flat sibling parameter

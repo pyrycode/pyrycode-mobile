@@ -102,3 +102,46 @@ row from whatever `items` / `queuedMessages` pair is current. See
 [Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782) for
 the fold's five correlation rules and [the list section](thread-screen-how-it-works-list-and-status-row.md)
 for where it is called.
+
+### The model-menu agent filter (#1110)
+
+`runConfigFlow`'s menu arm — `repository.observeModelMenu(conversationId)` — is a separate `combine` from
+`state`'s, at Kotlin's five-typed-argument ceiling already (`sessionSettings`, the menu, `pendingModel`,
+`pendingEffort`, `pendingPermission`). Filtering a merged `multi_agent` menu down to this conversation's own
+rows therefore needs the agent as a **sixth** input, which does not fit — so it joins by a chained
+`.combine(conversationAgent) { menu, agent -> menu?.forAgent(agent) }` on the menu flow itself, ahead of the
+five-arm `combine`, rather than growing that combine's arity. `forAgent` (a private top-level extension on
+`ModelMenu`) keeps only the rows whose `agent == agent` (daemon order preserved) and zeroes `droppedModels`
+for every agent but Claude — the count is the daemon's own tail-cut of Claude's rows and does not apply to
+Codex's. Because this filter runs on the menu arm before `runConfig` applies `MAX_RENDERED_MODEL_CHOICES`,
+`hiddenChoices` counts the filtered list, and `effortRecall.offer` (see [Thread composer footer § Remembered
+effort recall](thread-composer-footer-effort-recall.md)) receives only the conversation's own agent's rows
+through the ordinary `state` combine — no separate wiring was needed for AC 5 to fall out of the filter.
+
+**`conversationAgent`, not the `state` combine's own `agent` field, feeds this filter — the two are resolved
+twice on purpose.** [#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114) already reads
+`conv?.agent ?: ConversationAgent.Claude` inline inside the `state` combine's lambda to set
+`ThreadUiState.agent` (see [Data model § the agent name](data-model.md)); that value lives only inside the
+lambda and cannot be reused by `runConfigFlow`, a sibling `combine` chain built from a different flow. #1110
+instead hoists a private `conversations: Flow<List<Conversation>>` — `repository.observeConversations(All)`
+shared with `shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)` — and derives
+`conversationAgent: Flow<ConversationAgent> = conversations.map { it.firstOrNull { c -> c.id ==
+conversationId }?.agent ?: ConversationAgent.Claude }.distinctUntilChanged()` from it, so both `runConfigFlow`
+and `state` can each read the same upstream. **`state`'s first combine arm changed from
+`repository.observeConversations(ConversationFilter.All)` to this shared `conversations`** for exactly that
+reason — `RemoteConversationRepository.observeConversations` sends a `list_conversations` request on every
+new subscription, so a second, independent subscription for the filter would have doubled that request per
+thread opening. `shareIn` with no stop timeout is deliberate: the shared flow only needs to outlive `state`'s
+own `WhileSubscribed(5_000)` upstream, never longer, so it stops with `state`'s last subscriber rather than
+lingering on its own separate timeout.
+
+**Edge case flagged by review, not yet reachable.** `conversationAgent` reads `Claude` while the shared list
+does not yet hold this conversation's row — the same default `Conversation.agent` and `conversationAgentOf`
+already use. Today that only happens before the first `list_conversations` reply lands, and nothing in
+`state` or `runConfigFlow` can observe the model menu or offer a recall before then. If a future change ever
+let `state` collect for a conversation the list hasn't upserted yet — e.g. a thread opened immediately after
+local creation, before the daemon's confirmation round-trips — `EffortRecall.offer` would decide once against
+Claude's rows (including the `default` row when nothing is saved) for a Codex conversation, and never
+reconsider once `decided` flips. The daemon would refuse the resulting write, so no visible corruption
+follows, but the recall opportunity for that opening would be spent on the wrong agent's vocabulary. Revisit
+this note before changing when `state` starts collecting relative to the conversation list's first emission.

@@ -24,6 +24,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -43,9 +44,9 @@ private val BannerIconGap = 8.dp
  * app's own chrome is the realistic abuse. The render-time obligations:
  * - **Stripped** of control characters and terminal escapes by [bannerDisplayText] at this one sink.
  * - **Inert** — a plain [Text]: never markdown, no link detection, no click, no `SelectionContainer`.
- * - **Attributed** — the client-owned "Claude: " is its own medium-weight span. claude can type those
- *   characters but cannot style a span, so the attribution cannot be forged from inside the text. Keep
- *   it a separate styled span.
+ * - **Attributed** — the client-owned "<agent>: " ([agentName] of the conversation's [agent], #1113) is its
+ *   own medium-weight span. The agent can type those characters but cannot style a span, so the attribution
+ *   cannot be forged from inside the text. Keep it a separate styled span.
  * - **No second length cap** — the daemon bounds the text at 4 KiB and reports its own cut in
  *   [ThreadItem.Banner.truncated], shown as a client-owned italic mark.
  * - **No logging, no persisting** — nothing on this path logs the text, and the row is never cached.
@@ -53,11 +54,13 @@ private val BannerIconGap = 8.dp
 @Composable
 fun BannerNoticeRow(
     item: ThreadItem.Banner,
+    agent: ConversationAgent,
     modifier: Modifier = Modifier,
 ) {
     val warning = item.level == BannerLevel.Warning
     val color = if (warning) MaterialTheme.colorScheme.warning else MaterialTheme.colorScheme.onSurfaceVariant
-    val attribution = stringResource(R.string.thread_banner_attribution)
+    val name = agentName(agent)
+    val attribution = stringResource(R.string.thread_banner_attribution, name)
     val truncatedMark = stringResource(R.string.thread_banner_truncated)
     val text =
         buildAnnotatedString {
@@ -77,7 +80,7 @@ fun BannerNoticeRow(
         if (warning) {
             Icon(
                 imageVector = Icons.Outlined.WarningAmber,
-                contentDescription = stringResource(R.string.cd_thread_banner_warning),
+                contentDescription = stringResource(R.string.cd_thread_banner_warning, name),
                 modifier = Modifier.size(BannerIconSize),
                 tint = color,
             )
@@ -126,6 +129,7 @@ private fun BannerNoticeRowPreviewMatrix() {
                 truncated = false,
                 occurredAt = PreviewInstant,
             ),
+            agent = ConversationAgent.Claude,
         )
         BannerNoticeRow(
             ThreadItem.Banner(
@@ -134,6 +138,7 @@ private fun BannerNoticeRowPreviewMatrix() {
                 truncated = false,
                 occurredAt = PreviewInstant,
             ),
+            agent = ConversationAgent.Claude,
         )
         BannerNoticeRow(
             ThreadItem.Banner(
@@ -142,6 +147,7 @@ private fun BannerNoticeRowPreviewMatrix() {
                 truncated = true,
                 occurredAt = PreviewInstant,
             ),
+            agent = ConversationAgent.Codex,
         )
     }
 }

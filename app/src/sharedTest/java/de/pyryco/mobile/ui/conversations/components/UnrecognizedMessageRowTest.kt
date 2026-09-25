@@ -138,6 +138,21 @@ class UnrecognizedMessageRowTest {
         composeTestRule.onNodeWithText("$label · $undecodableSite").assertIsDisplayed()
     }
 
+    // #1109: the two Codex sites carry their own client-owned labels.
+    @Test
+    fun codex_method_site_is_labelled_codex_notification() {
+        setContent(unrecognized(site = UnrecognizedSite.CodexMethod, messageType = "error"))
+
+        composeTestRule.onNodeWithText("$label · error · Codex notification").assertIsDisplayed()
+    }
+
+    @Test
+    fun codex_item_site_is_labelled_codex_item() {
+        setContent(unrecognized(site = UnrecognizedSite.CodexItem, messageType = "webSearch"))
+
+        composeTestRule.onNodeWithText("$label · webSearch · Codex item").assertIsDisplayed()
+    }
+
     @Test
     fun expanded_state_survives_configuration_change() {
         val restorationTester = StateRestorationTester(composeTestRule)
