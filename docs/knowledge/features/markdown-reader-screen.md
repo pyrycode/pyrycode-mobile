@@ -9,7 +9,9 @@ instead of handing the file to another app; every other attachment type still go
 Since #1050, the same screen also opens on a **tapped workspace-note link in an assistant reply**, fetched live
 rather than from a stored attachment — see [Linked note, live (since #1050)](#linked-note-live-since-1050).
 Since #1067, the top bar also carries a three-dot menu — copy the note in three formats, and refresh it in
-place — see [Copy and refresh menu (since #1067)](#copy-and-refresh-menu-since-1067).
+place — see [Copy and refresh menu (since #1067)](#copy-and-refresh-menu-since-1067). Since #1068 the same menu's
+last item hands the note on to another app, as `text/markdown` — see
+[Open in another app (since #1068)](#open-in-another-app-since-1068), inside that same section.
 
 ## What it does
 
@@ -199,10 +201,11 @@ shows.
 The top bar's overflow button (`Icons.Filled.MoreVert`, `cd_more_actions`, the same 48dp touch target and bar
 metrics as `ThreadTopAppBar`'s own) opens a plain M3 `DropdownMenu` built the way `ThreadOverflowMenu` builds
 the thread's menu — the operator decided (2026-09-24) it reuses that dropdown rather than a second style.
-Figma: `Options overlay` (`533:1958`). Four items, each dismissing the menu before it acts: **Copy as
-markdown**, **Copy as plain text**, **Copy as HTML**, **Refresh**. The menu shows only once the reader has
-content — the bar draws nothing until the first read finishes, and a failed first read never opens the reader
-at all (see [What it does](#what-it-does)).
+Figma: `Options overlay` (`533:1958`). Five items, each dismissing the menu before it acts: **Copy as
+markdown**, **Copy as plain text**, **Copy as HTML**, **Refresh**, **Open in another app** (since #1068,
+[below](#open-in-another-app-since-1068)). The menu shows only once the reader has content — the bar draws
+nothing until the first read finishes, and a failed first read never opens the reader at all (see [What it
+does](#what-it-does)).
 
 ### Copy
 
@@ -282,6 +285,61 @@ retrying, the natural next action after that notice, silently did nothing. The f
 its own `scope.launch { … }`, so the in-flight guard covers only the read; a retry while the notice is still
 showing reads again. Pinned by `MarkdownReaderScreenTest.aRetry_whileTheFailureNoticeShows_readsAgain`.
 
+### Open in another app (since #1068)
+
+The menu's last item, `markdown_reader_open_in_app`, hands the `document` currently on screen — after a
+Refresh, the refreshed one — to another app as `text/markdown`, through the system chooser, mirroring the
+read-only single-URI grant [`openAttachment`](message-bubble-attachment-slot.md#open-and-save-since-985) gives
+a stored attachment. A linked note (since #1050) has no file on disk at all, and a stored attachment's kept
+file can be stale after a Refresh, so the text on screen is always written out fresh first rather than handing
+on whatever file (if any) already exists.
+
+- **`SharedNoteFile.kt`** (new, `ui/conversations/thread/`, pure JVM, no Compose or Android types):
+  `sharedNoteDirectory(noBackupFilesDir)` is `<noBackupFilesDir>/attachments/shared-note` — a child of the same
+  root [`AttachmentStore`](attachment-retrieval.md#host-store--datacacheattachmentstorekt) and the attachment
+  `FileProvider` use, but named `shared-note`, which is not a 64-character hex digest. That is what keeps it
+  safe from `AttachmentStore.removeHost`'s recursive per-host delete (`<root>/<sha256hex(serverId)>`), which
+  can never collide with or reach a name outside that shape, and it never deletes anything but its own
+  contents in return. `sharedNoteFileName(name)` takes the last component after the last `/` and `\` (a
+  daemon-authored name — an attachment's `displayName` or a link's path text — can carry either separator),
+  runs it through `attachmentDisplayName` (the same control/format-character strip and 255-UTF-8-byte bound
+  attachment names already get, see [Attachment retrieval](attachment-retrieval.md)), and falls back to
+  `note.md` for an empty, `.` or `..` result. `writeSharedNote(directory, name, text)` runs under one
+  process-wide lock: creates the directory, deletes every entry already there (so at most one note's file
+  exists at a time — an open never accumulates), resolves the name inside it, and refuses (`null`) unless the
+  resolved file's canonical parent is still the directory's own canonical file — the same
+  climb-back-out defence `writeSharedNote`'s own test (`aNameThatWouldClimbOut_staysInside`) pins, on top of
+  `FileProvider`'s independent canonicalisation against `attachment_paths.xml`'s one root. Any exception is
+  `null`, unread — an exception message can carry the path.
+- **`openNoteInAnotherApp(context, document, chooserTitle, ioDispatcher)`** (`AttachmentActions.kt`): writes the
+  note on `ioDispatcher` (`OPEN_FAILED` on `null`), resolves its content URI through the same
+  `attachmentContentUri` an opened attachment uses (`OPEN_FAILED` on `null`), builds an `ACTION_VIEW` /
+  `text/markdown` intent carrying exactly `FLAG_GRANT_READ_URI_PERMISSION` — never write, persistable or
+  prefix — then checks `packageManager.queryIntentActivities` before starting anything: an empty result is
+  `NO_APP`, because handing an unresolvable `ACTION_VIEW` to `Intent.createChooser` would show an empty chooser
+  rather than throw. `startActivity(Intent.createChooser(view, chooserTitle))` follows; `createChooser` itself
+  migrates only that read grant into the chooser's own `ClipData` for the picked target.
+  `ActivityNotFoundException` is also `NO_APP`; any other exception is `OPEN_FAILED`; a started chooser is
+  `null`. `AndroidManifest.xml` gained a `<queries>` element (`VIEW` + `content` scheme + `text/markdown` type)
+  so the `queryIntentActivities` check sees installed viewers under Android 11+ package visibility — without
+  it the query would under-report regardless of what is actually installed.
+- **`MarkdownReaderScreen`** owns the action the same way it owns the copies: the tap captures the `document`
+  it is currently drawing, launches in `rememberCoroutineScope()`, and a non-null notice shows in the reader's
+  own `snackbarHostState` — `AttachmentNotice.NO_APP` ("No app can open this file") or the existing
+  `OPEN_FAILED` ("Couldn't open file"), the same strings the thread's own attachment-open failures use.
+  Notice strings are resolved with `stringResource` before the coroutine launches, not `Context.getString`
+  inside it (lint `LocalContextGetResourceValueCall`).
+- **Accepted stale-grant gap** (from the ticket's security review): the app the operator picked loses its read
+  grant on the previous file the moment the *next* open deletes it, and it cannot resolve the new file unless
+  the note's name is unchanged (a different URI). Recorded as accepted rather than fixed — one note stays on
+  disk at a time is the design, and a grant to text the operator already handed the app for the same note is
+  not a new exposure.
+
+**Lesson from implementation:** `MarkdownReaderScreenTest` needed the same `FileProvider.sCache` reset
+`AttachmentActionsTest` already used (see [Testing](#testing)) — without it, a shared-note file served in one
+test could leave the provider's authority-to-root cache pointed at a data directory Robolectric had already
+torn down for the next test in the same JVM, turning an expected `NO_APP` into `OPEN_FAILED`.
+
 Both destinations wrap `RefreshableMarkdownReader` rather than `MarkdownReaderScreen` directly:
 `MarkdownReaderDestination`'s `Loaded` arm passes `reread = { readMarkdownAttachment(repository,
 conversationId, attachmentId) }` (see [The reader destination](#the-reader-destination));
@@ -294,8 +352,9 @@ scenario (see [Testing](#testing) and [Interactive stream e2e](../../e2e-interac
 ### Logging
 
 `RelayLog.d` only, static fields, never the text, name, path or clip contents:
-`event=markdown_reader_copy format=markdown|plain|html chars=<source length>` and
-`event=markdown_reader_refresh outcome=loaded|failed`.
+`event=markdown_reader_copy format=markdown|plain|html chars=<source length>`,
+`event=markdown_reader_refresh outcome=loaded|failed`, and (since #1068)
+`event=markdown_reader_open_in_app outcome=opened|no_app|failed chars=<text length>`.
 
 ## Testing
 
@@ -358,11 +417,31 @@ spends two real-claude turns — the rewrite prompt moved from the phone's compo
 turn to the suite's running total; see [Interactive stream e2e § Follow-ups to
 ticket](../../e2e-interactive-stream.md#follow-ups-to-ticket) for the live-run evidence.
 
+\#1068's [open in another app](#open-in-another-app-since-1068) adds: `SharedNoteFileTest` (`app/src/test/…/thread/`,
+pure JVM, `TemporaryFolder`, 8 tests) — `sharedNoteFileName` takes the last path component for both `/` and
+`\`, strips control characters, fits the 255-UTF-8-byte limit, and falls back to `note.md` for an empty, `.`,
+`..` or trailing-separator name; `sharedNoteDirectory`'s name is never a 64-hex-character host directory;
+`writeSharedNote` keeps the exact UTF-8 bytes under the resolved name, a second write leaves only the second
+note's file, a name that would climb out of the directory still resolves inside it, and a directory that cannot be
+created (a regular file already sitting at that path) writes nothing. `AttachmentActionsTest` gained 3 Robolectric tests:
+the shared-note file is served by the attachment provider with the note's name as its last path segment; with
+a markdown viewer registered, `openNoteInAnotherApp` starts an `ACTION_CHOOSER` whose `EXTRA_INTENT` is
+`ACTION_VIEW` + `text/markdown` + a `content` URI of the attachments authority with flags exactly the read
+grant, and whose own chooser flags carry none of the write/persistable/prefix bits; with no viewer registered,
+`NO_APP` and nothing started; with the shared-note directory blocked by a file in its place, `OPEN_FAILED` and
+nothing started. `MarkdownReaderScreenTest` grew by 2 tests and one `@Before`: the reset of `FileProvider`'s
+cached authority roots the [lesson above](#open-in-another-app-since-1068) needed; the overflow's five items in
+order (was four); choosing Open in another app with no registered viewer shows "No app can open this file"
+while the rendered content stays displayed underneath. No rung-3 scenario — the hand-off ends in another app's
+chooser, which the harness cannot drive, and the daemon is not involved; the read that produces the text is
+already proven live by the scenarios above.
+
 ## Related
 
 - [MessageBubble — attachment slot § Open and save](message-bubble-attachment-slot.md#open-and-save-since-985) —
   the `Ready`-row tap this screen is one branch of; `AttachmentActions.kt`'s `rememberAttachmentActions` and
-  `openAttachment`.
+  `openAttachment`, the read-only single-URI-grant pattern [`openNoteInAnotherApp`](#open-in-another-app-since-1068)
+  mirrors for a note instead of a kept attachment file.
 - [Attachment retrieval](attachment-retrieval.md) — `ConversationRepository.retrieveAttachment`, the
   host-keyed `AttachmentStore` this reader's two reads (thread, then reader) both resolve through, and why the
   retrieval bound and this reader's own 256 KiB bound are separate numbers for separate reasons.
@@ -398,3 +477,8 @@ ticket](../../e2e-interactive-stream.md#follow-ups-to-ticket) for the live-run e
   change, the fence provider always replaced, `&` left encoded in a link href, the quote-continuation fix, the
   `chars=` log field, the bar padding, and the two rework-round fixes: the live Refresh proof and the
   retry-while-the-notice-shows fix).
+- Ticket: `docs/specs/architecture/1068-markdown-reader-open-in-app.md` — design for
+  [open in another app](#open-in-another-app-since-1068), the security review (the accepted stale-grant
+  gap, the `shared-note` directory's non-collision with `AttachmentStore`'s host directories), and the
+  Revisions entry (the `FileProvider.sCache` reset `MarkdownReaderScreenTest` needed once `AttachmentActionsTest`
+  ran first in the same JVM, and resolving notice strings with `stringResource` ahead of the coroutine).

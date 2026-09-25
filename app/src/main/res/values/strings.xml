@@ -406,5 +406,6 @@
     <string name="markdown_reader_copy_plain_text">Copy as plain text</string>
     <string name="markdown_reader_copy_html">Copy as HTML</string>
     <string name="markdown_reader_refresh">Refresh</string>
+    <string name="markdown_reader_open_in_app">Open in another app</string>
     <string name="markdown_reader_clip_label">Note</string>
 </resources>
