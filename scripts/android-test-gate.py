@@ -53,6 +53,8 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1087 adds the workspace add, rename and archive method.
 LIVE_MINIMUM += 1
+# #1088 adds the channel create, edit and archive method.
+LIVE_MINIMUM += 1
 # #1076 adds the background-task progress method.
 LIVE_MINIMUM += 1
 
