@@ -277,6 +277,15 @@ class StableConversationRepositoryTest {
             assertEquals(AttachmentRetrievalResult.Unavailable, facade.fetchAttachment("c1", "a1"))
         }
 
+    // #1049: a workspace read with no live connection is a retryable failure, not a throw.
+    @Test
+    fun readWorkspaceFile_whileAbsent_isUnavailable() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            assertEquals(AttachmentRetrievalResult.Unavailable, facade.readWorkspaceFile("c1", "notes.md"))
+        }
+
     // #829: the upload runs on the connection live at entry; a later change of connection does not move it.
     @Test
     fun uploadAttachment_staysOnTheRepositoryLiveAtEntry() =

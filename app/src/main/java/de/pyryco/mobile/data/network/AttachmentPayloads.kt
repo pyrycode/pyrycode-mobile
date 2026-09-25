@@ -101,6 +101,20 @@ internal data class RequestAttachmentPayloadDto(
 )
 
 /**
+ * Mobile Protocol v2 `read_workspace_file` payload (#1049): ask this connection's daemon for one markdown file
+ * as it is on disk now in [conversationId]'s workspace. Wire SSOT: `../pyrycode/docs/protocol-mobile.md`
+ * § Attachments → `read_workspace_file`. Both keys are always sent. [path] is sent as given: the daemon owns
+ * confinement. Neither field is ever logged, so [toString] names neither.
+ */
+@Serializable
+internal data class ReadWorkspaceFilePayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val path: String,
+) {
+    override fun toString(): String = "ReadWorkspaceFilePayloadDto"
+}
+
+/**
  * Whether [value] is the published `attachment_id` shape (`protocol-mobile.md` § The `attachment_id` shape),
  * which conversation ids share: a lowercase UUIDv4, 36 bytes, `-` at 8, 13, 18 and 23, `4` at 14, one of
  * `8`, `9`, `a`, `b` at 19, and lowercase hex everywhere else. The alphabet is what keeps the id from
