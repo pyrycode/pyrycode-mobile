@@ -487,6 +487,17 @@ overlay. For relay and Noise changes, combine deterministic JVM coverage with th
 appropriate UI or post-verifier live path; do not claim the latter ran unless its
 output identifies the executed scenario and XML evidence.
 
+A device gate run (`ui`, `scripted`, `scripted-all` or `live`) copies each fresh
+per-test `logcat-*.txt` into that run's `build/dispatcher-tests/<mode>-*` artifact
+directory next to the XML it already copies (`fresh_logcats` in
+`scripts/android-test-gate.py`, the sibling of `fresh_reports`) — the next run
+overwrites AGP's originals under `androidTest-results/`, so this is the only place
+they survive (#1039). To diagnose a relay connection drop, read those
+[`RelayLog`](relay-log.md) `event=transport_end` / `event=pump_teardown` lines
+alongside the daemon's `daemon.log` by timestamp; neither side logs the other's
+cause, so correlating by time is what tells a phone-side, relay-side or network
+ending apart.
+
 ## Documentation evidence
 
 Record the failure that would otherwise recur, its cause and the check that catches

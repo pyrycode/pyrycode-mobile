@@ -28,7 +28,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -122,8 +124,8 @@ private val TaskMarkTopInset = 4.dp // sits the mark on the first text line, not
  * what they remove is the amplification tail, where a few kilobytes of pipes become tens of
  * thousands of measured composables, re-paid on every streaming reveal tick.
  */
-private const val MAX_TABLE_COLUMNS = 32
-private const val MAX_TABLE_ROWS = 256
+internal const val MAX_TABLE_COLUMNS = 32
+internal const val MAX_TABLE_ROWS = 256
 
 /**
  * GFM, not CommonMark, since #681. `org.jetbrains:markdown` offers no per-construct registration, so
@@ -135,14 +137,28 @@ private const val MAX_TABLE_ROWS = 256
  * The constructor flags configure only the HTML generating providers, which this renderer never
  * builds — it walks the AST itself — so their defaults are inert here rather than relied upon.
  */
-private val MarkdownFlavour = GFMFlavourDescriptor()
+internal val MarkdownFlavour = GFMFlavourDescriptor()
 
+/**
+ * [onOpenMarkdownPath] (#1050) opts a caller in to workspace notes: a link whose target is a markdown path
+ * ([markdownLinkPath]) is handed to it instead of doing nothing. Only assistant replies pass it; with the
+ * default every link keeps the `http` / `https` / `mailto` allowlist, which is what the reader relies on.
+ */
 @Composable
 fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
+    onOpenMarkdownPath: ((String) -> Unit)? = null,
 ) {
-    val uriHandler = LocalUriHandler.current
+    val platformHandler = LocalUriHandler.current
+    val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
+    // Every link tap goes through this one handler, so the block walkers below keep passing a UriHandler.
+    val uriHandler =
+        remember(platformHandler) {
+            object : UriHandler {
+                override fun openUri(uri: String) = routeMarkdownLink(uri, currentOnOpenMarkdownPath, platformHandler::openUri)
+            }
+        }
     val root =
         remember(markdown) {
             MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(markdown)
@@ -477,7 +493,7 @@ private fun TableBlock(
  * Trimming the TOKENS and not the built string is what keeps the span offsets honest — an
  * `AnnotatedString` trimmed after the fact carries styles that no longer line up with its text.
  */
-private fun ASTNode.trimmedContent(): List<ASTNode> =
+internal fun ASTNode.trimmedContent(): List<ASTNode> =
     children
         .dropWhile { it.type == MarkdownTokenTypes.WHITE_SPACE }
         .dropLastWhile { it.type == MarkdownTokenTypes.WHITE_SPACE }
@@ -815,6 +831,25 @@ private fun buildInline(
     }
 }
 
+/**
+ * The text [nodes] render as, without styles or links (#1067): the same walk [buildInline] runs, so the
+ * reader's plain-text copy drops exactly the delimiters the screen hides. The handler and colours are inert,
+ * since nothing here is drawn or tapped.
+ */
+internal fun inlineText(
+    nodes: List<ASTNode>,
+    source: String,
+): String =
+    buildAnnotatedString {
+        appendInlineChildren(nodes, source, InertUriHandler, InertInlineColors)
+    }.text
+
+private object InertUriHandler : UriHandler {
+    override fun openUri(uri: String) = Unit
+}
+
+private val InertInlineColors = InlineColors(Color.Unspecified, Color.Unspecified, Color.Unspecified)
+
 private fun AnnotatedString.Builder.appendInline(
     node: ASTNode,
     source: String,
@@ -890,9 +925,8 @@ private fun AnnotatedString.Builder.appendInline(
                         ),
                     linkInteractionListener =
                         LinkInteractionListener { link ->
-                            (link as? LinkAnnotation.Url)?.url?.let { target ->
-                                if (isSafeLinkScheme(target)) uriHandler.openUri(target)
-                            }
+                            // The handler decides: a markdown path, an allowed scheme, or nothing.
+                            (link as? LinkAnnotation.Url)?.url?.let(uriHandler::openUri)
                         },
                 ),
             ) {
@@ -1021,7 +1055,42 @@ private fun isFlankingWhitespace(character: Char?): Boolean = character == null 
 private fun isFlankingPunctuation(character: Char?): Boolean =
     character != null && !character.isLetterOrDigit() && !character.isWhitespace()
 
-private fun isSafeLinkScheme(url: String): Boolean {
+// A trailing `:line` or `:line:column`, digits only, as editors and claude write a location.
+private val LinkLineSuffix = Regex("""(:\d+){1,2}$""")
+
+// RFC 3986's scheme: a letter, then letters, digits, `+`, `-` or `.`, then the colon.
+private val LinkScheme = Regex("""^[A-Za-z][A-Za-z0-9+.-]*:""")
+
+/**
+ * The workspace path a link [target] names (#1050), or `null` when it is not a markdown path: after dropping
+ * a trailing `#fragment` and then a trailing `:line` or `:line:column`, it has no URL scheme and ends in `.md`
+ * or `.markdown`, in any case. The suffix goes before the scheme check, or `Plan.md:12` would read as the
+ * scheme `plan.md`. The path is returned as written: the phone never decodes, resolves or confines it,
+ * the daemon does.
+ */
+internal fun markdownLinkPath(target: String): String? {
+    val path = target.substringBeforeLast('#').replace(LinkLineSuffix, "")
+    if (LinkScheme.containsMatchIn(path)) return null
+    return path.takeIf { it.endsWith(".md", ignoreCase = true) || it.endsWith(".markdown", ignoreCase = true) }
+}
+
+/**
+ * Where a tapped link [target] goes (#1050): a markdown path to [onOpenMarkdownPath] when the caller opted
+ * in, and otherwise to [openUri] only for an allowed scheme. Anything else does nothing.
+ */
+internal fun routeMarkdownLink(
+    target: String,
+    onOpenMarkdownPath: ((String) -> Unit)?,
+    openUri: (String) -> Unit,
+) {
+    val path = onOpenMarkdownPath?.let { markdownLinkPath(target) }
+    when {
+        path != null -> onOpenMarkdownPath(path)
+        isSafeLinkScheme(target) -> openUri(target)
+    }
+}
+
+internal fun isSafeLinkScheme(url: String): Boolean {
     val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
     return scheme == "http" || scheme == "https" || scheme == "mailto"
 }

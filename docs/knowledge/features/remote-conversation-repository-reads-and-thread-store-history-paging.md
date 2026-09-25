@@ -63,6 +63,19 @@ same fail-open posture every other per-entry decode failure in this reducer alre
 carry no name or MIME hint: the wire's `attachment_ids` is bare ids, so `displayName`/`mimeType` stay
 `null` until a merge (below) fills them from a twin that has one.
 
+**A stored user `message` entry reduces its `attachment_ids` the same way (#1020).** Before this ticket
+the `TYPE_MESSAGE` arm read no ids at all, so a peer's own attached file never survived a history reload
+or a rebuilt thread cache — #983 had wired only the `TYPE_SEND_MESSAGE` arm, the operator's own echo. The
+daemon now stores the optional field on a `message` entry too, named and shaped like `send_message`'s
+(pyrycode#2596). `TYPE_MESSAGE` still decodes through `MessagePayloadDto.toMessage` first; only when the
+decoded `role` is `Role.User` does it copy the result with `attachments =
+storedAttachmentReferences(dto.attachmentIds)`, the same shared filter, dedup and `MAX = 32` cap
+`TYPE_SEND_MESSAGE` calls — the ids mean something only on a user turn, so an assistant `message` keeps an
+empty attachment list whatever its payload carries. The hint-fill below needed no change to cover it:
+`withAttachmentHintsFrom` keys on `message_id` and `attachmentId`, not entry type, so a replayed user
+`message` row picks up its filename from a cached twin or from [retrieval](attachment-retrieval.md)
+exactly as a `send_message` row does.
+
 **A `message_id` join now also fills a missing attachment hint from its twin, in both merge
 directions (#983).** `mergeHistoryRows` and [`mergeCachedRows`](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)
 share one hint-fill, `withAttachmentHintsFrom`: when a kept `MessageItem` has a reference with a `null`

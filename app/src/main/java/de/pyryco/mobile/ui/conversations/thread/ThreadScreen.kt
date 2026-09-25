@@ -208,6 +208,9 @@ fun ThreadScreen(
     // MainActivity → vm::onOpenMarkdownAttachment / vm.markdownOpenFailures.
     onOpenMarkdownAttachment: (String) -> Unit = {},
     markdownOpenFailures: Flow<Unit> = emptyFlow(),
+    // #1050: a tapped link to a workspace markdown note in an assistant reply, by its path. Bound by
+    // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
+    onOpenMarkdownLink: (String) -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -565,6 +568,7 @@ fun ThreadScreen(
                                                         onRetryAttachment = onRetryAttachment,
                                                         onOpenAttachment = attachmentActions.open,
                                                         onSaveAttachment = attachmentActions.save,
+                                                        onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
                                                     SessionBoundaryDelimiter(boundary = item)

@@ -317,6 +317,12 @@ class StableConversationRepository(
     ): AttachmentFetchResult =
         currentRepository.value?.fetchAttachment(conversationId, attachmentId) ?: AttachmentRetrievalResult.Unavailable
 
+    /** Reads on the repository live at call entry (#1049), like [fetchAttachment]; none live is a retryable failure. */
+    override suspend fun readWorkspaceFile(
+        conversationId: String,
+        path: String,
+    ): AttachmentFetchResult = currentRepository.value?.readWorkspaceFile(conversationId, path) ?: AttachmentRetrievalResult.Unavailable
+
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"
     }

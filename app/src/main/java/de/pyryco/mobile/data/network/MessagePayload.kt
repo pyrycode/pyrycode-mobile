@@ -27,6 +27,10 @@ import kotlinx.serialization.Serializable
  * (the domain message carries no conversation id; the consuming repository already knows
  * which conversation it requested). Keeping it a required `String` is the deliberate
  * strict-decode posture for an untrusted boundary — mirrors #316's unused `last_message_ts`.
+ *
+ * [attachmentIds] (#1020) is the optional fifth field a stored `role: "user"` history entry carries when
+ * the turn named files (pyrycode#2596), with [SendMessagePayloadDto.attachmentIds]'s name and shape. Absent
+ * everywhere else, so [toMessage] ignores it; only the history reducer reads it, and only on a user row.
  */
 @Serializable
 data class MessagePayloadDto(
@@ -34,6 +38,7 @@ data class MessagePayloadDto(
     @SerialName("message_id") val messageId: String,
     val role: WireRole,
     val text: String,
+    @SerialName("attachment_ids") val attachmentIds: List<String>? = null,
 )
 
 /**

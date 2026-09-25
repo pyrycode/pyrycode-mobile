@@ -6,16 +6,24 @@ instead of handing the file to another app; every other attachment type still go
 [`openAttachment`](message-bubble-attachment-slot.md#open-and-save-since-985). Figma: `Markdown Reader Screen`
 (`553:2574`). Package: `de.pyryco.mobile.ui.conversations.thread`, new file `MarkdownReaderScreen.kt`.
 
+Since #1050, the same screen also opens on a **tapped workspace-note link in an assistant reply**, fetched live
+rather than from a stored attachment — see [Linked note, live (since #1050)](#linked-note-live-since-1050).
+Since #1067, the top bar also carries a three-dot menu — copy the note in three formats, and refresh it in
+place — see [Copy and refresh menu (since #1067)](#copy-and-refresh-menu-since-1067).
+
 ## What it does
 
 The reader draws the thread's own top bar — 24dp back arrow, the file name in `titleLarge` /
-`onPrimaryContainer` on one ellipsised line, a 60%-alpha `outlineVariant` rule — with no overflow icon and no
-title tap, since the Figma frame's overflow has no actions yet (left out per the ticket). Below it, the file
+`onPrimaryContainer` on one ellipsised line, a three-dot overflow button at the end (since #1067, see below), a
+60%-alpha `outlineVariant` rule — with no title tap. Below it, the file
 renders through [`MarkdownText`](markdown-text.md), the same renderer [assistant replies](message-bubble.md)
 use, in a `weight(1f)` `verticalScroll` column under the fixed bar. The back arrow and system back both pop
 the destination and return to the same thread. A file that cannot be read, or is not valid UTF-8, never opens
 the reader at all — the operator stays on the thread with the existing `AttachmentNotice.OPEN_FAILED`
-snackbar (see [Load and navigate from the thread](#load-and-navigate-from-the-thread) below).
+snackbar (see [Load and navigate from the thread](#load-and-navigate-from-the-thread) below). Once the reader
+is open, the same "could not be read" notice can recur as a snackbar *inside* the reader — see
+[Copy and refresh menu](#copy-and-refresh-menu-since-1067) — because Refresh can fail after the first read
+already succeeded.
 
 ## Routing a tap to the reader
 
@@ -84,20 +92,25 @@ above any realistic workspace note.
 `MarkdownReaderDestination(repository, conversationId, attachmentId, onBack, modifier)` re-reads the same
 call — a `produceState<ReaderLoad>` keyed on all three identity params. Because it is the same kept file the
 thread just decoded, this second read is local, not a fetch. Three states: `Loading` draws a bare `Surface`;
-`Loaded(document)` renders `MarkdownReaderScreen`; `Failed` — the file disappeared between the thread's read
-and this one — calls `onBack()` once from a `LaunchedEffect(Unit)`, through `rememberUpdatedState(onBack)` so
-a stale lambda from an earlier composition is never captured. This is how "never shows empty or garbled
-content" holds even for the rare in-between-reads removal case; no test pins this path specifically (verifier
-NIT on PR #1034 — a shared test with a failing fake repository would cover it cheaply). The document is held
-in composition only, never `rememberSaveable`, so no file content ever enters the saved-state bundle.
+`Loaded(document)` renders [`RefreshableMarkdownReader`](#copy-and-refresh-menu-since-1067) with
+`reread = { readMarkdownAttachment(repository, conversationId, attachmentId) }`; `Failed` — the file disappeared
+between the thread's read and this one — calls `onBack()` once from a `LaunchedEffect(Unit)`, through
+`rememberUpdatedState(onBack)` so a stale lambda from an earlier composition is never captured. This is how
+"never shows empty or garbled content" holds even for the rare in-between-reads removal case; no test pins this
+path specifically (verifier NIT on PR #1034 — a shared test with a failing fake repository would cover it
+cheaply). The document is held in composition only, never `rememberSaveable`, so no file content ever enters
+the saved-state bundle.
 
-`MarkdownReaderScreen(document, onBack, modifier)` is the stateless render: a `Surface` (not a bare `Column`
-with a background — `Surface` is what makes `MaterialTheme.colorScheme.onSurface` the content colour
-`MarkdownText`'s text draws in) holding `MarkdownReaderTopBar` then the scrolling body. `MarkdownReaderTopBar`
-reuses `ThreadTopAppBar`'s bar-metric constants (`BarGlyphSize`, `BarTouchSize`, `BarTouchSlack`, `BarGutter`,
-`BarTopGap`, `BarRuleGap`, `BarBottomGap`, `BAR_RULE_ALPHA`) — promoted from `private` to `internal` in
-`ThreadTopAppBar.kt` by this ticket, visibility-only, so both bars share one set of numbers rather than a
-second copy.
+`MarkdownReaderScreen(document, onBack, modifier, onRefresh, snackbarHostState)` is the stateless render: a
+`Surface` (not a bare `Column` with a background — `Surface` is what makes `MaterialTheme.colorScheme.onSurface`
+the content colour `MarkdownText`'s text draws in) holding `MarkdownReaderTopBar` then the scrolling body, with
+a `SnackbarHost` docked to the bottom for a failed refresh. `onRefresh` and `snackbarHostState` both default to
+inert values, so every existing caller and preview still compiles; `RefreshableMarkdownReader` is the one real
+caller. `MarkdownReaderTopBar` reuses `ThreadTopAppBar`'s bar-metric constants (`BarGlyphSize`, `BarTouchSize`,
+`BarTouchSlack`, `BarGutter`, `BarTopGap`, `BarRuleGap`, `BarBottomGap`, `BAR_RULE_ALPHA`) — promoted from
+`private` to `internal` in `ThreadTopAppBar.kt` by #1027, visibility-only, so both bars share one set of numbers
+rather than a second copy. Since #1067 the row's end padding is `BarGutter - BarTouchSlack`, matching
+`ThreadTopAppBar`, because the row now ends in a 48dp touch target (the overflow button) instead of plain text.
 
 ## Route
 
@@ -113,6 +126,176 @@ exactly like [`ThreadDestinationFactory.repository`](attachment-retrieval.md#les
 (the single-flight bookkeeping and the kept file itself) lives one level up in the app-singleton
 `AttachmentStore`, so this second wrapper reaches the same kept file the thread already read. The
 `navigate(...)` call carries no `launchSingleTop`.
+
+## Linked note, live (since #1050)
+
+A markdown-path link in an assistant reply — [`markdownLinkPath`](markdown-text.md#markdown-path-links-since-1050),
+e.g. `[Plan](notes/Plan.md)` — opens this same reader, but the note is **never a stored attachment**: it is
+read live from the conversation's workspace on every tap, and nothing is kept between opens. The operator
+decided (2026-09-24) that the reader always shows the file as it is on the host right now, so unlike the
+attachment path above there is no local second read to reuse — the thread's one read *is* what the reader
+shows.
+
+- `internal suspend fun readLinkedMarkdown(repository, conversationId, path): MarkdownDocument?` — one
+  `repository.readWorkspaceFile(conversationId, path)` (#1049). A `Fetched` result whose `content.size` is at
+  most `MAX_MARKDOWN_READER_BYTES` is copied to a `ByteArray` and decoded with the same `decodeUtf8Strictly`
+  the attachment path uses; anything else (`NotFound`, `Unavailable` — covering a refusal, an aborted or
+  stalled stream, a dropped connection — `Invalid`, over the bound, bad UTF-8, a non-cancellation exception)
+  is `null`. `path` reaches the repository exactly as the link wrote it — the phone never decodes, resolves or
+  confines it; the daemon does.
+- `internal fun linkedMarkdownName(path: String): String` — the top-bar name, since the assistant authored the
+  link: the text after the last `/`, through `attachmentDisplayName`, the same sanitiser a retrieved
+  attachment's name goes through. The bar shows the path actually read, never the link's own display text, so
+  `[Plan](secrets.md)` cannot make the operator think a different file opened.
+- `ThreadViewModel.onOpenMarkdownLink(path)` shares the attachment path's `markdownOpenJob` guard — one open
+  in flight blocks a second tap, whether it is another link or the attachment flow, and either one clears
+  before a new job starts. Success stores `path` and the document together as `linkedMarkdownNote:
+  LinkedMarkdown?` (a plain `var`, not a `StateFlow`; **since #1067** — before that it held only the
+  `MarkdownDocument`) and sends `ThreadNavigation.OpenLinkedMarkdown` (a `data object`; the note itself never
+  travels in the event); failure sends on the shared `markdownOpenFailures`, so a failed link tap shows the
+  same "Couldn't open file" snackbar the attachment path uses. `linkedMarkdown(): LinkedMarkdown?` reads the
+  held note once; `releaseLinkedMarkdown()` drops it. Logs `event=thread_markdown_link_open outcome=reader|failed`
+  only — no path, name or text, ever.
+- `class LinkedMarkdown(val path: String, val document: MarkdownDocument)` (in `MarkdownReaderScreen.kt`, #1067)
+  is the thread's hand-off: the [reader's Refresh](#copy-and-refresh-menu-since-1067) needs the path the
+  document was read from, and the path lived only in the open call's stack frame before this. `toString()`
+  prints lengths only, the same discipline `MarkdownDocument` uses.
+- `@Composable fun LinkedMarkdownReaderDestination(note: LinkedMarkdown?, reread: suspend (path: String) ->
+  MarkdownDocument?, onBack, modifier)` draws [`RefreshableMarkdownReader`](#copy-and-refresh-menu-since-1067)
+  with `initial = note.document` and `reread = { reread(note.path) }` for a non-null `note`; `null` — the
+  process was restored with this destination on top, or it was reached with nothing held — draws a bare
+  `Surface` and calls `onBack()` once, the same shape `MarkdownReaderDestination`'s `Failed` case uses. Before
+  #1067 this composable took a bare `document: MarkdownDocument?` and drew `MarkdownReaderScreen` directly, with
+  no way to refresh.
+- Route: `Routes.MARKDOWN_LINK = "markdown_link/{serverId}/{conversationId}"`, ids only — no path, no
+  attachment id. The path never needs to travel: the document and the path it came from already live in the
+  thread's `ThreadViewModel`. `MainActivity`'s `HostDestination` block for this route calls
+  `navController.getBackStackEntry(Routes.CONVERSATION_THREAD)` to find the thread beneath (`null` if it is
+  gone), resolves that same `ThreadViewModel` with `koinViewModel(viewModelStoreOwner = threadEntry)`, and
+  `remember(backStackEntry) { threadVm?.linkedMarkdown() }`s the note **once** rather than collecting it live.
+  Since #1067 it also `remember(target.serverId) { destinations.repository(target.serverId) }`s the same host
+  repository the attachment route resolves, and passes
+  `reread = { path -> readLinkedMarkdown(repository, target.conversationId, path) }` — so Refresh on a linked
+  note reaches the daemon through this host, not through the thread's own `ThreadViewModel`.
+
+  **Why `remember` once, not a live read.** The thread destination clears its copy
+  (`vm.releaseLinkedMarkdown()`) from a `LaunchedEffect(vm)` that fires whenever it recomposes — including
+  during the pop transition back from this reader, while the reader is still on screen. A live read of
+  `linkedMarkdown()` at that moment would see `null` and pop a second time, which would close the thread
+  underneath it too. Reading it once when the destination first composes avoids that; it also means Refresh's
+  `reread` closure captures `note.path` directly rather than calling back into the ViewModel, so a later
+  `releaseLinkedMarkdown()` cannot affect a reader already open.
+- Root cause of the SHOULD FIX the #1050 verifier left open (PR #1062, non-blocking): the release runs on
+  thread *re-entry*, not on the reader's own exit. If a link's read finishes while the operator is on a screen
+  pushed above the thread (Settings, say) and the operator returns before opening the reader, the effect can
+  clear `linkedMarkdownNote` before the buffered `OpenLinkedMarkdown` navigation is acted on, and the reader
+  mounts with `null` — a blank-surface flash and an immediate pop, with no "Couldn't open file" notice.
+  Narrow (needs a completed background read plus a return to the thread before the navigation fires) and not
+  fixed as of #1067; a `DisposableEffect` releasing on the *reader's* exit, or folding the document into the
+  `OpenLinkedMarkdown` event itself, would close it.
+
+## Copy and refresh menu (since #1067)
+
+The top bar's overflow button (`Icons.Filled.MoreVert`, `cd_more_actions`, the same 48dp touch target and bar
+metrics as `ThreadTopAppBar`'s own) opens a plain M3 `DropdownMenu` built the way `ThreadOverflowMenu` builds
+the thread's menu — the operator decided (2026-09-24) it reuses that dropdown rather than a second style.
+Figma: `Options overlay` (`533:1958`). Four items, each dismissing the menu before it acts: **Copy as
+markdown**, **Copy as plain text**, **Copy as HTML**, **Refresh**. The menu shows only once the reader has
+content — the bar draws nothing until the first read finishes, and a failed first read never opens the reader
+at all (see [What it does](#what-it-does)).
+
+### Copy
+
+All three copy formats act on the `document` currently on screen — after a Refresh, on the refreshed one — and
+go out through `LocalClipboardManager.setClip(ClipEntry(clipData))`. None shows a snackbar of its own: every
+supported device (min SDK 33) already confirms a copy at the platform level, the same precedent
+[`MessageMetaRow`'s `CopyTextControl`](message-bubble.md#meta-row-and-copy-control-messagemetarowkt-since-644)
+set. The clip label is the static string `markdown_reader_clip_label`, never the note's name.
+
+- **Copy as markdown** — `ClipData.newPlainText(label, boundClipText(document.text))`: the raw file text,
+  bounded.
+- **Copy as plain text** — `ClipData.newPlainText(label, boundClipText(markdownPlainText(document.text)))`.
+- **Copy as HTML** — one `ClipData.newHtmlText(label, plainTextFallback, html)`: a single clip item carrying
+  both the generated HTML and the plain-text form as its fallback, each independently bounded.
+
+`markdownPlainText` and `markdownHtml` are new pure functions in
+`ui/conversations/components/MarkdownConversions.kt`, no Compose runtime, no Android types — parsed with the
+same `MarkdownFlavour` (GFM) [`MarkdownText`](markdown-text.md) uses, so the copies match what the screen
+actually renders rather than a second, potentially-drifting notion of "this note's markdown":
+
+- **Plain text** walks the AST directly for block structure (headings — all six ATX levels, even though the
+  renderer shows `####`+ as raw source, because the AC promises no heading markers at any level; lists, one
+  line per item with no bullet/number/task box, nested lists indented two spaces per level; block quotes, no
+  `>`; fenced/indented code kept verbatim via the renderer's own `fencedCodeText`/`indentedCodeText`; tables,
+  header then body rows tab-separated, within the renderer's `MAX_TABLE_ROWS`/`MAX_TABLE_COLUMNS` bounds) but
+  defers every inline span — paragraph text, heading content, table cells — to
+  [`inlineText`](markdown-text.md#inline-dispatch), the renderer's own inline walk exposed for this purpose.
+  That is what makes "the rendered text" true by construction: emphasis/code/strike delimiters and link targets
+  drop exactly as the screen hides them. **Lesson from implementation:** a block quote's continuation `>` and
+  the space after it sit inside the *paragraph* node, not the quote's own children — a plain-text extractor
+  that walks only the paragraph keeps them, rendering a two-line quote as `words  and more` with a double
+  space; `blockText`'s `PARAGRAPH` arm filters both out explicitly.
+- **HTML** runs the same parse through `org.intellij.markdown`'s `HtmlGenerator` with the flavour's own
+  provider map, then overrides the providers that would otherwise put note-authored text somewhere unsafe. This
+  is the one new place note text leaves the app (another app renders the pasted HTML), so every override
+  matters for the security boundary, not just fidelity:
+  - **Raw HTML is text.** The HTML-block and inline-HTML-tag providers are replaced with one that
+    HTML-escapes the node's source and writes it as a `<p>` (block) or inline text.
+  - **One href allowlist for every link-producing node** — inline links, reference links, `<autolink>` and a
+    GFM bare URL all resolve through [`isSafeLinkScheme`](markdown-text.md#link-safety--scheme-allowlist)
+    (`http`/`https`/`mailto`); anything else writes the link's text alone, with no `href`. Titles are dropped.
+    **Lesson:** `LinkGeneratingProvider.RenderInfo.destination` arrives already entity-decoded by the library,
+    so escaping its `&` again turned `?b=1&c=2` into `&amp;amp;`; the href is escaped for `"`/`'`/`<`/`>` only,
+    leaving `&` alone, and the scheme check runs on that decoded value so `java&#115;cript:` is judged as
+    `javascript:`. The autolink provider reads *raw* source instead, so it escapes `&` as well as the other
+    four characters.
+  - **Images become alt text only** — no `<img>` ever reaches the clip, so a remote `src` can never fetch
+    anything on the note author's behalf.
+  - **The code-fence provider is always replaced**, not conditionally — `<pre><code>` with the code escaped, no
+    `class` attribute — so a fence info string can never reach an attribute regardless of what the library
+    itself would have escaped. A revision during implementation dropped the earlier "replace it only if the
+    library doesn't already escape it" plan in favour of always replacing it, since that removes any dependence
+    on the library's own behaviour.
+  - No other attribute in the generated HTML carries note-authored text.
+- **`internal fun boundClipText(text)`** — `text.take(MAX_CLIPBOARD_CHARS)`. **`internal fun
+  boundClipHtml(html)`** — unchanged within the bound; otherwise cut after the last `>` inside it, so the cut
+  never lands inside a tag or an entity. `MAX_CLIPBOARD_CHARS` moved from `private` in `MessageMetaRow.kt` to
+  `internal` (visibility only) so both copy paths share the one number — a parcelled clip has a Binder ceiling
+  near 1 MB, and a note at the reader's own `MAX_MARKDOWN_READER_BYTES` (256 KiB) must not crash a copy.
+
+### Refresh
+
+`@Composable fun RefreshableMarkdownReader(initial: MarkdownDocument, reread: suspend () -> MarkdownDocument?,
+onBack, modifier)` owns the refresh and is the one real caller of `MarkdownReaderScreen`. `document` is
+`remember(initial) { mutableStateOf(initial) }`, so it survives a Refresh but not a new attachment/link
+identity. A tap holds a `Job` in `remember`; if it is still active, a second tap does nothing — the read
+already in flight is the only one that can complete. A non-null result from `reread()` replaces `document` in
+place, keeping the scroll position wherever `MarkdownText` happens to re-lay it out; `null` leaves `document`
+untouched and shows `AttachmentNotice.OPEN_FAILED`'s "Couldn't open file" string in the reader's own
+`SnackbarHostState` — the same string the thread's own failed-open snackbar uses, but scoped to the reader so
+the operator doesn't have to leave it to see the failure. Leaving the reader cancels the scope and any read
+still in flight.
+
+**Lesson from the verifier's rework round:** the failure snackbar first ran *inside* the same `Job` as the
+read, so `refreshJob?.isActive` stayed `true` for the ~4s the "Couldn't open file" snackbar was showing —
+retrying, the natural next action after that notice, silently did nothing. The fix launches the snackbar in
+its own `scope.launch { … }`, so the in-flight guard covers only the read; a retry while the notice is still
+showing reads again. Pinned by `MarkdownReaderScreenTest.aRetry_whileTheFailureNoticeShows_readsAgain`.
+
+Both destinations wrap `RefreshableMarkdownReader` rather than `MarkdownReaderScreen` directly:
+`MarkdownReaderDestination`'s `Loaded` arm passes `reread = { readMarkdownAttachment(repository,
+conversationId, attachmentId) }` (see [The reader destination](#the-reader-destination));
+`LinkedMarkdownReaderDestination` passes `reread = { reread(note.path) }`, where the outer `reread` parameter
+is `MainActivity`'s `{ path -> readLinkedMarkdown(destinations.repository(target.serverId), target.conversationId,
+path) }` (see [Linked note, live](#linked-note-live-since-1050)) — so a linked note's Refresh sends another
+`read_workspace_file`, proven live by the extended `interactiveTurn_markdownLink_opensLiveNoteInReader`
+scenario (see [Testing](#testing) and [Interactive stream e2e](../../e2e-interactive-stream.md)).
+
+### Logging
+
+`RelayLog.d` only, static fields, never the text, name, path or clip contents:
+`event=markdown_reader_copy format=markdown|plain|html chars=<source length>` and
+`event=markdown_reader_refresh outcome=loaded|failed`.
 
 ## Testing
 
@@ -139,6 +322,42 @@ exactly like [`ThreadDestinationFactory.repository`](attachment-retrieval.md#les
   local, covered by the Robolectric tests above. The existing live fixtures all use `.txt` names, so the new
   markdown branch does not reroute them.
 
+\#1050's linked-note path adds its own tests, on the same shapes: `MarkdownReaderLoadTest` gained
+`readLinkedMarkdown` cases (name from the last path component, text unchanged, every failure kind collapsing
+to `null`, exactly-at-bound succeeding); `MarkdownLinkRoutingTest` (`app/src/test/…/components/`) covers
+`markdownLinkPath` and `routeMarkdownLink` classification (see
+[MarkdownText § Markdown-path links](markdown-text.md#markdown-path-links-since-1050)); `ThreadViewModelMarkdownLinkTest`
+covers one read per open, the shared in-flight guard, a reopen after release re-fetching and showing new
+content, one failure signal with nothing held, and that logs carry neither path nor text;
+`MarkdownLinkTapTest` (`app/src/sharedTest/…/components/`, Robolectric) covers a tap in both a finished and a
+streaming assistant `MessageBubble`, an `https` link still reaching the platform handler, a `MarkdownText`
+with no callback leaving a markdown-path tap inert, and `LinkedMarkdownReaderDestination` with a document and
+with `null`. Rung 3: `InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader`, extended by
+\#1067 below — see [Interactive stream e2e](../../e2e-interactive-stream.md).
+
+\#1067's [copy and refresh menu](#copy-and-refresh-menu-since-1067) adds: `MarkdownConversionsTest`
+(`app/src/test/…/components/`, pure JVM, 11 tests) — `markdownPlainText` drops every syntax kind the AC lists
+and keeps code and table content verbatim; `markdownHtml` escapes a raw `<script>` block and an inline
+`onerror` attribute as text, keeps `href` for `http`/`https`/`mailto` inline and reference links, writes text
+only for `javascript:`, an entity-encoded `javascript:`, `file:`, `data:`, `intent:` and a relative path, and
+neither a quote inside an allowed href nor a hostile fence info string can open a tag; images come out as alt
+text with no `<img`; bounds hold at `MAX_MARKDOWN_READER_BYTES`, with `boundClipHtml` always ending on `>`
+inside the limit. `MarkdownReaderScreenTest` grew from 4 to 15 tests: the overflow button opens the four items
+in order; each copy puts the expected clip on the system `ClipboardManager` (the HTML clip carries both
+`htmlText` and its `text` fallback, MIME `text/html`) with no snackbar shown; a copy at
+`MAX_MARKDOWN_READER_BYTES` does not throw; `RefreshableMarkdownReader` with a controllable `reread` covers a
+successful refresh replacing the content, a second refresh while the first is still suspended calling `reread`
+once, a failed refresh keeping the old content and showing "Couldn't open file", and the retry-while-the-notice-
+shows regression test above. `ThreadViewModelMarkdownLinkTest` gained the assertion that the held note carries
+the path it was read from, alongside the existing name/text checks.
+`InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader` grew a third step: with the reader
+still open after the first tap, the peer (not the phone) has claude rewrite the note, then the test chooses
+Refresh from the reader's own overflow and asserts the new heading is shown with the old one and "Couldn't open
+file" both absent, before backing out and re-opening through the link as #1050 already did. The scenario still
+spends two real-claude turns — the rewrite prompt moved from the phone's composer to the peer's — so it adds no
+turn to the suite's running total; see [Interactive stream e2e § Follow-ups to
+ticket](../../e2e-interactive-stream.md#follow-ups-to-ticket) for the live-run evidence.
+
 ## Related
 
 - [MessageBubble — attachment slot § Open and save](message-bubble-attachment-slot.md#open-and-save-since-985) —
@@ -152,9 +371,30 @@ exactly like [`ThreadDestinationFactory.repository`](attachment-retrieval.md#les
 - [Thread screen](thread-screen.md) — `ThreadNavigation`, the one-shot `navigationChannel` this ticket's
   `OpenMarkdown` case rides, and where `onOpenMarkdownAttachment` / `markdownOpenFailures` are wired into
   `ThreadScreen`.
-- [MarkdownText](markdown-text.md) — the renderer this screen reuses unchanged; following links inside a
-  rendered note is a later ticket.
+- [MarkdownText § Markdown-path links](markdown-text.md#markdown-path-links-since-1050) — `markdownLinkPath`,
+  `routeMarkdownLink`, and the `onOpenMarkdownPath` opt-in this screen's linked-note path is reached through;
+  following a link inside an *open* note (attachment or linked) is still a later ticket, unaffected by #1050.
+- [MarkdownText § Inline dispatch](markdown-text.md#inline-dispatch) and
+  [§ Link safety](markdown-text.md#link-safety--scheme-allowlist) — `inlineText`, `MarkdownFlavour` and
+  `isSafeLinkScheme`, all `internal` since #1067 so the copy-and-refresh menu's conversions share the renderer's
+  own parse and allowlist rather than a second copy.
+- [Thread overflow menu](thread-overflow-menu.md) — `ThreadOverflowMenu`, the `DropdownMenu` +
+  `DropdownMenuItem` + dismiss-then-act shape [the reader's own menu](#copy-and-refresh-menu-since-1067) copies,
+  per the operator's 2026-09-24 decision against a second dropdown style.
+- [MessageMetaRow § Meta row and copy control](message-bubble.md#meta-row-and-copy-control-messagemetarowkt-since-644) —
+  `CopyTextControl` and `MAX_CLIPBOARD_CHARS` (now `internal`, shared with this reader's copies), and the
+  "system confirms the copy, we don't" precedent this menu's copy items follow.
 - Ticket: `docs/specs/architecture/1027-markdown-reader.md` — design, the security review (the 256 KiB bound
   closes a composition-cost DoS the retrieval bound alone would not), and the implementation revisions (the
   `Surface`-over-`Column` choice, the `modifier` parameter, where `isMarkdownAttachmentName` ended up, and the
   tap-routing screen test).
+- Ticket: `docs/specs/architecture/1050-markdown-link-live-reader.md` — design for the linked-note path (why
+  the route carries ids only rather than the path), the security review, and the Revisions entry resolving
+  `performFirstLinkClick`'s availability at BOM `2026.02.01`.
+- Ticket: `docs/specs/architecture/1049-read-workspace-file.md` — `ConversationRepository.readWorkspaceFile`,
+  the live read `readLinkedMarkdown` calls.
+- Ticket: `docs/specs/architecture/1067-markdown-reader-menu.md` — design for the copy-and-refresh menu, the
+  security review of the HTML-escaping/allowlist boundary, and the Revisions entries (the `reread`-parameter
+  change, the fence provider always replaced, `&` left encoded in a link href, the quote-continuation fix, the
+  `chars=` log field, the bar padding, and the two rework-round fixes: the live Refresh proof and the
+  retry-while-the-notice-shows fix).
