@@ -2752,8 +2752,9 @@ class InteractiveStreamE2ETest {
         cycleHostLink(serverId)
 
         // 2. AC-2: `/` lists the published commands; picking the first completes it into the composer. The
-        //    menu is read off the host's live connection: the reconnect's fresh connection can drop and be
-        //    redialled within a second (#1029, #1039), and the app follows the redial, so the read does too.
+        //    menu is read off the host's live connection: the reconnect's fresh connection used to drop and be
+        //    redialled when the daemon's connect-time burst overflowed the relay's per-phone outbox
+        //    (pyrycode/pyrycode-relay#154), and the app follows any redial, so the read does too.
         val published =
             try {
                 val live =
