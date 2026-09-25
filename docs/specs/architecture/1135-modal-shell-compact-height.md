@@ -55,3 +55,13 @@ Focused runs: the new method and the two portrait tests on `pixel2Api33Atd` (§ 
 ## Open questions
 
 - Whether the emulator's IME inset rises in one step or animates. Rule 2 above covers both; the test shows which. If the field is not revealed, add an explicit bring-into-view and record it under Revisions.
+
+## Revisions
+
+**2026-09-25, during implementation: how the test reaches landscape.** The shell design is unchanged. The test fixture differs from the plan in three ways:
+
+- Rotating before launch does nothing: the portrait-only launcher is on top, so the display stays at rotation 0. `rotateToLandscape()` now runs in the test body after the host activity launches and before `setContent`, and waits for the relaunched host to be landscape and focused. The `@Landscape` rule only restores rotation after the activity has closed.
+- The rule is `createAndroidComposeRule<ComponentActivity>()` (what `createComposeRule()` already was on Android) so the test can read the relaunched activity through its scenario.
+- On the `pixel2Api33Atd` image, a "Bluetooth keeps stopping" system crash dialog takes window focus after the rotation. The wait broadcasts `CLOSE_SYSTEM_DIALOGS` until the host has focus.
+
+**Open question resolved.** No explicit bring-into-view was needed: with the outer scroll always applied, the focused field is revealed above the test keyboard in landscape.
