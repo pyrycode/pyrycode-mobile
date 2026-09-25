@@ -36,6 +36,13 @@ import java.util.concurrent.atomic.AtomicBoolean
  * `onFailure`, a local protocol-violation close, and an app [close]. [send]/[connect]/[close] are
  * non-suspend and safe to call from any dispatcher.
  *
+ * **Logging (#1039).** Each end writes exactly one [RelayLog] line from the terminal CAS:
+ * `event=transport_end end=<label>` with `local_close` ([close]), `peer_close` (`onClosed`), `failure`
+ * (`onFailure`), `protocol_violation` (a local reject of a relay frame) or `invalid_request` (bad stored
+ * request data), then the close code or HTTP status when there is one, the peer's close code seen in
+ * `onClosing` when the end was not a clean peer close, and the cause's class name. Never the peer's close
+ * reason text, an exception message, the relay URL, the server id or the token.
+ *
  * @param webSocketFactory the dial seam — a configured [OkHttpClient] (`OkHttpClient implements
  *   WebSocket.Factory`). Production passes the shared client built from [defaultClient]; tests drive
  *   the same seam with an in-process `MockWebServer`.
@@ -57,6 +64,10 @@ class OkHttpRelayTransport(
     private val connectStarted = AtomicBoolean(false)
     private val terminated = AtomicBoolean(false)
 
+    /** The peer's close code from `onClosing`, kept for the end line when the handshake never finishes. */
+    @Volatile
+    private var peerClosingCode: Int? = null
+
     override fun connect() {
         check(connectStarted.compareAndSet(false, true)) {
             "connect() may be called once per transport instance"
@@ -68,7 +79,7 @@ class OkHttpRelayTransport(
                 // Malformed stored relayUrl, or a header value with illegal CR/LF/control chars (a
                 // hostile QR-sourced serverId/token cannot inject extra headers — OkHttp rejects it).
                 // Surfaced uniformly as a Down so the supervisor handles all failures via events.
-                terminate(TransportEvent.Down(code = null, reason = "invalid relay request", cause = e))
+                terminate(END_INVALID_REQUEST, TransportEvent.Down(code = null, reason = "invalid relay request", cause = e))
                 return
             }
         webSocket = webSocketFactory.newWebSocket(request, Listener())
@@ -78,7 +89,7 @@ class OkHttpRelayTransport(
 
     override fun close() {
         webSocket?.close(WS_NORMAL_CLOSURE, null)
-        terminate(TransportEvent.Down(code = WS_NORMAL_CLOSURE, reason = null, cause = null))
+        terminate(END_LOCAL_CLOSE, TransportEvent.Down(code = WS_NORMAL_CLOSURE, reason = null, cause = null))
     }
 
     /**
@@ -110,16 +121,40 @@ class OkHttpRelayTransport(
     }
 
     /**
-     * Runs the terminal path at most once: emits the single [Down], then closes both channels so
-     * [inbound]/[events] complete (buffered frames drain to the consumer first). The CAS makes this
-     * idempotent across every termination trigger.
+     * Runs the terminal path at most once: logs the end, emits the single [Down], then closes both
+     * channels so [inbound]/[events] complete (buffered frames drain to the consumer first). The CAS makes
+     * this idempotent across every termination trigger. [end] is a fixed label; [logCode] is the code the
+     * line reports, which for a local protocol-violation close is the code sent rather than [Down.code].
      */
-    private fun terminate(down: TransportEvent.Down) {
+    private fun terminate(
+        end: String,
+        down: TransportEvent.Down,
+        logCode: Int? = down.code,
+    ) {
         if (terminated.compareAndSet(false, true)) {
+            logEnd(end, logCode, down.cause)
             eventsChannel.trySend(down)
             eventsChannel.close()
             inboundChannel.close()
         }
+    }
+
+    /** The one end line. Content-free by construction: only fixed labels, integers and a class name. */
+    private fun logEnd(
+        end: String,
+        code: Int?,
+        cause: Throwable?,
+    ) {
+        val closing = peerClosingCode.takeIf { end != END_PEER_CLOSE }
+        val message = {
+            buildString {
+                append("event=transport_end end=").append(end)
+                code?.let { append(" code=").append(it) }
+                closing?.let { append(" peer_closing=").append(it) }
+                cause?.let { append(" cause=").append(it.javaClass.simpleName) }
+            }
+        }
+        if (end == END_LOCAL_CLOSE || end == END_PEER_CLOSE) RelayLog.i(message) else RelayLog.w(message)
     }
 
     /**
@@ -135,7 +170,7 @@ class OkHttpRelayTransport(
         cause: Throwable,
     ) {
         webSocket.close(closeCode, reason)
-        terminate(TransportEvent.Down(code = null, reason = reason, cause = cause))
+        terminate(END_PROTOCOL_VIOLATION, TransportEvent.Down(code = null, reason = reason, cause = cause), logCode = closeCode)
     }
 
     private inner class Listener : WebSocketListener() {
@@ -190,7 +225,9 @@ class OkHttpRelayTransport(
             code: Int,
             reason: String,
         ) {
-            // Acknowledge the server's close to complete the WS closing handshake; onClosed follows.
+            // Acknowledge the server's close to complete the WS closing handshake; onClosed follows. If
+            // the peer drops TCP first, onFailure ends the socket instead and the end line keeps this code.
+            peerClosingCode = code
             webSocket.close(WS_NORMAL_CLOSURE, null)
         }
 
@@ -199,7 +236,7 @@ class OkHttpRelayTransport(
             code: Int,
             reason: String,
         ) {
-            terminate(TransportEvent.Down(code = code, reason = reason, cause = null))
+            terminate(END_PEER_CLOSE, TransportEvent.Down(code = code, reason = reason, cause = null))
         }
 
         override fun onFailure(
@@ -208,7 +245,7 @@ class OkHttpRelayTransport(
             response: Response?,
         ) {
             // reason is category-only (no dial URL / token); the full Throwable rides in cause.
-            terminate(TransportEvent.Down(code = response?.code, reason = t.javaClass.simpleName, cause = t))
+            terminate(END_FAILURE, TransportEvent.Down(code = response?.code, reason = t.javaClass.simpleName, cause = t))
         }
     }
 
@@ -225,6 +262,13 @@ class OkHttpRelayTransport(
         private const val WS_PROTOCOL_ERROR = 1002
         private const val WS_UNSUPPORTED_DATA = 1003
         private const val WS_MESSAGE_TOO_BIG = 1009
+
+        // The fixed end labels of the #1039 end line.
+        private const val END_LOCAL_CLOSE = "local_close"
+        private const val END_PEER_CLOSE = "peer_close"
+        private const val END_FAILURE = "failure"
+        private const val END_PROTOCOL_VIOLATION = "protocol_violation"
+        private const val END_INVALID_REQUEST = "invalid_request"
 
         /**
          * The securely-configured shared client for relay dials. `readTimeout`/`callTimeout` are

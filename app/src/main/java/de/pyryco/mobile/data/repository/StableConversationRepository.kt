@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -97,6 +98,21 @@ class StableConversationRepository(
         switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
+     * The context-usage reading for [conversationId] (#945), cleared across connections as [observeAnnouncedModel]
+     * is. After a reconnect it stays absent until the conversation's next turn ends on the new connection.
+     */
+    override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
+        switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
+
+    /**
+     * The files offered in [conversationId] on the owner host's live connection (#898). The switch is what
+     * makes offers live-only across connections: a reconnect or a host switch drops the previous
+     * connection's offers rather than carrying one host's files over to the next.
+     */
+    override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> =
+        switchToLive(emptyList()) { it.observeAttachmentOffers(conversationId) }
+
+    /**
      * The usage-limit reading for [conversationId] (#802), switched over the live connection like every
      * other cold read — and here the switch is the **account-isolation mechanism**, not just plumbing:
      * a usage-limit window belongs to an account rather than to a conversation, so [flatMapLatest]
@@ -173,6 +189,11 @@ class StableConversationRepository(
 
     override suspend fun createDiscussion(workspace: String?): Conversation = live.createDiscussion(workspace)
 
+    override suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = live.createChannel(name, workspace)
+
     override suspend fun promote(
         conversationId: String,
         name: String,
@@ -182,6 +203,11 @@ class StableConversationRepository(
     override suspend fun archive(conversationId: String): Unit = live.archive(conversationId)
 
     override suspend fun unarchive(conversationId: String): Unit = live.unarchive(conversationId)
+
+    override suspend fun setMuted(
+        conversationId: String,
+        muted: Boolean,
+    ): Unit = live.setMuted(conversationId, muted)
 
     override suspend fun delete(conversationId: String): Unit = live.delete(conversationId)
 
@@ -216,8 +242,8 @@ class StableConversationRepository(
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
-        attachmentIds: List<String>,
-    ): Message = live.sendMessage(conversationId, text, attachmentIds)
+        attachments: List<MessageAttachment>,
+    ): Message = live.sendMessage(conversationId, text, attachments)
 
     override suspend fun createWorkspaceFolder(name: String): String = live.createWorkspaceFolder(name)
 
@@ -283,6 +309,19 @@ class StableConversationRepository(
                 }
         return repository.uploadAttachment(conversationId, bytes, filename, mimeType)
     }
+
+    /** Fetches on the repository live at call entry (#899), like [uploadAttachment]; none live is a retryable failure. */
+    override suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult =
+        currentRepository.value?.fetchAttachment(conversationId, attachmentId) ?: AttachmentRetrievalResult.Unavailable
+
+    /** Reads on the repository live at call entry (#1049), like [fetchAttachment]; none live is a retryable failure. */
+    override suspend fun readWorkspaceFile(
+        conversationId: String,
+        path: String,
+    ): AttachmentFetchResult = currentRepository.value?.readWorkspaceFile(conversationId, path) ?: AttachmentRetrievalResult.Unavailable
 
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"

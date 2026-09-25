@@ -20,13 +20,13 @@ import java.util.Locale
 
 /**
  * Rung 2 (#804): claude's usage-limit report driven through the real [RemoteConversationRepository]
- * `rate_limited` projection (#802) and rendered by `UsageLimitIndicator` on the [ScriptedThreadHarness],
- * in [ScriptedApiRetryTest]'s shape. Live behaviour is #679's.
+ * `rate_limited` projection (#802) and rendered as the Top overlay's usage pill (#1002) on the
+ * [ScriptedThreadHarness], in [ScriptedApiRetryTest]'s shape. Live behaviour is #679's.
  *
- * Assertions are on the row's content description, which is its visible label, with `assertDoesNotExist`
- * on the other arms for every mutual-exclusion claim. Where a scenario proves an **absence**, a later
- * `turn_state` frame is the sync point: frames fold in order on the one inbound collector, and the thinking
- * arm only renders when no higher arm holds the slot.
+ * Assertions are on the pill's content description, which is its visible label. Since #1002 the pill is a
+ * notice beside the status row, not an arm of it, so every status-row signal still shows while a reading
+ * is live. Where a scenario proves an **absence**, a later `turn_state` frame is the sync point: frames
+ * fold in order on the one inbound collector.
  */
 @RunWith(AndroidJUnit4::class)
 class ScriptedUsageLimitTest {
@@ -50,16 +50,16 @@ class ScriptedUsageLimitTest {
         harness.close()
     }
 
-    // AC #1: claude's status fills the slot verbatim, inside the attributed lead, replacing thinking.
+    // AC #1: claude's status shows verbatim, inside the attributed lead; #1002 keeps thinking beside it.
     @Test
-    fun reading_replacesTheThinkingLabel_withClaudesStatus() {
+    fun reading_showsClaudesStatus_besideTheThinkingLabel() {
         harness.pushTurnState("thinking")
         awaitDisplayed(thinkingDescription)
 
         harness.pushRateLimited(status = "allowed_warning", utilization = 0.94)
 
         awaitDisplayed(label("allowed_warning", spent = 94))
-        composeRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(thinkingDescription).assertIsDisplayed()
     }
 
     // AC #1: conversation-level, not turn-scoped — it shows while the turn is idle too.
@@ -118,40 +118,39 @@ class ScriptedUsageLimitTest {
     // AC #4: the benign frame clears the arm, even naming a different limit than the warning it clears.
     @Test
     fun benignFrame_clearsTheArm() {
-        harness.pushTurnState("thinking")
         harness.pushRateLimited(status = "allowed_warning", limitType = "seven_day")
         awaitDisplayed(label("allowed_warning"))
 
         harness.pushRateLimited(status = "allowed", limitType = "five_hour")
+        // The sync point: thinking first shows only once the frame after the benign one has folded.
+        harness.pushTurnState("thinking")
 
         awaitDisplayed(thinkingDescription)
         composeRule.onNodeWithContentDescription(label("allowed_warning")).assertDoesNotExist()
     }
 
-    // AC #4: api-retry still wins the slot, and the reading returns once the retry clears.
+    // #1002: api-retry and the reading show together — the pill is not a status-row arm.
     @Test
-    fun apiRetry_winsTheSlotOverTheReading() {
+    fun apiRetry_andTheReading_showTogether() {
         harness.pushRateLimited(status = "allowed_warning")
         awaitDisplayed(label("allowed_warning"))
 
         harness.pushApiRetry(active = true, current = 3, total = 10)
-        awaitDisplayed(string(R.string.cd_thread_api_retry, 3, 10))
-        composeRule.onNodeWithContentDescription(label("allowed_warning")).assertDoesNotExist()
 
-        harness.pushApiRetry(active = false, current = 3, total = 10)
-        awaitDisplayed(label("allowed_warning"))
+        awaitDisplayed(string(R.string.cd_thread_api_retry, 3, 10))
+        composeRule.onNodeWithContentDescription(label("allowed_warning")).assertIsDisplayed()
     }
 
-    // AC #4: the reading outranks compaction; the two never stack.
+    // #1002: compaction keeps the status row while a reading is live.
     @Test
-    fun reading_winsTheSlotOverCompaction() {
+    fun compaction_andTheReading_showTogether() {
         harness.pushCompacting(active = true)
         awaitDisplayed(compactingDescription)
 
         harness.pushRateLimited(status = "allowed_warning")
 
         awaitDisplayed(label("allowed_warning"))
-        composeRule.onNodeWithContentDescription(compactingDescription).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(compactingDescription).assertIsDisplayed()
     }
 
     private fun label(

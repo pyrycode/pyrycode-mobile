@@ -18,6 +18,9 @@ fun ThreadInputBar(
     modifier: Modifier = Modifier,
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
+    onAnchorChanged: (Rect) -> Unit = {},
+    hasAttachments: Boolean = false,
+    sending: Boolean = false,
 )
 
 // Stateless — used by previews and UI tests
@@ -29,8 +32,18 @@ fun ThreadInputBar(
     modifier: Modifier = Modifier,
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
+    onAnchorChanged: (Rect) -> Unit = {},
+    hasAttachments: Boolean = false,
+    sending: Boolean = false,
+    onImagesReceived: ((List<Uri>) -> Unit)? = null,
 )
 ```
+
+[#934](https://github.com/pyrycode/pyrycode-mobile/issues/934) added `onImagesReceived`, defaulted `null` so every pre-#934 call site still compiles and renders a field with no `contentReceiver` at all. Non-null on `ThreadScreen`'s own call — see [§ Image paste into the field](#image-paste-into-the-field-934).
+
+[#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) added `onAnchorChanged`, defaulted on both overloads so no existing call site changes. It reports the field's `boundsInWindow()` with `left` moved in by `FieldLeadingInset` (16dp) on every frame the field's own position changes, so a row of the [slash-command type-ahead](slash-command-type-ahead.md)'s `OptionsOverlay` lines its text up with the composer's own typed text. See [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934) for the other #885 change to this file.
+
+[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) added `hasAttachments` and `sending`, both defaulted so every pre-#933 call site still compiles. They come from the chat's own pending-attachment strip — see [Thread screen § Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) — not from anything local to this composable.
 
 [#643](../codebase/643.md) added `isBusy` and `onInterrupt` to both overloads, defaulted so the pre-existing previews and call sites stay one-liners. The stateful overload holds `var text by rememberSaveable { mutableStateOf("") }` and delegates to the stateless overload; on send it invokes `onSend(text)` and resets `text = ""` **only when `text.isNotBlank()`**. Blank input is a UI no-op (button is also disabled when idle, but the IME `Send` action can still fire on some keyboards). The stateless overload is what the previews call directly.
 
@@ -40,13 +53,17 @@ The two-overload pattern matches the project convention for composables that nee
 
 [#643](../codebase/643.md) retired the standalone foot-of-list `InterruptAffordance` (see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) and folded its stop action into this button, following desktop's #678 precedent instead of inventing a third placement:
 
-| `text` | `isBusy` | description | action | enabled |
-|---|---|---|---|---|
-| non-blank | either | `cd_send_message` ("Send message") | `onSend` | yes |
-| blank | `true` | `cd_thread_interrupt` ("Stop the running turn") | `onInterrupt` | yes |
-| blank | `false` | `cd_send_message` ("Send message") | — | no |
+| `text` | `hasAttachments` | `isBusy` | `sending` | description | action | enabled |
+|---|---|---|---|---|---|---|
+| non-blank | either | either | either | `cd_send_message` ("Send message") | `onSend` | yes |
+| blank | `true` | either | `false` | `cd_send_message` ("Send message") | `onSend` | yes |
+| blank | `true` | either | `true` | `cd_send_message` ("Send message") | `onSend` | no |
+| blank | `false` | `true` | either | `cd_thread_interrupt` ("Stop the running turn") | `onInterrupt` | yes |
+| blank | `false` | `false` | either | `cd_send_message` ("Send message") | — | no |
 
-Text present wins over an in-flight turn **deliberately**: sending while the agent is busy is a shipped path (the daemon queues it and [`QueuedBacklog`](queued-backlog-section.md) renders it, #461/#467), so a stop variant that pre-empted a typed message would silently remove the only tap that reaches it. Stop therefore owns the button exactly when the composer is empty — the state anyone actually reaching for stop is in. One consequence worth knowing for anyone touching this path: **stop is unreachable while a draft sits in the composer** — the user must clear the field first. Deliberate and settled (queue-while-busy is real, the design has exactly one button slot), but a real thing to watch during a live turn.
+Text present wins over an in-flight turn **deliberately**: sending while the agent is busy is a shipped path (the daemon queues it and [`QueuedBacklog`](queued-backlog-section.md) renders it, #461/#467), so a stop variant that pre-empted a typed message would silently remove the only tap that reaches it. Stop therefore owns the button exactly when the composer is empty **and holds no attachment** — [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) widened `stopping = isBusy && text.isBlank() && !hasAttachments`, since an attachment with no text is still something to send, not the empty state stop is for. One consequence worth knowing for anyone touching this path: **stop is unreachable while a draft sits in the composer, or while an attachment is pending** — the user must clear both first. Deliberate and settled (queue-while-busy is real, the design has exactly one button slot), but a real thing to watch during a live turn.
+
+`enabled = stopping || (!sending && (text.isNotBlank() || hasAttachments))` (also #933): attachments alone enable Send, and `sending` — true for as long as [`ThreadViewModel.sendWithAttachments`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) is uploading and sending — disables it outright rather than letting it fall through to stop, so a second tap during an in-flight attachment send does nothing.
 
 Both states draw the same filled-circle silhouette so the control reads as one button in two states: `Icons.Filled.ArrowCircleUp` for send, `Icons.Filled.StopCircle` for stop, both tinted `colorScheme.primary` inside a container-less 48dp `IconButton`.
 
@@ -62,14 +79,186 @@ Inside, a `Row` (padding `start = FieldLeadingInset /* 16.dp */, end = FieldTrai
 
 ### `BasicTextField` — not `TextField`
 
-`BasicTextField` is the right primitive here because the field `Surface` already supplies the container styling (color, shape, height). A material `TextField` would have to override `TextFieldDefaults.colors` to transparent on every container slot, which is more code than the `BasicTextField + decorationBox` variant. Configuration (carried over verbatim through #643's rewrite):
+`BasicTextField` is the right primitive here because the field `Surface` already supplies the container styling (color, shape, height). A material `TextField` would have to override `TextFieldDefaults.colors` to transparent on every container slot, which is more code than the `BasicTextField + decorator` variant. [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934) moved the field from the `value`/`onValueChange` overload to the `state: TextFieldState` overload — the only one that can receive pasted content, see [§ Image paste into the field](#image-paste-into-the-field-934) — so several of these settings changed name without changing behaviour. Configuration:
 
-- `value = text`, `onValueChange = onTextChange`, `Modifier.weight(1f).padding(vertical = FieldTextVerticalInset /* 12.dp */)` — the design's `Text area` `py-12`; keeps wrapped text off the container's edge as the field grows.
+- `state = fieldState` (a heap-only `TextFieldState`, not the `text`/`onTextChange` pair directly — see [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934)), `inputTransformation = reportEdits`, `Modifier.weight(1f).padding(vertical = FieldTextVerticalInset /* 12.dp */).then(if (onImagesReceived != null) Modifier.contentReceiver(imageReceiver) else Modifier)` — the design's `Text area` `py-12`; keeps wrapped text off the container's edge as the field grows.
 - `textStyle = MaterialTheme.typography.bodyLarge.copy(color = onSurface)`.
 - `cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)` — `BasicTextField`'s default cursor is solid black, which fails against dark theme. Explicit `cursorBrush` mapped to `primary` matches the M3 `TextField` baseline.
-- `singleLine = false, maxLines = 5` — multi-line, capped at 5 visible lines so the field never overruns the screen on long pastes.
-- `keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send)` + `keyboardActions = KeyboardActions(onSend = { onSend() })` — the IME `Send` action invokes the same path as the message-input button, so the user can submit without leaving the keyboard.
-- `decorationBox = { innerTextField -> Box { if (text.isEmpty()) Text("Message", color = onSurfaceVariant.copy(alpha = 0.6f)); innerTextField() } }` — the placeholder renders behind `innerTextField` when the field is empty. `text.isEmpty()` (not `isBlank()`) is intentional — a leading space shouldn't clobber the placeholder visually mid-typing.
+- `lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5)` — multi-line, capped at 5 visible lines so the field never overruns the screen on long pastes. Renamed from `singleLine = false, maxLines = 5` by the #934 field migration; same cap.
+- `keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send)` + `onKeyboardAction = { onSend() }` — the IME `Send` action invokes the same path as the message-input button, so the user can submit without leaving the keyboard. Renamed from `KeyboardActions(onSend = ...)` by the #934 migration; same trigger.
+- `decorator = { innerTextField -> Box { if (fieldState.text.isEmpty()) Text("Message", color = onSurfaceVariant.copy(alpha = 0.6f)); innerTextField() } }` — the placeholder renders behind `innerTextField` when the field is empty. `fieldState.text.isEmpty()` (not `isBlank()`) is intentional — a leading space shouldn't clobber the placeholder visually mid-typing, and reading the field's own text (rather than the hoisted `text`) keeps the placeholder correct immediately after an undo, before the draft has caught up. Renamed from `decorationBox` by the #934 migration.
+
+### Draft binding — cursor-at-end, undo and redo (#885, #934)
+
+Found by the [slash-command type-ahead](slash-command-type-ahead.md)'s pick test.
+Before #885, the stateless overload passed the hoisted `text: String` straight to
+`BasicTextField(value: String, ...)`, which keeps the field's *previous* cursor
+offset whenever the string changes from outside the field — indistinguishable, from
+the field's point of view, from the user having typed at that same offset. Picking
+`/model ` from a draft of `/mo` left the cursor at offset 3 (where the user had left
+it), so typing `opus` next landed inside the name instead of after it:
+`/moopusdel `, not `/model opus`.
+
+\#885 fixed this with a caller-held `TextFieldValue`. [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934)
+moved the field onto `BasicTextField(state: TextFieldState, ...)` instead — the only
+overload `Modifier.contentReceiver` (the paste entry point, see
+[§ Image paste into the field](#image-paste-into-the-field-934)) works with — and rebuilt
+the same rule on top of it, plus closed a second desync the migration introduced.
+
+**The state is a plain `remember`, never `rememberTextFieldState`:**
+
+```kotlin
+val fieldState = remember { TextFieldState(text, TextRange(text.length)) }
+```
+
+`rememberTextFieldState` is `rememberSaveable(saver = TextFieldState.Saver)` under
+Compose foundation 1.10.4, and that saver writes the field's text *and its whole
+undo history* — deleted text included — into the activity's saved-state Bundle on
+every `onStop`. That breaks [#789's heap-only draft contract](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership)
+(the draft must never cross into `system_server`) and, for a large paste, can throw
+`TransactionTooLargeException` and crash the app on backgrounding. This shipped
+wrong on the first pass — the plan's own Security review claimed "drafts stay
+heap-only" while the Design section specified `rememberTextFieldState` — and was
+caught in verification, not before. `ThreadInputBarDraftBindingTest` (shared,
+Robolectric) types a draft and asserts it is absent from
+`SaveableStateRegistry.performSave()`; it fails if the state becomes saveable again.
+**Any future `TextFieldState` field holding private content must use the same plain
+`remember`, not the `rememberTextFieldState` default.**
+
+**Outward, user edits → draft, via an `InputTransformation`:**
+
+```kotlin
+val reportEdits = remember {
+    InputTransformation {
+        val edited = toString()
+        accountedText = edited
+        if (edited != currentText) {
+            textAtLastEdit = currentText
+            currentOnTextChange(edited)
+        }
+    }
+}
+```
+
+Every edit that changes the field's text — typing, a text paste, an IME edit —
+records `textAtLastEdit` (what the draft was just before this edit) and calls
+`onTextChange`. A programmatic `setTextAndPlaceCursorAtEnd` does not run input
+transformations, so an outside change never echoes back through this path.
+
+**Inward, outside change → field, via `LaunchedEffect(text)`:**
+
+```kotlin
+LaunchedEffect(text) {
+    val shown = fieldState.text.toString()
+    if (shown == text) {
+        textAtLastEdit = null
+    } else if (text != textAtLastEdit) {
+        accountedText = text
+        fieldState.setTextAndPlaceCursorAtEnd(text)
+    }
+}
+```
+
+If `text` still equals `textAtLastEdit`, the field keeps its own value and cursor —
+this is the asynchronous [draft round trip](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership)
+lagging behind the field's own keystroke, not a genuine outside change, and treating
+it as one would fight the cursor on ordinary typing. Otherwise the field adopts
+`text` with the cursor at the end, which covers both a completion pick and the field
+clearing after a send. Once `text` catches up to what the field shows, `textAtLastEdit`
+clears, so a later send that returns the draft to that same remembered value is still
+adopted as a real outside change.
+
+**Undo and redo bypass `InputTransformation` — found in verification, not by design.**
+In foundation 1.10.4, `TextUndoOperationKt.undo`/`redo` write the field's buffer
+directly and never call `commitEditAsUser`, so a hardware-keyboard Ctrl+Z changed
+what the field showed without calling `onTextChange`: the draft (what Send actually
+sends) stayed on the pre-undo text while the field itself showed the undone value.
+The fix adds a third path, `accountedText` plus a `snapshotFlow` collector, that
+catches whatever the other two miss:
+
+```kotlin
+var accountedText by remember { mutableStateOf(text) }
+LaunchedEffect(fieldState) {
+    snapshotFlow { fieldState.text.toString() }.collect { shown ->
+        if (shown != accountedText) {
+            accountedText = shown
+            textAtLastEdit = currentText
+            currentOnTextChange(shown)
+        }
+    }
+}
+```
+
+`accountedText` is set by whichever of the three paths last put text in the field —
+the `InputTransformation` for a user edit, the inward effect for an outside change —
+before that path changes the field, so neither one is reported again by the
+collector. Only undo, redo, or any other path that bypasses both is left over, and
+the collector reports it to `onTextChange` the same way a typed edit would.
+`ThreadInputBarUndoDeviceTest` pins this; it is device-only because Robolectric's
+`KeyCharacterMap` ignores the Ctrl meta state, so a test that sends Ctrl+Z there
+actually types a "z" and would pass green without exercising undo at all — see
+[development-verification.md](development-verification.md) for the general version of
+this limitation.
+
+Both overloads' signatures are otherwise unchanged; see the ticket's plan Revisions
+(`docs/specs/architecture/885-slash-command-type-ahead.md` for the original fix,
+`docs/specs/architecture/934-paste-images-into-composer.md` for the migration and the
+undo fix) for the mutation-checked tests that pin each rule.
+
+### Image paste into the field (#934)
+
+[Modifier.contentReceiver](https://developer.android.com/reference/kotlin/androidx/compose/foundation/content/package-summary)
+(`@ExperimentalFoundationApi`) is the entry point for both the clipboard's Paste and a
+keyboard's image insert (`commitContent`), and only the `TextFieldState` overload of
+`BasicTextField` reads `Modifier.contentReceiver` at all — Compose foundation
+1.10.4's legacy `value`/`onValueChange` field ignores it entirely (checked in
+bytecode: only `TextFieldDecoratorModifierNode` / `TextFieldSelectionState` read
+`ReceiveContentConfiguration`). That is why the #934 field migration above was
+necessary for a feature that is not itself about the cursor.
+
+The field only gets the modifier when a receiver is supplied: `.then(if (onImagesReceived
+!= null) Modifier.contentReceiver(imageReceiver) else Modifier)`. `imageReceiver` is a
+`ReceiveContentListener` built once per package name:
+
+```kotlin
+ReceiveContentListener { content ->
+    val receive = currentOnImagesReceived ?: return@ReceiveContentListener content
+    val description = content.clipMetadata.clipDescription
+    val images = mutableListOf<Uri>()
+    val rest = content.consume { item ->
+        val image = isPastedImageItem(item, description, ownPackage)
+        if (image) images += item.uri
+        image
+    }
+    if (images.isNotEmpty()) receive(images)
+    rest
+}
+```
+
+`content.consume { }` classifies each clip item and returns the items it does **not**
+consume; the field pastes those as text, the same as before #934. Classification
+(`isPastedImageItem` in `AttachmentPicker.kt`) is synchronous and makes no binder
+call — safe to run inline inside `onReceive` — and applies the same
+[`isForeignContentUri`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)
+trust boundary a pick already uses, so a clip pointing at this app's own provider is
+never accepted. `[NIT, noted in review]` an item the listener consumes but whose
+provider later types as non-image (checked off the main thread by
+`describePastedImage`) is dropped rather than falling through to the field as text —
+it was already taken out of the clip by `content.consume`, so there is nothing left
+to paste. This is the plan's documented behaviour, not a bug.
+
+The accepted URIs are handed to `onImagesReceived`
+(`rememberPastedImageReceiver` in `AttachmentPicker.kt`, mirroring
+`rememberAttachmentPicker`), which describes them off the main thread and joins the
+same [`addPickedAttachments`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)
+sink a pick uses — see that document for the size/count refusals, the send-time
+bounded read, and the provider-type re-check. `ThreadScreen` is the only production
+caller and passes `onImagesReceived = rememberPastedImageReceiver(onAttachmentsPicked)`;
+no other call site changes because the parameter defaults to `null`.
+
+A `TextFieldState` field also exposes a `ScrollBy` semantics action that the legacy
+field did not — see [development-verification.md](development-verification.md) for
+the test-selector fallout this had on unrelated list-scroll assertions.
 
 ### The mic stub is gone
 
@@ -189,7 +378,17 @@ Both tests use the live `FakeConversationRepository()` rather than a recording m
 
 The old mic `Toast` onClick was intentionally never unit-tested; it went with the stub in #643, so there is nothing left to skip.
 
-**Instrumented, added in [#643](../codebase/643.md):** `ThreadFrameTest.kt` (`app/src/androidTest/…/thread/`) covers the send/stop precedence directly — `inputButton_sendsWhenTextPresent`, `inputButton_stopsWhileBusyWithEmptyField`, and an additive sixth case `inputButton_isDisabledSendWhenIdleAndEmpty` beyond the plan's original five, plus `busyThread_hasExactlyOneStopControl` at the `ThreadScreen` level. See [Interrupt affordance § Testing](interrupt-affordance.md#testing) and [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md) for the header-side coverage. Pre-existing `ScriptedThreadRenderTest`'s `interrupt_shownWhileBusy_invokesOnTap_goneAfterTurnEnd` stayed green unchanged against the relocated control — it finds `cd_thread_interrupt` by description regardless of where the control lives.
+**Instrumented, added in [#643](../codebase/643.md):** `ThreadFrameTest.kt` (`app/src/androidTest/…/thread/`) covers the send/stop precedence directly — `inputButton_sendsWhenTextPresent`, `inputButton_stopsWhileBusyWithEmptyField`, and an additive sixth case `inputButton_isDisabledSendWhenIdleAndEmpty` beyond the plan's original five, plus `busyThread_hasExactlyOneStopControl` at the `ThreadScreen` level. See [Interrupt affordance § Testing](interrupt-affordance.md#testing) and [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md) for the header-side coverage. Pre-existing `ScriptedThreadRenderTest`'s `interrupt_shownWhileBusy_invokesOnTap_goneAfterTurnEnd` stayed green unchanged against the relocated control — it finds `cd_thread_interrupt` by description regardless of where the control lives. `SlashCommandTypeAheadScreenTest` and `ThreadFrameTest` both stayed green across the #934 `TextFieldState` migration — they are the regression suite for [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934), not just this composable's own coverage.
+
+**Added in [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934):**
+
+- `AttachmentPasteTest` (`app/src/test`, Robolectric for `ClipData`) — `isPastedImageItem` accepts a foreign `content:` URI under an `image/png` clip description and refuses a text-only item, a `file:` URI, this app's own authority, and a `content:` URI under an `application/pdf` description; `describePastedImage` keeps an `image/jpeg`-typed URI and drops a `text/plain`-typed one against a Robolectric-registered provider.
+- `ComposerPasteTest` (`app/src/sharedTest`, Robolectric) — a `SemanticsActions.PasteText` image paste reaches the attachment path and adds no text; a text paste inserts text into the draft and adds no attachment. Proves the open question in the ticket's plan: `SemanticsActions.PasteText` on a `TextFieldState` field goes through `contentReceiver` the same way a real user Paste does, both under Robolectric and on the device — no text-toolbar workaround was needed.
+- `ThreadInputBarDraftBindingTest` (`app/src/sharedTest`, Robolectric) — pins the heap-only fix in [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934): a typed draft must not appear in `SaveableStateRegistry.performSave()`.
+- `ThreadInputBarUndoDeviceTest` (`app/src/androidTest`, device-only) — a hardware Ctrl+Z reaches the draft; see [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934) for why this is device-only.
+- `ComposerImagePasteDeviceTest` (`app/src/androidTest`, device-only, AC#2) — inserts a real PNG through `MediaStore`, puts it on the real clipboard with `ClipData.newUri`, drives the field's `PasteText` semantics action, and asserts one strip tile named for the file. Device-only because it needs the real clipboard service and a real `MediaStore` provider with its grant and `getType` — Robolectric's clipboard and resolver are shadows and cannot prove the platform path the AC names.
+
+No rung-3 scenario for #934: pasting adds an attachment locally with no daemon exchange; the live attachment exchange belongs to [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674).
 
 ## Previews
 
@@ -208,7 +407,9 @@ The existing `ThreadScreenLightPreview` / `ThreadScreenDarkPreview` in `ThreadSc
 - **No error *surface* (but crash-guarded since #490).** A `repository.sendMessage` failure is swallowed quietly by [`launchGuardedRepoCall`](guarded-repo-launch.md) — no crash, no user-visible message. Phase 4 adds the user-visible surfacing when the real network client lands.
 - **`maxLines = 5` is a soft cap on visible lines, not on content length.** The user can paste 50 lines; only 5 are visible and the field scrolls internally. No character cap on `text` is enforced anywhere in the stack.
 - **No undo for the cleared field.** Once the user taps send (or the IME `Send` action), `text` is reset to `""`. There is no "restore last draft" affordance.
-- **No autocomplete, no slash-commands, no `/clear` plumbing yet.** The text field is a plain `BasicTextField`. The pyrycode CLI's `/clear` / `/compact` slash commands land at the conversations-model layer in pyrycode Phase 2 and surface here in mobile Phase 3+; out of scope.
+- **Slash-command completion, not slash-command execution.** [#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) added the [type-ahead](slash-command-type-ahead.md) that completes a typed `/name`, but the text field itself is still a plain `BasicTextField` with no knowledge of commands — a completed `/clear` is ordinary text that reaches the daemon through the same send path as any other message. The pyrycode CLI's `/clear` / `/compact` behavior lives at the conversations-model layer, not in this composable.
+- **`fieldState` / `textAtLastEdit` / `accountedText` are unkeyed `remember`s.** A reused composition slot (e.g. a `LazyColumn` cell reuse, which does not currently apply to this composable's own single mount) would keep the previous conversation's field text in memory until the next outside change. What renders is still correct, because the inward `LaunchedEffect(text)` adopts the current `text` regardless — see [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934). Flagged as a non-blocking review NIT in #885; keying on the conversation id would be tidier if slot reuse ever becomes a real concern. **Must stay a plain `remember`, never `rememberSaveable` / `rememberTextFieldState`** — see [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934) for why #934 found this load-bearing rather than cosmetic: the field holds live message content, and the saveable saver would put it, undo history included, in the saved-state Bundle.
+- **A consumed paste item that turns out non-image is dropped, not pasted as text.** [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934)'s `imageReceiver` decides per item from the clip's declared type before any provider call; an item it accepts is removed from what the field receives, so if the provider's own `getType` later disagrees the item is gone, not returned to the field. See [§ Image paste into the field](#image-paste-into-the-field-934). Noted in review as a known behaviour, not a defect.
 - **Keyboard `Send` action vs. multi-line entry.** Some keyboards render the IME `Send` action as a glyph; others fall through to `Done` or `Enter`. The `KeyboardActions(onSend = …)` callback fires only for `ImeAction.Send`. Multi-line entry via `Enter` is the OS's responsibility under `singleLine = false`; no manual `\n` handling needed.
 - **Stop is unreachable while the field holds a draft** — see [The message-input button](#the-message-input-button--one-control-two-actions) above; this is the live #643 consequence that superseded the old "mic is a stub" limitation.
 - **The disabled send button has no visual dimming** — see [The message-input button](#the-message-input-button--one-control-two-actions) above; a shipped, non-blocking gap, not a design limitation.
@@ -217,7 +418,9 @@ The existing `ThreadScreenLightPreview` / `ThreadScreenDarkPreview` in `ThreadSc
 ## Related
 
 - Ticket notes: [`../codebase/188.md`](../codebase/188.md) (original implementation), [`../codebase/187.md`](../codebase/187.md) (the `sendMessage` repository mutator this consumes), [`../codebase/459.md`](../codebase/459.md) (added `isBusy`/`onInterrupt` to `ThreadScreen`, pre-#643), [`../codebase/643.md`](../codebase/643.md) (the Figma `16:8` frame — `Input large` field, mic removal, send/stop button, three-part composer)
-- Specs: `docs/specs/architecture/188-thread-input-bar.md`, `docs/specs/architecture/187-sendmessage-on-conversation-repository.md`, `docs/specs/architecture/643-thread-header-and-composer-layout.md`
+- Specs: `docs/specs/architecture/188-thread-input-bar.md`, `docs/specs/architecture/187-sendmessage-on-conversation-repository.md`, `docs/specs/architecture/643-thread-header-and-composer-layout.md`, `docs/specs/architecture/885-slash-command-type-ahead.md` (`onAnchorChanged` + the original `TextFieldValue` cursor fix), `docs/specs/architecture/934-paste-images-into-composer.md` (the `TextFieldState` migration, the heap-only fix, the undo/redo fix, and the image paste receiver)
 - Parent: [Thread screen](thread-screen.md) (the screen this mounts into) and [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md) (the `ThreadTopAppBar` rewrite and the status-area/interrupt relocation, both part of the same #643 pass); [Conversation repository](conversation-repository.md) (the `sendMessage` mutator the VM forwards to); [Navigation](navigation.md) (the `conversation_thread/{conversationId}` route this destination lives under); [Dependency injection](dependency-injection.md) (the unchanged Koin `viewModel { ThreadViewModel(get(), get()) }` binding)
+- Sibling: [Slash-command type-ahead](slash-command-type-ahead.md) — the [#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) caller of `onAnchorChanged`, and the reason `text` can now change from outside the field mid-composition
 - Sibling: [Interrupt affordance](interrupt-affordance.md) — the composable #643 retired from the screen; its stop action lives on this button now
-- Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) (parent thread screen), `Input large` (`347:6635`, the field itself), `Input area` (`533:1957`, the three-band composer this field is the middle of)
+- Sibling: [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) — the [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) picker/strip and `addPickedAttachments` sink a [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934) paste joins; also `isForeignContentUri`, the trust boundary [§ Image paste into the field](#image-paste-into-the-field-934) reuses
+- Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) (parent thread screen), `Input large` (`347:6635`, the field itself), `Input area` (`533:1957`, the three-band composer this field is the middle of). No new visual for #934 — a pasted image reuses the existing `Attachment area` tile (`390:7136`).

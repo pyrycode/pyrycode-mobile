@@ -39,7 +39,56 @@ Requires a recent Android Studio (Hedgehog or later).
 `1:989241581793:android:90475142351ecb860f17a0` for `de.pyryco.mobile`). It carries no
 server credentials — those stay in the password manager. The Google Services Gradle
 plugin applies only when the file is present, so builds without it (CI, fresh worktrees)
-still succeed, with push disabled.
+still succeed, with push disabled — the `firebase-messaging` SDK dependency is unconditional,
+but without the file no `FirebaseApp` exists, so no token or message is ever delivered.
+
+The Android API key in that file is restricted in Google Cloud console, under
+APIs & Services → Credentials: to Android apps with package `de.pyryco.mobile` and
+the SHA-1 of each signing certificate, and to the Firebase Cloud Messaging and
+Firebase Installations APIs. A new signing key — another machine's debug keystore,
+or a Play app-signing key — needs its SHA-1 added to that key first; until then,
+builds signed with it cannot get a push token. `./gradlew signingReport` prints the
+SHA-1.
+
+Push is enabled only when the file is present. A received message must be a **data** message: while
+the app is backgrounded, a notification message goes to the system tray instead and never reaches
+the app's code. No daemon or relay push sender exists yet — the phone half (token capture, rotation
+and the background wake) is in place, but nothing on the server side sends FCM, so push notifications
+do not work end to end. See [`docs/knowledge/features/push-messaging-service.md`](docs/knowledge/features/push-messaging-service.md).
+
+## Release builds
+
+`release` is debug-signed by default, so `./gradlew assembleRelease` keeps working with
+no setup. A bundle meant for Play upload needs the upload key instead — Play App Signing
+registers the key of a build's *first* upload as the permanent upload key, so a
+debug-signed first upload cannot be undone. Four Gradle properties supply it:
+
+- `pyry.upload.storeFile` — absolute path to the keystore. It is not expanded (`~` is
+  taken literally) and a relative path resolves against `app/`, so use an absolute path.
+- `pyry.upload.storePassword`
+- `pyry.upload.keyAlias`
+- `pyry.upload.keyPassword`
+
+They can come from `-P`, from `~/.gradle/gradle.properties`, or from
+`ORG_GRADLE_PROJECT_`-prefixed environment variables — prefer the last, injected with
+`op run`, since a `-P` value shows up in the host's process list and
+`~/.gradle/gradle.properties` sits on disk in plaintext:
+
+```bash
+op run --env-file=... -- ./gradlew bundleRelease
+```
+
+With all four properties set, `bundleRelease` produces `app/build/outputs/bundle/release/app-release.aab`
+signed with that key. With any missing, `assembleRelease` still succeeds with the debug
+key (so local release builds keep working), but `bundleRelease` fails before writing an
+`.aab`, naming each missing property. The keystore and its passwords never enter the
+repository; `.gitignore` covers `*.jks`, `*.keystore`, `*.p12` and `*.pfx` as a backstop.
+
+`versionCode` is `git rev-list --count HEAD` — the commit count on the current branch,
+which rises with every commit on main and satisfies Play's requirement that each upload's
+version code exceed the last. This needs a full clone; a shallow clone undercounts.
+Override it with `-PversionCode=N` when needed. `versionName` is a hand-edited field in
+`defaultConfig` and does not move on its own.
 
 ## Pre-ship gate
 

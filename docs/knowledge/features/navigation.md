@@ -5,19 +5,22 @@ Single-activity Compose Navigation host. `MainActivity` is the only Activity; al
 ## What it does
 
 Boots into `welcome` on a fresh install or `channel_list` when a saved pairing
-exists. The graph has ten routes; thread and literal-screen destinations carry
-both the owning `serverId` and the host-local `conversationId`.
+exists. The graph has eleven routes; the thread destination carries both the
+owning `serverId` and the host-local `conversationId`.
 
 - **`welcome`** (start destination when no paired-server record exists) — renders `WelcomeScreen` (#7).
 - **`scanner`** — renders [ScannerScreen](scanner-screen.md) with its destination-scoped ViewModel, camera permission launcher and live preview. A decoded QR is parsed into an immutable fingerprint/record confirmation state without writing. Confirm saves, starts the controller and navigates to `channel_list`, popping the scanner inclusively; this camera path does not await encrypted readiness. Decline/Back from confirmation re-arms scanning. Paste actions navigate to `pair_code`; ordinary Back pops to the caller.
 - **`pair_code`** — renders [PairCodeScreen](paste-code-dialog.md) with a destination-scoped `PairCodeViewModel`. Its optional-name form, fingerprint confirmation and saved-target connection wait stay within one route. Cancel returns to the caller; success clears the previous graph entries and opens `channel_list` only after both target connection legs are ready. Since #842 the destination pattern (`Routes.PAIR_CODE_ROUTE`) takes an optional `serverId` query argument, shaped like Settings' own below; when present, the flow is scoped to re-pair exactly that host instead of naming a new one — see [manual pairing entry and return](#manual-pairing-entry-and-return).
 - **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md), fed entirely by host-qualified state since #738 retired the flat compatibility model and its `selectedServerId()` adapter for this screen. Its own section-header add control also opens `scanner` (`ChannelListEvent.PairHostTapped → navController.navigate(Routes.SCANNER)`, #738) — the first entry into pairing that does not require an unpaired phone, reusing the existing `scanner` destination above rather than adding a second flow; both of that destination's completions (camera confirm, and manual entry via `pair_code`) already land back here.
 - **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md). Unreachable since #731 retired the channel list's "see all" link that was its only entry point; the route, screen and its adapter (captures host-qualified row and promotion targets, consumes only `hostNavigationEvents`) stay in the graph regardless — removing them is out of scope for both #731 and #738.
-- **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack; “Show the literal screen” passes the same target to `Routes.literal(target)`.
-- **`literal_screen/{serverId}/{conversationId}`** — renders [LiteralScreenSurface](literal-screen-surface.md#wiring). Each new back-stack entry owns a fresh `LiteralScreenViewModel`, isolating snapshots even when two hosts use the same conversation id. Request and Retry use that entry's host and conversation.
+- **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack. Also reachable from outside the graph entirely since [#685](../../specs/architecture/685-mobile-attention-alerts.md): a notification tap parses to the same `HostConversationTarget` and `PyryNavHost` pushes it on top of `channel_list` via its `openTarget` param, gated by `ThreadDestinationFactory.isSavedHost` — see [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685).
+- **`markdown_reader/{serverId}/{conversationId}/{attachmentId}`** — renders the [Markdown reader screen](markdown-reader-screen.md) (#1027), reached only from the thread destination above: tapping a ready file row whose name ends in `.md`/`.markdown` reads and strictly decodes it first, then routes `ThreadNavigation.OpenMarkdown(attachmentId)` to `navController.navigate(Routes.markdownReader(target, event.attachmentId))`. Wrapped in `HostDestination` like the thread route; the back arrow and system back both pop back to the same thread entry.
+- **`markdown_link/{serverId}/{conversationId}`** — since #1050, renders the same [Markdown reader screen](markdown-reader-screen.md#linked-note-live-since-1050) for a markdown-path link tapped in an assistant reply, but for a note read live from the workspace rather than a stored attachment. Ids only, deliberately: the path itself never travels in the route (it would put assistant-authored text in the saved back stack), so `Routes.markdownReader`'s own "ids only: never a file name, path or URI" KDoc holds unchanged, and the sibling `markdown_reader` route above is untouched. `ThreadNavigation.OpenLinkedMarkdown` (carrying nothing — the document lives in the thread's `ThreadViewModel`) routes to `navController.navigate(Routes.markdownLink(target))`. The destination resolves the thread's own `ThreadViewModel` with `navController.getBackStackEntry(Routes.CONVERSATION_THREAD)` + `koinViewModel(viewModelStoreOwner = …)` and reads its held document once. Wrapped in `HostDestination` like the two routes above.
 - **`settings?serverId={serverId}`** — renders `SettingsScreen` (#64; About-row wiring #90; Storage-row wiring #94; About-row copy + License-row treatment #163; About section → single navigable entry #271; host ownership #749). Reached by the settings entry on the channel list's own bar (#21, redrawn as its own bar by #737) via `ChannelListEvent.SettingsTapped → navController.navigate(Routes.settings(destinations.selectedServerId()))` — the gear captures the current host's exact server id **once, at tap time**, the same compatibility adapter the list's other temporary consumers use (#749). Destination block passes four navigation lambdas: `onBack = { navController.popBackStack() }`, `onOpenArchivedDiscussions` (nullable since #715 — non-null only when this destination's own captured owner is non-empty, `{ navController.navigate(Routes.archive(owner)) }`; `null` when it owns no host, which `SettingsRow` renders inert rather than offering a tap that could only be rejected) (#94, rebound to an owner by #715), `onOpenAbout = { navController.navigate(Routes.ABOUT) }` (#271), and `onPairServer = { navController.navigate(Routes.SCANNER) }` (#749 — the same destination the channel list's own pairing entry opens, #738). An earlier lambda `onOpenLicense = { navController.navigate(Routes.LICENSE) }` from #91 was dropped in #163 along with the `LicenseScreen` parameter; #271's `onOpenAbout` is its structural successor — the whole About section is now a single navigable entry into [`AboutScreen`](about-screen.md). See [Settings screen](settings-screen.md).
 - **`archived_discussions/{serverId}`** — renders `ArchivedDiscussionsScreen` (#94) backed by `ArchivedDiscussionsViewModel`; a secondary screen listing archived discussions with an inline restore affordance. **Owned by a required path segment since #715** (unlike Settings' optional query argument above — Settings has to stay open for an unpaired phone, Archive has no such case, so a route that cannot express "no owner" is the cheapest way to keep one from being invented) and, **unlike Settings, wrapped in `HostDestination`**: an unknown or newly-removed owner bounces to `channel_list` rather than falling through to another host's archive, which is exactly what keeps a colliding conversation id on two hosts from restoring the wrong one. Reached from the Settings Storage section's "Archived discussions" row (inherits the owner Settings' own destination already holds — see above) and, since #737, from the channel list's own bar via `ChannelListEvent.ArchiveTapped → destinations.selectedServerId()?.let { navController.navigate(Routes.archive(it)) }` (rebound from the pre-#715 unscoped `Routes.ARCHIVED_DISCUSSIONS` navigate) — the same destination, two doors, each capturing its owner from a deliberately different source: Settings' row inherits a destination-held owner, the list's entry re-reads selection on every tap. Destination block follows the `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape, additionally collecting `vm.host` for the header; the inline `when (event)` intercepts `ArchivedDiscussionsEvent.BackTapped → navController.popBackStack()` and forwards `is RestoreRequested` / `is TabSelected` to `vm.onEvent(event)` (the VM owns the `unarchive` side-effect). No `navigationEvents` channel — restore stays on-screen and the row drops on the next `MutableStateFlow` re-emission. See [Archived Discussions screen](archived-discussions-screen.md).
 - **`about`** — renders [`AboutScreen`](about-screen.md) (#271); a **static** sub-screen (no ViewModel) listing the app version + build SHA, the open-source repo link, an inert privacy-policy row, and the MIT license line. Reached from the Settings About section's "About" row via `onOpenAbout`. Destination block is the minimal `composable(Routes.ABOUT) { AboutScreen(onBack = { navController.popBackStack() }) }` — no `koinViewModel<…>()`, no `collectAsStateWithLifecycle()`, no `onEvent` (the screen is stateless apart from `rememberScrollState()`). Both the TopAppBar back arrow and the system back gesture return to Settings via the default `popBackStack()`. Shows that a sub-screen with no real state drops the VM/state-collection machinery the `archived_discussions` block carries. See [About screen](about-screen.md).
+
+[#382](../codebase/382.md) had added a tenth route, `literal_screen/{serverId}/{conversationId}`, rendering a `LiteralScreenSurface` reached from the thread overflow menu and the stall promotion banner. [#883](../../specs/architecture/883-retire-literal-screen.md) removed the route, its destination ViewModel and both entry points once the daemon dropped the server-side screen-snapshot render path; the graph is back to nine routes.
 
 ## How it works
 
@@ -113,8 +116,9 @@ of the destination and follows app lifecycle.
 ### Host-qualified destinations
 
 The internal `Routes` object is shared with navigation tests. `Routes.thread(target)`
-and `Routes.literal(target)` each URI-encode `serverId` and `conversationId`
-independently. `Routes.hostArguments()` declares both as `NavType.StringType`, and
+URI-encodes `serverId` and `conversationId` independently (`Routes.literal(target)`,
+the same shape for the now-retired literal-screen destination, was removed by
+[#883](../../specs/architecture/883-retire-literal-screen.md)). `Routes.hostArguments()` declares both as `NavType.StringType`, and
 `Routes.target(arguments)` reconstructs the exact `HostConversationTarget`. Reserved
 characters cannot become route separators. Domain ids and wire payloads remain
 host-local; do not encode the host into a repository conversation id.
@@ -131,9 +135,6 @@ Resolve `koinViewModel()` inside each guarded destination so its
 `NavBackStackEntry` owns the ViewModel and seeds its `SavedStateHandle` with both
 identifiers. Back reveals the prior entry; reopening after a pop creates a new
 one. Saved back-stack restoration preserves the same host/conversation pair.
-Thread-to-literal navigation copies the target from the thread entry, never from
-compatibility selection. Literal Retry re-fetches through that destination's
-repository; snapshot text is not written to saved state.
 
 ### Settings: an optionally-owned destination
 
@@ -142,7 +143,7 @@ repository; snapshot text is not written to saved state.
 no empty form and this destination has to open on a phone with nothing paired (#749). Navigation
 Compose matches the bare `"settings"` route against that pattern via the argument's own default —
 confirmed on-device rather than assumed, since it was an open question in the plan. Three helpers
-join the existing `thread`/`literal`/`hostArguments`/`target` set: `Routes.settings(serverId: String?)`
+join the existing `thread`/`hostArguments`/`target` set: `Routes.settings(serverId: String?)`
 (bare `"settings"` when null/empty, else `Uri.encode`d into the query param — same per-component
 encoding discipline as `Routes.thread`), `Routes.settingsArguments()`, and `Routes.settingsOwner(arguments)`.
 
@@ -152,7 +153,7 @@ or newly-unpaired phone goes to pair, so it must stay open when its captured own
 nothing. `SettingsViewModel.connection` (see [Settings ViewModel](settings-viewmodel.md)) carries that
 tolerance instead: a blank or unrecognised owner is a `SettingsConnectionState`, not a navigation
 rejection. `ThreadDestinationFactory.settings(handle, preferences, repository)` reads `serverId` from
-the `SavedStateHandle` the same way `thread`/`literal` do, but never resolves it to a connection
+the `SavedStateHandle` the same way `thread` does, but never resolves it to a connection
 bundle — Settings reads identity and status only, so a saved-but-disconnected owner is still its
 owner.
 
@@ -175,10 +176,10 @@ structurally impossible rather than merely suppressed.
 Where Settings' route argument is optional because the destination has to open with no owner,
 `Routes.ARCHIVED_DISCUSSIONS = "archived_discussions/{serverId}"` is a **required** path segment: Archive
 has no legitimate no-owner state, so making one inexpressible in the route is cheaper than guarding
-against it appearing. Three helpers mirror `thread`/`literal`/`settings`: `Routes.archive(serverId)`
+against it appearing. Three helpers mirror `thread`/`settings`: `Routes.archive(serverId)`
 (`Uri.encode`d into the segment), `Routes.archiveArguments()`, and `Routes.archiveOwner(arguments)`.
 And where Settings is deliberately **not** wrapped in `HostDestination` (an unpaired phone must be able
-to open it), Archive **is** — the same shape `thread`/`literal` use — because an unknown or
+to open it), Archive **is** — the same shape `thread` uses — because an unknown or
 newly-removed owner falling through to another host's rows is exactly the failure this ticket closes.
 The device test's removal case proves the guard fires by asserting the destination's *departure*, not
 merely the other host's absence: a host-bound repository under an unknown owner still emits
@@ -220,7 +221,7 @@ existing unavailable-action behavior and no selection fallback.
 [ThreadDestinationFactory](dependency-injection-host-conversation-source.md#destination-ownership) binds
 reads and actions to the retained owner. Reconnect switches its concrete repository
 without changing route ownership; changing compatibility selection cannot redirect
-the open thread, permission prompt, picker or literal Retry. Demo routes carry the
+the open thread, permission prompt or picker. Demo routes carry the
 explicit `demo` id and use the existing fake singleton with inert live/modal/control
 dependencies, even when relay hosts are saved. Creation reads the `demo` workspace
 default or scratch, independently of any paired host's migrated legacy default.
@@ -229,10 +230,10 @@ default or scratch, independently of any paired host's migrated legacy default.
 
 [ChannelListScreen](channel-list-screen.md)'s assembled conversation tree (#729/#730/#731, split from
 \#641) resolves each row's host from the row itself — `TreeRowTapped(HostConversationTarget)` maps straight to
-`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. `TreeHostAddTapped(serverId)` /
-`TreeHostAddLongPressed(serverId)` (#738) carry the same discipline into creation: they map straight to
-`vm.createHostDiscussion(serverId)` / `vm.openHostWorkspacePicker(serverId)` against the add control's own
-row, never `selectedServerId()`. `ChannelListScreen` and its `ChannelListViewModel` therefore have **no**
+`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. `TreeHostAddTapped(serverId)` (#738) /
+`TreeHostAddLongPressed(serverId)` (#738, retargeted to Add workspace by #904) carry the same discipline
+into creation: they map straight to `vm.createHostDiscussion(serverId)` / `vm.openAddWorkspace(serverId)`
+against the add control's own row, never `selectedServerId()`. `ChannelListScreen` and its `ChannelListViewModel` therefore have **no**
 remaining consumer of the compatibility adapter below — #738 retired the flat `ChannelListUiState`, its
 `onEvent` reducer and the `repository` constructor parameter that fed them, along with the last FAB path
 that read `selectedServerId()` for this screen. The still-unreachable `DiscussionListScreen`
@@ -246,14 +247,18 @@ host prompt into the flat `Loaded.pendingPromotion` display model; selection cha
 do not change the confirmation target. Legacy bare-id navigation flows remain on
 the ViewModels for compatibility but are not collected by the production graph.
 
-`HostWorkspaceRepository` wraps both the thread destination and the channel list with
-`LocalWorkspacePickerRepository`. The list side passes `hostState.workspacePickerServerId`
-directly — the exact host the host row's long-press opened the picker for (#738; previously
-the same field, but populated via the FAB's `selectedServerId()` capture rather than the row's
-own id) — so recent folders, folder creation and the final workspace/create action agree on
-ownership. Binding only the ViewModel leaves the picker's independent repository lookup
-exposed to selection changes. Settings and archive destination migration remains #637; see
-[WorkspacePicker](workspace-picker.md).
+`HostWorkspaceRepository` wraps the thread destination and, since #714, Settings with
+`LocalWorkspacePickerRepository` — both still reach `WorkspacePicker` through it, passing their own
+picker's captured owner (the thread's route host, `SettingsViewModel.workspacePickerServerId`) so
+recent folders, folder creation and the final workspace/create action agree on ownership. Binding
+only the ViewModel leaves the picker's independent repository lookup exposed to selection changes.
+**Since #904, the channel list is no longer one of these wrappers.** The host row's long-press now
+opens [`AddWorkspaceModal`](mobile-modal.md#callers) instead of `WorkspacePicker`, and
+`ChannelListViewModel` resolves `hostSource.repositoryFor(serverId)` itself, at the press, the same
+host-resolved-write shape `submitChatName` uses — so this screen's `Routes.CHANNEL_LIST` destination
+no longer wraps `ChannelListScreen` in `HostWorkspaceRepository` at all; nothing on it reads
+`LocalWorkspacePickerRepository` any more. See [WorkspacePicker § Consumers](workspace-picker.md#consumers)
+for the two callers that remain.
 
 ## Adding a route
 
@@ -304,12 +309,19 @@ Welcome; expecting it to choose a new initial route tests the wrong lifecycle
 Koin bindings directly, bypassing the Activity startup gate. It cannot prove
 migration completes before navigation opens. It covers both host event streams,
 A/A/B duplicate suppression, reserved characters, distinct destination ViewModels,
-back/reopen, saved-state restoration, thread overflow to literal, Retry and
-invalid-host return. A copied minimal graph can pass while production route
-arguments or bindings are wrong.
+back/reopen, saved-state restoration and invalid-host return. A copied minimal
+graph can pass while production route arguments or bindings are wrong.
 Its picker cases open the actual descendant component with two Noise peers,
 distinct recents and assertions that the other host receives no picker reads or
 writes across selection changes and reconnect.
+
+The file kept its name across [#883](../../specs/architecture/883-retire-literal-screen.md)'s removal of the
+literal-screen destination it originally covered: only two of its four tests ever
+touched the literal screen, and the other two are the workspace-picker owner tests
+this paragraph describes, since extended for #904/#899/#685. #883 took out the
+literal-screen steps — the overflow-menu trip to `LITERAL_SCREEN` in the back-reopen
+test (host B now restores the thread itself instead) and the `Routes.literal`
+navigation in the invalid-host test — and left the rest of the harness unchanged.
 
 `SettingsNavigationTest` (#749; extended #750) copies that harness — production `PyryNavHost`,
 `Routes` and Koin bindings, two Noise peers, no Activity startup gate — for the Settings destination
@@ -349,7 +361,7 @@ two-host archive/restore rung-3 scenario specifically is #676.
 
 ## Related
 
-- Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/12.md` (Scanner stub + first destination-block Koin/coroutine wiring), `../codebase/13.md` (conditional start destination + `produceState` gating), `../codebase/14.md` (Welcome `onSetup` → `Intent.ACTION_VIEW` + `LocalContext.current` capture in a `composable` block), `../codebase/15.md` (first parameterized route), `../codebase/16.md` (Settings placeholder + interactive-placeholder factoring rule), `../codebase/46.md` (first VM-backed destination — `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape, inline `when (event)` → `navigate` translation), `../codebase/21.md` (channel-list `SettingsTapped` → `Routes.SETTINGS` wiring + `material-icons-core` on the classpath), `../codebase/24.md` (`discussions` route — first destination with dual nav wiring + a back-arrow `navigationIcon` reusing `R.string.cd_back`), `../codebase/26.md` (`discussions` route wired into the live graph — `ChannelListEvent.RecentDiscussionsTapped → navController.navigate(Routes.DISCUSSION_LIST)`), `../codebase/126.md` (`conversation_thread/{conversationId}` body flipped from placeholder `Text(...)` to real `ThreadScreen` + `ThreadViewModel`; path-argument extraction moves from `backStackEntry.arguments?.getString(...)` into the VM's `SavedStateHandle` via Koin's `viewModel { ThreadViewModel(get()) }` block), `../codebase/271.md` (`about` route — first static sub-screen added with no VM, mirroring the `archived_discussions` block minus the state-collection machinery), [`../codebase/382.md`](../codebase/382.md) (`literal_screen/{conversationId}` route — second parameterized route; per-back-stack-entry `koinViewModel()` for a fresh, per-conversation VM, plus the `onShowLiteralScreen` pure-navigation callback threaded from the thread overflow menu, mirroring `onOpenAbout`)
+- Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/12.md` (Scanner stub + first destination-block Koin/coroutine wiring), `../codebase/13.md` (conditional start destination + `produceState` gating), `../codebase/14.md` (Welcome `onSetup` → `Intent.ACTION_VIEW` + `LocalContext.current` capture in a `composable` block), `../codebase/15.md` (first parameterized route), `../codebase/16.md` (Settings placeholder + interactive-placeholder factoring rule), `../codebase/46.md` (first VM-backed destination — `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape, inline `when (event)` → `navigate` translation), `../codebase/21.md` (channel-list `SettingsTapped` → `Routes.SETTINGS` wiring + `material-icons-core` on the classpath), `../codebase/24.md` (`discussions` route — first destination with dual nav wiring + a back-arrow `navigationIcon` reusing `R.string.cd_back`), `../codebase/26.md` (`discussions` route wired into the live graph — `ChannelListEvent.RecentDiscussionsTapped → navController.navigate(Routes.DISCUSSION_LIST)`), `../codebase/126.md` (`conversation_thread/{conversationId}` body flipped from placeholder `Text(...)` to real `ThreadScreen` + `ThreadViewModel`; path-argument extraction moves from `backStackEntry.arguments?.getString(...)` into the VM's `SavedStateHandle` via Koin's `viewModel { ThreadViewModel(get()) }` block), `../codebase/271.md` (`about` route — first static sub-screen added with no VM, mirroring the `archived_discussions` block minus the state-collection machinery), [`../codebase/382.md`](../codebase/382.md) (had added the `literal_screen/{conversationId}` route — second parameterized route; per-back-stack-entry `koinViewModel()` for a fresh, per-conversation VM, plus the `onShowLiteralScreen` pure-navigation callback threaded from the thread overflow menu, mirroring `onOpenAbout`; the route and callback were removed by [#883](../../specs/architecture/883-retire-literal-screen.md) once the daemon dropped the server-side screen-snapshot render path)
 - Specs: `docs/specs/architecture/8-navigation-compose-setup.md`, `docs/specs/architecture/12-stub-scanner-screen.md`, `docs/specs/architecture/13-conditional-navhost-start-destination.md`, `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/16-settings-placeholder-route.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/126-thread-screen-skeleton.md`, `docs/specs/architecture/271-dedicated-about-screen.md`, `docs/specs/architecture/749-settings-destination-host-owner.md` (optional-owner route + `HostDestination`-guard exemption), `docs/specs/architecture/750-settings-saved-host-connection-rows.md` (host-to-host navigation + `popUpTo … inclusive` back-stack decision), `docs/specs/architecture/715-archive-host-owner.md` (required-owner route + `HostDestination` wrap + the two-doors fix)
-- Consumers: [Welcome screen](welcome-screen.md), [Scanner screen](scanner-screen.md), [Paired server store](paired-server-store.md) (read by startup and written by confirmed camera/manual pairing), [Thread screen](thread-screen.md) (VM-backed destination since #126), [Settings screen](settings-screen.md) + [About screen](about-screen.md) (the `settings` → `about` sub-screen pair, #271), [Archived Discussions screen](archived-discussions-screen.md)
+- Consumers: [Welcome screen](welcome-screen.md), [Scanner screen](scanner-screen.md), [Paired server store](paired-server-store.md) (read by startup and written by confirmed camera/manual pairing), [Thread screen](thread-screen.md) (VM-backed destination since #126), [Markdown reader screen](markdown-reader-screen.md) (`markdown_reader/{serverId}/{conversationId}/{attachmentId}`, reached only from the thread destination, #1027), [Settings screen](settings-screen.md) + [About screen](about-screen.md) (the `settings` → `about` sub-screen pair, #271), [Archived Discussions screen](archived-discussions-screen.md)
 - Follow-ups: Phase 2 thread UI (the outer shell at `conversation_thread/{conversationId}` shipped in #126; downstream slices #128–#140 / #145 fill the message list, input bar, status row, connection banner, session-boundary delimiter, empty states, and TopAppBar overflow), Phase 3 Settings sections (data-layer wiring for remaining no-op rows; `SettingsScreen` shell + About-section Version/Open-source rows already wired since #64 / #90; License row is text-only since #163), pairing — parsing and fingerprint confirmation are shipped for both camera and manual input; scanner redesign remains #640, list entry points #641; two-host pairing, rename, link-cycling and restart are proven by #847's rung-3 e2e, leaving the two-host archive/restore and unpair rung-3 e2e as #676

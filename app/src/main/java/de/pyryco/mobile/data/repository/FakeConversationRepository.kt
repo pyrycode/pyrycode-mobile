@@ -127,7 +127,19 @@ class FakeConversationRepository(
         return result
     }
 
-    override suspend fun createDiscussion(workspace: String?): Conversation {
+    override suspend fun createDiscussion(workspace: String?): Conversation =
+        insertNew(name = null, cwd = workspace ?: "", isPromoted = false)
+
+    override suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = insertNew(name = name, cwd = workspace, isPromoted = true)
+
+    private fun insertNew(
+        name: String?,
+        cwd: String,
+        isPromoted: Boolean,
+    ): Conversation {
         val now = Clock.System.now()
         val conversationId = UUID.randomUUID().toString()
         val sessionId = UUID.randomUUID().toString()
@@ -143,11 +155,11 @@ class FakeConversationRepository(
         val conversation =
             Conversation(
                 id = conversationId,
-                name = null,
-                cwd = workspace ?: "",
+                name = name,
+                cwd = cwd,
                 currentSessionId = sessionId,
                 sessionHistory = listOf(sessionId),
-                isPromoted = false,
+                isPromoted = isPromoted,
                 lastUsedAt = now,
             )
         val record = ConversationRecord(conversation, mapOf(sessionId to session))
@@ -195,6 +207,16 @@ class FakeConversationRepository(
                 conversationId to
                     record.copy(conversation = record.conversation.copy(archived = false))
             )
+        }
+    }
+
+    override suspend fun setMuted(
+        conversationId: String,
+        muted: Boolean,
+    ) {
+        state.update { records ->
+            val record = records[conversationId] ?: throw unknown(conversationId)
+            records + (conversationId to record.copy(conversation = record.conversation.copy(muted = muted)))
         }
     }
 

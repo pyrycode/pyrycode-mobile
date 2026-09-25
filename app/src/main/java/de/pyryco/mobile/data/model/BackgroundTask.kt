@@ -17,6 +17,26 @@ data class BackgroundTaskUpdate(
 )
 
 /**
+ * One `background_task_progress` frame (#1042), held whole: what a running task is doing right now. Wire SSOT:
+ * pyrycode `docs/protocol-mobile.md` § `background_task_progress`. [description] is the task's **current
+ * activity**, never its opening description, and [truncatedFields] is this frame's own cut report.
+ *
+ * The counters are claude's cumulative per-task readings, taken as sent: a later frame replaces an earlier
+ * one whole, and a lower reading is valid because claude can restart its counters. All three strings are
+ * inert display text; [description] names files on the operator's host. None is parsed, evaluated, used as
+ * a key or logged.
+ */
+data class BackgroundTaskProgress(
+    val description: String,
+    val subagentType: String,
+    val lastToolName: String,
+    val totalTokens: Long,
+    val toolUses: Long,
+    val durationMs: Long,
+    val truncatedFields: List<String>?,
+)
+
+/**
  * One background task claude left running past its turn (#677): the join, on [taskId], of the
  * `background_task_started` frame, the roster row and the updates the phone has seen for it.
  *
@@ -29,6 +49,8 @@ data class BackgroundTaskUpdate(
  * frame (empty `status`) and [finish] the last terminal one (non-empty `status`), so neither erases the
  * other. [isFinished] can be `true` with [finish] `null`: after a reconnect only the knowledge that the
  * task finished carries over, not the terminal frame itself.
+ *
+ * [progress] is the latest progress frame for a running task (#1042), and always `null` once [isFinished].
  */
 data class BackgroundTask(
     val taskId: String,
@@ -39,6 +61,7 @@ data class BackgroundTask(
     val latestUpdate: BackgroundTaskUpdate?,
     val finish: BackgroundTaskUpdate?,
     val isFinished: Boolean,
+    val progress: BackgroundTaskProgress? = null,
 )
 
 /**

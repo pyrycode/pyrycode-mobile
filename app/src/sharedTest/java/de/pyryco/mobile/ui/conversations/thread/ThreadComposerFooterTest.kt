@@ -3,18 +3,24 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -22,6 +28,9 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -70,20 +79,30 @@ class ThreadComposerFooterTest {
     private val modelSelections = mutableListOf<String>()
     private val effortSelections = mutableListOf<String>()
     private val permissionSelections = mutableListOf<String>()
+    private val overflowEvents = mutableListOf<ThreadEvent>()
+    private val composerCommands = mutableListOf<ComposerAction>()
 
     private fun state(
         conversationId: String = "c1",
         runConfig: ThreadRunConfig = baseConfig,
+        mutationsSupported: Boolean = true,
+        absentActions: Set<ComposerAction> = emptySet(),
     ) = ThreadUiState(
         conversationId = conversationId,
         displayName = "Test channel",
         isPromoted = true,
         hasMessages = false,
         runConfig = runConfig,
+        mutationsSupported = mutationsSupported,
+        absentActions = absentActions,
     )
 
-    private fun setThread(runConfig: ThreadRunConfig = baseConfig) {
-        state = state(runConfig = runConfig)
+    private fun setThread(
+        runConfig: ThreadRunConfig = baseConfig,
+        mutationsSupported: Boolean = true,
+        absentActions: Set<ComposerAction> = emptySet(),
+    ) {
+        state = state(runConfig = runConfig, mutationsSupported = mutationsSupported, absentActions = absentActions)
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 if (shown) {
@@ -96,6 +115,8 @@ class ThreadComposerFooterTest {
                         onModelSelected = { modelSelections += it },
                         onEffortSelected = { effortSelections += it },
                         onPermissionModeSelected = { permissionSelections += it },
+                        onOverflowEvent = { overflowEvents += it },
+                        onComposerCommand = { composerCommands += it },
                     )
                 }
             }
@@ -216,7 +237,8 @@ class ThreadComposerFooterTest {
     }
 
     // AC#2: a tap outside closes the overlay, selects nothing and never reaches the composer. The click
-    // lands on the input field's own centre, which the scrim covers.
+    // lands near the input field's start, which the scrim covers. Since #884 put the Actions button first,
+    // the model overlay opens far enough right to cover the field's centre, so the tap stays clear of it.
     @Test
     fun outsideTap_dismissesWithoutSelecting_andNeverReachesTheComposer() {
         setThread()
@@ -224,7 +246,7 @@ class ThreadComposerFooterTest {
         footerButton("Opus 4.7").performClick()
         overlay().assertExists()
 
-        composeTestRule.onNode(hasSetTextAction()).performClick()
+        composeTestRule.onNode(hasSetTextAction()).performTouchInput { click(centerLeft + Offset(8.dp.toPx(), 0f)) }
 
         overlay().assertDoesNotExist()
         composeTestRule.onNode(hasSetTextAction()).assertIsNotFocused()
@@ -312,5 +334,146 @@ class ThreadComposerFooterTest {
         composeTestRule.waitForIdle()
         overlay().assertDoesNotExist()
         composeTestRule.onNode(hasText("max") and isSelectable()).assertDoesNotExist()
+    }
+
+    private fun actionRow(label: String) = composeTestRule.onNode(hasText(label) and hasClickAction() and !isSelectable())
+
+    // #884 AC#1: the Actions button leads the footer and opens the three rows in order, drawn as buttons.
+    @Test
+    fun actionsButton_opensTheThreeRowsInOrder() {
+        setThread(baseConfig.copy(permissionMode = "plan"))
+
+        val actions = footerButton("Actions").assertIsDisplayed().getUnclippedBoundsInRoot()
+        assertTrue(actions.left < footerButton("Plan").getUnclippedBoundsInRoot().left)
+        footerButton("Actions").performClick()
+        overlay().assertExists()
+
+        val tops =
+            listOf("Reset session", "Compact session", "Knowledge capture").map {
+                actionRow(it)
+                    .assertIsDisplayed()
+                    .assertIsEnabled()
+                    .getUnclippedBoundsInRoot()
+                    .top
+            }
+        assertEquals(tops.sorted(), tops)
+        composeTestRule.onAllNodes(isSelectable()).assertCountEquals(0)
+    }
+
+    // #884 AC#2: Reset session runs the overflow menu's existing reset path and closes the overlay.
+    @Test
+    fun resetSession_dispatchesTheExistingNewSessionEvent() {
+        setThread()
+
+        footerButton("Actions").performClick()
+        actionRow("Reset session").performClick()
+
+        assertEquals(listOf<ThreadEvent>(ThreadEvent.NewSession), overflowEvents)
+        assertTrue(composerCommands.isEmpty())
+        overlay().assertDoesNotExist()
+    }
+
+    // #884 AC#2: a command row hands its client-owned action to the send path and closes the overlay.
+    @Test
+    fun commandRows_dispatchTheirAction() {
+        setThread()
+
+        footerButton("Actions").performClick()
+        actionRow("Compact session").performClick()
+        overlay().assertDoesNotExist()
+        footerButton("Actions").performClick()
+        actionRow("Knowledge capture").performClick()
+
+        assertEquals(listOf(ComposerAction.CompactSession, ComposerAction.KnowledgeCapture), composerCommands)
+        assertTrue(overflowEvents.isEmpty())
+    }
+
+    // #884: Reset session keeps the overflow item's mutationsSupported gate.
+    @Test
+    fun resetSession_isAbsentWithoutMutations() {
+        setThread(mutationsSupported = false)
+
+        footerButton("Actions").performClick()
+
+        composeTestRule.onNodeWithText("Reset session").assertDoesNotExist()
+        actionRow("Compact session").assertIsDisplayed()
+    }
+
+    // #884 AC#3: a command the published menu proves absent is greyed out and does nothing.
+    @Test
+    fun absentCommand_isDisabled_andInert() {
+        setThread(absentActions = setOf(ComposerAction.CompactSession))
+
+        footerButton("Actions").performClick()
+        composeTestRule.onNodeWithText("Compact session").assertIsNotEnabled().performClick()
+
+        assertTrue(composerCommands.isEmpty())
+        overlay().assertExists()
+        actionRow("Knowledge capture").assertIsEnabled()
+        actionRow("Reset session").assertIsEnabled()
+    }
+
+    // #884 AC#1: an outside tap and Back each close the Actions overlay without acting.
+    @Test
+    fun actionsOverlay_outsideTapAndBack_closeWithoutActing() {
+        setThread()
+
+        footerButton("Actions").performClick()
+        composeTestRule.onNode(hasSetTextAction()).performClick()
+        overlay().assertDoesNotExist()
+
+        footerButton("Actions").performClick()
+        overlay().assertExists()
+        Espresso.pressBack()
+        composeTestRule.waitForIdle()
+        overlay().assertDoesNotExist()
+
+        assertTrue(overflowEvents.isEmpty())
+        assertTrue(composerCommands.isEmpty())
+    }
+
+    private fun contextSegment() = composeTestRule.onNode(hasTestTag(CONTEXT_USAGE_TEST_TAG))
+
+    // #946 AC#1: with a reading, the footer shows Claude's percentage after the buttons, and the Status sheet
+    // one tap away shows the same figure.
+    @Test
+    fun contextSegment_showsTheReportedPercentage_andTheSheetAgrees() {
+        setThread(baseConfig.copy(contextPercent = 84))
+
+        contextSegment()
+            .assertTextEquals("Cxt: 84%")
+            .assert(hasContentDescription("Context usage 84%"))
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
+        composeTestRule.onNodeWithText("84% used").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Context usage unavailable").assertDoesNotExist()
+    }
+
+    // #946 AC#2: no reading is an explicit unavailable state on both surfaces, never a number.
+    @Test
+    fun contextSegment_withoutAReading_saysUnavailable_andShowsNoNumber() {
+        setThread(baseConfig.copy(contextPercent = null))
+
+        contextSegment()
+            .assertTextEquals("Cxt: n/a")
+            .assert(hasContentDescription("Context usage unavailable"))
+        composeTestRule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
+
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
+        composeTestRule.onNodeWithText("Context usage unavailable").assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
+    }
+
+    // #946 AC#3: a newer reading replaces the shown one; the segment is a display and opens nothing.
+    @Test
+    fun contextSegment_showsAReplacedReading_andOpensNoOverlay() {
+        setThread(baseConfig.copy(contextPercent = 12))
+        contextSegment().assertTextEquals("Cxt: 12%").assert(!hasClickAction())
+
+        state = state(runConfig = baseConfig.copy(contextPercent = 37))
+
+        contextSegment().assertTextEquals("Cxt: 37%")
+        composeTestRule.onNodeWithText("Cxt: 12%").assertDoesNotExist()
+        overlay().assertDoesNotExist()
     }
 }

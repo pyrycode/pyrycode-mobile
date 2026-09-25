@@ -64,11 +64,14 @@ a connected status → `false`, own host moving rejected → connected → `fals
 `rePairAvailable == false`; follows an injected `pairingRejected` flow true → false). The second file is
 **deliberately not folded into `ThreadViewModelTest.kt`** above — #816 was in flight against that same
 file when this ticket was built, and a new file sidesteps the merge entirely rather than relying on the
-two tickets' insertion points staying disjoint. The Compose coverage is a third new file,
-`app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreenRePairTest.kt`: with
-`showRePair` and `Offline`, the Re-pair button is displayed and the "Offline — tap to retry" banner text
-does not exist; tapping it invokes `onRePair`; without `showRePair`, the banner shows and the button does
-not exist.
+two tickets' insertion points staying disjoint. The Compose coverage is a third file,
+`app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreenRePairTest.kt`
+(moved from `androidTest` by the 2026-09-23 shared-test migration): with `showRePair` and `Offline`, the
+pairing notice is displayed and the "Offline — tap to retry" banner text does not exist; tapping it invokes
+`onRePair`; without `showRePair`, the banner shows and the notice does not exist. Assertions find the
+notice **by its `R.string.thread_re_pair` text**, not by composable identity, so
+[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) moving that notice from a status-row
+button to a [Top overlay pill](thread-top-overlay.md#the-pairing-pill) needed no change to this file.
 
 Sibling test file added in [#136](../codebase/136.md): `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreenCutoffTest.kt` — six JUnit 4 tests against the `internal` top-level helper `mostRecentSessionBoundaryIndex(items: List<ThreadItem>): Int`: `emptyList → -1`, `messagesOnly → -1`, `singleBoundary → its index`, `multipleBoundaries → latest index`, `boundaryAtFirstPosition → 0`, `boundaryAtLastPosition → lastIndex`. No `runTest`, no `Dispatchers.setMain`, no coroutines — the helper is pure and synchronous. File-private `msg(id, sessionId, role, timestamp)` and `boundary(previousSessionId, newSessionId, occurredAt)` constructors keep the body terse; `BoundaryReason.Clear` is fine for every fixture (the helper doesn't discriminate on reason). The Compose-side correctness of the per-row `Box(Modifier.alpha(...))` wrap is verified visually by the two new `@Preview`s; no `ComposeTestRule` in this ticket because there's no interactive behaviour to assert.
 
@@ -121,6 +124,22 @@ reached them.
 Tests added in [#789](https://github.com/pyrycode/pyrycode-mobile/issues/789), grouped under the file's `// ---- #789: per-chat composer drafts ----` section comment: `makeVm` gained a `draftStore: ComposerDraftStore = ComposerDraftStore()` parameter, defaulted so every pre-existing case is unaffected, and a `threadHandle(serverId, conversationId)` helper builds a two-argument `SavedStateHandle` for cases that need a real pair. Coverage: `onDraftChange` writes only its own pair; a second VM built against the same store restores the first VM's text (AC #1's navigate-away-and-back, proven by construction rather than navigation); the same conversation id under two hosts holds two independent drafts; an accepted send clears the entry and drops the now-empty host bucket; a refused send leaves the draft — one case per failure type the guard catches, driven through `ThrowingConversationRepository`; a `TypingDuringSendRepository` test double runs a callback from inside the fake's suspending `sendMessage` to prove text typed while a send is in flight survives that send's completion; a blank send never touches the store; and `ThreadEvent.NewSession` leaves the draft untouched (AC #3). New file `ComposerDraftStoreTest.kt` covers the store directly: exact round-trip including surrounding whitespace, `""` removing an entry and emptying its host bucket, a whitespace-only draft retained rather than treated as empty, two hosts under one conversation id staying independent, and an unknown pair reading as `""`.
 
 **`ThrowingConversationRepository` does not throw for every reachable conversation id — only for the failure it was constructed with, and only from the overrides it actually implements.** The #789 refusal cases route through `sendMessage(conversationId, text)`, but `state` still assembles from `observeConversations`/`observeMessages`, which the seeded `FakeConversationRepository` backs by default. Pointing a refusal test's `conversationId` at an unseeded id throws `IllegalArgumentException` ("Unknown conversation") out of the *state* machinery, not the guarded `sendMessage` call under test — a different failure than the one the assertion means to pin, and one `launchGuardedRepoCall` does not catch. Fixture conversation ids for any test that reaches a repository's other reads need to be ones the fake actually seeds (`DRAFT_CONV = "seed-channel-personal"` here), not an arbitrary string.
+
+Sibling test file added in [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043):
+`app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/TaskCountPillTest.kt`
+(`@GraphicsMode(GraphicsMode.Mode.NATIVE)` — see [Compose evidence](development-verification.md#compose-evidence)
+for why an exact-width/position assertion needs real fonts rather than Robolectric's legacy renderer, which
+measured the pill's label at almost no width and made it wrap). Five `@Test`s host the real `ThreadScreen`:
+the pill beside a live `ThinkingIndicator` reading, positioned to that reading's right; the pill alone,
+right-edge-aligned on `rootWidth - ComposerGutter`; the singular "1 task running" copy (and that "1 tasks
+running" does not exist); the zero-count case, which measures the newest message row's **bottom** edge
+rather than the input field's top — the composer is a bottom-anchored `bottomBar`, so only the status band's
+own height moves that edge — at zero, again after the pill raises it by the exact 32dp of its own 24dp plus
+the composer column's 8dp gap, and again after the count returns to zero, asserting the last measurement
+equals the first; and a tap opening `BackgroundTaskPanel` with the roster's task visible. See [Thread screen
+— how it works, overlays, retry and the app bar §
+Thinking-indicator placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
+for the composable this test pins.
 
 **General lesson for the next structural change to `ThreadScreen`'s list:** a
 blast-radius search keyed on the symbols a change touches (`QueuedBacklog`,

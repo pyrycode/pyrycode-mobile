@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.AttachmentChunkPlan
 import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
@@ -12,6 +13,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
+import de.pyryco.mobile.data.network.attachmentDisplayName
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ATTACHMENT_CHUNK
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_DEQUEUE_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_REQUEST_SNAPSHOT
@@ -128,14 +130,19 @@ internal class MessageCommands(
     ): Message = sendMessage(conversationId, text, emptyList())
 
     /**
-     * The same send naming [attachmentIds] (#830) on the payload. The bound is checked before a request id
-     * is taken, so a refused list sends nothing. Logs only the id count, never an id or the text.
+     * The same send naming [attachments]' ids (#830) on the payload. The bound is checked before a request id
+     * is taken, so a refused list sends nothing. Logs only the id count, never an id, a name or the text.
+     *
+     * The confirmed row carries one reference per distinct id in caller order (#983), its name and MIME hint
+     * passed through [attachmentDisplayName]: a local file name is authored by whichever app provided the
+     * document, so it is cleaned exactly as a daemon-offered one is.
      */
     suspend fun sendMessage(
         conversationId: String,
         text: String,
-        attachmentIds: List<String>,
+        attachments: List<MessageAttachment>,
     ): Message {
+        val attachmentIds = attachments.map { it.attachmentId }
         val namedIds =
             try {
                 MessageAttachmentIds.forSend(attachmentIds)
@@ -174,6 +181,13 @@ internal class MessageCommands(
                 content = text,
                 timestamp = sentAt,
                 isStreaming = false,
+                attachments =
+                    attachments.distinctBy { it.attachmentId }.map { attachment ->
+                        attachment.copy(
+                            displayName = attachment.displayName?.let(::attachmentDisplayName),
+                            mimeType = attachment.mimeType?.let(::attachmentDisplayName),
+                        )
+                    },
             )
         conversationList.recordLastMessage(conversationId, message)
         threadProjection.appendMessages(listOf(conversationId to message))

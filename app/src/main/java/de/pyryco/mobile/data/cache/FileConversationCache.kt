@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -353,6 +354,7 @@ private data class CachedConversation(
     val sessionHistory: List<String> = emptyList(),
     val isSleeping: Boolean = false,
     val archived: Boolean = false,
+    val muted: Boolean = false,
     val workspaceLabel: String? = null,
 )
 
@@ -367,6 +369,7 @@ private fun Conversation.toRecord() =
         sessionHistory = sessionHistory,
         isSleeping = isSleeping,
         archived = archived,
+        muted = muted,
         workspaceLabel = workspaceLabel,
     )
 
@@ -381,6 +384,7 @@ private fun CachedConversation.toDomain() =
         lastUsedAt = Instant.parse(lastUsedAt),
         isSleeping = isSleeping,
         archived = archived,
+        muted = muted,
         workspaceLabel = workspaceLabel,
     )
 
@@ -407,7 +411,19 @@ private data class CachedMessage(
     val content: String,
     val timestamp: String,
     val tool: CachedToolCall? = null,
+    /** #983. Defaulted, so a document written before references existed reads back with none. */
+    val attachments: List<CachedAttachment> = emptyList(),
 )
+
+/** One [MessageAttachment]: `null` hints are omitted on encode (`explicitNulls = false`) and read back as `null`. */
+@Serializable
+private data class CachedAttachment(
+    val attachmentId: String,
+    val displayName: String? = null,
+    val mimeType: String? = null,
+) {
+    override fun toString(): String = "CachedAttachment(attachmentId=$attachmentId)"
+}
 
 @Serializable
 private data class CachedToolCall(
@@ -439,6 +455,7 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
                         content = message.content,
                         timestamp = message.timestamp.toString(),
                         tool = message.toolCall?.let { CachedToolCall(it.toolName, it.input, it.output, it.status) },
+                        attachments = message.attachments.map { CachedAttachment(it.attachmentId, it.displayName, it.mimeType) },
                     ),
             )
         is ThreadItem.SessionBoundary ->
@@ -465,6 +482,7 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
                 timestamp = Instant.parse(message.timestamp),
                 isStreaming = false,
                 toolCall = message.tool?.let { ToolCall(it.toolName, it.input, it.output, it.status) },
+                attachments = message.attachments.map { MessageAttachment(it.attachmentId, it.displayName, it.mimeType) },
             ),
         )
     } else {

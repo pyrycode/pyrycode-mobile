@@ -19,11 +19,11 @@ Three design points pinned in #201:
 - **`Modifier.padding(inner)` lives on the outer `Column`, not the `LazyColumn`.** The Scaffold's content-inset wraps the banner *and* the list — applying `padding(inner)` only to the `LazyColumn` (leaving the banner outside the inset) would let the banner draw under the AppBar's status-bar inset on edge-to-edge devices.
 - **`Connected` short-circuit is the steady state.** The fake's `FakeConnectionStateSource` always emits `Connected`; the banner's public-entry `when` returns early on `Connected` with no composition. Under normal use the banner is invisible; the integration is exercised by VM unit tests that push `Offline` / `Connecting` / `Reconnecting` through the fake (see [Testing](thread-screen-testing.md#testing) below).
 
-`connectionState: ConnectionState` is a flat parameter rather than a field on `ThreadUiState` — see [`#201`'s ticket notes](../codebase/201.md) for the full rationale. Short version: the existing `state` derivation stays untouched (no `combine(...)` ceremony, no churn to the seven existing tests that pattern-match `ThreadUiState`); connection state is global (every screen would consume the same source under future work) while conversation state is per-screen; reflecting that orthogonality at the type level is cleaner than artificial fusion. The destination block consumes two `collectAsStateWithLifecycle()` calls — the same shape `SettingsViewModel` already uses for its four separate flows. [`#406`](../codebase/406.md) added a **second** such sibling signal to the VM on this same rationale: `val isThinking: StateFlow<Boolean>` (`ThreadViewModel.kt:216`), the live `turn_state` thinking-phase flag reduced from the [coordinator](relay-repository-coordinator.md)'s `liveSessionEvents` seam — a transient, connection-scoped cross-cutting signal kept off `ThreadUiState` so the `state` combine stays zero-touch. [`#407`](../codebase/407.md) then threaded it into `ThreadScreen` as a **third** flat sibling parameter — `isThinking: Boolean = false` (defaulted, after `modifier`, `ThreadScreen.kt:74`), collected at `MainActivity` via `vm.isThinking.collectAsStateWithLifecycle()` exactly parallel to `connectionState` — and rendered the at-work [`ThinkingIndicator`](thinking-indicator.md) at the foot of the content `Column` (see [Thinking-indicator placement (post-#407, moved in #643)](#thinking-indicator-placement-post-407-moved-in-643) below). See [Turn-state thinking flag](turn-state-thinking-flag.md) for the data path. [`#396`](../codebase/396.md) added a **fourth** sibling signal on the *same* rationale: `val isStalled: StateFlow<Boolean>` (`ThreadViewModel.kt:225`, beside `isThinking`), sourced straight off the already-injected `repository.observeStall(conversationId)` (#395) — **no constructor/DI/interface change**, unlike `isThinking` which needed the new `liveSessionEvents` ctor param — and threaded into `ThreadScreen` as a **fourth** flat sibling parameter `isStalled: Boolean = false` (defaulted, after `modifier`, `ThreadScreen.kt:75`), collected at `MainActivity` via `vm.isStalled.collectAsStateWithLifecycle()`. It deviates from the ticket's "hoist into `UiState`" Technical Note deliberately: stall is the same signal class as `isThinking`, so siblinghood is consistent and the 5-arity `state` combine stays untouched. See [Stall state](stall-state.md) for the data path and [Stall-promotion-banner placement (post-#396)](#stall-promotion-banner-placement-post-396) below for the render. [#459](../codebase/459.md) added a **fifth** sibling on the *same* rationale: `val isBusy: StateFlow<Boolean>` (`ThreadViewModel.kt:296`, beside `isThinking`) — declared **identically** to `isThinking` over the same `liveSessionEvents` seam but **broadened** to `thinking` **or** `responding` via a dedicated `busyTransition` reducer (a "a turn is running" signal, not the `thinking`-only one; see [Interrupt affordance](interrupt-affordance.md)) — and threaded into `ThreadScreen` as two defaulted siblings, `isBusy: Boolean = false` plus the flat `onInterrupt: () -> Unit = {}` callback (`:102`), collected at `MainActivity` via `vm.isBusy.collectAsStateWithLifecycle()` with `onInterrupt = vm::onInterrupt`.
+`connectionState: ConnectionState` is a flat parameter rather than a field on `ThreadUiState` — see [`#201`'s ticket notes](../codebase/201.md) for the full rationale. Short version: the existing `state` derivation stays untouched (no `combine(...)` ceremony, no churn to the seven existing tests that pattern-match `ThreadUiState`); connection state is global (every screen would consume the same source under future work) while conversation state is per-screen; reflecting that orthogonality at the type level is cleaner than artificial fusion. The destination block consumes two `collectAsStateWithLifecycle()` calls — the same shape `SettingsViewModel` already uses for its four separate flows. [`#406`](../codebase/406.md) added a **second** such sibling signal to the VM on this same rationale: `val isThinking: StateFlow<Boolean>` (`ThreadViewModel.kt:216`), the live `turn_state` thinking-phase flag reduced from the [coordinator](relay-repository-coordinator.md)'s `liveSessionEvents` seam — a transient, connection-scoped cross-cutting signal kept off `ThreadUiState` so the `state` combine stays zero-touch. [`#407`](../codebase/407.md) then threaded it into `ThreadScreen` as a **third** flat sibling parameter — `isThinking: Boolean = false` (defaulted, after `modifier`, `ThreadScreen.kt:74`), collected at `MainActivity` via `vm.isThinking.collectAsStateWithLifecycle()` exactly parallel to `connectionState` — and rendered the at-work [`ThinkingIndicator`](thinking-indicator.md) at the foot of the content `Column` (see [Thinking-indicator placement (post-#407, moved in #643)](#thinking-indicator-placement-post-407-moved-in-643) below). See [Turn-state thinking flag](turn-state-thinking-flag.md) for the data path. [`#396`](../codebase/396.md) had added a **fourth** sibling signal on the *same* rationale: `val isStalled: StateFlow<Boolean>` (beside `isThinking`), sourced straight off the already-injected `repository.observeStall(conversationId)` (#395), threaded into `ThreadScreen` as a defaulted flat sibling parameter and collected at `MainActivity` via `vm.isStalled.collectAsStateWithLifecycle()`. [#883](../../specs/architecture/883-retire-literal-screen.md) removed both the `ThreadScreen` parameter and the `MainActivity` collection, since the only renderer of the flag — the stall promotion banner — was retired; see [Stall-promotion-banner placement (post-#396, retired from the screen in #883)](#stall-promotion-banner-placement-post-396-retired-from-the-screen-in-883) below. `ThreadViewModel.isStalled` itself is untouched — see [Stall state](stall-state.md). [#459](../codebase/459.md) added a **fifth** sibling on the *same* rationale: `val isBusy: StateFlow<Boolean>` (`ThreadViewModel.kt:296`, beside `isThinking`) — declared **identically** to `isThinking` over the same `liveSessionEvents` seam but **broadened** to `thinking` **or** `responding` via a dedicated `busyTransition` reducer (a "a turn is running" signal, not the `thinking`-only one; see [Interrupt affordance](interrupt-affordance.md)) — and threaded into `ThreadScreen` as two defaulted siblings, `isBusy: Boolean = false` plus the flat `onInterrupt: () -> Unit = {}` callback (`:102`), collected at `MainActivity` via `vm.isBusy.collectAsStateWithLifecycle()` with `onInterrupt = vm::onInterrupt`.
 
 `onRetry` binds to `vm::retry` at the destination — method reference, not a fresh lambda, so the binding is stable across recompositions (the lambda allocation only happens once per VM lifecycle, not per recomposition).
 
-**Withheld under a rejected pairing (#843).** `ConnectionBanner` is not drawn while `showRePair` holds: `if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)`. A rejected pairing still derives to the legacy `ConnectionState.Offline` (see [Reconnect supervision § derivation table](relay-reconnect-supervisor.md#derivation-and-visual-tables)), so without this gate the banner would offer a retry that cannot succeed — the relay leg halts redial on a rejection and only a fresh pairing clears it. The [status area's Re-pair action](#thinking-indicator-placement-post-407-moved-in-643) replaces it in that state. Network loss (`Reconnecting`, `DaemonAbsent`, the 30s-cap `Offline`) is unaffected — `showRePair` is `false` for all of those, so the banner and its retry render exactly as before.
+**Withheld under a rejected pairing (#843).** `ConnectionBanner` is not drawn while `showRePair` holds: `if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)`. A rejected pairing still derives to the legacy `ConnectionState.Offline` (see [Reconnect supervision § derivation table](relay-reconnect-supervisor.md#derivation-and-visual-tables)), so without this gate the banner would offer a retry that cannot succeed — the relay leg halts redial on a rejection and only a fresh pairing clears it. The pairing pill in [`ThreadTopOverlay`](thread-top-overlay.md#the-pairing-pill) replaces it in that state — a status-area **Re-pair** button until [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) moved it into the Top overlay alongside the usage-limit notice; see [Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) below for what stayed behind. Network loss (`Reconnecting`, `DaemonAbsent`, the 30s-cap `Offline`) is unaffected — `showRePair` is `false` for all of those, so the banner and its retry render exactly as before.
 
 ### Thinking-indicator placement (post-#407, moved in #643)
 
@@ -32,7 +32,7 @@ Three design points pinned in #201:
 ```kotlin
 bottomBar = {
     Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, usageLimit = usageLimit, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, showRePair = showRePair, onRePair = onRePair)
+        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true })
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
     }
@@ -41,49 +41,152 @@ bottomBar = {
 @Composable
 private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
-    usageLimit: UsageLimitReading?, // #804
+    resetting: ResetStatus?, // #872
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?, // #805
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?, // #803
-    showRePair: Boolean = false, // #843
-    onRePair: () -> Unit = {}, // #843
+    runningTool: ToolCall?, // #897
+    taskCount: Int, // #1043
+    onTasksClick: () -> Unit, // #1043
 ) {
-    val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter) // 20dp gutter − the indicators' own 16dp
-    val signal: @Composable (Modifier) -> Unit = { slot ->
-        when {
-            apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
-            usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
-            isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
-            turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-            else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
-        }
+    val reading: @Composable (Modifier) -> Unit = { modifier ->
+        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
     }
-    if (!showRePair) {
-        signal(gutter)
+    if (taskCount <= 0) {
+        reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
         return
     }
-    // Figma 111:3525: the signal leading, the action trailing on the same row.
-    Row(modifier = gutter, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(modifier = Modifier.weight(1f)) { signal(Modifier.fillMaxWidth()) }
-        RePairButton(onClick = onRePair)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        reading(Modifier.weight(1f))
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+            NoticePill(text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount), isError = false, onClick = onTasksClick, shadowElevation = 0.dp)
+        }
+    }
+}
+
+/** The one live reading; unchanged since #643 except for its extraction into its own function. */
+@Composable
+private fun StatusReading(
+    apiRetry: ApiRetryStatus,
+    resetting: ResetStatus?,
+    isCompacting: Boolean,
+    turnOutcome: TurnOutcomeReport?,
+    isThinking: Boolean,
+    thinkingProgress: ThinkingProgress?,
+    runningTool: ToolCall?,
+    modifier: Modifier,
+) {
+    when {
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
+        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
+        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
+        else -> ThinkingIndicator(isThinking = isThinking, modifier = modifier, progress = thinkingProgress, runningTool = runningTool)
     }
 }
 ```
 
+**[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count pill at the band's
+right end, and split the `when` out into `StatusReading` to make room for it.** Above zero,
+`state.backgroundTaskCount` (§ [Background-tasks panel placement](#background-tasks-panel-placement-post-678)
+below) renders as a [`NoticePill`](notice-pill.md) reading the client-owned plural `R.plurals.thread_task_count`
+("1 task running" / "N tasks running") beside whichever `StatusReading` arm is live, right-aligned on the
+20dp gutter; tapping it sets the same `backgroundTasksOpen` flag the Actions menu's row sets, opening the
+same `BackgroundTaskPanel`. `StatusReading` itself is byte-identical to the pre-#1043 `when` above, just
+parameterised on `modifier` instead of closing over the file-private `slot` — at `taskCount <= 0` it still
+gets exactly that `slot`, so an idle thread with no running tasks renders identically to before this ticket.
+When a reading is live, `StatusReading` takes `Modifier.weight(1f)` inside the `Row` and `Arrangement.End`
+keeps the pill flush against the gutter; when no reading is live, `StatusReading` emits no node (§ *The band
+collapses when nothing is live* below still holds), its weight goes with it, and `Arrangement.End` leaves the
+pill alone at the right end. `NoticePill` gained a `shadowElevation: Dp = PillShadow` parameter for this
+caller — Figma `568:3162` (the in-band pill) carries no drop shadow, unlike [`ThreadTopOverlay`](thread-top-overlay.md)'s
+pills, which keep the default; see [Notice pill § Three call sites](notice-pill.md#three-call-sites-three-contracts).
+A clickable `Surface` inside a 24dp band would otherwise lay out at M3's 48dp minimum interactive size and
+double the band's height — `CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides
+Dp.Unspecified)` around the pill keeps the layout at Figma's 24dp while Compose's hit-test still expands the
+pill's *touch* bounds to 48dp, so the tap target is unaffected. This is the app's first use of that local.
+`TaskCountPillTest` (`app/src/sharedTest/.../thread/`, `@GraphicsMode(NATIVE)` — see [Compose evidence](development-verification.md#compose-evidence))
+proves the band's collapse is exact rather than assumed: it measures the newest message row's bottom edge
+(not the input field's top — the composer is a bottom-anchored `bottomBar`, so only the band's own height
+moves that edge) at zero tasks, again once the pill raises it by exactly 32dp (the pill's 24dp plus the
+column's 8dp gap), and again after it returns to zero, asserting the second zero-count measurement equals
+the first.
+
+**[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed `usageLimit`, `showRePair` and
+`onRePair` from this composable, and deleted the private `RePairButton` it used to hold.** From #804 to
+\#1002 `ThreadStatusArea` took a `usageLimit: UsageLimitReading?` parameter and raised an arm for it between
+api-retry and resetting; from #843 to #1002 it also took `showRePair` / `onRePair` and, while `showRePair`
+held, wrapped the signal in a `Row` beside a private `RePairButton` (Figma `354:7093`, a 6dp-radius
+`Surface` at 16dp/8dp padding) so the row split leading (signal) / trailing (button). Both moved out because
+claude has attached an `allowed_warning` usage report to every turn since 2026-09-24, and the reading
+outranked resetting, compaction, the turn outcome and thinking/running tool — none of them rendered while
+it was live. `ThreadScreen` now draws both notices as pills in [`ThreadTopOverlay`](thread-top-overlay.md),
+pinned over the top of the message area instead of sharing this slot; see that document for the pill
+shapes, including the exact Figma deviation the old `RePairButton` recorded (the theme's
+`errorContainer`/`onErrorContainer` pair rather than Figma's literal `on-error`/`error`, carried forward
+unchanged by [`NoticePill`](notice-pill.md)) and for `showRePair`'s sourcing, which #1002 left untouched.
+`ThreadStatusArea` is now turn status only, and always a single signal with no trailing slot.
+
 The `bottomBar` column's third band was `ThreadStatusRow(model = …, effort = …, onExpandClick = { sheetVisible = true }, …)` through [#807](../codebase/807.md); [#808](../codebase/808.md) replaced it with [`ThreadComposerFooter`](thread-composer-footer.md), shown above, and wrapped the surrounding `Scaffold` in a `Box` so an [`OptionsOverlay`](options-overlay.md) can draw above it on selection — see [Thread composer footer](thread-composer-footer.md) for the full wiring. `ThreadStatusArea` itself (below) is unaffected by that change.
 
-- **The trailing contextual-action slot (#843).** The KDoc above `ThreadStatusArea` had reserved this slot since #643 ("stays empty until #675 fills it"); [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) fills it with a **Re-pair** button (Figma `354:7093`, a 6dp-radius `Surface` at 16dp/8dp padding, `bodySmall` + `FontWeight.Medium`) while `showRePair` holds — a private `RePairButton` composable beside the existing signal, which shrinks into a `weight(1f)` box so the row splits leading/trailing rather than stacking. `showRePair` comes from `ThreadViewModel.rePairAvailable`, `true` exactly when this thread's own host is in the rejected-pairing state (see below); `onRePair` is bound at `MainActivity` to `navController.navigate(Routes.pairCode(target.serverId))`. **Deliberate deviation from Figma:** the frame paints the button `on-error`/`error`; the shipped button uses the theme's `errorContainer`/`onErrorContainer` pair instead — the same family [`ConnectionBanner`](connection-banner.md)'s `Offline` arm and [`HistoryRetryRow`](thread-screen-how-it-works-list-and-status-row.md) already use for an error-plus-action affordance, per the ticket's Figma notes. The label is the local string resource `R.string.thread_re_pair` ("Pairing error - Re-pair"), never daemon-authored text.
-- **Sourced by `serverId` through the registry, not the captured connection bundle.** `ThreadDestinationFactory.thread` (`di/AppModule.kt`) builds `showRePair`'s upstream from a new top-level `pairingRejected(connections: Flow<List<HostConversationConnection>>, serverId: String): Flow<Boolean>` that finds the matching entry in `RelayConnectionRegistry.hostConnections` and `flatMapLatest`s onto *its* `status` — not off the `HostConversationConnection` bundle the factory captured when the destination opened. This is load-bearing: a successful re-pair changes the saved record, and `RelayConnectionRegistry.reconcile` closes the old bundle and publishes a **new** entry with its own `status` flow for the same `serverId`. Reading through the registry means the `flatMapLatest` picks up the replacement and the button clears; reading off the captured bundle would have kept observing the closed connection's now-frozen status and the action could never go away after a successful re-pair. `ThreadViewModel` exposes the result as a sibling `StateFlow<Boolean>` (`rePairAvailable`, `WhileSubscribed(5_000)`, defaulted to `flowOf(false)` so the demo destination is unaffected), matching the `connectionState` precedent rather than widening `ThreadUiState` — the `state` combine is already at its five-arity ceiling.
+- **The pairing pill (#843, moved to the Top overlay by #1002).** The KDoc above `ThreadStatusArea` had
+  reserved a trailing contextual-action slot since #643 ("stays empty until #675 fills it");
+  [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) filled it with a **Re-pair** button while
+  `showRePair` held, and #1002 replaced that button with the pairing [`NoticePill`](notice-pill.md) in
+  [`ThreadTopOverlay`](thread-top-overlay.md#the-pairing-pill) — same trigger (`showRePair`), same target
+  (`onRePair`), same colours, different surface. `showRePair` comes from `ThreadViewModel.rePairAvailable`,
+  `true` exactly when this thread's own host is in the rejected-pairing state (see below); `onRePair` is
+  bound at `MainActivity` to `navController.navigate(Routes.pairCode(target.serverId))`. The label is the
+  local string resource `R.string.thread_re_pair` ("Pairing error - Re-pair"), never daemon-authored text.
+- **Sourced by `serverId` through the registry, not the captured connection bundle.** `ThreadDestinationFactory.thread` (`di/AppModule.kt`) builds `showRePair`'s upstream from a new top-level `pairingRejected(connections: Flow<List<HostConversationConnection>>, serverId: String): Flow<Boolean>` that finds the matching entry in `RelayConnectionRegistry.hostConnections` and `flatMapLatest`s onto *its* `status` — not off the `HostConversationConnection` bundle the factory captured when the destination opened. This is load-bearing: a successful re-pair changes the saved record, and `RelayConnectionRegistry.reconcile` closes the old bundle and publishes a **new** entry with its own `status` flow for the same `serverId`. Reading through the registry means the `flatMapLatest` picks up the replacement and the pill clears; reading off the captured bundle would have kept observing the closed connection's now-frozen status and the action could never go away after a successful re-pair. `ThreadViewModel` exposes the result as a sibling `StateFlow<Boolean>` (`rePairAvailable`, `WhileSubscribed(5_000)`, defaulted to `flowOf(false)` so the demo destination is unaffected), matching the `connectionState` precedent rather than widening `ThreadUiState` — the `state` combine is already at its five-arity ceiling. Untouched by #1002.
 
 - **Moved, not rewritten.** The three original arms, their flags and their precedence (api-retry first, then compaction, then thinking — see [API-retry indicator](api-retry-indicator.md#placement-in-the-thread)) are byte-identical to the pre-#643 `when`; only the mount point and the horizontal inset changed at #643. `ThinkingIndicator.kt`, `ApiRetryIndicator.kt` and `CompactingIndicator.kt` were not touched by that move.
 - **[#803](thinking-indicator.md) adds a sixth flat sibling, `thinkingProgress: ThinkingProgress?`, and no new arm.** It decorates the thinking arm's own `else` branch, so it rides the precedence above rather than adding to it — retry and compaction still pre-empt a live reading for free. Visibility stays `isThinking`'s alone; see [Thinking indicator § What it does](thinking-indicator.md#what-it-does).
-- **[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) adds a seventh flat sibling, `usageLimit: UsageLimitReading?`, and one new `when` arm** — inserted between api-retry and compaction, since claude's usage-limit report is informational but must not be masked by compaction's benign progress. See [Usage-limit indicator](usage-limit-indicator.md#placement-in-the-thread) for the full component.
-- **[#805](https://github.com/pyrycode/pyrycode-mobile/issues/805) adds an eighth flat sibling, `turnOutcome: TurnOutcomeReport?`, and one new `when` arm** — inserted between compaction and thinking, the bottom of the ladder: `api-retry → usage limit → compaction → turn outcome → thinking`. Compaction is mid-turn progress and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed. The arm is raised by a `turnOutcomeReport(event)` classification held in `ThreadViewModel.turnOutcome`, and it clears itself the moment the next turn's `thinking`/`responding` phase arrives — never on `idle`, which may arrive on either side of the `turn_end` it accompanies. See [Turn-outcome indicator](turn-outcome-indicator.md#placement-in-the-thread) for the full component.
+- **[#805](https://github.com/pyrycode/pyrycode-mobile/issues/805) adds a flat sibling, `turnOutcome: TurnOutcomeReport?`, and one new `when` arm** — inserted between compaction and thinking, the bottom of the ladder at the time. Compaction is mid-turn progress and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed. The arm is raised by a `turnOutcomeReport(event)` classification held in `ThreadViewModel.turnOutcome`, and it clears itself the moment the next turn's `thinking`/`responding` phase arrives — never on `idle`, which may arrive on either side of the `turn_end` it accompanies. See [Turn-outcome indicator](turn-outcome-indicator.md#placement-in-the-thread) for the full component.
+- **#872 adds a flat sibling, `resetting: ResetStatus?`, and one new `when` arm** — inserted directly above compaction (Reset session's phase belongs below the "something may be wrong" signal(s) above it and above compaction's benign progress). See [Resetting indicator](resetting-indicator.md#placement-in-the-thread) for the full component.
+- **[#897](thinking-indicator.md#the-running-tool-897) adds a flat sibling, `runningTool: ToolCall?`, and no new arm.** Like `thinkingProgress`, it decorates the thinking arm's own `else` branch, so every arm above still pre-empts it for free. It is also the one sibling here that is not sourced from a `ThreadViewModel` flow: `ThreadScreen` derives it locally as `if (isBusy) openToolCall(state.items) else null`, `openToolCall` being a pure top-level function beside the screen (`internal fun openToolCall(items: List<ThreadItem>): ToolCall?` — the latest `Running`-status tool row, or `null`). See [Thinking indicator § The running tool](thinking-indicator.md#the-running-tool-897) for the selector and label detail.
+- **[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) had added a flat sibling, `usageLimit: UsageLimitReading?`, and one `when` arm between api-retry and resetting; [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed both.** See the callout above the code block for the full account. The ladder is now turn status only: `api-retry → resetting → compaction → turn outcome → thinking/running tool`.
 - **`ComposerStatusGutter = 20dp − 16dp = 4dp`.** The three indicator files each already carry their own 16dp horizontal padding (sized for their old full-bleed foot-of-list mount), so reaching the design's 20dp content gutter needs only the 4dp remainder here, not the full 20dp — passing the full gutter would double the inset and land the indicators' content at 36dp, a fidelity miss that reads as a design error rather than a padding sum.
 - **The band collapses when nothing is live.** Every arm still early-returns when its flag is false, so an idle status area emits no node and the composer column's `Arrangement.spacedBy(8.dp)` gap simply doesn't open above the input field.
 - **The 12dp gap above the whole `Input area`** (`ComposerTopGap`, the composer column's own top padding) is what used to be the space between the list and the foot-of-list `Column`; it now holds regardless of whether a status arm is showing.
 - No longer gated on `hasMessages` in any special way — moving out of the content `Column` entirely means the empty-thread and populated cases share the same composer, so the old "outside the branch" reasoning is moot.
+
+### Thread top overlay placement (post-#1002)
+
+[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) draws
+[`ThreadTopOverlay`](thread-top-overlay.md) — the usage-limit and pairing-error pills this section's
+callouts describe leaving `ThreadStatusArea` for — as an **overlap**, not a `Column` child, inside the
+message-area `Box` in the content `Column` (not the `bottomBar` column `ThreadStatusArea` lives in):
+
+```kotlin
+Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+    if (!state.hasMessages && state.queuedMessages.isEmpty()) {
+        EmptyThreadState(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp))
+    } else {
+        LazyColumn(modifier = Modifier.fillMaxSize().nestedScroll(autoScrollNestedScroll), reverseLayout = true) { … }
+    }
+    ThreadTopOverlay(
+        usageLimit = usageLimit,
+        usageLimitDismissed = usageLimit?.dismissalKey() in dismissedUsageLimits,
+        onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
+        showRePair = showRePair,
+        onRePair = onRePair,
+        modifier = Modifier.align(Alignment.TopEnd).padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
+    )
+}
+```
+
+Wrapping both branches of the empty/populated `if` in one `Box` is what lets one `ThreadTopOverlay` call
+cover both — the pre-#1002 code had no shared parent at this level, since the empty and populated branches
+each took the `weight(1f)` slot directly. The overlay draws *after* (so *over*) whichever branch rendered,
+and `Alignment.TopEnd` plus the overlay's own early-return-to-nothing keeps it from taking layout space —
+the list never reflows as a pill appears or clears. See [Thread top overlay](thread-top-overlay.md) for the
+composable itself, the dismissal holder `UsageLimitDismissals`, and why this replaced the status-row arms.
 
 ### Interrupt-affordance placement (post-#459, retired from the screen in #643)
 
@@ -91,33 +194,83 @@ The `bottomBar` column's third band was `ThreadStatusRow(model = …, effort = �
 
 [#643](../codebase/643.md) applied the Figma `16:8` frame and retired that standalone control from the screen entirely, following desktop's #678 precedent: **the composer's message-input button now carries the stop action as one of two states**, so the waiting signal (in the status area above) and the stop affordance (on the send button) can never stack again. `InterruptAffordance` keeps its file, its own tests and its own doc — it simply has no production call site on `ThreadScreen` any more (`codegraph_callers`: none outside its own file, flagged by code review as dead code worth a follow-up to either retire the file or record what still keeps it alive). See [Interrupt affordance](interrupt-affordance.md#placement--wiring) for the send/stop precedence table and the composer wiring, and [Thread input bar](thread-input-bar.md#shape) for the button itself.
 
-### Stall-promotion-banner placement (post-#396)
+### Stall-promotion-banner placement (post-#396, retired from the screen in #883)
 
-[#396](../codebase/396.md) mounts the stateless [`StallPromotionBanner`](stall-promotion-banner.md) directly **below** [`ConnectionBanner`](connection-banner.md) in the content `Column` (`ThreadScreen.kt:123`), above the workspace chip / empty state / message list — i.e. **outside** the scrolling `LazyColumn`:
+[#396](../codebase/396.md) mounted the stateless `StallPromotionBanner` directly **below** [`ConnectionBanner`](connection-banner.md) in the content `Column`, above the workspace chip / empty state / message list — outside the scrolling `LazyColumn` — as a prominent CTA that reused the overflow menu's "Show the literal screen" navigation (`onShowLiteralScreen`) while `isStalled` held.
 
-```kotlin
-Column {
-    ConnectionBanner(state = connectionState, onRetry = onRetry)
-    StallPromotionBanner(isStalled = isStalled, onShowLiteralScreen = onShowLiteralScreen)
-    // optional WorkspaceChip …
-    if (!state.hasMessages) EmptyThreadState(...) else LazyColumn(reverseLayout = true, ...) { … }
-    ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
-}
-```
-
-- **Top, not foot — the counterpoint to `ThinkingIndicator`.** A stall promotion is a "do this now" recommendation, so it takes the most-prominent top slot directly analogous to `ConnectionBanner` (connection-degraded → top banner; parse-degraded/stalled → top banner); the at-work thinking indicator stays at the foot. Being **outside** the `LazyColumn`, it stays pinned while the stall holds rather than scrolling away.
-- **Reuses the already-shipped snapshot action (AC #4).** The banner's `onClick` is the **same** `onShowLiteralScreen` (#382) the overflow "Show the literal screen" item triggers — no new `ThreadEvent`, no new navigation, no new data path.
-- Driven solely by the hoisted `isStalled` flag (`if (!isStalled) return` inside the composable) — holds no local state, emits nothing when not stalled (AC #1/#2/#3). See [Stall promotion banner](stall-promotion-banner.md) for the composable's shape, a11y (`cd_thread_stall_promotion`), tertiary-container styling (design-owed), and previews.
+[#883](../../specs/architecture/883-retire-literal-screen.md) removed the banner outright, once the daemon dropped the server-side screen-snapshot render path the action opened: `ThreadScreen` no longer renders it, and since it was `isStalled`'s only consumer, `ThreadScreen`'s `isStalled` parameter and `MainActivity`'s collection of `vm.isStalled` were removed too. `ThreadViewModel.isStalled` and the underlying `observeStall` projection are untouched — see [Stall state](stall-state.md), which now has no UI consumer.
 
 ### Permission-modal overlay placement (post-#446)
 
 [#446](../codebase/446.md) renders the hoisted [`currentModal`](current-modal-state.md) (#445; since #816,
-already filtered to this thread's own conversation) as the **seventh `Scaffold` sibling** — a `when (modalState)` block after the `DeleteConfirmationDialog` block (`ThreadScreen.kt:314`), **outside** the content `Column` (it is a floating dialog window, not part of the thread layout). `MainActivity` collects `currentModal` (and, since [#452](../codebase/452.md), `armedOptionId`) via `collectAsStateWithLifecycle` and forwards them as the defaulted `modalState` / `armedOptionId` params, exactly like `isThinking` / `isStalled`; `modalSendErrors` is forwarded by reference and collected inside `ThreadScreen` (single-consumer; the snackbar is a screen concern). Full doc: [Permission-modal overlay](permission-modal-overlay.md).
+already filtered to this thread's own conversation) as the **seventh `Scaffold` sibling** — a `when (modalState)` block after the `DeleteConfirmationDialog` block (`ThreadScreen.kt:314`), **outside** the content `Column` (it is a floating dialog window, not part of the thread layout). `MainActivity` collects `currentModal` (and, since [#452](../codebase/452.md), `armedOptionId`) via `collectAsStateWithLifecycle` and forwards them as the defaulted `modalState` / `armedOptionId` params, the same defaulted-flat-sibling shape `isThinking` uses (and `isStalled` used, before [#883](../../specs/architecture/883-retire-literal-screen.md) retired it); `modalSendErrors` is forwarded by reference and collected inside `ThreadScreen` (single-consumer; the snackbar is a screen concern). Full doc: [Permission-modal overlay](permission-modal-overlay.md).
 
 - **Separate surface, not a `LazyColumn` row.** `Open` → a private `PermissionModalOverlay` built on **`BasicAlertDialog`** (not the 2-button `AlertDialog` — the option count varies 4/2), rendering verbatim `title` / `prompt` / `options` (wire **array order**); `ModalOptionButton` is a stateless **3-way** ([#452](../codebase/452.md), `isArmed` precedence): the fail-safe-deny `defaultOptionId` → filled `Button`, the VM's armed non-default (`armedOptionId`) → `FilledTonalButton` (below the default's emphasis), else `OutlinedButton`, each with its `stateDescription` marker. `modalClass` is carried but not branched on. **Live since [#452](../codebase/452.md):** the option-tap forwards verbatim to `onModalOption` (the VM decides arm-vs-send, no UI-side arming), an explicit low-emphasis Cancel `TextButton` reaches `onModalCancel`, and `filterTouchesWhenObscured = true` on the dialog's own window adds a tapjacking net now that taps are live.
 - **Scoped to this thread's conversation (#816).** The coordinator's fold holds one modal per host (not a per-conversation map), but `ThreadViewModel.currentModal` filters it via `ModalUiState.scopedTo(conversationId)` before the screen ever sees it: a modal raised for another conversation on the same host arrives here as `Hidden`, so it neither renders nor can be answered from this thread. A missing/blank `conversation_id` on the wire scopes to no thread rather than every thread.
 - **Dismiss = snackbar, not overlay.** `Dismissed` renders no overlay and fires a `LaunchedEffect(modalId)` snackbar surfacing a **mapped local** reason (`dismissReasonText`: remote/local/timeout + a generic forward-compat fallback). The Scaffold gains a `remember { SnackbarHostState() }` + `snackbarHost` (the only change to the existing Scaffold), mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent. Keying on `modalId` (a sticky terminal state in #445's fold) fires it exactly once per resolution.
-- **Security (this slice owns the render-time obligations #445 deferred).** Plain `Text` only (never [`MarkdownText`](markdown-text.md)/`SelectionContainer`), and `DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` sets `FLAG_SECURE` on the **dialog's own window** — the [#381](../codebase/381.md) [`LiteralScreenSurface`](literal-screen-surface.md) precedent flags the **Activity** window, which a dialog draws outside of, so `SecureOn` (not the default `Inherit`) is load-bearing. No modal text reaches `rememberSaveable` / saved-instance state; the mapped-not-echoed dismiss reason is a confidentiality requirement (the snackbar draws in the un-secured Activity window). `dismissOnBackPress`/`dismissOnClickOutside = false` — a permission gate ignores stray taps; cancel is the explicit Cancel button only. [#452](../codebase/452.md) adds the remaining live-tap obligations: **send-error confidentiality** (the `modalSendErrors` event is `Flow<Unit>` + a fixed local `modal_send_failed` string ⇒ structurally no payload reaches the snackbar) and **tapjacking** (`filterTouchesWhenObscured = true` on the dialog's own window, the View-level analog of `SecureOn`, different fabric from the second-confirm UX belt).
+- **Security (this slice owns the render-time obligations #445 deferred).** Plain `Text` only (never [`MarkdownText`](markdown-text.md)/`SelectionContainer`), and `DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` sets `FLAG_SECURE` on the **dialog's own window** — the [#381](../codebase/381.md) `LiteralScreenSurface` precedent (retired by [#883](../../specs/architecture/883-retire-literal-screen.md)) flagged the **Activity** window, which a dialog draws outside of, so `SecureOn` (not the default `Inherit`) is load-bearing. No modal text reaches `rememberSaveable` / saved-instance state; the mapped-not-echoed dismiss reason is a confidentiality requirement (the snackbar draws in the un-secured Activity window). `dismissOnBackPress`/`dismissOnClickOutside = false` — a permission gate ignores stray taps; cancel is the explicit Cancel button only. [#452](../codebase/452.md) adds the remaining live-tap obligations: **send-error confidentiality** (the `modalSendErrors` event is `Flow<Unit>` + a fixed local `modal_send_failed` string ⇒ structurally no payload reaches the snackbar) and **tapjacking** (`filterTouchesWhenObscured = true` on the dialog's own window, the View-level analog of `SecureOn`, different fabric from the second-confirm UX belt).
+
+### Slash-command type-ahead placement (post-#885)
+
+[#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) adds a second `OptionsOverlay` mount alongside the footer's, in the same overlay `Box` layer the footer anchor-tracking already draws into (see [Thread composer footer § Wiring in `ThreadScreen`](thread-composer-footer.md#wiring-in-threadscreen)):
+
+```kotlin
+var inputAnchor by remember { mutableStateOf<Rect?>(null) }
+val imeVisible = WindowInsets.isImeVisible  // @OptIn(ExperimentalLayoutApi::class)
+
+ThreadInputBar(
+    // ...
+    onAnchorChanged = { inputAnchor = it },
+)
+
+SlashCommandTypeAhead(
+    text = draft,
+    commands = state.slashCommands,
+    anchor = inputAnchor?.takeIf { openMenu == null }?.translate(-layerOrigin),
+    imeVisible = imeVisible,
+    onComplete = onDraftChange,
+    resetKey = state.conversationId,
+)
+```
+
+`inputAnchor` mirrors the existing `footerAnchors` map's own pattern one level up — [`Thread input bar`](thread-input-bar.md)'s new `onAnchorChanged` parameter reports the field's live `boundsInWindow()`, translated into the layer's own coordinates by subtracting `layerOrigin`, the same translation every `OptionsOverlay` anchor in this file already applies. `anchor?.takeIf { openMenu == null }` is what keeps this overlay and the footer's from ever drawing at once — passing `null` closes [`SlashCommandTypeAhead`](slash-command-type-ahead.md) unconditionally whenever a footer menu (`openMenu != null`) is open, rather than relying on z-order or manual dismissal. `resetKey = state.conversationId` matches the conversation-keyed `remember` idiom the footer's own overlay state already uses, so no suggestion state survives a conversation switch. See [Slash-command type-ahead](slash-command-type-ahead.md) for the composable's own state machine (`dismissedFor`, the two `LaunchedEffect`s) and [Thread input bar § Draft binding](thread-input-bar.md#draft-binding--cursor-at-end-undo-and-redo-885-934) for what a pick's `onDraftChange` call requires of the field underneath it.
+
+### Background-tasks panel placement (post-#678)
+
+[#678](https://github.com/pyrycode/pyrycode-mobile/issues/678) draws
+[`BackgroundTaskPanel`](thread-composer-footer.md#actions-menu-884) directly inside `ThreadScreen`, right
+after the footer's `OptionsOverlay` `Box` closes and before the `WorkspacePicker` mount — not as an eighth
+`Scaffold` sibling and not from the `MainActivity` destination block the way
+[`QuestionBatchModal`](question-batch-modal.md) is drawn (`MobileReadOnlyModal` opens its own `Dialog`
+window, so its place in the composition tree doesn't affect what it draws over — the same reasoning
+[Permission-modal overlay placement](#permission-modal-overlay-placement-post-446) already gives for its own
+`Scaffold`-sibling `when` block):
+
+```kotlin
+var backgroundTasksOpen by remember(state.conversationId) { mutableStateOf(false) }
+// … footer OptionsOverlay Box …
+if (backgroundTasksOpen) {
+    BackgroundTaskPanel(roster = state.backgroundTasks, onDismiss = { backgroundTasksOpen = false })
+}
+WorkspacePicker(...)
+```
+
+`backgroundTasksOpen` is a plain `remember`, not `rememberSaveable`, keyed on `state.conversationId` — the
+same idiom `openControl` uses one field up: switching conversations drops an open panel, and a process
+death never restores one a fresh screen instance never opened. The Actions menu's background-tasks row sets
+it (see [Thread composer footer § Actions menu](thread-composer-footer.md#actions-menu-884)); since
+[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) the status band's task-count pill (§
+[Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) above) sets the same
+flag through the same `{ backgroundTasksOpen = true }` lambda, so the panel now has two openers over one
+piece of state rather than a second flag to keep in sync. Closing the
+panel — the footer Close button, the close glyph, or Back, all routed through `MobileReadOnlyModal`'s single
+`onDismissRequest` — only flips it back, sending nothing and touching no task or conversation state.
+`state.backgroundTasks` (`BackgroundTaskRoster?`) and `state.backgroundTaskCount` (`Int`) reach
+`ThreadUiState` from two defaulted `ThreadViewModel` constructor lambdas bound in `AppModule` to the open
+host's `RelayRepositoryCoordinator.observeBackgroundTasks` / `observeLiveBackgroundTaskCount` — the same
+per-conversation binding shape `questionBatch` uses — and default to `null` / `0` on the demo destination.
+See [Shared mobile modal § Callers](mobile-modal.md#callers) for the panel's own content and trust-boundary
+handling.
 
 ### `fun retry()` — non-suspend, VM owns the launch
 
@@ -143,7 +296,7 @@ val connectionState: StateFlow<ConnectionState> =
 
 ### `ThreadTopAppBar` — Figma `16:8` chrome
 
-**[#643](../codebase/643.md) replaced the stock M3 `TopAppBar` with a hand-rolled bar plus a closing rule** — the Figma `16:8` `Top bar` frame (`533:1948`), the same design language [`ChannelListTopBar`](channel-list-screen.md) already shipped for the channel list. `ThreadTopAppBar(title, onBack, onTitleClick, onOverflowClick, overflowExpanded, onOverflowDismiss, onOverflowEvent, onShowLiteralScreen, isPromoted, mutationsSupported, modifier)` stays a **public** stateless composable in its own file (`ThreadTopAppBar.kt`); only its body changed. It is now a `Column` of a content `Row` and a `HorizontalDivider`:
+**[#643](../codebase/643.md) replaced the stock M3 `TopAppBar` with a hand-rolled bar plus a closing rule** — the Figma `16:8` `Top bar` frame (`533:1948`), the same design language [`ChannelListTopBar`](channel-list-screen.md) already shipped for the channel list. `ThreadTopAppBar(title, onBack, onTitleClick, onOverflowClick, overflowExpanded, onOverflowDismiss, onOverflowEvent, isPromoted, mutationsSupported, modifier)` (the `onShowLiteralScreen` parameter [#382](../codebase/382.md) had added here was removed by [#883](../../specs/architecture/883-retire-literal-screen.md)) stays a **public** stateless composable in its own file (`ThreadTopAppBar.kt`); only its body changed. It is now a `Column` of a content `Row` and a `HorizontalDivider`:
 
 - **Back** — a 48dp `IconButton(onClick = onBack)` around a 24dp `Icons.AutoMirrored.Filled.ArrowBack`, `R.string.cd_back` ("Back") reused from every other back-arrow in the app.
 - **Title** — `Text(text = title, modifier = Modifier.weight(1f).clickable(onClick = onTitleClick).semantics { role = Role.Button }, style = titleLarge, color = onPrimaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)`, sitting between the two controls. `weight(1f)` precedes `.clickable(...)`, so the `Text` measures to the **full title slot**, not just its visible glyphs — the tap area and ripple cover the trailing space after a short title too (harmless: `Row` siblings never overlap, so it can't reach either control, and it is arguably a better target than the stock bar's text-sized one). `maxLines = 1` + `TextOverflow.Ellipsis` is what makes a display name longer than the slot truncate inside it rather than overlap or cover a control. `Role.Button` keeps TalkBack announcing the title as activatable.

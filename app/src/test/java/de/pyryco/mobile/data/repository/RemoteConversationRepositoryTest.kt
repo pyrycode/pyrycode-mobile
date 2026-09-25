@@ -1024,6 +1024,166 @@ class RemoteConversationRepositoryTest {
             assertEquals("c-new", create().getOrThrow().id)
         }
 
+    // ---- createChannel (#956): promoted create_conversation → conversation_created reply --------
+
+    // AC #1: one create_conversation with is_promoted=true and the name and cwd verbatim — the
+    // surrounding whitespace survives, so nothing on the way trims.
+    @Test
+    fun createChannel_sendsOneCreateConversationWithPromotedTrueAndVerbatimNameAndCwd() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startCreateChannel(repo, "  Weekly planning ", "/work/wp")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "create_conversation" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"is_promoted":true,"name":"  Weekly planning ","cwd":"/work/wp"}"""),
+                sent.payload,
+            )
+
+            pump.push(conversationCreatedEnvelope(inReplyTo = sent.id, id = "c-new", cwd = "/work/wp", isPromoted = true))
+            runCurrent()
+        }
+
+    // AC #1: the return is the daemon's confirmed conversation, not the request echoed back.
+    @Test
+    fun createChannel_onCreatedReply_returnsDaemonValuesNotRequest() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val create = startCreateChannel(repo, "  Weekly planning ", "/work/wp")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(
+                conversationCreatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "c-chan",
+                    isPromoted = true,
+                    name = "Weekly planning",
+                    cwd = "/srv/work/wp",
+                ),
+            )
+            runCurrent()
+
+            val conversation = create().getOrThrow()
+            assertEquals("c-chan", conversation.id)
+            assertTrue(conversation.isPromoted)
+            assertEquals("Weekly planning", conversation.name)
+            assertEquals("/srv/work/wp", conversation.cwd)
+        }
+
+    // AC #1: the confirmed conversation appears as a promoted row — Channels, not Discussions.
+    @Test
+    fun createChannel_onSuccess_appearsInChannelsTierOnly() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val channels = collectConversations(repo, ConversationFilter.Channels)
+            val discussions = collectConversations(repo, ConversationFilter.Discussions)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreateChannel(repo, "Weekly planning", "/work/wp")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(
+                conversationCreatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "c-chan",
+                    isPromoted = true,
+                    name = "Weekly planning",
+                    cwd = "/work/wp",
+                    lastUsedAt = "2026-05-08T11:00:00Z",
+                ),
+            )
+            runCurrent()
+
+            val created = create().getOrThrow()
+            assertEquals(listOf("c-chan", "chan"), channels.last().map { it.id })
+            assertEquals(created, channels.last().first())
+            assertEquals(listOf("disc"), discussions.last().map { it.id })
+        }
+
+    // AC #2: a server error throws RelayErrorException and inserts nothing.
+    @Test
+    fun createChannel_onServerError_throwsRelayErrorAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreateChannel(repo, "Weekly planning", "/work/wp")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "protocol.malformed", retryable = false))
+            runCurrent()
+
+            val ex = create().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("protocol.malformed", (ex as RelayErrorException).code)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #2: a disconnected session (pump.send returns false) throws IllegalStateException; no fold.
+    @Test
+    fun createChannel_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreateChannel(repo, "Weekly planning", "/work/wp")
+            runCurrent()
+
+            val ex = create().exceptionOrNull()
+            assertTrue("expected IllegalStateException, got $ex", ex is IllegalStateException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #2: a malformed conversation_created reply throws the #318 decode exception before the fold.
+    @Test
+    fun createChannel_onMalformedCreatedReply_throwsAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreateChannel(repo, "Weekly planning", "/work/wp")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            // Payload omits the required `cwd` → ConversationResponseDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "conversation_created",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"id":"c-bad","name":"Weekly planning","is_promoted":true,"last_used_at":"2026-05-08T10:00:00Z"}""",
+                        ),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            assertTrue(create().exceptionOrNull() is IllegalArgumentException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
     // ---- promote (#348): promote_conversation request → conversation_updated reply --------------
 
     // AC #1, #4: an explicit workspace pins the cwd; the request carries all three required fields.
@@ -1373,6 +1533,32 @@ class RemoteConversationRepositoryTest {
             rename().getOrThrow()
 
             // Folded in place: still two entries; chan now shows the new name.
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals("Renamed Channel", all.last().single { it.id == "chan" }.name)
+        }
+
+    // #996: the caller's scope (the thread's viewModelScope, cleared by a Back pop) is cancelled after the
+    // reply reached the collector but before the caller resumed. The reply still reaches the list: the
+    // collector finds the still-registered waiter, and the cancelled caller never runs its own upsert.
+    @Test
+    fun rename_callerCancelledAfterReplyArrives_stillFoldsRenamedConversationIntoList() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val caller = backgroundScope.launch { repo.rename("chan", "Renamed Channel") }
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "rename_conversation" }.id
+            // Queued ahead of the cancellation, so the collector handles the reply first.
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sentId, id = "chan", name = "Renamed Channel", cwd = "/p/chan"))
+            caller.cancel()
+            runCurrent()
+
+            assertTrue(caller.isCancelled)
             assertEquals(listOf("chan", "disc"), all.last().map { it.id })
             assertEquals("Renamed Channel", all.last().single { it.id == "chan" }.name)
         }
@@ -7064,6 +7250,40 @@ class RemoteConversationRepositoryTest {
             assertFalse(assistant.isStreaming)
         }
 
+    // #981: the #687 Read turn's order, with the permission prompt shown and answered between the
+    // tool_use and its tool_result. The fold keeps the finalized reply, so a thread that shows no reply
+    // after this sequence is the screen's failure, not the repository's.
+    @Test
+    fun assistantDelta_afterAnsweredPermissionPrompt_foldsFinalizedReply() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "Read the token file", "2026-09-24T05:27:00Z"))
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Read", "token.txt"))
+            pump.push(
+                modalShownEnvelope(
+                    """
+                    {"modal_id":"p1","class":"permission","title":"Allow Read?","prompt":"Read token.txt",
+                     "options":[{"id":"allow","label":"Allow"},{"id":"deny","label":"Deny"}],
+                     "default_option_id":"deny","conversation_id":"c1"}
+                    """.trimIndent(),
+                ),
+            )
+            pump.push(modalDismissedEnvelope("p1", outcome = "allowed", source = "remote"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "1 line"))
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "TOKEN-981"))
+            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "tu1", "t1"), messageIds(emissions.last()))
+            val assistant = assistantRowOf(emissions.last(), "t1")!!
+            assertEquals("TOKEN-981", assistant.content)
+            assertFalse(assistant.isStreaming)
+        }
+
     // ---- #336: fold session_transition into the thread as ThreadItem.SessionBoundary ------------
 
     // AC #1: a session_transition folds a SessionBoundary between message runs, in arrival order,
@@ -9124,6 +9344,28 @@ class RemoteConversationRepositoryTest {
             assertEquals("Tax filing", a1.workspaceLabel)
         }
 
+    // #999: each conversation_updated fold carries the record's is_muted — muting and a later unmute both
+    // land in the projection, so the row always holds the host's value.
+    @Test
+    fun conversationUpdated_unsolicitedPush_foldsTheRecordsMutedFlagOnEveryFold() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+            assertFalse(all.last().single { it.id == "a1" }.muted)
+
+            pump.push(conversationUpdatedEnvelope(id = "a1", cwd = "/w/alpha", isMuted = true))
+            runCurrent()
+            assertTrue(all.last().single { it.id == "a1" }.muted)
+
+            pump.push(conversationUpdatedEnvelope(id = "a1", cwd = "/w/alpha", isMuted = false))
+            runCurrent()
+            assertFalse(all.last().single { it.id == "a1" }.muted)
+        }
+
     // AC #2: a frame moving the conversation to a differently-labelled workspace lands the DESTINATION
     // cwd and the destination label — the case a client cannot resolve for itself.
     @Test
@@ -9295,6 +9537,17 @@ class RemoteConversationRepositoryTest {
         var outcome: Result<Conversation>? = null
         backgroundScope.launch { outcome = runCatching { repo.createDiscussion(workspace) } }
         return { requireNotNull(outcome) { "createDiscussion has not completed" } }
+    }
+
+    /** Launch [RemoteConversationRepository.createChannel] like [startCreate] (#956). */
+    private fun TestScope.startCreateChannel(
+        repo: RemoteConversationRepository,
+        name: String,
+        workspace: String,
+    ): () -> Result<Conversation> {
+        var outcome: Result<Conversation>? = null
+        backgroundScope.launch { outcome = runCatching { repo.createChannel(name, workspace) } }
+        return { requireNotNull(outcome) { "createChannel has not completed" } }
     }
 
     /**
@@ -9539,6 +9792,7 @@ class RemoteConversationRepositoryTest {
         inReplyTo: Long? = null,
         isPromoted: Boolean = true,
         isArchived: Boolean = false,
+        isMuted: Boolean = false,
         name: String? = null,
         workspaceLabel: String? = null,
         lastUsedAt: String = "2026-05-08T10:00:00Z",
@@ -9550,11 +9804,11 @@ class RemoteConversationRepositoryTest {
             id = envId,
             type = "conversation_updated",
             ts = TS,
-            // is_archived and workspace_label are always present on the wire (pyrycode#881, #2210 —
-            // both nullable but never omitted).
+            // is_archived, is_muted and workspace_label are always present on the wire (pyrycode#881,
+            // #2210 — the label nullable but never omitted).
             payload =
                 MobileJson.parseToJsonElement(
-                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"is_archived":$isArchived,"cwd":"$cwd","last_used_at":"$lastUsedAt","workspace_label":$labelJson}""",
+                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"is_archived":$isArchived,"is_muted":$isMuted,"cwd":"$cwd","last_used_at":"$lastUsedAt","workspace_label":$labelJson}""",
                 ),
             inReplyTo = inReplyTo,
         )

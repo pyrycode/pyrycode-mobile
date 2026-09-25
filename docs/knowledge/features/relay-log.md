@@ -10,13 +10,15 @@ from release but **keeps `Log.i`/`Log.w`**, which the near-miss reached for. `Re
 **safe-by-construction** replacement: a tool that *cannot* reach release output and *cannot* assemble
 a sensitive value in release, so the guarantee doesn't depend on anyone remembering to revert.
 
-This ticket ships the **facility only**. It does **not** instrument
-[`RelayConnectionSupervisor`](relay-reconnect-supervisor.md) /
-[`RelayRepositoryCoordinator`](relay-repository-coordinator.md) /
-[`NoiseSessionPump`](noise-session-pump.md) / [`OkHttpRelayTransport`](relay-ws-transport.md), which
-keep their **"Emits no logs"** contract. There is no observed need for standing diagnostic logging
-(Evidence-Based Fix Selection) — the facility is *ready-to-use, not pre-installed*. A future diagnosis
-session or follow-up ticket adopts it at the points it needs.
+\#521 shipped the facility with **zero adoption** — there was no observed need yet for standing
+diagnostic logging (Evidence-Based Fix Selection); it was *ready-to-use, not pre-installed*.
+[#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039) adopted it at the two points a live
+e2e connection-drop investigation needed: [`OkHttpRelayTransport`](relay-ws-transport.md) now writes one
+`event=transport_end` line per connection end, and [`NoiseSessionPump`](noise-session-pump.md) one
+`event=pump_teardown` line per teardown — see § Adopted call sites below for the fixed labels.
+[`RelayConnectionSupervisor`](relay-reconnect-supervisor.md) and
+[`RelayRepositoryCoordinator`](relay-repository-coordinator.md) still keep the **"Emits no logs"**
+contract: the transport line already carries the `Down` code the supervisor sees.
 
 ## What it does
 
@@ -115,9 +117,59 @@ suspenders.
 Adopted widely since #521 as the app's general debug-event logger, not only for connection diagnosis —
 `RelayLog.d` calls now live across the ViewModels, `di/`, and several `data/repository/` transfers,
 including [`DebugBundleTransfer`](relay-debug-bundle-transfer.md) and the [attachment
-upload](attachment-upload.md)'s `AttachmentUploadTransfer` (#829). The four relay-transport files this
-ticket named as future adoption targets (see Scope above) still emit no logs; that scope line is
-otherwise stale.
+upload](attachment-upload.md)'s `AttachmentUploadTransfer` (#829). Two of the four relay-transport files
+this ticket named as future adoption targets — [`OkHttpRelayTransport`](relay-ws-transport.md) and
+[`NoiseSessionPump`](noise-session-pump.md) — adopted it in #1039 (§ Adopted call sites below);
+[`RelayConnectionSupervisor`](relay-reconnect-supervisor.md) and
+[`RelayRepositoryCoordinator`](relay-repository-coordinator.md) still emit no logs.
+
+## Adopted call sites (#1039)
+
+`OkHttpRelayTransport.terminate` — the CAS every connection end funnels into — writes exactly one line
+before it sends the terminal `Down`:
+
+`event=transport_end end=<label>[ code=<n>][ peer_closing=<n>][ cause=<SimpleClassName>]`
+
+| `end` | Source |
+|---|---|
+| `local_close` | the app's own `close()` |
+| `peer_close` | a clean `onClosed` |
+| `failure` | `onFailure` (dial refused, TLS, or the peer dropping TCP before the close handshake finishes) |
+| `protocol_violation` | a local reject of a malformed / oversized / binary relay frame |
+| `invalid_request` | a malformed stored `relayUrl` or header-injection attempt caught in `connect()` |
+
+`code` is the peer's close code, the `onFailure` HTTP status when there is one, or the local close code a
+protocol-violation reject sent. `peer_closing` carries the code `onClosing` recorded when the end was not
+itself a clean `peer_close` — without it, a relay `1011` close followed by the peer dropping TCP would
+log as a bare `failure`, indistinguishable from an ordinary network blip.
+
+`NoiseSessionPump.teardown` — the CAS every pump ending funnels into — writes exactly one line before it
+sets `Closed`:
+
+`event=pump_teardown trigger=<label>[ cause=<SimpleClassName>]`
+
+| `trigger` | Funnel |
+|---|---|
+| `session_create_failed` | `sessionFactory.create()` threw |
+| `handshake_deadline` | no frame arrived before the `noise_resp` deadline |
+| `handshake_transport_down` | the transport went `Down` before any frame arrived |
+| `handshake_wrong_first_frame` | the first inbound frame was not `noise_resp` |
+| `handshake_resp_rejected` | `readResp` / base64 threw (MAC failure, malformed `hello_ack`, bad base64) |
+| `open_decrypt_failed` | a `noise_msg`'s base64 decode or AEAD decrypt threw |
+| `open_parse_failed` | the decrypted plaintext failed to parse as an `Envelope` |
+| `open_unexpected_frame_type` | an open-state frame was neither `noise_msg` nor `noise_resp` |
+| `open_unexpected_noise_resp` | a `noise_resp` arrived with no re-key in flight |
+| `rekey_resp_rejected` | the re-key `readRekeyResp` threw |
+| `open_frame_failed` | any other exception out of the open-frame collector |
+| `rekey_deadline` | the bounded re-key response watchdog fired |
+| `transport_down` | the transport's `inbound` completed cleanly |
+| `close` | the app's own `close()` |
+
+In both lines, `cause` is the exception's class name, never its message (a message can carry frame
+content); neither line ever carries the peer's close reason text, the relay URL, the server id, or the
+token. Level is `i` for `local_close` / `peer_close` and for a `null`-cause pump teardown, `w` otherwise.
+The pump's own `transport.close()` inside `teardown` then shows up in the transport's line as a local
+`1000` close; the pump line immediately before it is what explains that local close.
 
 ```kotlin
 RelayLog.i { "relay open ${RelayLog.redactConnId(connId)} caps=${caps.joinToString()}" }
@@ -157,10 +209,12 @@ them, so the `Log` class is never loaded.
   authentication ≥ 8 bytes there)
 - [ADR 0004 — vendor `noise-java`](../decisions/0004-vendor-noise-java-crypto.md) — source of the
   vendored `Blake2sMessageDigest`; no new dependency
-- [Relay WebSocket transport](relay-ws-transport.md), [Noise session pump](noise-session-pump.md),
-  [Relay reconnect supervisor](relay-reconnect-supervisor.md),
-  [Relay repository coordinator](relay-repository-coordinator.md) — the four "Emits no logs" files
-  this facility is *ready to* instrument but does **not** touch in #521 (adoption is a future ticket)
+- [Relay WebSocket transport](relay-ws-transport.md), [Noise session pump](noise-session-pump.md) —
+  adopted this facility in #1039; see § Adopted call sites above for the fixed labels each writes, and
+  each doc's own Logging section
+- [Relay reconnect supervisor](relay-reconnect-supervisor.md),
+  [Relay repository coordinator](relay-repository-coordinator.md) — still emit no logs; the transport
+  line already carries the `Down` code the supervisor sees
 - [Paired server store](paired-server-store.md) — home of the `PairedServer.toString`
   never-log-secret comment this facility's contract generalizes
 - [Attachment upload](attachment-upload.md) ([#829](https://github.com/pyrycode/pyrycode-mobile/issues/829)) —

@@ -138,7 +138,21 @@ data class ErrorPayload(
     val code: String,
     val message: String,
     val retryable: Boolean,
+    /** The host's minimum app version, carried only by [ERROR_CLIENT_UPDATE_REQUIRED] (pyrycode#2576) and
+     *  omitted when the host could not parse this app's version. Raw daemon text: pass it through
+     *  [validMinClientVersion] before it reaches any state. */
+    @SerialName("min_client_version") val minClientVersion: String? = null,
 )
+
+/** The `error.code` a host sends before its `4412` close when this app build is below its minimum (#1008). */
+internal const val ERROR_CLIENT_UPDATE_REQUIRED = "client.update_required"
+
+// Three dot-separated ASCII decimal parts, each 1-6 digits: at most 20 characters in all.
+private val MIN_CLIENT_VERSION_SHAPE = Regex("[0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}")
+
+/** [raw] when the whole string is three bounded decimal parts (`1.4.0`), else `null` — an unusable
+ *  minimum is treated as absent (#1008). */
+internal fun validMinClientVersion(raw: String?): String? = raw?.takeIf { MIN_CLIENT_VERSION_SHAPE.matches(it) }
 
 /**
  * The thrown form of a server [ErrorPayload] whose [code] is not a contract-mapped

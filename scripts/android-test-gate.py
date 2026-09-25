@@ -20,10 +20,37 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 E2E_PACKAGE = "de.pyryco.mobile.e2e"
-SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "reconnect", "replay-order")
+SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "replay-order")
 # The live gate's executed-test floor: the size of scripts/e2e-emulator.sh's LIVE curated list (#848),
 # so a method silently dropped from that list reddens the gate. Raise it with the list.
-LIVE_MINIMUM = 14
+# 20 while #977 keeps the #687 bypass method out of the list; #981 restores it and 21.
+# #965 adds the stop method on top: 21 while #687 stays out, 22 once #981 restores it.
+LIVE_MINIMUM = 22
+# #966 adds the permission-answer and question-answer methods on top of #981's 22.
+LIVE_MINIMUM += 2
+# #967 adds the two reconnect methods and the background-task method.
+LIVE_MINIMUM += 3
+# #955 adds the two push methods.
+LIVE_MINIMUM += 2
+# #1016 adds two attachment-exchange methods.
+LIVE_MINIMUM += 2
+# #1020 adds the third, the peer's file after a history reload, now that history replay names it.
+LIVE_MINIMUM += 1
+# #1050 adds the live markdown-note link method.
+LIVE_MINIMUM += 1
+
+LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
+
+
+def parse_live_tests(value):
+    """The --tests list as Class#method names, or None when any entry is not a live-class method."""
+    names = [name for name in (part.strip() for part in value.split(",")) if name]
+    prefix = LIVE_CLASS + "#"
+    for name in names:
+        method = name[len(prefix):]
+        if not name.startswith(prefix) or not method.isidentifier():
+            return None
+    return list(dict.fromkeys(names)) or None
 
 
 def claude_authenticated(env):
@@ -36,6 +63,14 @@ def claude_authenticated(env):
 
 def fresh_reports(directory, started_ns):
     return sorted(p for p in directory.rglob("TEST-*.xml") if p.stat().st_mtime_ns >= started_ns)
+
+
+def fresh_logcats(directory, started_ns):
+    """The per-test logcat files this run wrote. The next run overwrites them, so the gate keeps copies (#1039).
+
+    They are artifacts only: nothing from them reaches the dispatcher report or stdout.
+    """
+    return sorted(p for p in directory.rglob("logcat-*.txt") if p.stat().st_mtime_ns >= started_ns)
 
 
 def combine_reports(paths, minimum, expected_class=None):
@@ -142,7 +177,7 @@ def changed_paths(base="main"):
         return None
 
 
-# ---- scripted-all: the seven scenarios on one emulator this script boots ------------------------------
+# ---- scripted-all: the eight scenarios on one emulator this script boots ------------------------------
 # Each `scripted <scenario>` run has Gradle boot and tear down its own managed emulator, and Gradle's own
 # waits for the device cost about 10 of each scenario's 23 seconds (measured 2026-09-23). scripted-all boots
 # the managed device's AVD once, read-only from its snapshot, and runs every scenario against it through
@@ -154,7 +189,7 @@ def managed_avd(device):
     if device != "pixel2Api33Atd":
         return None
     home = Path(os.environ.get("ANDROID_USER_HOME") or Path.home() / ".android") / "avd" / "gradle-managed"
-    found = sorted(home.glob("dev33_aosp_atd_*_Pixel_2.ini"))
+    found = sorted(home.glob("dev33_google_atd_*_Pixel_2.ini"))
     return (home, found[0].stem) if found else None
 
 
@@ -238,6 +273,8 @@ def run_scripted_all(env, run_dir, device):
             outcome = subprocess.run(["bash", str(ROOT / "scripts" / "e2e-emulator.sh")], cwd=ROOT,
                                      env=scenario_env, stdout=sys.stderr, stderr=sys.stderr)
             paths = fresh_reports(directory, started)
+            for index, path in enumerate(fresh_logcats(directory, started)):
+                shutil.copy2(path, run_dir / f"{scenario}-{index}-{path.name}")
             try:
                 _, passed, executed = combine_reports(paths, 1, expected_class)
             except ValueError as error:
@@ -269,9 +306,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("ui", "scripted", "scripted-all", "live"))
     parser.add_argument("scenario", nargs="?", choices=SCENARIOS)
+    parser.add_argument("--tests", help="live only: a comma-separated Class#method list to run instead of the "
+                        "curated list. The dispatcher's flake re-run and main comparison pass the failed tests here.")
     args = parser.parse_args()
     if (args.mode == "scripted") != (args.scenario is not None):
         parser.error("scripted requires one scenario; ui and live take no scenario")
+    live_tests = None
+    if args.tests is not None:
+        if args.mode != "live":
+            parser.error("--tests applies to live only")
+        live_tests = parse_live_tests(args.tests)
+        if live_tests is None:
+            parser.error(f"--tests must be a comma-separated list of {LIVE_CLASS}#method names")
     device = os.environ.get("DEVICE", "pixel2Api33Atd")
     if not device.isalnum():
         parser.error("DEVICE must be an alphanumeric Gradle device name")
@@ -309,6 +355,7 @@ def main():
             command.insert(3, "-Pandroid.testInstrumentationRunnerArguments.class=" + ",".join(classes))
     else:
         env.pop("LIVE", None)
+        env.pop("LIVE_TESTS", None)
         env.pop("DETERMINISTIC", None)
         command = ["bash", str(ROOT / "scripts" / "e2e-emulator.sh")]
         if args.mode == "scripted":
@@ -317,7 +364,12 @@ def main():
         elif args.mode == "live":
             env["LIVE"] = "1"
             minimum = LIVE_MINIMUM
-            expected_class = E2E_PACKAGE + ".InteractiveStreamE2ETest"
+            expected_class = LIVE_CLASS
+            if live_tests:
+                # A chosen subset: the dispatcher judges each named test itself, and on main a test the
+                # branch added does not exist, so the curated floor does not apply.
+                env["LIVE_TESTS"] = ",".join(live_tests)
+                minimum = 1
     if args.mode == "live":
         # Missing login is an environment failure, not a suite of product regressions.
         if not claude_authenticated(env):
@@ -354,6 +406,9 @@ def main():
         directory = results / "connected/debug" if device == "connected" else results / "managedDevice/debug" / device
         paths = fresh_reports(directory, started)
         for index, path in enumerate(paths):
+            shutil.copy2(path, run_dir / f"{index}-{path.name}")
+        # Kept before the report is judged: a failing run is the one whose logcat someone needs to read.
+        for index, path in enumerate(fresh_logcats(directory, started)):
             shutil.copy2(path, run_dir / f"{index}-{path.name}")
         xml, passed, executed = combine_reports(paths, minimum, expected_class)
         (run_dir / "dispatcher.xml").write_text(xml + "\n")

@@ -4,32 +4,36 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -44,18 +48,23 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
+import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.BannerNoticeRow
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
@@ -65,25 +74,28 @@ import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.ModelRefusalRow
+import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
 import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
-import de.pyryco.mobile.ui.conversations.components.StallPromotionBanner
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
-import de.pyryco.mobile.ui.conversations.components.UsageLimitIndicator
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
@@ -102,17 +114,14 @@ private val ComposerBottomGap = 16.dp
 // same 20dp gutter as the input field and the footer, with their own files untouched.
 private val ComposerStatusGutter = ComposerGutter - 16.dp
 
-// #843: Figma 354:7093's "Button small" and its gap from the status signal it sits beside.
-private val StatusActionGap = 8.dp
-private val RePairButtonRadius = 6.dp
-private val RePairButtonHorizontalPadding = 16.dp
-private val RePairButtonVerticalPadding = 8.dp
+// #1002: the Top overlay's inset from the message area's top edge, clear of the app bar.
+private val TopOverlayTopGap = 8.dp
 
 // #778: the ONE oldest-end slot. Loading, retry and dead-end share this key because they share the slot —
 // at most one of them is ever emitted.
 private const val HISTORY_TAIL_KEY = "history-tail"
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ThreadScreen(
     state: ThreadUiState,
@@ -122,9 +131,8 @@ fun ThreadScreen(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     isThinking: Boolean = false,
-    isStalled: Boolean = false,
     apiRetry: ApiRetryStatus = ApiRetryStatus.NotRetrying, // #594: claude's API-retry status, replaces the spinner
-    usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report, below api-retry in the slot
+    usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report; #1002 draws it in the Top overlay
     resetting: ResetStatus? = null, // #872: Reset session's phase, below usage limit and above compaction
     isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
     turnOutcome: TurnOutcomeReport? = null, // #805: how the last turn failed or was interrupted, above thinking
@@ -133,12 +141,14 @@ fun ThreadScreen(
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
-    onShowLiteralScreen: () -> Unit = {},
     // #807: a published ModelMenuRow.value / effort level, forwarded verbatim — never a device enum.
     onModelSelected: (String) -> Unit = {},
     onEffortSelected: (String) -> Unit = {},
     // #650: a PermissionModeOption wire value from the footer's permission menu.
     onPermissionModeSelected: (String) -> Unit = {},
+    // #884: a command row of the footer's Actions menu, wired by MainActivity → vm::onComposerCommand.
+    // Reset session is not a command: it goes through onOverflowEvent(ThreadEvent.NewSession).
+    onComposerCommand: (ComposerAction) -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
@@ -172,10 +182,35 @@ fun ThreadScreen(
     draft: String = "",
     onDraftChange: (String) -> Unit = {},
     // #843: this thread's host rejected the saved pairing (ThreadViewModel.rePairAvailable). Draws the
-    // status area's Re-pair action and withholds the connection banner, whose retry cannot succeed then.
+    // Top overlay's pairing pill (#1002) and withholds the connection banner, whose retry cannot succeed then.
     // The tap is bound by MainActivity to the code-pair route keyed by the destination's own server id.
     showRePair: Boolean = false,
     onRePair: () -> Unit = {},
+    // #1002: the usage readings hidden from the Top overlay (the app-scoped UsageLimitDismissals) and the X's
+    // tap, which hides the reading the pill is showing. Defaulted so screens that never dismiss show every one.
+    dismissedUsageLimits: Set<UsageLimitDismissals.Key> = emptySet(),
+    onDismissUsageLimit: (UsageLimitReading) -> Unit = {},
+    // #933: this chat's pending attachments (ThreadViewModel.pendingAttachments) and whether a send carrying
+    // them is under way (attachmentsSending); the picker's result, a tile's remove, and the one-shot refusal
+    // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
+    attachments: List<PendingAttachment> = emptyList(),
+    attachmentsSending: Boolean = false,
+    onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
+    onRemoveAttachment: (Long) -> Unit = {},
+    attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
+    // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
+    // row is on screen, and a failed one's retry. Bound by MainActivity; defaulted so other screens and tests
+    // draw attachments as loading and start nothing.
+    attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
+    onAttachmentShown: (String) -> Unit = {},
+    onRetryAttachment: (String) -> Unit = {},
+    // #1027: a ready markdown attachment's tap, and the one-shot signal that it could not be read. Bound by
+    // MainActivity → vm::onOpenMarkdownAttachment / vm.markdownOpenFailures.
+    onOpenMarkdownAttachment: (String) -> Unit = {},
+    markdownOpenFailures: Flow<Unit> = emptyFlow(),
+    // #1050: a tapped link to a workspace markdown note in an assistant reply, by its path. Bound by
+    // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
+    onOpenMarkdownLink: (String) -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -216,20 +251,62 @@ fun ThreadScreen(
     LaunchedEffect(sessionSettingsErrors, snackbarHostState) {
         sessionSettingsErrors.collect { snackbarHostState.showSnackbar(sessionSettingsFailedMessage) }
     }
+    // #933: a pick with refused entries names how many, per reason — counts only, never a file name.
+    val resources = LocalContext.current.resources
+    LaunchedEffect(attachmentRefusals, snackbarHostState) {
+        attachmentRefusals.collect { refusal ->
+            if (refusal.tooLarge > 0) {
+                val text = resources.getQuantityString(R.plurals.thread_attachments_too_large, refusal.tooLarge, refusal.tooLarge)
+                snackbarHostState.showSnackbar(text)
+            }
+            if (refusal.tooMany > 0) {
+                val text = resources.getQuantityString(R.plurals.thread_attachments_too_many, refusal.tooMany, refusal.tooMany)
+                snackbarHostState.showSnackbar(text)
+            }
+        }
+    }
+    val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
+    // #985: a ready message attachment opens in another app or saves to a picked document; each outcome the
+    // user should hear about is one static sentence, never a name, URI or path.
+    val noticeScope = rememberCoroutineScope()
+    val attachmentActions =
+        rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
+            noticeScope.launch { snackbarHostState.showSnackbar(resources.getString(notice.message)) }
+        }
+    // #1027: a markdown file that cannot be read says what any failed open says.
+    LaunchedEffect(markdownOpenFailures, snackbarHostState) {
+        markdownOpenFailures.collect { snackbarHostState.showSnackbar(resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
+    }
+    // #934: a pasted image joins the chat's strip through the same sink as a picked one.
+    val onImagesPasted = rememberPastedImageReceiver(onAttachmentsPicked)
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
     // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
     // closes when the control stops offering anything (a write goes pending, a reading drops the menu).
     var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
+    // #678: the read-only background-task panel the Actions menu opens. Local and keyed like [openControl]:
+    // closing it only flips this flag, so nothing is sent and no conversation or task changes.
+    var backgroundTasksOpen by remember(state.conversationId) { mutableStateOf(false) }
     val footerAnchors = remember { mutableStateMapOf<FooterControl, Rect>() }
     var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     val openMenu =
         openControl
             ?.takeIf { footerControlEnabled(it, state.runConfig) }
-            ?.let { control -> footerMenu(control, state.runConfig)?.let { control to it } }
+            ?.let { control ->
+                footerMenu(
+                    control,
+                    state.runConfig,
+                    state.mutationsSupported,
+                    state.absentActions,
+                    state.backgroundTaskCount,
+                )?.let { control to it }
+            }
     LaunchedEffect(openControl, openMenu == null) {
         if (openMenu == null) openControl = null
     }
+    // #885: the input field's text-aligned window bounds, where the slash-command suggestions anchor.
+    var inputAnchor by remember { mutableStateOf<Rect?>(null) }
+    val imeVisible = WindowInsets.isImeVisible
     Box(
         modifier = modifier.onGloballyPositioned { layerOrigin = it.positionInWindow() },
     ) {
@@ -245,7 +322,6 @@ fun ThreadScreen(
                     overflowExpanded = overflowExpanded,
                     onOverflowDismiss = { overflowExpanded = false },
                     onOverflowEvent = onOverflowEvent,
-                    onShowLiteralScreen = onShowLiteralScreen,
                     isPromoted = state.isPromoted,
                     mutationsSupported = state.mutationsSupported,
                 )
@@ -265,17 +341,29 @@ fun ThreadScreen(
                             .padding(top = ComposerTopGap, bottom = ComposerBottomGap),
                     verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
                 ) {
+                    // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
+                    val openTool = remember(state.items) { openToolCall(state.items) }
                     ThreadStatusArea(
                         apiRetry = apiRetry,
-                        usageLimit = usageLimit,
                         resetting = resetting,
                         isCompacting = isCompacting,
                         turnOutcome = turnOutcome,
                         isThinking = isThinking,
                         thinkingProgress = thinkingProgress,
-                        showRePair = showRePair,
-                        onRePair = onRePair,
+                        runningTool = if (isBusy) openTool else null,
+                        taskCount = state.backgroundTaskCount,
+                        onTasksClick = { backgroundTasksOpen = true },
                     )
+                    // #933: Figma's `Attachment area`, between the status area and the input field, only when
+                    // this chat has something pending.
+                    if (attachments.isNotEmpty()) {
+                        ComposerAttachmentStrip(
+                            attachments = attachments,
+                            sending = attachmentsSending,
+                            onRemove = onRemoveAttachment,
+                            modifier = Modifier.padding(horizontal = ComposerGutter),
+                        )
+                    }
                     ThreadInputBar(
                         text = draft,
                         onTextChange = onDraftChange,
@@ -287,6 +375,10 @@ fun ThreadScreen(
                         modifier = Modifier.padding(horizontal = ComposerGutter),
                         isBusy = isBusy,
                         onInterrupt = onInterrupt,
+                        onAnchorChanged = { inputAnchor = it },
+                        hasAttachments = attachments.isNotEmpty(),
+                        sending = attachmentsSending,
+                        onImagesReceived = onImagesPasted,
                     )
                     // The design puts the model/effort controls in the footer, below the input field, not
                     // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
@@ -297,6 +389,7 @@ fun ThreadScreen(
                         onStatusClick = { sheetVisible = true },
                         onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
                         modifier = Modifier.padding(horizontal = ComposerGutter),
+                        onAttach = openAttachmentPicker,
                     )
                 }
             },
@@ -307,10 +400,9 @@ fun ThreadScreen(
                         .padding(inner)
                         .fillMaxSize(),
             ) {
-                // #843: a rejected pairing reads as Offline here, and its retry cannot succeed — the status
-                // area's Re-pair action replaces it. Network loss still gets the banner and its retry.
+                // #843: a rejected pairing reads as Offline here, and its retry cannot succeed — the Top
+                // overlay's pairing pill replaces it. Network loss still gets the banner and its retry.
                 if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)
-                StallPromotionBanner(isStalled = isStalled, onShowLiteralScreen = onShowLiteralScreen)
                 if (!state.isPromoted && !state.hasMessages) {
                     WorkspaceChip(
                         workspaceLabel = state.workspaceLabel,
@@ -333,146 +425,195 @@ fun ThreadScreen(
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
                 // hasMessages already covers that case.
-                if (!state.hasMessages && state.queuedMessages.isEmpty()) {
-                    EmptyThreadState(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .padding(horizontal = 24.dp),
-                    )
-                } else {
-                    val reversedRows = rows.asReversed()
-                    // Still read off state.items, and still comparing against an index into `rows`: the two
-                    // spaces agree wherever a boundary can land, because `rows` shares its prefix with
-                    // `items` index-for-index and only ever appends unmatched queued rows after them.
-                    val cutoffChronologicalIndex =
-                        remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
-                    val listState = rememberLazyListState()
-                    val hasStreamingMessage by remember(state.items) {
-                        derivedStateOf {
-                            state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming }
-                        }
-                    }
-                    var userScrolledAway by remember { mutableStateOf(false) }
-                    val autoScrollNestedScroll =
-                        remember {
-                            object : NestedScrollConnection {
-                                override fun onPreScroll(
-                                    available: Offset,
-                                    source: NestedScrollSource,
-                                ): Offset {
-                                    if (source == NestedScrollSource.UserInput && available.y != 0f) {
-                                        userScrolledAway = true
-                                    }
-                                    return Offset.Zero
-                                }
+                // #1002: the message area, with the Top overlay pinned over its top edge while the messages
+                // scroll beneath it.
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    if (!state.hasMessages && state.queuedMessages.isEmpty()) {
+                        EmptyThreadState(
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 24.dp),
+                        )
+                    } else {
+                        val reversedRows = rows.asReversed()
+                        // Still read off state.items, and still comparing against an index into `rows`: the two
+                        // spaces agree wherever a boundary can land, because `rows` shares its prefix with
+                        // `items` index-for-index and only ever appends unmatched queued rows after them.
+                        val cutoffChronologicalIndex =
+                            remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
+                        // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
+                        val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
+                        val listState = rememberLazyListState()
+                        val hasStreamingMessage by remember(state.items) {
+                            derivedStateOf {
+                                state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming }
                             }
                         }
-                    LaunchedEffect(listState) {
-                        snapshotFlow {
-                            listState.firstVisibleItemIndex == 0 &&
-                                listState.firstVisibleItemScrollOffset == 0
-                        }.collect { atBottom ->
-                            if (atBottom) userScrolledAway = false
-                        }
-                    }
-                    // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
-                    // visible index, not the first.
-                    //
-                    // The row count is read through rememberUpdatedState over the THREAD ITEMS, never through
-                    // layoutInfo.totalItemsCount: the latter counts the oldest-end loading row itself, so a
-                    // page answering atStart = false with zero entries would self-drive with no further user
-                    // input — ask, the indicator mounts, the count rises, the page settles, the indicator
-                    // unmounts, the count falls, the predicate re-fires. Reading the thread's own count makes
-                    // the indicator's presence unable to move the predicate: at the oldest end the last
-                    // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
-                    // so distinctUntilChanged sees no edge and no second demand is issued.
-                    val historyRowCount by rememberUpdatedState(rows.size)
-                    val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
-                    LaunchedEffect(listState) {
-                        snapshotFlow {
-                            val oldestVisible =
-                                listState.layoutInfo.visibleItemsInfo
-                                    .lastOrNull()
-                                    ?.index ?: -1
-                            historyRowCount > 0 && oldestVisible >= historyRowCount - 1
-                        }.distinctUntilChanged()
-                            .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
-                    }
-                    LaunchedEffect(hasStreamingMessage, listState) {
-                        if (!hasStreamingMessage) return@LaunchedEffect
-                        snapshotFlow {
-                            listState.layoutInfo.visibleItemsInfo
-                                .firstOrNull { it.index == 0 }
-                                ?.size ?: 0
-                        }.distinctUntilChanged()
-                            .collect {
-                                if (!userScrolledAway) {
-                                    listState.scrollToItem(0)
-                                }
-                            }
-                    }
-                    LazyColumn(
-                        state = listState,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .nestedScroll(autoScrollNestedScroll),
-                        reverseLayout = true,
-                    ) {
-                        itemsIndexed(
-                            items = reversedRows,
-                            // The key derivation and its uniqueness argument live beside the fold, in
-                            // ThreadRows.kt — a matched queued row deliberately takes the key its
-                            // delivered form carries, which is what leaves it in place across delivery.
-                            key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
-                        ) { reversedIndex, row ->
-                            val chronologicalIndex = rows.size - 1 - reversedIndex
-                            val rowAlpha =
-                                if (chronologicalIndex < cutoffChronologicalIndex) {
-                                    ABOVE_DELIMITER_ALPHA
-                                } else {
-                                    1f
-                                }
-                            Box(modifier = Modifier.alpha(rowAlpha)) {
-                                when (row) {
-                                    is ThreadRow.Delivered ->
-                                        when (val item = row.item) {
-                                            is ThreadItem.MessageItem -> MessageBubble(message = item.message)
-                                            is ThreadItem.SessionBoundary ->
-                                                SessionBoundaryDelimiter(boundary = item)
-                                            is ThreadItem.UnrecognizedMessage ->
-                                                UnrecognizedMessageRow(item = item)
-                                            is ThreadItem.Banner -> BannerNoticeRow(item = item)
-                                            is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
-                                            is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item)
+                        var userScrolledAway by remember { mutableStateOf(false) }
+                        val autoScrollNestedScroll =
+                            remember {
+                                object : NestedScrollConnection {
+                                    override fun onPreScroll(
+                                        available: Offset,
+                                        source: NestedScrollSource,
+                                    ): Offset {
+                                        if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                                            userScrolledAway = true
                                         }
-                                    // One render path for both kinds of queued row — the one the echo
-                                    // correlated to and the one this device minted no echo for — so the
-                                    // two cannot drift apart. The id is bound here, so the row never
-                                    // holds one.
-                                    is ThreadRow.Queued ->
-                                        QueuedMessageRow(
-                                            text = row.text,
-                                            onDrop = { onDropQueued(row.queuedMessageId) },
-                                        )
+                                        return Offset.Zero
+                                    }
                                 }
                             }
+                        LaunchedEffect(listState) {
+                            snapshotFlow {
+                                listState.firstVisibleItemIndex == 0 &&
+                                    listState.firstVisibleItemScrollOffset == 0
+                            }.collect { atBottom ->
+                                if (atBottom) userScrolledAway = false
+                            }
                         }
-                        // #777: under reverseLayout a later item takes a higher index and draws further up,
-                        // so appending here puts the affordance at the oldest end for free. #778 widened it
-                        // from one row to four states, but it is still ONE slot and one key — loading, a
-                        // retry or a dead end, never two of them at once.
-                        when (state.historyTail) {
-                            ThreadHistoryTail.None -> Unit
-                            ThreadHistoryTail.Loading -> item(key = HISTORY_TAIL_KEY) { HistoryLoadingRow() }
-                            ThreadHistoryTail.Retry ->
-                                item(key = HISTORY_TAIL_KEY) { HistoryRetryRow(onRetry = onRetryOlderHistory) }
-                            ThreadHistoryTail.DeadEnd -> item(key = HISTORY_TAIL_KEY) { HistoryDeadEndRow() }
+                        // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
+                        // visible index, not the first.
+                        //
+                        // The row count is read through rememberUpdatedState over the THREAD ITEMS, never through
+                        // layoutInfo.totalItemsCount: the latter counts the oldest-end loading row itself, so a
+                        // page answering atStart = false with zero entries would self-drive with no further user
+                        // input — ask, the indicator mounts, the count rises, the page settles, the indicator
+                        // unmounts, the count falls, the predicate re-fires. Reading the thread's own count makes
+                        // the indicator's presence unable to move the predicate: at the oldest end the last
+                        // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
+                        // so distinctUntilChanged sees no edge and no second demand is issued.
+                        val historyRowCount by rememberUpdatedState(rows.size)
+                        val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
+                        LaunchedEffect(listState) {
+                            snapshotFlow {
+                                val oldestVisible =
+                                    listState.layoutInfo.visibleItemsInfo
+                                        .lastOrNull()
+                                        ?.index ?: -1
+                                historyRowCount > 0 && oldestVisible >= historyRowCount - 1
+                            }.distinctUntilChanged()
+                                .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
+                        }
+                        LaunchedEffect(hasStreamingMessage, listState) {
+                            if (!hasStreamingMessage) return@LaunchedEffect
+                            snapshotFlow {
+                                listState.layoutInfo.visibleItemsInfo
+                                    .firstOrNull { it.index == 0 }
+                                    ?.size ?: 0
+                            }.distinctUntilChanged()
+                                .collect {
+                                    if (!userScrolledAway) {
+                                        listState.scrollToItem(0)
+                                    }
+                                }
+                        }
+                        // #981: the list keeps its first visible row anchored by key, so under reverseLayout a new
+                        // newest row lands at index 0 below the viewport. The streaming pin above only covers a
+                        // row that is still streaming when it collects; a reply that arrives whole, a tool row or
+                        // the operator's own echo needs this one. A streaming row that grows keeps its key and is
+                        // left to the pin. drop(1) skips the first value, because userScrolledAway is not saved
+                        // and a recreation must not pull a reader who had scrolled away back to the newest end.
+                        val newestRowKey by rememberUpdatedState(rows.lastOrNull()?.listKey(rows.lastIndex))
+                        LaunchedEffect(listState) {
+                            snapshotFlow { newestRowKey }
+                                .drop(1)
+                                .collect {
+                                    if (!userScrolledAway) {
+                                        // A finger resting at the newest end holds the list at UserInput priority,
+                                        // which refuses this scroll with a CancellationException. Unlike the
+                                        // streaming pin, this effect never relaunches, so the refusal costs this one
+                                        // scroll only; a real cancellation of the effect still ends it.
+                                        try {
+                                            listState.scrollToItem(0)
+                                        } catch (e: CancellationException) {
+                                            ensureActive()
+                                        }
+                                    }
+                                }
+                        }
+                        LazyColumn(
+                            state = listState,
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .nestedScroll(autoScrollNestedScroll),
+                            reverseLayout = true,
+                        ) {
+                            itemsIndexed(
+                                items = reversedRows,
+                                // The key derivation and its uniqueness argument live beside the fold, in
+                                // ThreadRows.kt — a matched queued row deliberately takes the key its
+                                // delivered form carries, which is what leaves it in place across delivery.
+                                key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
+                            ) { reversedIndex, row ->
+                                val chronologicalIndex = rows.size - 1 - reversedIndex
+                                val rowAlpha =
+                                    if (chronologicalIndex < cutoffChronologicalIndex) {
+                                        ABOVE_DELIMITER_ALPHA
+                                    } else {
+                                        1f
+                                    }
+                                Box(modifier = Modifier.alpha(rowAlpha)) {
+                                    when (row) {
+                                        is ThreadRow.Delivered ->
+                                            when (val item = row.item) {
+                                                is ThreadItem.MessageItem ->
+                                                    MessageBubble(
+                                                        message = item.message,
+                                                        toolNestingDepth = toolDepths[item.message.id] ?: 0,
+                                                        attachmentStates = attachmentStates,
+                                                        onAttachmentShown = onAttachmentShown,
+                                                        onRetryAttachment = onRetryAttachment,
+                                                        onOpenAttachment = attachmentActions.open,
+                                                        onSaveAttachment = attachmentActions.save,
+                                                        onOpenMarkdownLink = onOpenMarkdownLink,
+                                                    )
+                                                is ThreadItem.SessionBoundary ->
+                                                    SessionBoundaryDelimiter(boundary = item)
+                                                is ThreadItem.UnrecognizedMessage ->
+                                                    UnrecognizedMessageRow(item = item)
+                                                is ThreadItem.Banner -> BannerNoticeRow(item = item)
+                                                is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
+                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item)
+                                            }
+                                        // One render path for both kinds of queued row — the one the echo
+                                        // correlated to and the one this device minted no echo for — so the
+                                        // two cannot drift apart. The id is bound here, so the row never
+                                        // holds one.
+                                        is ThreadRow.Queued ->
+                                            QueuedMessageRow(
+                                                text = row.text,
+                                                onDrop = { onDropQueued(row.queuedMessageId) },
+                                            )
+                                    }
+                                }
+                            }
+                            // #777: under reverseLayout a later item takes a higher index and draws further up,
+                            // so appending here puts the affordance at the oldest end for free. #778 widened it
+                            // from one row to four states, but it is still ONE slot and one key — loading, a
+                            // retry or a dead end, never two of them at once.
+                            when (state.historyTail) {
+                                ThreadHistoryTail.None -> Unit
+                                ThreadHistoryTail.Loading -> item(key = HISTORY_TAIL_KEY) { HistoryLoadingRow() }
+                                ThreadHistoryTail.Retry ->
+                                    item(key = HISTORY_TAIL_KEY) { HistoryRetryRow(onRetry = onRetryOlderHistory) }
+                                ThreadHistoryTail.DeadEnd -> item(key = HISTORY_TAIL_KEY) { HistoryDeadEndRow() }
+                            }
                         }
                     }
+                    ThreadTopOverlay(
+                        usageLimit = usageLimit,
+                        usageLimitDismissed = usageLimit?.dismissalKey() in dismissedUsageLimits,
+                        onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
+                        showRePair = showRePair,
+                        onRePair = onRePair,
+                        modifier =
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
+                    )
                 }
             }
         }
@@ -491,13 +632,35 @@ fun ThreadScreen(
                             FooterControl.Model -> onModelSelected(value)
                             FooterControl.Effort -> onEffortSelected(value)
                             FooterControl.Permission -> onPermissionModeSelected(value)
+                            // #884: Reset session is the overflow menu's own path; a command row sends.
+                            FooterControl.Actions ->
+                                when (val action = ComposerAction.fromValue(value)) {
+                                    null -> Unit
+                                    ComposerAction.ResetSession -> onOverflowEvent(ThreadEvent.NewSession)
+                                    ComposerAction.BackgroundTasks -> backgroundTasksOpen = true
+                                    else -> onComposerCommand(action)
+                                }
                         }
                         openControl = null
                     },
                     onDismiss = { openControl = null },
+                    actions = menu.actions,
                 )
             }
         }
+        // #885: the slash-command suggestions share the footer overlay's layer. They stand down while a
+        // footer menu is open, so two overlays never stack. A pick completes the draft and sends nothing.
+        SlashCommandTypeAhead(
+            text = draft,
+            commands = state.slashCommands,
+            anchor = inputAnchor?.takeIf { openMenu == null }?.translate(-layerOrigin),
+            imeVisible = imeVisible,
+            onComplete = onDraftChange,
+            resetKey = state.conversationId,
+        )
+    }
+    if (backgroundTasksOpen) {
+        BackgroundTaskPanel(roster = state.backgroundTasks, onDismiss = { backgroundTasksOpen = false })
     }
     WorkspacePicker(
         visible = state.workspacePickerVisible,
@@ -512,14 +675,25 @@ fun ThreadScreen(
         )
     }
     state.saveAsChannelDialog?.let { dialogState ->
+        // #957: the thread stays open behind the modal; the failure strings are generic because the
+        // shell announces them aloud, and no daemon message reaches this screen.
         SaveAsChannelDialog(
+            conversationId = state.conversationId,
             initialName = dialogState.initialName,
-            onSubmit = { name, workspace ->
+            onSubmit = { name, systemPrompt ->
                 onOverflowEvent(
-                    ThreadEvent.SaveAsChannelSubmit(name = name, workspace = workspace),
+                    ThreadEvent.SaveAsChannelSubmit(name = name, systemPrompt = systemPrompt),
                 )
             },
-            onDismiss = { onOverflowEvent(ThreadEvent.SaveAsChannelDismiss) },
+            onDismissRequest = { onOverflowEvent(ThreadEvent.SaveAsChannelDismiss) },
+            nameEditable = !dialogState.promoted,
+            loading = dialogState.saving,
+            error =
+                when (dialogState.failure) {
+                    SaveAsChannelFailure.Promote -> stringResource(R.string.save_as_channel_failed)
+                    SaveAsChannelFailure.SystemPrompt -> stringResource(R.string.save_as_channel_prompt_failed)
+                    null -> null
+                },
         )
     }
     if (sheetVisible) {
@@ -546,6 +720,7 @@ fun ThreadScreen(
             onDismiss = { sheetVisible = false },
             effortNote = state.runConfig.effortNote?.let { stringResource(it.textRes()) },
             running = state.runConfig.running,
+            contextPercent = state.runConfig.contextPercent,
         )
     }
     if (state.channelInfoOpen) {
@@ -599,106 +774,105 @@ fun ThreadScreen(
 }
 
 /**
- * Figma `16:8`'s `Status area` (`111:3525`) — the composer's top band, carrying whichever of the three
- * conversation-level waiting signals is live (#643 moved this block here from the foot of the content
- * `Column`; the arms, their flags and their precedence are unchanged).
+ * Figma `16:8`'s `Status area` (`111:3525`) — the composer's top band, carrying whichever live turn-status
+ * signal is current (#643 moved this block here from the foot of the content `Column`).
  *
- * One status slot; the retry status wins whenever it is active (#594), then compaction (#597). Both
- * signals are conversation-level and outlive the thinking phase, so each must show regardless of what
- * `turn_state` says — and no two may ever stack. Single-sourcing the mutual exclusion here, in the
- * screen, is deliberate: `isThinking` stays defined as the `turn_state` phase (other tests assert it
- * directly), so suppressing it at its source would make the VM's contract lie. api-retry keeps the top
- * arm because it is the "something is going wrong" signal while compaction is benign progress, so the
- * benign affordance must never mask the alarming one; the two overlapping has never been observed.
+ * One status slot, top wins: api-retry → resetting → compaction → turn outcome → thinking / running tool.
+ * No two may ever stack. Single-sourcing the mutual exclusion here, in the screen, is deliberate:
+ * `isThinking` stays defined as the `turn_state` phase (other tests assert it directly), so suppressing it
+ * at its source would make the VM's contract lie.
  *
- * claude's usage-limit report (#804) sits between them — api-retry → usage limit → compaction → thinking —
- * for the same reason: compaction is benign and must never mask a report that something may be going
- * wrong. The arm is raised by a non-`null` reading alone; the expiry and the benign clear are already
- * applied upstream, so nothing here re-reads its fields.
+ * api-retry (#594) keeps the top arm because it is the "something is going wrong" signal, and the benign
+ * affordances below must never mask it. A running Reset session's phase (#872) sits next: the wrap-up is
+ * itself a claude turn, so without this ordering the reset the user started would read as generic thinking
+ * or as a compaction inside it, and it outranks a turn outcome lingering from before the reset. A phase
+ * change replaces the reading in this one arm; the falling edge and the session transition clear it
+ * upstream. Compaction (#597) is mid-turn and outlives the thinking phase. A failed or interrupted turn's
+ * outcome (#805) is post-turn and clears when the next turn starts.
  *
- * A failed or interrupted turn's outcome (#805) sits directly above thinking — api-retry → usage limit →
- * compaction → turn outcome → thinking. Compaction is mid-turn and the outcome is post-turn, so the two
- * co-occurring has not been observed; the outcome clears when the next turn starts.
- *
- * A running Reset session's phase (#872) sits between usage limit and compaction — the full ladder, top
- * wins: api-retry → usage limit → resetting → compaction → turn outcome → thinking. It stays below the two
- * "something may be wrong" signals so it never hides them. It sits above compaction and thinking because
- * the wrap-up is itself a claude turn — without this ordering the reset the user started would read as
- * generic thinking, or as a compaction inside it — and above a turn outcome lingering from before the
- * reset. A phase change replaces the reading in this one arm; the falling edge and the session transition
- * clear it upstream.
- *
- * The design's trailing contextual-action slot holds the Re-pair action (#843) while [showRePair] does,
- * and is otherwise absent, so nothing inert is emitted beside the signal. Without it, when no signal is
- * live every arm returns without emitting, so the band contributes no node and the composer column's gap
- * above the input field collapses with it.
+ * Notices are not turn status and are not here: claude's usage-limit report and the pairing error draw as
+ * pills in the message area's [ThreadTopOverlay] (#1002), so a live reading never hides the running tool,
+ * the wrap-up or "interrupted". When no signal is live every arm returns without emitting, so the band
+ * contributes no node and the composer column's gap above the input field collapses with it.
  *
  * [thinkingProgress] (#803) adds **no arm**: it decorates the thinking arm's label and rides the `else`
- * branch, so retry and compaction pre-empt a live reading for free and the mutual exclusion above is
- * unchanged. Visibility stays governed by [isThinking] alone — `turn_state` owns the thinking phase
- * (#406), and letting a reading raise the arm on its own would be a fourth arm wearing the third one's
- * name.
+ * branch, so every arm above pre-empts a live reading for free. Visibility stays governed by [isThinking]
+ * alone — `turn_state` owns the thinking phase (#406).
+ *
+ * [runningTool] (#897) rides the same `else` branch and does raise it: a tool claude is running during
+ * the `responding` phase is exactly the signal the band otherwise lacks. The screen passes it only while
+ * the turn is busy, so every arm above still pre-empts it and a closed call drops the band back to what
+ * it would otherwise show.
+ *
+ * [taskCount] (#1043) is not an arm either: above zero, a pill reading it sits at the band's right end
+ * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel. At zero
+ * the band is exactly the reading, so with nothing live it still contributes no node.
  */
 @Composable
 private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
-    usageLimit: UsageLimitReading?,
     resetting: ResetStatus?,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
-    showRePair: Boolean = false,
-    onRePair: () -> Unit = {},
+    runningTool: ToolCall?,
+    taskCount: Int,
+    onTasksClick: () -> Unit,
 ) {
-    val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter)
-    val signal: @Composable (Modifier) -> Unit = { slot ->
-        when {
-            apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
-            usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
-            resetting != null -> ResettingIndicator(status = resetting, modifier = slot)
-            isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
-            turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-            else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
-        }
+    val reading: @Composable (Modifier) -> Unit = { modifier ->
+        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
     }
-    if (!showRePair) {
-        signal(gutter)
+    if (taskCount <= 0) {
+        reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
         return
     }
-    // Figma 111:3525: the signal leading, the action trailing on the same row.
+    // The reading's own 16dp padding lands its content on the 20dp gutter; the pill ends on it. A reading
+    // that emits nothing takes its weight with it, and Arrangement.End keeps the pill at the right end.
     Row(
-        modifier = gutter,
+        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter),
+        horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(StatusActionGap),
     ) {
-        Box(modifier = Modifier.weight(1f)) { signal(Modifier.fillMaxWidth()) }
-        RePairButton(onClick = onRePair)
+        reading(Modifier.weight(1f))
+        // Figma's band is 24dp, the pill's own height. The clickable Surface would otherwise lay out at the
+        // 48dp minimum touch target; the hit test still widens its touch bounds to that minimum without it.
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+            NoticePill(
+                text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount),
+                isError = false,
+                onClick = onTasksClick,
+                // Figma 568:3162 sits in the band, not over the messages, so it has no overlay shadow.
+                shadowElevation = 0.dp,
+            )
+        }
     }
 }
 
-/**
- * Figma `354:7093`'s "Pairing error - Re-pair" small button (#843): a 6dp-radius container, 16/8 padding,
- * a `bodySmall` label at medium weight (`M3/body/small-emphasized`).
- *
- * Deliberate deviation: the frame paints it `on-error` / `error`; this uses the theme's `errorContainer` /
- * `onErrorContainer` pair instead, the family [ConnectionBanner]'s Offline arm and [HistoryRetryRow] already
- * use for an error-plus-action affordance, as the ticket directs. The label is a local resource, never
- * daemon text.
- */
+/** The band's one live reading, top wins; see [ThreadStatusArea]. Emits nothing when no signal is live. */
 @Composable
-private fun RePairButton(onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(RePairButtonRadius),
-        color = MaterialTheme.colorScheme.errorContainer,
-        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-    ) {
-        Text(
-            text = stringResource(R.string.thread_re_pair),
-            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-            modifier = Modifier.padding(horizontal = RePairButtonHorizontalPadding, vertical = RePairButtonVerticalPadding),
-        )
+private fun StatusReading(
+    apiRetry: ApiRetryStatus,
+    resetting: ResetStatus?,
+    isCompacting: Boolean,
+    turnOutcome: TurnOutcomeReport?,
+    isThinking: Boolean,
+    thinkingProgress: ThinkingProgress?,
+    runningTool: ToolCall?,
+    modifier: Modifier = Modifier,
+) {
+    when {
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
+        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
+        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
+        else ->
+            ThinkingIndicator(
+                isThinking = isThinking,
+                modifier = modifier,
+                progress = thinkingProgress,
+                runningTool = runningTool,
+            )
     }
 }
 
@@ -748,3 +922,15 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         memoryPlugins = emptyList(),
         channelId = conversationId,
     )
+
+/**
+ * The thread's open tool call (#897): the latest row in [items] whose call is still
+ * [ToolCallStatus.Running], or `null`. Denied, done and failed rows are not open. One call supplies both
+ * the name and the elapsed reading the status area shows, so the two can never come from different calls,
+ * and a newer open call replaces an older one because it sits later in the chronological list.
+ */
+internal fun openToolCall(items: List<ThreadItem>): ToolCall? =
+    items
+        .lastOrNull { item ->
+            item is ThreadItem.MessageItem && item.message.toolCall?.status == ToolCallStatus.Running
+        }.let { (it as? ThreadItem.MessageItem)?.message?.toolCall }

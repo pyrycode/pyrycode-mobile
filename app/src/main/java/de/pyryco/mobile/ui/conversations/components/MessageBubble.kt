@@ -21,6 +21,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.delay
 import kotlinx.datetime.Instant
@@ -42,6 +43,10 @@ internal val BubbleContentSpacing = 12.dp // `Message` gap-[12px] — body to me
 internal val MessageContentGutter = 20.dp
 internal val MessageRoleInset = 100.dp
 
+// #896: the frame has no subagent grouping, so each nesting level steps a tool row in by the
+// `Message area` gap it already uses between rows.
+private val ToolNestingIndent = MessageAreaRowSpacing
+
 // The bubble's own container, tagged because its *width* is the property under test and nothing else
 // observes it: a body `Text` hugs its own content whether or not the container around it does, so the
 // Surface is the only node that moves when the hug regresses.
@@ -53,14 +58,43 @@ private const val STREAMING_REVEAL_STEP_CHARS = 1
 private const val STREAMING_REVEAL_STEP_MS: Long = 1000L / STREAMING_REVEAL_CHARS_PER_SECOND
 private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
 
+/**
+ * [toolNestingDepth] (#896) is read only by a tool row: how many `Agent`/`Task` calls deep a subagent's
+ * call sits. Each level indents the row's leading edge one [ToolNestingIndent] past the gutter.
+ *
+ * [attachmentStates], [onAttachmentShown] and [onRetryAttachment] (#984) are read only by the two bubble
+ * roles, for the message's attachments: each attachment's state by id, the report that one is on screen,
+ * and its retry control. [onOpenAttachment] and [onSaveAttachment] (#985) are a ready attachment's tap and
+ * long-press.
+ *
+ * [onOpenMarkdownLink] (#1050) is read only by an assistant reply, streaming or finished: a tapped link to a
+ * workspace markdown note hands over its path. `null` leaves such a link inert, as it was before.
+ */
 @Composable
 fun MessageBubble(
     message: Message,
     modifier: Modifier = Modifier,
+    toolNestingDepth: Int = 0,
+    attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
+    onAttachmentShown: (String) -> Unit = {},
+    onRetryAttachment: (String) -> Unit = {},
+    onOpenAttachment: (AttachmentTarget) -> Unit = {},
+    onSaveAttachment: (AttachmentTarget) -> Unit = {},
+    onOpenMarkdownLink: ((String) -> Unit)? = null,
 ) {
+    val attachments: @Composable () -> Unit = {
+        MessageAttachments(
+            attachments = message.attachments,
+            states = attachmentStates,
+            onShown = onAttachmentShown,
+            onRetry = onRetryAttachment,
+            onOpen = onOpenAttachment,
+            onSave = onSaveAttachment,
+        )
+    }
     when (message.role) {
-        Role.User -> UserMessageBubble(message, modifier)
-        Role.Assistant -> AssistantMessage(message, modifier)
+        Role.User -> UserMessageBubble(message, attachments, modifier)
+        Role.Assistant -> AssistantMessage(message, attachments, onOpenMarkdownLink, modifier)
         // The gutter is applied here rather than inside ToolCallRow: moving it into the components left
         // the tool row as the one list kind still bleeding to the screen edge, which reads as a ragged
         // left edge next to the bubbles. The row's own layout belongs to #658, and this arm reaches it
@@ -69,7 +103,12 @@ fun MessageBubble(
             message.toolCall?.let {
                 ToolCallRow(
                     toolCall = it,
-                    modifier = modifier.padding(horizontal = MessageContentGutter),
+                    modifier =
+                        modifier.padding(
+                            start = MessageContentGutter + ToolNestingIndent * toolNestingDepth,
+                            end = MessageContentGutter,
+                        ),
+                    subagentDepth = toolNestingDepth,
                 )
             }
     }
@@ -84,6 +123,7 @@ fun MessageBubble(
 @Composable
 private fun UserMessageBubble(
     message: Message,
+    attachments: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -91,8 +131,10 @@ private fun UserMessageBubble(
         alignment = Alignment.End,
         bubbleColor = MaterialTheme.colorScheme.primaryContainer,
         bubbleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        attachments = attachments,
         modifier = modifier,
     ) {
+        if (message.hasNoBody()) return@MessageContainer
         Text(
             text = message.content,
             style = MaterialTheme.typography.bodyMedium,
@@ -116,6 +158,8 @@ private fun UserMessageBubble(
 @Composable
 private fun AssistantMessage(
     message: Message,
+    attachments: @Composable () -> Unit,
+    onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -123,6 +167,7 @@ private fun AssistantMessage(
         alignment = Alignment.Start,
         bubbleColor = MaterialTheme.colorScheme.secondaryContainer,
         bubbleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        attachments = attachments,
         modifier = modifier,
     ) {
         if (message.isStreaming) {
@@ -133,15 +178,16 @@ private fun AssistantMessage(
             // at `turn_end`: one snap rather than continuous jitter.
             StreamingAssistantBody(
                 content = message.content,
+                onOpenMarkdownLink = onOpenMarkdownLink,
                 modifier = Modifier.fillMaxWidth(),
             )
-        } else {
+        } else if (!message.hasNoBody()) {
             // No `fillMaxWidth()`. It sets minWidth = maxWidth, which pinned every finalized assistant
             // bubble to the full lane and made 272dp a fixed width rather than the maximum the design
             // specifies — the frame's short assistant instance (`I533:1956;132:4539`) is 205dp. Without
             // it `MarkdownText`'s `Column` wraps its widest child, while `CodeBlock` carries its own
             // `fillMaxWidth()`, so a fenced block still spans the bubble and only prose hugs.
-            MarkdownText(markdown = message.content)
+            MarkdownText(markdown = message.content, onOpenMarkdownPath = onOpenMarkdownLink)
         }
     }
 }
@@ -155,6 +201,9 @@ private fun AssistantMessage(
  *
  * The meta row is handed [Message.content] directly, never anything read back out of [body], so an
  * assistant bubble copies its markdown source rather than the parsed render.
+ *
+ * [attachments] fills the design's `Slot` between the body and the meta row (#984), and only when the
+ * message has any: a text-only bubble lays out exactly as before.
  */
 @Composable
 private fun MessageContainer(
@@ -163,6 +212,7 @@ private fun MessageContainer(
     bubbleColor: Color,
     bubbleContentColor: Color,
     modifier: Modifier = Modifier,
+    attachments: @Composable () -> Unit = {},
     body: @Composable () -> Unit,
 ) {
     val isUserSide = alignment == Alignment.End
@@ -198,6 +248,7 @@ private fun MessageContainer(
                 horizontalAlignment = Alignment.Start,
             ) {
                 body()
+                if (message.attachments.isNotEmpty()) attachments()
                 MessageMetaRow(
                     timestamp = message.timestamp,
                     copyText = message.content,
@@ -208,9 +259,16 @@ private fun MessageContainer(
     }
 }
 
+/**
+ * A message that carries attachments and no text has no body (#984): drawing an empty text block would
+ * leave a blank line above the attachments. A text-only message always keeps its body.
+ */
+private fun Message.hasNoBody(): Boolean = attachments.isNotEmpty() && content.isBlank()
+
 @Composable
 private fun StreamingAssistantBody(
     content: String,
+    onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val revealedLength by produceState(initialValue = 0, key1 = content) {
@@ -228,6 +286,7 @@ private fun StreamingAssistantBody(
     StreamingAssistantBodyView(
         revealedText = content.take(revealedLength),
         caretVisible = caretVisible,
+        onOpenMarkdownLink = onOpenMarkdownLink,
         modifier = modifier,
     )
 }
@@ -236,10 +295,11 @@ private fun StreamingAssistantBody(
 private fun StreamingAssistantBodyView(
     revealedText: String,
     caretVisible: Boolean,
+    onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val displayText = if (caretVisible) revealedText + STREAMING_CARET_GLYPH else revealedText
-    MarkdownText(markdown = displayText, modifier = modifier)
+    MarkdownText(markdown = displayText, modifier = modifier, onOpenMarkdownPath = onOpenMarkdownLink)
 }
 
 // Pinned rather than Clock.System.now() so the meta row renders a stable, reviewable timestamp — the
@@ -295,8 +355,22 @@ private fun MessageBubblePreviewSequence() {
         // this sequence wraps and so reaches the lane maximum, which is what made the hug invisible
         // under review: 272dp is the maximum, and a brief reply must sit well inside it.
         MessageBubble(previewMessage(role = Role.Assistant, content = "On it."))
+        // #896: an agent call, its subagent's call one level in, and that subagent's own subagent two in.
+        PreviewToolNesting.forEachIndexed { depth, toolCall ->
+            MessageBubble(
+                message = previewMessage(role = Role.Tool, content = "").copy(toolCall = toolCall),
+                toolNestingDepth = depth,
+            )
+        }
     }
 }
+
+private val PreviewToolNesting =
+    listOf(
+        ToolCall(toolName = "Agent", input = "Survey the schema", output = ""),
+        ToolCall(toolName = "Task", input = "Check the legacy table", output = ""),
+        ToolCall(toolName = "Grep", input = "user_id", output = "", inputFields = mapOf("pattern" to "user_id")),
+    )
 
 @Preview(name = "MessageBubble — Light", showBackground = true, widthDp = 412)
 @Composable
@@ -415,6 +489,7 @@ private fun MessageBubbleMarkdownPreviewBody() {
             StreamingAssistantBodyView(
                 revealedText = MARKDOWN_PREVIEW_FIXTURE.take(MARKDOWN_PREVIEW_FIXTURE.length / 2),
                 caretVisible = true,
+                onOpenMarkdownLink = null,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

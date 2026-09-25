@@ -12,6 +12,8 @@ import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Builds independent connection owners without resolving any application-wide connection state. */
@@ -19,7 +21,7 @@ class RelayConnectionFactory(
     private val deviceStaticKeyStore: DeviceStaticKeyStore,
     private val transportFactory: RelayTransportFactory,
     private val clientInfo: NoiseClientInfo,
-    private val pushToken: suspend () -> String? = { null },
+    private val pushTokens: Flow<String?> = flowOf(null),
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
@@ -37,7 +39,7 @@ class RelayConnectionFactory(
     fun createCompatibility(store: PairedServerStore): RelayConnectionBundle = build(store)
 
     private fun build(store: PairedServerStore): RelayConnectionBundle =
-        RelayConnectionBundle(deviceStaticKeyStore, transportFactory, clientInfo, store, pushToken, dispatcher, ioDispatcher)
+        RelayConnectionBundle(deviceStaticKeyStore, transportFactory, clientInfo, store, pushTokens, dispatcher, ioDispatcher)
 }
 
 /**
@@ -49,7 +51,7 @@ class RelayConnectionBundle internal constructor(
     transportFactory: RelayTransportFactory,
     clientInfo: NoiseClientInfo,
     pairedServerStore: PairedServerStore,
-    pushToken: suspend () -> String?,
+    pushTokens: Flow<String?>,
     dispatcher: CoroutineDispatcher,
     ioDispatcher: CoroutineDispatcher,
 ) {
@@ -67,10 +69,18 @@ class RelayConnectionBundle internal constructor(
         RelayRepositoryCoordinator(
             connections = supervisor.currentConnection,
             relayStatus = supervisor.relayStatus,
-            createPump = { transport -> NoiseSessionPump(transport, sessionFactory, dispatcher) },
+            // Each pump reports its own transport's app-too-old minimum to the supervisor that dialled it (#1008).
+            createPump = { transport ->
+                NoiseSessionPump(
+                    transport,
+                    sessionFactory,
+                    dispatcher,
+                    onClientMinimum = { supervisor.recordClientMinimum(transport, it) },
+                )
+            },
             dispatcher = dispatcher,
             deviceName = clientInfo.deviceName,
-            pushToken = pushToken,
+            pushTokens = pushTokens,
         )
     private val disposed = AtomicBoolean(false)
 

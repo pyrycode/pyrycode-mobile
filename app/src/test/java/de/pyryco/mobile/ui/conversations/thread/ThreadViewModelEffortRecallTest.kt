@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
@@ -105,6 +106,17 @@ class ThreadViewModelEffortRecallTest {
 
             assertTrue(repo.calls.isEmpty())
             assertEquals(EFFORT_PLACEHOLDER_LABEL, vm.state.value.runConfig.effortLabel)
+        }
+
+    @Test
+    fun recall_withNoModelOverride_writesALevelTheDefaultRowPublishes() =
+        runTest {
+            val repo = ScriptedRepo()
+            val inheritedMenu = ModelMenu(rows = menu.rows + row("default", listOf("medium", "xhigh")), droppedModels = 0)
+            val vm = newVm(repo, MemoryStore("xhigh"), menu = inheritedMenu)
+            collect(vm, repo, reading(effort = "", model = ""))
+
+            assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, effort = "xhigh")), repo.calls)
         }
 
     @Test
@@ -280,7 +292,8 @@ class ThreadViewModelEffortRecallTest {
     fun aSuccessfulTap_survivesAnAppRestart() =
         runTest {
             val file = tmp.newFile("remembered_effort_vm.preferences_pb")
-            val scope1 = CoroutineScope(Dispatchers.IO + Job())
+            val job1 = Job()
+            val scope1 = CoroutineScope(Dispatchers.IO + job1)
             val prefs1 = AppPreferences(PreferenceDataStoreFactory.create(scope = scope1, produceFile = { file }))
             val repo = ScriptedRepo()
             val vm = collectedVm(repo, prefs1.asRememberedEffortStore(), reading(effort = "low"))
@@ -290,6 +303,7 @@ class ThreadViewModelEffortRecallTest {
                 withTimeout(5_000) { prefs1.rememberedEffort.first { it == "max" } }
             }
             scope1.cancel()
+            job1.join() // the first store releases the file only once its scope has completed
 
             val scope2 = CoroutineScope(Dispatchers.IO + Job())
             val prefs2 = AppPreferences(PreferenceDataStoreFactory.create(scope = scope2, produceFile = { file }))
@@ -515,10 +529,10 @@ class ThreadViewModelEffortRecallTest {
         override suspend fun sendMessage(
             conversationId: String,
             text: String,
-            attachmentIds: List<String>,
+            attachments: List<MessageAttachment>,
         ): Message {
             sentMessages++
-            return backing.sendMessage(conversationId, text, attachmentIds)
+            return backing.sendMessage(conversationId, text, attachments)
         }
 
         override suspend fun setSessionSettings(

@@ -96,8 +96,10 @@ class AndroidGateTest(unittest.TestCase):
         # #848: the floor is the curated list's size, so a method dropped from the list reddens the gate.
         script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
         live = script[script.index('elif [ -n "${LIVE}" ]; then\n  # LIVE curates'):]
-        target = live[live.index('TEST_TARGET="'):].split("\n", 1)[0]
-        self.assertEqual(gate.LIVE_MINIMUM, target.count("#interactiveTurn_"))
+        # The LIVE branch may build the list over several assignments, so count across all of them.
+        branch = live[: live.index("\nelse\n")]
+        targets = [line for line in branch.split("\n") if line.lstrip().startswith('TEST_TARGET="')]
+        self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))
             with self.assertRaises(ValueError):
@@ -259,8 +261,11 @@ class AndroidGateTest(unittest.TestCase):
             home.mkdir(parents=True)
             with patch.dict(os.environ, {"ANDROID_USER_HOME": tmp}):
                 self.assertIsNone(gate.managed_avd("pixel2Api33Atd"))
+                # #955: the AVD left from the aosp-atd image has no Play services, so it is never booted.
                 (home / "dev33_aosp_atd_arm64-v8a_Pixel_2.ini").write_text("")
-                self.assertEqual(gate.managed_avd("pixel2Api33Atd"), (home, "dev33_aosp_atd_arm64-v8a_Pixel_2"))
+                self.assertIsNone(gate.managed_avd("pixel2Api33Atd"))
+                (home / "dev33_google_atd_arm64-v8a_Pixel_2.ini").write_text("")
+                self.assertEqual(gate.managed_avd("pixel2Api33Atd"), (home, "dev33_google_atd_arm64-v8a_Pixel_2"))
                 self.assertIsNone(gate.managed_avd("otherDevice"))
 
     def test_free_emulator_port_skips_a_busy_pair(self):
@@ -287,6 +292,7 @@ class AndroidGateTest(unittest.TestCase):
                 (reports / "TEST-result.xml").write_text(
                     f'<testsuite tests="1" failures="{1 if failure else 0}">'
                     f'<testcase classname="{expected}" name="{scenario}">{failure}</testcase></testsuite>')
+                (reports / f"logcat-{expected}-{scenario}.txt").write_text(f"{scenario} lines\n")
                 return subprocess.CompletedProcess(command, 1 if failure else 0)
 
             stderr, stdout = io.StringIO(), io.StringIO()
@@ -294,6 +300,10 @@ class AndroidGateTest(unittest.TestCase):
                     patch.object(gate.subprocess, "run", run), patch.object(gate.signal, "signal"), \
                     contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
                 result = gate.run_scripted_all({"ANDROID_HOME": "/sdk"}, run_dir, "pixel2Api33Atd")
+            # #1039: each scenario's logcat is kept under its own name before the next scenario runs.
+            for scenario in gate.SCENARIOS:
+                self.assertEqual((run_dir / f"{scenario}-0-logcat-{expected}-{scenario}.txt").read_text(),
+                                 f"{scenario} lines\n")
         self.assertEqual(result, 1)
         self.assertEqual([s for s, _, _ in seen], list(gate.SCENARIOS))
         self.assertTrue(all(d == "1" and device == "pixel2Api33Atd" for _, d, device in seen))
@@ -329,6 +339,91 @@ class AndroidGateTest(unittest.TestCase):
             with patch.object(gate, "ROOT", root):
                 self.assertEqual(gate.changed_paths(), ["docs/new.md", "edited.kt", "untracked.kt"])
                 self.assertIsNone(gate.changed_paths("no-such-branch"))
+
+    def test_live_tests_accepts_only_live_class_methods(self):
+        method = gate.LIVE_CLASS + "#interactiveTurn_a"
+        self.assertEqual(gate.parse_live_tests(f"{method}, {method},{gate.LIVE_CLASS}#b"), [method, gate.LIVE_CLASS + "#b"])
+        for bad in ("", ",", "Other#a", gate.LIVE_CLASS, gate.LIVE_CLASS + "#a[0]", gate.LIVE_CLASS + "#a b",
+                    f"{method},Other#a"):
+            with self.subTest(bad=bad):
+                self.assertIsNone(gate.parse_live_tests(bad))
+
+    def test_live_tests_runs_the_subset_with_a_floor_of_one(self):
+        method = gate.LIVE_CLASS + "#interactiveTurn_ping"
+        seen = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd"
+            started = 2_000_000_000
+
+            def run(command, **kwargs):
+                seen.update(kwargs["env"])
+                directory.mkdir(parents=True)
+                path = self.report(directory, f'<testsuite tests="1"><testcase classname="{gate.LIVE_CLASS}" '
+                                              'name="interactiveTurn_ping"/></testsuite>')
+                os.utime(path, ns=(started + 1, started + 1))
+                return subprocess.CompletedProcess(command, 0)
+
+            stdout = io.StringIO()
+            with patch.object(gate, "ROOT", root), \
+                    patch.dict(os.environ, {"LIVE_TESTS": "stale"}, clear=True), \
+                    patch("sys.argv", ["android-test-gate.py", "live", "--tests", method]), \
+                    patch.object(gate, "claude_authenticated", return_value=True), \
+                    patch.object(gate.time, "time_ns", return_value=started), \
+                    patch.object(gate.subprocess, "run", side_effect=run), \
+                    contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(gate.main(), 0)
+        self.assertEqual(seen["LIVE_TESTS"], method)
+        self.assertEqual(len(ET.fromstring(stdout.getvalue()).findall(".//testcase")), 1)
+
+    def test_live_run_keeps_fresh_per_test_logcat_even_when_the_report_is_broken(self):
+        # #1039: the managed device writes logcat-<class>-<method>.txt per test and the next run overwrites it,
+        # so the gate copies each fresh one into the run's artifact directory. A broken report must not lose it.
+        for report in ("pass", "malformed"):
+            with self.subTest(report=report), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                directory = root / "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd"
+                started = 2_000_000_000
+
+                def run(command, **kwargs):
+                    device = directory / "emulator-5554"
+                    device.mkdir(parents=True)
+                    xml = baseline if report == "pass" else "<testsuite>"
+                    path = self.report(directory, xml)
+                    fresh = device / f"logcat-{gate.LIVE_CLASS}-interactiveTurn_ping.txt"
+                    fresh.write_text("I RelayLog: event=transport_end end=peer_close code=1011\n")
+                    stale = device / f"logcat-{gate.LIVE_CLASS}-interactiveTurn_old.txt"
+                    stale.write_text("old run\n")
+                    for item, stamp in ((path, started + 1), (fresh, started + 1), (stale, started - 1)):
+                        os.utime(item, ns=(stamp, stamp))
+                    return subprocess.CompletedProcess(command, 0)
+
+                baseline = live_report(gate.LIVE_MINIMUM)
+                stdout = io.StringIO()
+                with patch.object(gate, "ROOT", root), patch.dict(os.environ, {}, clear=True), \
+                        patch("sys.argv", ["android-test-gate.py", "live"]), \
+                        patch.object(gate, "claude_authenticated", return_value=True), \
+                        patch.object(gate.time, "time_ns", return_value=started), \
+                        patch.object(gate.subprocess, "run", side_effect=run), \
+                        contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(gate.main(), 0 if report == "pass" else 1)
+                run_dir = next((root / "build/dispatcher-tests").glob("live-*"))
+                kept = sorted(path.name for path in run_dir.glob("*logcat-*"))
+                self.assertEqual(kept, [f"0-logcat-{gate.LIVE_CLASS}-interactiveTurn_ping.txt"])
+                self.assertIn("end=peer_close code=1011", (run_dir / kept[0]).read_text())
+                self.assertNotIn("RelayLog", stdout.getvalue())
+
+    def test_live_tests_is_refused_outside_live_and_when_malformed(self):
+        for argv in (["ui", "--tests", gate.LIVE_CLASS + "#a"], ["live", "--tests", "Other#a"]):
+            with self.subTest(argv=argv), patch("sys.argv", ["android-test-gate.py", *argv]), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                gate.main()
+
+    def test_emulator_script_runs_live_tests_in_place_of_the_curated_list(self):
+        script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
+        live = script[script.index('elif [ -n "${LIVE}" ]; then\n  # LIVE curates'):]
+        branch = live[: live.index("\nelse\n")]
+        self.assertTrue(branch.rstrip().endswith('if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi'))
 
     def test_live_floor_and_expected_class_are_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:

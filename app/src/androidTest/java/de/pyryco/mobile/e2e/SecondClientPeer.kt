@@ -5,8 +5,12 @@ import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.network.AttachmentChunkPayloadDto
+import de.pyryco.mobile.data.network.AttachmentChunkPlan
 import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.HistoryEntryDto
+import de.pyryco.mobile.data.network.HistoryPagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalAnswerPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
@@ -15,8 +19,13 @@ import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.NoiseSessionPump
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.QuestionAnswerEntryDto
+import de.pyryco.mobile.data.network.QuestionAnswerPayloadDto
+import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.QueueStatePayloadDto
 import de.pyryco.mobile.data.network.QueuedMessageDto
+import de.pyryco.mobile.data.network.RequestAttachmentPayloadDto
+import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.TransportEvent
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +45,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -87,18 +97,111 @@ class SecondClientPeer(
         scope.launch { pump.inbound.collect { envelope -> received.update { it + envelope } } }
     }
 
-    /** Post [text] to [conversationId] as this device, and wait for the daemon's `ack`. */
+    /**
+     * Post [text] to [conversationId] as this device, naming [attachmentIds] if any (#1016), and wait for the
+     * daemon's `ack`.
+     */
     suspend fun sendMessage(
         conversationId: String,
         text: String,
         timeoutMs: Long,
+        attachmentIds: List<String>? = null,
     ) = request(
         "send_message",
         MobileJson.encodeToJsonElement(
-            SendMessagePayloadDto(conversationId = conversationId, messageId = UUID.randomUUID().toString(), text = text),
+            SendMessagePayloadDto(
+                conversationId = conversationId,
+                messageId = UUID.randomUUID().toString(),
+                text = text,
+                attachmentIds = attachmentIds,
+            ),
         ),
         timeoutMs,
     )
+
+    /**
+     * Upload [bytes] into [conversationId] as this device (#1016), the way the desktop does: every chunk of an
+     * [AttachmentChunkPlan] under a freshly minted id, then the daemon's `attachment_stored` for that id. An
+     * `error` answering any chunk fails with its `code`. Returns the id, to name on [sendMessage].
+     */
+    internal suspend fun uploadAttachment(
+        conversationId: String,
+        filename: String,
+        mimeType: String,
+        bytes: ByteArray,
+        timeoutMs: Long,
+    ): String {
+        val attachmentId = UUID.randomUUID().toString().lowercase()
+        val plan = AttachmentChunkPlan(conversationId, attachmentId, bytes, filename, mimeType)
+        val chunkIds =
+            (0 until plan.totalChunks).mapTo(mutableSetOf()) { index ->
+                send("attachment_chunk", MobileJson.encodeToJsonElement(plan.payload(index)))
+            }
+
+        fun Envelope.answers() =
+            (type == "attachment_stored" && payloadField("attachment_id") == attachmentId) ||
+                (type == "error" && inReplyTo in chunkIds)
+        val reply = withTimeout(timeoutMs) { received.first { frames -> frames.any { it.answers() } }.first { it.answers() } }
+        check(reply.type == "attachment_stored") { "peer upload refused: ${reply.payloadField("code")}" }
+        return attachmentId
+    }
+
+    /**
+     * Fetch [attachmentId] from [conversationId] as this device (#1016): one `request_attachment`, then the
+     * `attachment_chunk` frames answering it, reassembled by `index` until `total_chunks` distinct indices
+     * have arrived. An `error` answer fails with its `code`. The bytes are the user's file: never logged.
+     */
+    internal suspend fun retrieveAttachment(
+        conversationId: String,
+        attachmentId: String,
+        timeoutMs: Long,
+    ): RetrievedAttachment {
+        val id =
+            send(
+                "request_attachment",
+                MobileJson.encodeToJsonElement(RequestAttachmentPayloadDto(conversationId = conversationId, attachmentId = attachmentId)),
+            )
+        val chunks =
+            withTimeout(timeoutMs) {
+                received
+                    .map { frames -> frames.filter { it.inReplyTo == id } }
+                    .first { answers ->
+                        answers.any { it.type != "attachment_chunk" } ||
+                            answers.firstOrNull()?.let { first ->
+                                answers.mapTo(mutableSetOf()) { it.chunk().index }.size == first.chunk().totalChunks
+                            } == true
+                    }
+            }
+        chunks.firstOrNull { it.type != "attachment_chunk" }?.let { error("peer retrieval refused: ${it.payloadField("code") ?: it.type}") }
+        val decoded = chunks.map { it.chunk() }.distinctBy { it.index }.sortedBy { it.index }
+        val bytes = decoded.fold(ByteArray(0)) { acc, chunk -> acc + Base64.getDecoder().decode(chunk.data) }
+        return RetrievedAttachment(decoded.first().filename, bytes)
+    }
+
+    /**
+     * Every entry of [conversationId]'s history as this device sees it (#1016), newest first: `request_history`
+     * pages walked from the newest, each page's cursor echoed verbatim, until one says `at_start`.
+     */
+    internal suspend fun history(
+        conversationId: String,
+        timeoutMs: Long,
+    ): List<HistoryEntryDto> {
+        val entries = mutableListOf<HistoryEntryDto>()
+        var cursor = ""
+        do {
+            val reply =
+                exchange(
+                    "request_history",
+                    MobileJson.encodeToJsonElement(RequestHistoryPayloadDto(conversationId = conversationId, cursor = cursor, limit = 0)),
+                    timeoutMs,
+                )
+            check(reply.type == "history_page") { "peer request_history refused: ${reply.payloadField("code") ?: reply.type}" }
+            val page = MobileJson.decodeFromJsonElement(HistoryPagePayloadDto.serializer(), reply.payload)
+            entries += page.entries
+            cursor = page.cursor
+        } while (!page.atStart && page.entries.isNotEmpty())
+        return entries
+    }
 
     /**
      * Drop [queuedMsgId] from [conversationId]'s backlog as this device (#849). Fire-and-forget: the daemon
@@ -147,16 +250,79 @@ class SecondClientPeer(
                 ModalAnswerPayloadDto(modalId = modalId, optionId = ALLOW_ONCE, answerToken = UUID.randomUUID().toString()),
             ),
         )
-        val dismissed =
-            withTimeout(timeoutMs) {
-                received
-                    .first { frames -> frames.any { it.isDismissalOf(modalId) } }
-                    .first { it.isDismissalOf(modalId) }
-            }
+        val dismissed = awaitDismissal("modal_dismissed", "modal_id", modalId, timeoutMs)
         check(dismissed.payloadField("outcome") == ALLOW_ONCE && dismissed.payloadField("source") == REMOTE_SOURCE) {
             "permission modal resolved otherwise: ${dismissed.payloadField("outcome")} from ${dismissed.payloadField("source")}"
         }
     }
+
+    /**
+     * The `modal_dismissed` for [modalId], whichever device resolved it (#966), waiting up to [timeoutMs].
+     * Its `outcome` and `source` are daemon-asserted sentinels, safe to compare and to name in a failure.
+     */
+    internal suspend fun awaitModalDismissed(
+        modalId: String,
+        timeoutMs: Long,
+    ): Envelope = awaitDismissal("modal_dismissed", "modal_id", modalId, timeoutMs)
+
+    /**
+     * The batch id of the [occurrence]th clarification question claude raises in [conversationId] (#966),
+     * waiting up to [timeoutMs]. The batch stays outstanding, and its turn open, until a privileged device
+     * answers or refuses it.
+     */
+    internal suspend fun awaitQuestion(
+        conversationId: String,
+        timeoutMs: Long,
+        occurrence: Int = 1,
+    ): String =
+        MobileJson
+            .decodeFromJsonElement(
+                QuestionShownPayloadDto.serializer(),
+                awaitFrame(conversationId, "question_shown", timeoutMs, occurrence).payload,
+            ).questionBatchId
+
+    /**
+     * Answer question [questionIndex] of [batchId] with [value] as this device, and wait for the daemon's
+     * `question_dismissed` for it (#966). As with `modal_answer`, the daemon replies nothing and ignores an
+     * answer from a device paired without `--allow-remote-permissions`, so that case surfaces as a bare
+     * `TimeoutCancellationException` naming no cause; a caller that watches the phone fails clearer first.
+     */
+    internal suspend fun answerQuestion(
+        batchId: String,
+        questionIndex: Int,
+        value: String,
+        timeoutMs: Long,
+    ) {
+        send(
+            "question_answer",
+            MobileJson.encodeToJsonElement(
+                QuestionAnswerPayloadDto(
+                    questionBatchId = batchId,
+                    answerToken = UUID.randomUUID().toString(),
+                    answers = listOf(QuestionAnswerEntryDto(questionIndex = questionIndex, values = listOf(value))),
+                ),
+            ),
+        )
+        val dismissed = awaitQuestionDismissed(batchId, timeoutMs)
+        check(dismissed.payloadField("outcome") == ANSWERED && dismissed.payloadField("source") == REMOTE_SOURCE) {
+            "question resolved otherwise: ${dismissed.payloadField("outcome")} from ${dismissed.payloadField("source")}"
+        }
+    }
+
+    /** The `question_dismissed` for [batchId], whichever device resolved it (#966), waiting up to [timeoutMs]. */
+    internal suspend fun awaitQuestionDismissed(
+        batchId: String,
+        timeoutMs: Long,
+    ): Envelope = awaitDismissal("question_dismissed", "question_batch_id", batchId, timeoutMs)
+
+    /**
+     * The payload field [name] of [envelope] as a string, or null (#966). Callers compare it or name a
+     * daemon-asserted sentinel from it; never claude-authored text.
+     */
+    internal fun field(
+        envelope: Envelope,
+        name: String,
+    ): String? = envelope.payloadField(name)
 
     /**
      * The backlog the **latest** recorded `queue_state` for [conversationId] reports, once it satisfies
@@ -192,6 +358,13 @@ class SecondClientPeer(
                 .filter { it.isFor(conversationId, type) }[occurrence - 1]
         }
 
+    /**
+     * The frames recorded so far that name [conversationId], in arrival order (#977). A snapshot: frames
+     * that arrive later are not in it. Callers report counts and booleans from it, never payload text.
+     */
+    internal fun recorded(conversationId: String): List<Envelope> =
+        received.value.filter { it.payloadField("conversation_id") == conversationId }
+
     /** Tear down the session (wiping its keys), the socket and the recorder. Idempotent. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -205,13 +378,24 @@ class SecondClientPeer(
         payload: JsonElement,
         timeoutMs: Long,
     ) {
-        val id = send(type, payload)
-        val reply =
-            withTimeout(timeoutMs) {
-                received.first { frames -> frames.any { it.inReplyTo == id } }.first { it.inReplyTo == id }
-            }
+        val reply = exchange(type, payload, timeoutMs)
         check(reply.type == "ack") { "peer $type refused: ${reply.payloadField("code") ?: reply.type}" }
     }
+
+    /** Send a [type] request carrying [payload], and return the first reply correlated to it, whatever its type. */
+    private suspend fun exchange(
+        type: String,
+        payload: JsonElement,
+        timeoutMs: Long,
+    ): Envelope {
+        val id = send(type, payload)
+        return withTimeout(timeoutMs) {
+            received.first { frames -> frames.any { it.inReplyTo == id } }.first { it.inReplyTo == id }
+        }
+    }
+
+    private fun Envelope.chunk(): AttachmentChunkPayloadDto =
+        MobileJson.decodeFromJsonElement(AttachmentChunkPayloadDto.serializer(), payload)
 
     /** Send a [type] frame carrying [payload] and return its envelope id. */
     private fun send(
@@ -230,7 +414,18 @@ class SecondClientPeer(
         type: String,
     ): Boolean = this.type == type && payloadField("conversation_id") == conversationId
 
-    private fun Envelope.isDismissalOf(modalId: String): Boolean = type == "modal_dismissed" && payloadField("modal_id") == modalId
+    /** The first recorded [type] frame whose [idField] is [id], waiting up to [timeoutMs]. */
+    private suspend fun awaitDismissal(
+        type: String,
+        idField: String,
+        id: String,
+        timeoutMs: Long,
+    ): Envelope {
+        fun Envelope.matches() = this.type == type && payloadField(idField) == id
+        return withTimeout(timeoutMs) {
+            received.first { frames -> frames.any { it.matches() } }.first { it.matches() }
+        }
+    }
 
     private fun Envelope.payloadField(name: String): String? = (payload as? JsonObject)?.get(name)?.jsonPrimitive?.contentOrNull
 
@@ -269,6 +464,17 @@ class SecondClientPeer(
         override suspend fun save(record: PairedServer): Unit = error("the peer's pairing is fixed")
     }
 
+    /**
+     * One file fetched with [retrieveAttachment] (#1016): the daemon's stored name for it and its bytes. Both
+     * are the user's file: [toString] prints the size only.
+     */
+    internal class RetrievedAttachment(
+        val filename: String,
+        val bytes: ByteArray,
+    ) {
+        override fun toString(): String = "RetrievedAttachment(size=${bytes.size})"
+    }
+
     private companion object {
         val CLIENT_INFO = NoiseClientInfo(deviceName = "e2e-peer", clientVersion = "e2e-peer")
         const val DH_NAME = "25519"
@@ -276,5 +482,6 @@ class SecondClientPeer(
         const val PERMISSION_CLASS = "permission"
         const val ALLOW_ONCE = "allow_once"
         const val REMOTE_SOURCE = "remote"
+        const val ANSWERED = "answered"
     }
 }

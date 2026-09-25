@@ -26,37 +26,74 @@ class CachingConversationRepository(
     private val delegate: ConversationRepository,
     private val cache: ConversationCache,
     private val serverId: String,
+    private val attachments: AttachmentStore? = null,
 ) : ConversationRepository by delegate {
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
     override suspend fun delete(conversationId: String)
+    override suspend fun retrieveAttachment(conversationId: String, attachmentId: String): AttachmentRetrievalResult
 }
 ```
 
-Kotlin class delegation (`by delegate`) means every member except `observeMessages` and `delete`
-(#798) is plain pass-through — stall, queue, API retry, compaction, thinking, usage limit, modals,
-archive, unarchive and every other one-shot keep their live-only behaviour unchanged. Nothing
-restored can reopen a permission prompt or restart an indicator, because nothing outside those two
-overrides is touched at all. Archive and unarchive deliberately stay delegation: they are not
-removals, so neither can reach a cache-clearing path (see [Conversation cache § Removal on
-unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the wording this mirrors).
+Kotlin class delegation (`by delegate`) means every member except `observeMessages`, `delete`
+(#798) and `retrieveAttachment` (#899) is plain pass-through — stall, queue, API retry, compaction,
+thinking, usage limit, modals, archive, unarchive and every other one-shot keep their live-only
+behaviour unchanged. Nothing restored can reopen a permission prompt or restart an indicator,
+because nothing outside those three overrides is touched at all. Archive and unarchive deliberately
+stay delegation: they are not removals, so neither can reach a cache-clearing path (see [Conversation
+cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the
+wording this mirrors).
+
+## Retrieving an attachment for this host (#899)
+
+```kotlin
+override suspend fun retrieveAttachment(conversationId: String, attachmentId: String): AttachmentRetrievalResult =
+    attachments?.retrieve(serverId, conversationId, attachmentId) { delegate.fetchAttachment(conversationId, attachmentId) }
+        ?: delegate.retrieveAttachment(conversationId, attachmentId)
+```
+
+This wrapper is the natural home for `retrieveAttachment` for the same reason it already holds the
+thread-row cache: it is the one place that knows both `serverId` and a live delegate to fetch through.
+[`AttachmentStore`](attachment-retrieval.md) does the actual work — single-flighting concurrent
+retrievals of the same file, checking for a kept file first, and writing verified bytes temp-then-rename
+— this wrapper only supplies the host identity and the fetch function. With no store (`attachments ==
+null`) the call is plain delegation, the same fallback every other member of this class not listed above
+already has by construction. See [Attachment retrieval](attachment-retrieval.md) for the store's layout,
+bound, single-flight and failure handling; this file only covers the wiring.
 
 ## How the restore merges with live rows
 
-`observeMessages` reuses the one dedup the codebase already has for this shape —
-[`mergeHistoryRows`](remote-conversation-repository-reads-and-thread-store-history-paging.md)
-(`HistoryPageReducer.kt`) — from the other side of its usual direction. Paging normally prepends
-an *older* page onto what is on screen; here the
+`observeMessages` merges through
+[`mergeCachedRows`](remote-conversation-repository-reads-and-thread-store-history-paging.md)
+(`HistoryPageReducer.kt`), a sibling of the history walk's `mergeHistoryRows` built for this
+wrapper's own direction: paging normally prepends an *older* page onto what is on screen; here the
 restored rows are the older set and the live projection is the receiver:
 
 ```
-drawn = live.mergeHistoryRows(restored)
+drawn = live.mergeCachedRows(restored)
 ```
 
-One join key per row kind (`message_id` for a message, covering a `tool_use_id` and a `turn_id`;
-the `(previousSessionId, newSessionId)` pair for a boundary), and a prepend rather than a re-sort,
-because a thread is in arrival order by deliberate choice. Merging into an empty live projection
-returns the restored rows verbatim — the disconnected case needs no branch of its own, it falls
-out of the same merge that handles a reconnect.
+`mergeCachedRows` shares `mergeHistoryRows`'s join (`message_id` for a message, covering a
+`tool_use_id` and a `turn_id`; the `(previousSessionId, newSessionId, occurredAt)` triple for a
+boundary) and its [attachment-reference hint fill](remote-conversation-repository-reads-and-thread-store-history-paging.md),
+so a restored row the daemon re-delivers is never drawn twice and a sent row's names come back even
+when the live side's replayed copy has none. Merging into an empty live projection returns the
+restored rows verbatim — the disconnected case needs no branch of its own, it falls out of the same
+merge that handles a reconnect. Where it differs from `mergeHistoryRows`: a row *only* the cache
+holds does not always go to the front. It goes right after the live copy of the nearest cached row
+above it that the live side also holds, and only goes in front when it has no such anchor — the
+older rows a reconnect's newest page does not reach, or a page that does not overlap the cache at
+all. Several cache-only rows sharing one anchor keep their cached relative order.
+
+**Why a plain prepend broke on a row only the cache holds (PR #987, verifier rework).** An attachment
+offer (#983) is the first kind of row the daemon never replays — the cache is its only retention —
+so after a reconnect or a cold restart it is the one row in a turn the live side's newest page does
+not re-deliver. `mergeHistoryRows`'s `fresh + kept` puts every such row **above the whole live page**,
+not back beside the message that produced it: cache `[m1, a1, attachment-offer-X, a2]` under a fresh
+page `[m1, a1, a2]` drew `[attachment-offer-X, m1, a1, a2]`, and the write-when-changed rule then
+made that reordering permanent on disk. `mergeCachedRows` exists so this wrapper's restore, and only
+this wrapper's restore, can anchor a cache-only row where it belongs; the history walk keeps
+`mergeHistoryRows` and its skip-and-prepend unchanged, since that is the deliberate answer to the
+ask-versus-answer race its own KDoc describes, not a general rule about row position.
 
 The restored snapshot (`cache.readThread(serverId, conversationId)`) is read **once per
 collection**. A later failed read therefore cannot blank rows already drawn, and the read is the
@@ -85,7 +122,7 @@ var lastWritten = base
 var lastDrawn = base
 delegate.observeMessages(conversationId).collect { live ->
     if (live.isEmpty()) base = settledThreadRows(lastDrawn)
-    val drawn = live.mergeHistoryRows(base)
+    val drawn = live.mergeCachedRows(base)
     lastDrawn = drawn
     emit(drawn)
     val cacheable = cacheableThreadRows(drawn)
@@ -117,10 +154,10 @@ base can also carry a previous connection's `ThreadItem.UnrecognizedMessage` row
 (`RemoteConversationRepository.unrecognizedRowId`) is a per-connection counter
 (`"unrecognized-<n>"`). That id's KDoc assumes no reader ever observes rows from two connection
 instances merged — an assumption the rebase breaks. After a reconnect, the new connection's first
-unrecognized frame can collide on id with a rebased row from the old connection, and
-`mergeHistoryRows` drops the older one in its usual fail-safe direction. The only effect is an
-earlier diagnostic row silently disappearing; this cannot produce a duplicate key or a crash.
-Deferred, not fixed.
+unrecognized frame can collide on id with a rebased row from the old connection, and the merge
+(`mergeCachedRows` since #983, `mergeHistoryRows` before it — both share the same `alreadyHolds` join)
+drops the older one in its usual fail-safe direction. The only effect is an earlier diagnostic row
+silently disappearing; this cannot produce a duplicate key or a crash. Deferred, not fixed.
 
 ## What is written, and when
 
@@ -195,9 +232,12 @@ result to the `decorateRepository` hook:
 
 ```kotlin
 decorateRepository(
-    if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId) else stable,
+    if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId, attachments) else stable,
 )
 ```
+
+`attachments` (#899) follows `cache` through the same conditional — a blank `serverId` gets neither, so
+retrieved files, like restored rows, are never filed under the empty id's namespace.
 
 `E2eTestApplication` replaces `decorateRepository` with `::TappingConversationRepository` for its
 instrumented harness. Because the cache sits *underneath* that hook rather than inside it, the
@@ -213,6 +253,15 @@ null` into `ThreadDestinationFactory`'s constructor — the same `useRelay` gate
 [`HostConversationSource.relay(get(), cache = get())`](dependency-injection-host-conversation-source.md#restore-from-the-on-disk-cache-796)
 already follows for the host-list restore. No new Koin binding was added for this ticket; both
 consumers resolve the single `ConversationCache` #796 bound.
+
+`ThreadDestinationFactory` gained the matching `attachments: AttachmentStore? = null` constructor
+param (#899), gated `if (useRelay) get() else null` the same way as `cache`, resolving the app's single
+`AttachmentStore` bound in `AppModule` over `File(androidContext().noBackupFilesDir, "attachments")`.
+Because that `get()` runs inside the `single { ThreadDestinationFactory(...) }` block, any Koin
+container that resolves a `ThreadDestinationFactory` under `useRelay = true` now needs an
+`AttachmentStore` binding too — see [Dependency injection §
+AttachmentStore](dependency-injection.md#attachmentstore-and-context-free-thread-destination-containers-899)
+for the four test containers that needed the same `InertConversationCache`-shaped override.
 
 Three `RelayConnectionFactoryTest` containers build a thread destination under `useRelay = true`
 with no `androidContext()`. Resolving the cache in `ThreadDestinationFactory` meant those
@@ -236,7 +285,16 @@ JVM unit tests against a fake `ConversationCache` and a `MutableStateFlow`-backe
 - **a reconnect after a disconnect merges over everything drawn so far** — covers the connection
   that follows a rebase;
 - non-thread flows are pure delegation (e.g. `observeStall` / `observeQueue` untouched by the
-  cache).
+  cache);
+- **a cold restore keeps a cache-only row in place (#983):** cache `[m1, a1, offer, a2]` under a
+  live page `[m1, a1, a2]` draws, and writes back, `[m1, a1, offer, a2]` — both the drawn thread and
+  the cache write-back are asserted, since the write-when-changed rule would otherwise persist the
+  regression it was written to catch;
+- an empty-then-page reconnect (disconnect, then a fresh page) keeps the same anchoring;
+- a cache-only row with no anchor above it (an older row a newest page does not reach) still goes in
+  front, matching the pre-#983 behaviour for that case;
+- a sent row's names, dropped by the live side's history-replayed copy, come back through the cache
+  merge's hint fill.
 
 Six further cases (#798), added on a real `FileConversationCache` (`TemporaryFolder`) so "the rest is
 readable" is proved against the real hashed-directory layout rather than a fake: a permanent delete
@@ -248,6 +306,11 @@ class delegation staying intact); a thread collected through the wrapper does no
 back after its conversation is deleted (the `deleted` set); and a cache whose `removeConversation`
 fails still lets `delete` return, logs the one static event, and leaks no server or conversation id
 into a captured log line.
+
+One further case (#899): `retrieveAttachment` goes through a fake `AttachmentStore`-shaped fetch with
+this wrapper's own `serverId` and the delegate's `fetchAttachment` as the fetch function — a wiring
+regression guard, not a proof of the store's own behaviour (that lives in
+[`AttachmentStoreTest`](attachment-retrieval.md#testing)).
 
 No Compose UI test: restored rows draw through the same composables a live row does, below the
 existing [`ConnectionBanner`](connection-banner.md) in its offline state. Live continuity across
@@ -267,9 +330,15 @@ per the dispatcher gate on PR #837's re-review.
   wrapper's rebase depends on
 - [Remote conversation repository — reads and thread store history
   paging](remote-conversation-repository-reads-and-thread-store-history-paging.md) —
-  `mergeHistoryRows`, the one dedup this restore reuses from the other side
+  `mergeHistoryRows` and `mergeCachedRows`, the join and hint fill this restore shares with the
+  history walk, and where the two merges' position rules diverge
+- [Remote conversation repository § Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event) —
+  `AttachmentOfferProjection`, the source of the cache-only offer row `mergeCachedRows` exists to keep
+  in place (#983)
 - [Dependency injection](dependency-injection.md) — `ThreadDestinationFactory.repository` wiring,
-  `decorateRepository`, and the `useRelay` cache gate
+  `decorateRepository`, and the `useRelay` cache/attachments gates
+- [Attachment retrieval](attachment-retrieval.md) (#899) — `AttachmentStore`, the host-keyed store this
+  wrapper's `retrieveAttachment` delegates to: its layout, single-flight, bound and failure handling
 - [Paired server store § Wiring & usage](paired-server-store.md#wiring--usage) and [Conversation
   cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) — the
   sibling removal path, `forgetRemovedHost`, that this wrapper's `delete` does not go through

@@ -107,8 +107,8 @@ for the gutter arithmetic):
 when {
     apiRetry != ApiRetryStatus.NotRetrying ->
         ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
-    usageLimit != null ->
-        UsageLimitIndicator(reading = usageLimit, modifier = Modifier.fillMaxWidth())
+    resetting != null ->
+        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth())
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
     turnOutcome != null ->
@@ -118,26 +118,29 @@ when {
 }
 ```
 
-**One status slot; retry wins whenever active, then the usage-limit report, then compaction.** The
+(Shown here at its current, post-[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) shape —
+`resetting` landed between api-retry and compaction in #872; the ladder also carried a `usageLimit` arm
+directly below api-retry from #804 until #1002 moved that reading into [Thread top
+overlay](thread-top-overlay.md#why-this-moved-1002) instead. See [Resetting indicator §
+Placement](resetting-indicator.md#placement-in-the-thread) for the ladder's full history.)
+
+**One status slot; retry wins whenever active, then the rest of the ladder.** The
 `api_retry` signal is conversation-level and outlives the `thinking` turn phase, so it must show
 *regardless of what `turn_state` says* — including while `turn_state` is `idle` — and no two arms may ever
 render stacked (AC #1). The precedence decision lives here, in the screen, deliberately **not** in the
 ViewModel: `isThinking` stays defined purely as the `turn_state` phase (other tests assert it directly), so
 suppressing it at its source would make the `ThreadViewModel` contract lie. api-retry keeps the top arm
-over the usage-limit arm and compaction because it is the "something is going wrong" signal while the
-other two are lower-urgency (a usage-limit report is informational, compaction is benign progress) — the
-benign affordance must never mask the alarming one (the arms have never been observed overlapping, so no
-AC is spent on the combination). See [Usage-limit indicator](usage-limit-indicator.md#placement-in-the-thread)
-([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804)) for why that arm sits between this one and
-compaction. The interrupt control — mounted directly below
+because it is the "something is going wrong" signal while the arms below it are lower-urgency (a running
+reset is a claude turn in progress, compaction is benign progress) — the benign affordance must never mask
+the alarming one (the arms have never been observed overlapping, so no AC is spent on the combination). The
+interrupt control — mounted directly below
 this slot until [#643](../codebase/643.md), now the send button's stop variant in `ThreadInputBar`
 just below the status area (see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) —
 is untouched by this arm: an in-flight turn stays interruptible while retrying or compacting.
 
-This is the counterpoint to [`StallPromotionBanner`](stall-promotion-banner.md), which lives in a
-different slot entirely (above the list, below `ConnectionBanner`) and is independent — every signal in
-this slot can legitimately co-render with it; that pairing is out of scope for this family (open
-question, PO's call if it ever reads badly in practice).
+Until [#883](../../specs/architecture/883-retire-literal-screen.md) retired it, this was also the
+counterpoint to `StallPromotionBanner`, which lived in a different slot entirely (above the list, below
+`ConnectionBanner`) and was independent — every signal in this slot could legitimately co-render with it.
 
 ## Wiring
 
@@ -203,12 +206,12 @@ both rendered branches are covered.
 
 - **Visual is design-owed.** No retry treatment is drawn in
   [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — the same design-owed gap
-  already recorded for [`ThinkingIndicator`](thinking-indicator.md) and
-  [`StallPromotionBanner`](stall-promotion-banner.md). Until it lands the visual follows the app's
+  already recorded for [`ThinkingIndicator`](thinking-indicator.md) (and, until [#883](../../specs/architecture/883-retire-literal-screen.md)
+  retired it, the stall promotion banner). Until it lands the visual follows the app's
   existing M3 progress idiom; when the frame arrives, re-tune spinner/typography here — no contract
   change.
-- **No `liveRegion` on any of the four status affordances** (this indicator, its counter-less sibling,
-  `ThinkingIndicator`, `StallPromotionBanner`) — flagged as a non-gating NIT in #594's code review, same
+- **No `liveRegion` on any of the status affordances** (this indicator, its counter-less sibling,
+  `ThinkingIndicator`) — flagged as a non-gating NIT in #594's code review, same
   class of deferred a11y enhancement as `ThinkingIndicator`'s. Folded into the design-owed follow-up
   rather than fixed per-component.
 - **No animation.** The swap between thinking / retrying / neither is an instant early-return/either-or
@@ -230,13 +233,15 @@ both rendered branches are covered.
 - Host: [Thread screen](thread-screen.md) — threads `apiRetry` as another flat sibling parameter and
   arbitrates the status slot (the composer's `ThreadStatusArea` since [#643](../codebase/643.md);
   the foot of the content `Column` before it), a five-way `when` across it,
-  [`UsageLimitIndicator`](usage-limit-indicator.md), [`CompactingIndicator`](compacting-indicator.md),
-  [`TurnOutcomeIndicator`](turn-outcome-indicator.md), and `ThinkingIndicator`.
+  [`ResettingIndicator`](resetting-indicator.md), [`CompactingIndicator`](compacting-indicator.md),
+  [`TurnOutcomeIndicator`](turn-outcome-indicator.md), and `ThinkingIndicator`. [`Usage-limit
+  indicator`](usage-limit-indicator.md) shared this slot from #804 to #1002; its reading now draws as a
+  pill in [Thread top overlay](thread-top-overlay.md) instead.
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
   light/dark previews, file-private spacing `val`s intentionally **not** shared/refactored across the
-  two components), [Stall promotion banner](stall-promotion-banner.md) (the different-slot,
-  independently-co-rendering counterpoint).
+  two components). The stall promotion banner was the different-slot, independently-co-rendering
+  counterpoint until [#883](../../specs/architecture/883-retire-literal-screen.md) retired it.
 - Sibling render slices: [Compacting indicator](compacting-indicator.md) ([#597](../codebase/597.md)) —
   joined this slot as the third arm, ordered below api-retry so the alarming signal is never masked by
   the benign one; [Usage-limit indicator](usage-limit-indicator.md)

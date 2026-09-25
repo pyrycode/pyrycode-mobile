@@ -2,13 +2,18 @@
 
 Uploads a file's bytes, name and declared MIME type to a conversation on **its owning host**, as
 `attachment_chunk` frames over the connection the call was made on (#829). Data layer only — no UI.
-[#670](https://github.com/pyrycode/pyrycode-mobile/issues/670)'s composer is the consumer;
-[#830](https://github.com/pyrycode/pyrycode-mobile/issues/830) sends a message naming the uploaded ids;
-[#671](https://github.com/pyrycode/pyrycode-mobile/issues/671) reuses the chunk payload shape for
-retrieval; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674) proves the flow live. Wire
-contract: `../pyrycode/docs/protocol-mobile.md` § Attachments (`attachment_chunk`, `attachment_stored`,
-"The `attachment_id` shape"). That section still says nothing emits `attachment_stored` — stale; the
-daemon has emitted it since pyrycode#1897. That correction belongs to the pyrycode repo, not here.
+[#932](https://github.com/pyrycode/pyrycode-mobile/issues/932) wires this call and the three-argument
+`sendMessage` into the composer draft's send path (data only — see § Consumer below);
+[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) is the picker and the strip that let a user
+actually fill that path — see [Thread screen § Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments);
+[#830](https://github.com/pyrycode/pyrycode-mobile/issues/830) sends a
+message naming the uploaded ids; [#671](https://github.com/pyrycode/pyrycode-mobile/issues/671) reuses
+the chunk payload shape for retrieval; [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016)
+(split from [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)) proves the phone's own upload
+live against a real daemon and a second client. Wire contract: `../pyrycode/docs/protocol-mobile.md` § Attachments
+(`attachment_chunk`, `attachment_stored`, "The `attachment_id` shape"). That section still says nothing
+emits `attachment_stored` — stale; the daemon has emitted it since pyrycode#1897. That correction belongs
+to the pyrycode repo, not here.
 
 ## The chunk plan — `data/network/AttachmentPayloads.kt`
 
@@ -120,6 +125,21 @@ connection, so a retry after reconnecting resends every chunk from scratch. No u
 that never answers is ended by the connection's own liveness teardown, the same choice
 `pyrycode-desktop`'s `attachmentTransfer` made (`pyrycode-desktop` `docs/knowledge/features/attachment-transfer.md`).
 
+### Composer draft — the production caller (#932)
+
+`ThreadViewModel.sendWithAttachments` is the first production caller of both `uploadAttachment` and the
+three-argument `sendMessage`. It reads `ComposerDraftStore`'s per-pair pending-attachment list, uploads
+whichever entries have no acknowledged id yet in send order, and names each id along with the pending
+entry's own `displayName`/`mimeType` as a `MessageAttachment` (#983) — see [Thread screen § Composer
+pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) for the store shape, the
+retry-keeps-earlier-ids behavior and the content-URI trust boundary
+(`ContentResolverAttachmentReader.isForeignContentUri`), and [data model §
+`Message`](data-model.md#message) for what the confirmed row does with those references.
+[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)
+landed the picker and the strip that fill this path from the UI; [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016)
+landed the live proof: a `SecondClientPeer` retrieves what the phone attached through this path and its
+digest matches the fixture.
+
 ### `StableConversationRepository` — the one one-shot that doesn't throw
 
 Every other one-shot on this facade follows [the snapshot-or-throw
@@ -172,12 +192,18 @@ assertion only ever saw a result that never settled (`null`) — a repository te
 live repository (`ReconnectRequired`, or `TooLarge` if oversized even then) and that switching
 `currentRepository` mid-upload leaves an in-flight call on the repository it started on.
 
-No emulator scenario: this is a data-layer ticket with no operator-facing flow of its own — #674 proves
-it live.
+No emulator scenario of its own: this is a data-layer ticket with no operator-facing flow of its own —
+[#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016) adds the rung-3 live scenario
+(`interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`, `docs/e2e-interactive-stream.md`),
+proving the phone's own upload reaches a real second client with matching bytes.
 
 ## Related
 
 - Ticket: `docs/specs/architecture/829-attachment-upload.md` — design, security review, revisions.
+- Sibling leg: [Attachment retrieval](attachment-retrieval.md) (#899) — the opposite correlation
+  direction (by the request's own envelope id, since every answering frame names it), the phone-side
+  512-chunk/23,040,000-byte retrieval bound, and the host-keyed `AttachmentStore` this leg has no
+  equivalent of.
 - Nearest shape: [Host diagnostic archive transfer](relay-debug-bundle-transfer.md) — the other
   connection-bound, settle-once transfer sharing the sole inbound consumer.
 - Contract: [Conversation repository](conversation-repository.md) — the default-throwing member idiom.

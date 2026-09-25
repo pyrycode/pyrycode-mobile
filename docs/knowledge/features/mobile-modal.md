@@ -11,9 +11,27 @@ row — both through the shared [`HostEditorModal`](host-editor.md) binding. Sin
 the Storage section's Log data download draws `DebugBundleModal` (#683) directly on
 this shell, its second direct caller. Since #826 [`EditChatModal`](#callers) draws this shell
 directly as its third caller — desktop's `EditChatDialogView` on the phone, a name field plus an
-outlined archive action, not yet drawn by any screen. Existing dialogs such as
-[CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
-their migration and operation-specific acceptance.
+outlined archive action, not yet drawn by any screen. Since #904
+[`AddWorkspaceModal`](#callers) draws this shell directly as its fourth caller — desktop's
+host-row Add workspace dialog on the phone, a folder list in place of a typed path, replacing
+the host row's own long-press into [`WorkspacePicker`](workspace-picker.md). Since #905
+[`EditWorkspaceModal`](#callers) draws this shell directly as its fifth caller — desktop's
+`EditWorkspaceDialogView` on the phone, a name field plus an outlined archive action, driven by
+every workspace row's own pencil in both tree sections. Since #957
+[`SaveAsChannelDialog`](save-as-channel-dialog.md) draws this shell directly as its sixth caller —
+a channel name field plus an optional system prompt field, replacing the dialog's earlier
+`AlertDialog`-with-workspace-radios shape, driven by the thread overflow's **Save as channel…** item.
+Since #958 [`CreateChannelModal`](#callers) draws this shell directly as its seventh caller — the same
+name-plus-system-prompt form reused by construction (both share `ChannelFormFields`), driven by a plus on
+every Channels-section workspace row instead of the thread overflow, and creating a new promoted channel
+rather than promoting an existing chat. Since #667 [`EditChannelModal`](#callers) draws this shell
+directly as its eighth caller — the same `ChannelFormFields` form once more, plus an outlined `Archive
+channel` action in `EditChatModal`'s shape, driven by the permanent pen every Channels row now carries
+(mirroring the Chats row pen #827 added) and editing that row's own name and already-**stored** prompt
+in place, rather than creating or promoting anything. Existing dialogs
+such as [CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
+their migration and operation-specific acceptance — `CreateFolderDialog` itself is now reused
+unchanged as a second window stacked over `AddWorkspaceModal`, described below.
 
 Since [#815](#the-hardened-gate-mobilegatemodal), the same file also exposes
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal), a hardened decision-gate entry point sharing this
@@ -21,6 +39,11 @@ shell's private structure. Its first caller is the
 [permission-modal overlay](permission-modal-overlay.md#the-overlay-open)'s `PermissionModalOverlay`; since
 [#661](question-batch-modal.md) [`QuestionBatchModal`](question-batch-modal.md) is its second, adding the
 optional submit/sending/error parameters described below.
+
+Since [#678](#the-read-only-panel-mobilereadonlymodal), the same file also exposes
+[`MobileReadOnlyModal`](#the-read-only-panel-mobilereadonlymodal), a plain read-only variant of the editing
+shell with no submit action, sharing the same private `MobileModalShell`. Its first caller is
+[`BackgroundTaskPanel`](#callers).
 
 ## Caller contract
 
@@ -111,6 +134,27 @@ does not depend on a caller-owned string resource.
 the gate, absent on the plain shell — replacing what used to be a code-review-only guarantee. See
 [Permission-modal overlay § Security](permission-modal-overlay.md#security--the-render-time-obligations-deferred-to-this-surface)
 for the gate's own security rationale.
+
+## The read-only panel: `MobileReadOnlyModal`
+
+```kotlin
+@Composable
+internal fun MobileReadOnlyModal(
+    title: String,
+    closeLabel: String,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+)
+```
+
+Added in #678 for [`BackgroundTaskPanel`](#callers), the shell's third entry point — `MobileModal` calls
+`MobileModalShell` with its own Cancel/OK footer, `MobileGateModal` with a decision-gate footer, and this
+one with a footer of a single `ModalCancelButton(label = closeLabel, onClick = dismiss)`, all three on the
+same private `MobileModalShell(gate = false, error = null)` call for the two non-gate variants. The close
+glyph, that one footer button and Back all route to `onDismissRequest`, exactly as `MobileModal`'s Cancel
+does — there is no submit action, so a caller with nothing to send never inherits an unused OK button.
+Outside taps still do not dismiss, matching every other entry point on this shell.
 
 ## Layout and theme
 
@@ -283,6 +327,137 @@ operator-*typed* name at the 128-char boundary; #851's security review flagged t
 `HostIdentityRow`'s `boundedRowText`, `ArchivedDiscussionsScreen` and `DebugBundleDownload`, as
 out of that ticket's scope and left for a follow-up.
 
+[`AddWorkspaceModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/AddWorkspaceModal.kt)
+(#904) is the shell's fourth direct caller — like `DebugBundleModal` and `EditChatModal`, it draws
+`MobileModal` itself. It is desktop's host-row Add workspace dialog on the phone: a list of that
+host's recent folders as `selectable(role = RadioButton)` rows (a `labelLarge` SemiBold "Recent"
+section label, paths in `bodyMedium` monospace, following `EditHostModal`'s field-label styling)
+plus an outlined "Create new folder under pyry-workspace…" action styled like `EditChatModal`'s
+Archive action, which opens the existing [`CreateFolderDialog`](create-folder-dialog.md) stacked
+as a second window over the shell. OK needs a selected folder and an available host; `MobileModal`
+also disables it while `loading`. It replaces the host row's long-press into the bottom-sheet
+[`WorkspacePicker`](workspace-picker.md#consumers), which stays for the thread and Settings
+pickers — see [ChannelListScreen § Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)
+and [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the host-resolved state machine
+this caller is bound to.
+
+A created folder becomes the caller's `selected` value without starting anything — creating and
+submitting are two separate transitions, so a folder made in the stacked dialog does not fire OK
+on its own. `selected` and `recent` are daemon-authored paths: rendered only as `Text`, clamped to
+`MAX_PATH_DISPLAY_CHARS` (512) without splitting a surrogate pair — the same round-trip-safe clamp
+`EditChatModal`'s field uses, load-bearing here too since the raw (unclamped) path is what
+`onSelect` reports back and what the caller eventually sends to `createDiscussion` — and the
+caller caps the recents list itself (`MAX_ADD_WORKSPACE_RECENTS = 50` in `ChannelListViewModel`)
+since this shell's content column is not lazy. A selection absent from `recent` (the just-created
+folder) draws in its own "New folder" section, so the current selection is always visible even
+before the next reopen re-fetches recents.
+
+**A caller-scoped recents list is a `combine` pairing hazard, not just a fetch.** The first draft
+paired an untagged `flatMapLatest`-derived recents flow with the open modal's target in one
+`combine`, so for one emission after retargeting to a different host the new target's state could
+still carry the previous target's daemon-authored folder list — the security review's one MUST
+FIX on this ticket. The fix tags each emission with the host it was fetched for and publishes it
+only when that tag matches the currently open target; see
+[ChannelListViewModel § the tagged recents combine](channel-list-viewmodel.md#wiring) for the
+mechanism. Worth checking for any future caller that derives a host-scoped list alongside a
+host-scoped open/close flag through the same `combine`.
+
+[`EditWorkspaceModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditWorkspaceModal.kt)
+(#905) is the shell's fifth direct caller — like `EditChatModal`, it draws `MobileModal` itself. It is
+desktop's `EditWorkspaceDialogView` on the phone: one "Workspace name (optional):" field seeded from the
+caller and an outlined "Archive workspace" action, in the same field and action styling `EditChatModal`
+established. `serverId` and `cwd` key the edit buffer and are never rendered, logged or reported — the
+same identity-keyed-buffer pattern `EditHostModal` established. OK is enabled on an available host and a
+label the daemon would accept; a blank name is allowed, since it clears the label rather than failing
+validation. The field's `supportingText` shows the trimmed name's size against the daemon's own unit,
+"UTF-8 bytes: n/128" (chosen over the plan's "n/128 bytes" because Android Lint's `PluralsCandidate` flags
+a bare number-then-word as a pluralizable string; leading with the unit avoids that without a plurals
+resource for what is really a counter). Archive workspace swaps the content for a confirmation in place —
+`EditHostModal`'s unpair shape again — naming the workspace and warning that every active chat and channel
+there moves to Archive; the shell's own footer carries the decision (OK confirms, every dismissal route
+declines), and the typed name survives a decline because the buffer is keyed on identity, not on the
+confirmation flag. [ChannelListScreen](channel-list-screen-tree-and-controls.md#workspace-row-edit-and-archive-control-905)
+(#905) is its first and only caller: every workspace row's own pencil, in both sections, opens it on that
+row's own host and exact `cwd` — see that section and
+[ChannelListViewModel](channel-list-viewmodel.md#wiring) for the label rule and the write targeting.
+
+The seed and the confirmation's name are both daemon-authored (the row's shown name) and both clamped once
+by `clampWorkspaceText` inside the modal before they reach layout or the prompt's format argument — the
+same round-trip-safe, surrogate-pair-aware clamp `workspaceDisplayName` uses. The label rule
+(`workspaceLabelFor`, `ui/workspace/WorkspaceDisplayName.kt`) treats that same clamped cut as the folder's
+own name too, so an untouched OK on an overlong folder seed clears the label instead of storing the cut as
+a new one — but only when the clamp actually cut the folder name; an uncut name is compared exactly and
+untrimmed, so a folder whose real name carries trailing whitespace is not silently treated as matching its
+own trimmed display. This asymmetry was a two-round fix during verification: the first attempt trimmed
+every folder-name comparison, which cleared labels for names it should not have matched.
+
+**A Compose semantics trap in this field's test.** `TextField`'s `supportingText` composes into the
+field's own merged `Text` semantics, so `assertTextEquals(typed)` fails against the byte-count line even
+when the typed value is correct. Use `assertTextContains(typed)` for any field in this shell that pairs a
+value with supporting text.
+
+[`SaveAsChannelDialog`](save-as-channel-dialog.md#shape)
+(`ui/conversations/components/SaveAsChannelDialog.kt`, #957) is the shell's sixth direct caller — like
+`EditChatModal`, it draws `MobileModal` itself. It replaces a channel name and system prompt
+`AlertDialog`-with-workspace-radios pair with this shell's fixed Cancel/OK footer: a "Channel name:"
+field seeded from the conversation's own name (or "New channel"), clamped to `MAX_WORKSPACE_LABEL_CHARS`
+the same way `EditChatModal`'s field is, and an optional multi-line "Channel system prompt:" field that
+always opens empty. Both fields are pulled into a standalone, reusable `ChannelFormFields` composable
+(`ui/components/ChannelFormFields.kt`) rather than kept private to this caller, since
+[`CreateChannelModal`](#callers) (#958) reuses the same form. OK promotes the conversation in place
+(`ConversationRepository.promote(id, name, workspace = null)` — no dedicated-folder choice any more,
+following desktop's pyrycode-desktop#1436) and, once that is confirmed, writes a non-blank prompt
+verbatim with `setSystemPrompt`; a blank prompt writes nothing. `nameEditable = false` locks the name
+field once the promote leg is confirmed, so a retry after a prompt-write failure never repeats the
+promote. See [Save as channel](save-as-channel-dialog.md) for the full two-write state machine, its
+`compareAndSet` terminal transitions, and why `SaveAsChannelSubmit`'s `toString` redacts the prompt.
+[ThreadOverflowMenu](thread-overflow-menu.md)'s discussion-only **Save as channel…** item is its only
+caller.
+
+[`CreateChannelModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/CreateChannelModal.kt)
+(`ui/components/CreateChannelModal.kt`, #958) is the shell's seventh direct caller — like
+`SaveAsChannelDialog`, it draws `MobileModal` itself around `ChannelFormFields`, and desktop's
+`CreateChannelDialog` is its analogue. Both fields open empty (there is no existing conversation to seed
+from), and `nameEditable = false` locks the name once the create leg is confirmed — the identical
+retry-never-repeats-the-first-write shape `SaveAsChannelDialog` uses, with `createChannel` in the first
+leg's place instead of `promote`. `serverId` and `cwd` key both buffers (`remember`, not
+`rememberSaveable` — the prompt may hold a pasted secret) and are never rendered: the title is the static
+string "Create channel," never the target path. [ChannelListScreen § Workspace row create-channel
+control](channel-list-screen-tree-and-controls.md#workspace-row-create-channel-control-958) is its only
+caller: every Channels-section workspace row's own plus opens it on that row's own host and exact `cwd`
+— see that section and [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the two-write state
+machine and why a second host sharing the same `cwd` is never addressed.
+
+[`EditChannelModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditChannelModal.kt)
+(`ui/components/EditChannelModal.kt`, #667) is the shell's eighth direct caller — like `EditChatModal`, it
+draws `MobileModal` itself around `ChannelFormFields` plus a private outlined `Archive channel` action
+copied from `EditChatModal`'s `ArchiveAction` (a verifier SHOULD FIX left for a follow-up: a shared
+`internal` action taking a `@StringRes` label would keep the two from drifting apart). It edits an
+**existing** channel's own name and already-stored system prompt in place, unlike `CreateChannelModal`
+and `SaveAsChannelDialog`, which only ever write a system prompt into a conversation with no stored one.
+The name buffer is `remember(conversationId)`, prefilled from the caller's `initialName` — the row's own
+host's snapshot name, clamped to `MAX_WORKSPACE_LABEL_CHARS` the same surrogate-safe way `EditChatModal`'s
+field is. The prompt buffer is `remember(conversationId) { mutableStateOf<String?>(null) }`: the field
+shows `typed ?: read.prompt.orEmpty()` and stays **disabled** — with a static reading line under it in
+`ChannelFormFields`'s new `promptNote` slot — until the caller's `prompt: ChannelPromptReading` reading
+arrives as `Read`, at which point it shows the stored prompt verbatim and a `Differs` status adds a
+static next-session line in the same slot. Until the field is enabled, `onSubmit` reports the prompt as
+`null` rather than an empty draft, so nothing the operator never saw can be written. OK needs an
+available host, a non-blank trimmed name and (when the prompt is showing) a draft within
+`SystemPromptLimit.MAX_BYTES`; Archive needs only the host and no write in flight, independent of either
+field, with no confirmation step — an archived channel comes back through Archive's own Restore, the
+same parity `EditChatModal`'s Archive established. [ChannelListScreen](channel-list-screen.md) is its
+only caller: the Channels row's own permanent pen — the same pen shape #827 gave Chats rows, now
+generalised behind `TreeConversationRow`'s `editDescription: @StringRes Int` parameter — opens it on
+that row's own host and conversation, reads the stored prompt once the row's host has a live
+repository, and OK writes only what changed (a rename, then the prompt, each independently) through the
+repository resolved **at the press** — see [ChannelListScreen § Channels row edit control
+(#667)](channel-list-screen-tree-and-controls.md#channels-row-edit-control-667) and
+[ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for the two target-tagged state flows
+that keep a prompt read from ever landing on a write's own `compareAndSet`, and for why this caller
+resolves the repository at the press rather than binding one at construction the way
+[`SystemPromptEditor`](system-prompt-editor.md) does.
+
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadPermissionModal.kt`, #815) is the first of
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than
 `MobileModal` before #661. It draws the [permission-modal overlay](permission-modal-overlay.md): the server
@@ -301,3 +476,71 @@ draws its own gate call inline in `ThreadScreen.kt`, this caller is drawn direct
 beside `ThreadScreen` rather than inside it — `MobileGateModal` opens its own `Dialog` window, so its place
 in the composition tree does not affect what it draws over. See
 [Question batch modal](question-batch-modal.md) for the full caller contract.
+
+[`BackgroundTaskPanel`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/BackgroundTaskPanel.kt)
+(#678, redrawn to its Figma frames by #1041) is
+[`MobileReadOnlyModal`](#the-read-only-panel-mobilereadonlymodal)'s first and so far only caller. Unlike
+`PermissionModalOverlay` and `QuestionBatchModal`, which use `MobileGateModal`, it draws inside
+`ThreadScreen` itself, behind screen-local `remember(state.conversationId)` visibility the Actions menu's
+background-tasks row flips — see [Thread composer footer § Actions
+menu](thread-composer-footer.md#actions-menu-884) for the row and its live-count label, and [Thread screen —
+overlays § Background-tasks panel placement](thread-screen-how-it-works-overlays-and-app-bar.md#background-tasks-panel-placement-post-678)
+for where it mounts. It lists the open conversation's `BackgroundTaskRoster?` (#677) read-only, with three
+readings: `null` draws a dashed ring, "No background-task report yet" and "The daemon has not reported on
+this conversation since the app connected."; an empty roster draws a solid ring, "No background tasks" and
+"Claude has nothing running in the background for this conversation."; a listed roster splits `tasks` into a
+"Running · n" group (`filterNot { it.isFinished }`) and a "Finished · n" group (`filter { it.isFinished }`),
+each in claude's order and each undrawn when empty — `droppedTasks > 0` both raises a filled
+`secondaryContainer` partial-list notice above the groups and switches both counts to "n shown".
+
+Each task is a card: the raw `taskType` in monospace beside a
+[`TaskStatusTag`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/TaskStatusTag.kt) pill
+(the Figma "Task status tag" component; Running `primaryContainer`/`onPrimaryContainer`, Completed
+`colorScheme.success` on a 16% tint of itself — the [success slot](success-color.md#usage)'s second consumer
+— Failed `errorContainer`/`onErrorContainer`, Stopped `secondaryContainer`/`onSecondaryContainer`, capped to
+160 dp and one line so a long word cannot widen the row), then the description (monospace when `taskType ==
+"local_bash"`, a shell command line), the finish summary, and, only when the task was updated mid-life, a
+"Latest update" label over a `surface` code block holding the latest patch — italic "No change reported"
+when the patch is empty, no label or block at all when `latestUpdate` is `null`. The tag resolves from
+`finish`: unfinished reads Running; `finish == null` (the reconnect case — a task marked finished with no
+terminal frame ever arriving) reads Finished in the Stopped style; the wire's three known terminal words
+(`completed`/`failed`/`stopped`, exact match) read Completed/Failed/Stopped; any other word is shown as
+itself in the Stopped style — except a blank word, or one that spells "running" in any case once trimmed,
+which falls back to Finished instead. That fallback is a security-review fix, not a style choice: an early
+draft showed an unknown terminal status raw, so a daemon-sent status of `"running"` on a *finished* task
+would have painted a Running tag — a claude-authored word passing for the app's own claim, and the one real
+trust-boundary risk this redraw introduced. No terminal status can read Running now.
+
+A partial-list notice, a "Truncated by the daemon" marker on a field the daemon's own `truncatedFields`
+names, and one this client cuts for display at the same `MAX_PANEL_TEXT_CHARS = 4096` bound, are unchanged
+in meaning from #678 — the task's own list (`description`/`task_type`) and an update's own list
+(`patch`/`summary`) still read independently and never cross — only their look changed: the cut marker is
+now a dashed `tertiary` chip and the partial notice a filled row, both still their own element straight
+after the field they describe, never text joined onto it. Every field, the tag's word included, still
+reaches only a plain `Text` through `printableText` + the 4096-char bound: no link, click, clipboard, parse,
+`key()`, test tag or log. `printableText` drops ISO control characters but keeps Unicode bidi format
+characters (e.g. U+202E), so a field can still be visually reordered to spell another word — an accepted,
+pre-existing limit since #678 and not widened by this redraw, since a tag's style is chosen by exact match
+on the raw word rather than on what renders. Closing the panel — any of the three routes above — sends
+nothing and changes no task or conversation state.
+
+A running card's progress (#1044, the Figma Populated frame) draws directly under the description and
+above the finish summary / "Latest update", gated on `!task.isFinished && task.progress != null` — the
+panel gates on `isFinished` itself rather than trusting that the #1042 projection already nulls `progress`
+on finish. The block is the activity line (the held frame's `description`, `bodyMedium`/`onSurfaceVariant`,
+through the same `TaskField` + cut-marker treatment as every other field) then a meta line
+(`bodySmall`/`outline`) joining the last tool name and three client-formatted counters with " · ", e.g.
+"Bash · 4 tools · 18k tokens · 2m 41s". `subagentType` is decoded onto the held frame but never rendered.
+
+The progress frame carries its own `truncatedFields` — a *third* independent list alongside the task's own
+and an update's own, never crossing either: the task's own list naming `description` does not mark the
+activity line, only the progress frame's own list naming `description` does, and naming `last_tool_name`
+marks the meta line instead. An empty last-tool-name drops its segment rather than leaving a stray leading
+separator. The three counters (`BackgroundTaskProgressFormat.progressCounters`) format purely from the
+frame's three `Long` readings, never a daemon string: singular exactly at 1, tokens whole under 1000 then
+half-up-rounded thousands with a "k" suffix (division/remainder, not `+500`, so it cannot overflow), elapsed
+as `Ns` under a minute, `Nm SSs` under an hour, `Nh MMm` (seconds dropped) beyond, and any negative reading
+clamps to zero since the wire's counters are not guaranteed monotonic. Sharing one `Text` for the tool name
+and the counters is an accepted limit, not an oversight: a hostile tool name could imitate a counter segment
+or bidi-reorder the line, but the same author supplies the integers being formatted, so this grants no new
+capability — the same accepted-limit shape as the tag's raw-word display above.

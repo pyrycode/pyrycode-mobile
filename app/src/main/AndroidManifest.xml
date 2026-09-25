@@ -4,9 +4,19 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- #685: attention alerts. Asked from the Settings switch and once on the channel list. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Camera is not required: the "paste the pairing code instead" fallback completes onboarding
          without it, so the app stays installable on camera-less devices. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <!-- #1068: the markdown reader's Open in another app asks which apps view a content URI as
+         text/markdown before it shows the chooser, so it can say when none can. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:mimeType="text/markdown" />
+        </intent>
+    </queries>
 
     <application
         android:name=".PyryApp"
@@ -29,6 +39,25 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- #985: serves retained message attachments, read-only and one granted URI at a time, to the
+             viewer the user picks. Never exported; its one root is the attachment store. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.attachments"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/attachment_paths" />
+        </provider>
+        <!-- #361: push wakes the saved hosts. Only the in-process Firebase SDK delivers to it. -->
+        <service
+            android:name=".push.PyryMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

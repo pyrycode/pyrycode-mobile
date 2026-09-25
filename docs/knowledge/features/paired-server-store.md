@@ -165,7 +165,7 @@ Both store interfaces resolve one observable decorator in `appModule`:
 
 ```kotlin
 single {
-    ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }))
+    ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }, lazy { get() }))
 } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
 ```
 
@@ -193,9 +193,10 @@ connection bundle. The production binding is
 [`forgetRemovedHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost),
 defined beside `ObservablePairedServerStore` in `di/ObservablePairedServerStore.kt`: it
 clears every composer draft held for the host — see
-[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership) —
-then removes the host's cached conversation content, since a `serverId` is stable
-across a re-pair and both would otherwise resurface content from before the unpair.
+[Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership) —
+then removes the host's cached conversation content and (#900) its retained attachment
+files, since a `serverId` is stable across a re-pair and both would otherwise resurface
+content from before the unpair.
 The parameter is required rather than defaulted, for the same reason `ThreadViewModel`'s
 `draftStore` is: a forgotten binding is the one failure that leaves every test green
 while production drops nothing; a caller with nothing to clean up passes `{}`
@@ -280,7 +281,7 @@ the full gesture (`openHostEditor` → `requestHostUnpair` → `confirmHostUnpai
 assert a failed removal drops no draft, a successful one drops the removed host's
 whole bucket, a same-conversation-id draft on another host survives, and no draft
 text reaches a captured log line. See
-[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership).
+[Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership).
 The sibling case for the same gesture's other half,
 `confirmingUnpairRemovesThatHostsCachedContentAndOnlyAfterTheRemovalSucceeded` (#798),
 binds `forgetRemovedHost` over a real `FileConversationCache` on a `TemporaryFolder`
@@ -291,6 +292,18 @@ one empties exactly that host's cache while a second host sharing a case-differi
 and a same-id conversation keeps its content, and no server id, conversation id or
 cached text reaches a log line. See
 [Conversation cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost).
+
+A third case, `confirmingUnpairRemovesThatHostsAttachmentFilesBeforeTheConfirmationCloses`
+(#900), binds the same production `forgetRemovedHost`, now with a real `AttachmentStore` added
+to the fixture on its own `StandardTestDispatcher` sharing the test scheduler. Before the
+store's queued removal runs, the confirmation is still open and the host's files are still
+present; after `runCurrent()`, both are gone and the other host's kept file is untouched — a
+`retrieve` for it would throw rather than fetch. `aFailedAttachmentRemovalIsLoggedWithoutAnIdAndTheUnpairStillSucceeds`
+covers the failure path: a read-only attachment root still closes the confirmation as a
+successful unpair and logs the static `event=host_attachments_remove_failed` with no id. See
+[Attachment retrieval § Lessons learned](attachment-retrieval.md#lessons-learned) for why the
+fixture needs a *second* `AttachmentStore`, on the test's own unconfined dispatcher, purely to
+seed and read back files without stalling the view model's launches.
 
 [`KeystorePairedServerStoreTest`](../../../app/src/androidTest/java/de/pyryco/mobile/data/crypto/KeystorePairedServerStoreTest.kt)
 uses real Android Keystore on a device/emulator. Its 17 tests cover byte-faithful
@@ -342,10 +355,14 @@ against the same DataStore before checking both records after reopening.
   by `ChannelListViewModel` and `SettingsViewModel`, each with its own instance and scope)
 - [Draft eviction on unpair (#790)](../../specs/architecture/790-drop-drafts-on-host-or-conversation-removal.md) —
   the `onHostRemoved` hook on `remove`; see [Wiring & usage](#wiring--usage) here and
-  [Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership)
+  [Thread screen § Composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership)
 - [Clear cached content on removal (#798)](../../specs/architecture/798-clear-cache-on-removal.md) —
   made `onHostRemoved` suspend and awaited, and gave it `forgetRemovedHost` as its production
   binding; see [Conversation cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost)
+- [Clear retained attachment files on unpair (#900)](../../specs/architecture/900-clear-attachments-on-unpair.md) —
+  added `forgetRemovedHost`'s third step, removing the host's kept attachment files; see
+  [Conversation cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost)
+  and [Attachment retrieval](attachment-retrieval.md)
 - [ADR 0006 — Keystore wrap-at-rest](../decisions/0006-keystore-wrap-at-rest-device-static-key.md)
 - [Device static keystore](device-static-keystore.md): separate key custody and
   throw-on-decrypt-failure contract

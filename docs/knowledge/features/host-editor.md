@@ -145,7 +145,7 @@ a relay address to reach the shell's live region from either caller.
 
 No new test file — the machine is proven by its two callers' own suites:
 
-- [`HostChannelListViewModelTest`](channel-list-viewmodel.md#testing) — unchanged by the move, and
+- [`HostChannelListViewModelTest`](channel-list-viewmodel-testing.md#testing) — unchanged by the move, and
   still green. That is the move's regression proof: same fixture, same assertions, same behavior
   through the delegating one-liners.
 - `SettingsViewModelTest`'s nine `hostEditor_*` cases (#751) — the second owner's coverage: opening on

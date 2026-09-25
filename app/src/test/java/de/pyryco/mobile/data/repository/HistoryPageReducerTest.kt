@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
@@ -10,6 +11,7 @@ import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -51,6 +53,165 @@ class HistoryPageReducerTest {
         assertEquals("hi", row?.content)
         assertEquals(TS_INSTANT, row?.timestamp)
         assertFalse(row?.isStreaming ?: true)
+    }
+
+    // ---- #983: a stored send's attachment_ids become references ---------------------------------
+
+    @Test
+    fun reduce_storedSendNamingAttachments_carriesOneReferencePerIdInWireOrder_withNoHints() {
+        val rows =
+            reduceHistoryPage(
+                listOf(entry(1, "send_message", sendMessagePayload("s1", "look", ids = listOf(ID_B, ID_A)))),
+                interactive = true,
+            )
+
+        assertEquals(listOf(MessageAttachment(ID_B), MessageAttachment(ID_A)), rows.messageRow("s1")?.attachments)
+    }
+
+    @Test
+    fun reduce_storedSendWithEmptyTextAndAttachments_isStillAUserRow() {
+        val rows =
+            reduceHistoryPage(listOf(entry(1, "send_message", sendMessagePayload("s1", "", ids = listOf(ID_A)))), interactive = true)
+
+        val row = rows.messageRow("s1")
+        assertEquals(Role.User, row?.role)
+        assertEquals("", row?.content)
+        assertEquals(listOf(MessageAttachment(ID_A)), row?.attachments)
+    }
+
+    @Test
+    fun reduce_storedSendWithANonConformingId_dropsOnlyThatId() {
+        val ids = listOf(ID_A, ID_A.uppercase(), "../etc/passwd", "", ID_B, ID_A)
+        val rows =
+            reduceHistoryPage(listOf(entry(1, "send_message", sendMessagePayload("s1", "hi", ids = ids))), interactive = true)
+
+        val row = rows.messageRow("s1")
+        assertEquals("hi", row?.content)
+        assertEquals(listOf(MessageAttachment(ID_A), MessageAttachment(ID_B)), row?.attachments)
+    }
+
+    @Test
+    fun reduce_storedSendNamingMoreThanTheBound_keepsTheFirstMax() {
+        val ids = (0..40).map { "00000000-0000-4000-8000-%012d".format(it) }
+        val rows =
+            reduceHistoryPage(listOf(entry(1, "send_message", sendMessagePayload("s1", "hi", ids = ids))), interactive = true)
+
+        assertEquals(ids.take(32).map { MessageAttachment(it) }, rows.messageRow("s1")?.attachments)
+    }
+
+    @Test
+    fun reduce_textOnlyStoredSend_hasNoReferences() {
+        val plain = reduceHistoryPage(listOf(entry(1, "send_message", sendMessagePayload("s1", "hi"))), interactive = true)
+        val explicitNull =
+            reduceHistoryPage(
+                listOf(
+                    entry(1, "send_message", """{"conversation_id":"$CONVERSATION","message_id":"s1","text":"hi","attachment_ids":null}"""),
+                ),
+                interactive = true,
+            )
+
+        val expected = listOf(messageItem("s1", content = "hi"))
+        assertEquals(expected, plain)
+        assertEquals(expected, explicitNull)
+    }
+
+    // ---- #1020: a stored user message's attachment_ids become references too -----------------------
+
+    @Test
+    fun reduce_storedUserMessageNamingAttachments_carriesOneReferencePerIdInWireOrder_withNoHints() {
+        val rows =
+            reduceHistoryPage(
+                listOf(entry(1, "message", messagePayload("m1", "user", "look", ids = listOf(ID_B, ID_A)))),
+                interactive = true,
+            )
+
+        val row = rows.messageRow("m1")
+        assertEquals(Role.User, row?.role)
+        assertEquals("look", row?.content)
+        assertEquals(listOf(MessageAttachment(ID_B), MessageAttachment(ID_A)), row?.attachments)
+    }
+
+    @Test
+    fun reduce_storedUserMessageIds_areFilteredDeduplicatedAndCappedAsASend() {
+        val bad = listOf(ID_A, ID_A.uppercase(), "../etc/passwd", "", ID_B, ID_A)
+        val over = (0..40).map { "00000000-0000-4000-8000-%012d".format(it) }
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "message", messagePayload("m2", "user", "many", ids = over)),
+                    entry(1, "message", messagePayload("m1", "user", "hi", ids = bad)),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf(MessageAttachment(ID_A), MessageAttachment(ID_B)), rows.messageRow("m1")?.attachments)
+        assertEquals(over.take(32).map { MessageAttachment(it) }, rows.messageRow("m2")?.attachments)
+    }
+
+    @Test
+    fun reduce_storedUserMessageWithoutIds_reducesAsBefore() {
+        val plain = reduceHistoryPage(listOf(entry(1, "message", messagePayload("m1", "user", "hi"))), interactive = true)
+        val explicitNull =
+            reduceHistoryPage(
+                listOf(
+                    entry(
+                        1,
+                        "message",
+                        """{"conversation_id":"$CONVERSATION","message_id":"m1","role":"user","text":"hi","attachment_ids":null}""",
+                    ),
+                ),
+                interactive = true,
+            )
+
+        val expected = listOf(messageItem("m1", content = "hi"))
+        assertEquals(expected, plain)
+        assertEquals(expected, explicitNull)
+    }
+
+    @Test
+    fun reduce_storedAssistantMessageNamingIds_carriesNoReferences() {
+        val rows =
+            reduceHistoryPage(
+                listOf(entry(1, "message", messagePayload("m1", "assistant", "hi", ids = listOf(ID_A)))),
+                interactive = true,
+            )
+
+        assertEquals(listOf(messageItem("m1", content = "hi", role = Role.Assistant)), rows)
+    }
+
+    @Test
+    fun merge_aHistoryTwinFillsTheMissingHintsOfTheRowKept_inPlace() {
+        val named = MessageAttachment(ID_A, "photo.jpg", "image/jpeg")
+        val live =
+            listOf(messageItem("before"), messageItem("sent-1", attachments = listOf(MessageAttachment(ID_A), MessageAttachment(ID_B))))
+        val cached = listOf(messageItem("sent-1", attachments = listOf(named)), messageItem("older"))
+
+        val merged = live.mergeHistoryRows(cached)
+
+        assertEquals(listOf("older", "before", "sent-1"), merged.messageIds())
+        assertEquals(listOf(named, MessageAttachment(ID_B)), merged.messageRow("sent-1")?.attachments)
+    }
+
+    @Test
+    fun merge_aNamelessHistoryTwinNeverReplacesAKnownName() {
+        val named = MessageAttachment(ID_A, "photo.jpg", "image/jpeg")
+        val echo = listOf(messageItem("sent-1", attachments = listOf(named)))
+        val reduced =
+            reduceHistoryPage(listOf(entry(1, "send_message", sendMessagePayload("sent-1", "x", ids = listOf(ID_A)))), interactive = true)
+
+        val merged = echo.mergeHistoryRows(reduced)
+
+        assertSame(echo, merged)
+    }
+
+    @Test
+    fun merge_aTwinWithDifferentNamesNeverOverwritesAKnownOne() {
+        val echo = listOf(messageItem("sent-1", attachments = listOf(MessageAttachment(ID_A, "mine.jpg", null))))
+        val other = listOf(messageItem("sent-1", attachments = listOf(MessageAttachment(ID_A, "theirs.jpg", "image/jpeg"))))
+
+        val merged = echo.mergeHistoryRows(other)
+
+        assertEquals(listOf(MessageAttachment(ID_A, "mine.jpg", "image/jpeg")), merged.messageRow("sent-1")?.attachments)
     }
 
     // ---- The within-page fold is the live lane's fold, not a second one ----------------------------
@@ -994,12 +1155,17 @@ class HistoryPageReducerTest {
         messageId: String,
         role: String,
         text: String,
-    ): String = """{"conversation_id":"$CONVERSATION","message_id":"$messageId","role":"$role","text":"$text"}"""
+        ids: List<String>? = null,
+    ): String = """{"conversation_id":"$CONVERSATION","message_id":"$messageId","role":"$role","text":"$text"${attachmentIdsField(ids)}}"""
+
+    private fun attachmentIdsField(ids: List<String>?): String =
+        ids?.let { list -> ""","attachment_ids":[${list.joinToString(",") { "\"$it\"" }}]""" }.orEmpty()
 
     private fun sendMessagePayload(
         messageId: String,
         text: String,
-    ): String = """{"conversation_id":"$CONVERSATION","message_id":"$messageId","text":"$text"}"""
+        ids: List<String>? = null,
+    ): String = """{"conversation_id":"$CONVERSATION","message_id":"$messageId","text":"$text"${attachmentIdsField(ids)}}"""
 
     private fun toolUsePayload(
         toolUseId: String,
@@ -1085,9 +1251,18 @@ class HistoryPageReducerTest {
         id: String,
         content: String = "x",
         role: Role = Role.User,
+        attachments: List<MessageAttachment> = emptyList(),
     ): ThreadItem.MessageItem =
         ThreadItem.MessageItem(
-            Message(id = id, sessionId = "", role = role, content = content, timestamp = TS_INSTANT, isStreaming = false),
+            Message(
+                id = id,
+                sessionId = "",
+                role = role,
+                content = content,
+                timestamp = TS_INSTANT,
+                isStreaming = false,
+                attachments = attachments,
+            ),
         )
 
     private fun List<ThreadItem>.messageIds(): List<String> = filterIsInstance<ThreadItem.MessageItem>().map { it.message.id }
@@ -1097,6 +1272,8 @@ class HistoryPageReducerTest {
 
     private companion object {
         const val CONVERSATION = "c1"
+        const val ID_A = "0f4c8a52-3d1e-4b7a-9c6d-2e5f8a1b3c4d"
+        const val ID_B = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
         const val TS = "2026-09-05T10:00:00Z"
         const val OCCURRED_AT = "2026-09-05T09:59:00Z"
         val TS_INSTANT: Instant = Instant.parse(TS)

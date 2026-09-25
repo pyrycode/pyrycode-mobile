@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -131,6 +132,33 @@ interface ConversationRepository {
     fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = flowOf(null)
 
     /**
+     * Emits the context-window reading Claude last reported for [conversationId] (#945), or **`null` while
+     * there is none**, which reads as "unavailable", never as zero. Cold flow; re-emits on every change. Each
+     * `context_usage` frame the daemon pushes after a turn replaces the reading. The conversation's session
+     * transition clears it, and a reconnect or host switch starts from nothing, so it stays absent until the next
+     * turn ends. The implementation sends no `request_context_usage` until pyrycode#2563 (#946).
+     *
+     * **Not [SessionSettings.usedTokens] / [SessionSettings.windowTokens].** Those are transcript-derived; this is
+     * Claude's own arithmetic, and neither stands in for the other.
+     *
+     * Default `flowOf(null)`, the same cascade-avoidance as [observeSessionFacts].
+     */
+    fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = flowOf(null)
+
+    /**
+     * Emits the files the daemon has offered in [conversationId] on this connection (#898), in arrival order
+     * with one entry per attachment id, or an empty list until one arrives. Cold flow; re-emits when an offer
+     * for this conversation lands. The offer is **live-only** on the wire (no replay, no list verb), so this
+     * is the set of offers the connection happened to receive, never the set of files the conversation
+     * holds, and it starts empty on every new connection. Pass [AttachmentOffer.attachmentId] back to fetch
+     * the bytes.
+     *
+     * Default `flowOf(emptyList())` — implementations without a live wire (the fake, inline test doubles)
+     * inherit "nothing offered" and need no override, the same cascade-avoidance as [observeCompacting].
+     */
+    fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> = flowOf(emptyList())
+
+    /**
      * Emits the usage-limit reading claude last reported for [conversationId], or **`null` when there
      * is none to read** (#802). `null` until the wire says otherwise; a [UsageLimitReading] once a
      * non-benign frame lands; back to `null` on the benign clearing edge or once the reading's
@@ -199,6 +227,23 @@ interface ConversationRepository {
 
     suspend fun createDiscussion(workspace: String? = null): Conversation
 
+    /**
+     * Create a named, promoted channel in [workspace] in one step (#956), rather than a discussion that is
+     * promoted afterwards. [name] and [workspace] are sent **verbatim**: trimming the name is the caller's
+     * job, and the daemon re-validates both.
+     *
+     * Returns the daemon's confirmed conversation — its values, not the request's — which then appears as a
+     * promoted row in [observeConversations]. A server `error`, a disconnected session or a malformed reply
+     * throws and inserts nothing, as with [createDiscussion].
+     *
+     * Default throws — implementations without the verb (inline test doubles) inherit it, the same
+     * cascade-avoidance as [setSystemPrompt].
+     */
+    suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = error("createChannel is not implemented for this ConversationRepository")
+
     suspend fun promote(
         conversationId: String,
         name: String,
@@ -208,6 +253,22 @@ interface ConversationRepository {
     suspend fun archive(conversationId: String)
 
     suspend fun unarchive(conversationId: String)
+
+    /**
+     * Set ([muted] `true`) or clear ([muted] `false`) [conversationId]'s mute-notifications flag (#1000),
+     * one `set_conversation_muted` per call. On success [observeConversations] shows the confirmed
+     * [Conversation.muted] value with no re-list.
+     *
+     * Throws [IllegalArgumentException] for an unknown conversation, like [archive], and
+     * [de.pyryco.mobile.data.network.RelayErrorException] for any other refusal; neither changes the list.
+     *
+     * Default throws — implementations without the verb (inline test doubles) inherit it, the same
+     * cascade-avoidance as [createChannel].
+     */
+    suspend fun setMuted(
+        conversationId: String,
+        muted: Boolean,
+    ): Unit = error("setMuted is not implemented for this ConversationRepository")
 
     /**
      * Permanently removes the conversation from the store. Tolerant of unknown
@@ -288,17 +349,20 @@ interface ConversationRepository {
     /**
      * [sendMessage] naming the uploaded attachments the message references (#830), each id once in the
      * caller's order, over the same connection and to the same conversation as the message. An empty
-     * [attachmentIds] sends exactly what the two-argument form sends. More than
+     * [attachments] sends exactly what the two-argument form sends. More than
      * [de.pyryco.mobile.data.network.MessageAttachmentIds.MAX] distinct ids throws
      * [IllegalArgumentException] before anything is sent. A daemon refusal such as `attachment.not_found`
      * fails as the two-argument send fails, and an `ack` adds the message to the thread as it does.
+     *
+     * Only each [MessageAttachment.attachmentId] goes on the wire. The name and MIME hints go only on the
+     * thread row the `ack` adds (#983), one reference per distinct id in caller order.
      *
      * Default throws, like [setSessionSettings], so the inline test doubles need no override.
      */
     suspend fun sendMessage(
         conversationId: String,
         text: String,
-        attachmentIds: List<String>,
+        attachments: List<MessageAttachment>,
     ): Message = error("sendMessage with attachments is not implemented for this ConversationRepository")
 
     /**
@@ -494,6 +558,45 @@ interface ConversationRepository {
         filename: String,
         mimeType: String,
     ): AttachmentUploadResult = error("uploadAttachment is not implemented for this ConversationRepository")
+
+    /**
+     * Fetch [attachmentId] of [conversationId] over this repository's connection (#899): one
+     * `request_attachment`, and the verified bytes in memory, or one [AttachmentRetrievalResult.Failed].
+     * Connection-level and host-blind; screens call [retrieveAttachment], which keeps the file for its host.
+     * Never throws except on cancellation.
+     *
+     * Default throws, like [requestSystemPrompt].
+     */
+    suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult = error("fetchAttachment is not implemented for this ConversationRepository")
+
+    /**
+     * Read [path] live from [conversationId]'s workspace over this repository's connection (#1049): one
+     * `read_workspace_file` per call, and the verified bytes in memory, or one [AttachmentRetrievalResult.Failed]
+     * with the same meanings as [fetchAttachment]'s. Nothing is cached or kept: two calls send two requests.
+     * [path] is sent as given; the daemon confines it. Never throws except on cancellation.
+     *
+     * Default throws, like [requestSystemPrompt].
+     */
+    suspend fun readWorkspaceFile(
+        conversationId: String,
+        path: String,
+    ): AttachmentFetchResult = error("readWorkspaceFile is not implemented for this ConversationRepository")
+
+    /**
+     * The file [attachmentId] of [conversationId], kept in app-private storage for this repository's host
+     * (#899). A file kept earlier is returned without sending anything; otherwise it is fetched once, however
+     * many callers ask at the same time. The id may come from an offer or from an upload: the request is the
+     * same. Never throws except on cancellation.
+     *
+     * Default throws, like [requestSystemPrompt]: only the host-bound [CachingConversationRepository] keeps files.
+     */
+    suspend fun retrieveAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentRetrievalResult = error("retrieveAttachment is not implemented for this ConversationRepository")
 
     /**
      * Store [systemPrompt] as [conversationId]'s system prompt (#823), one `set_system_prompt` per call,
@@ -1219,6 +1322,49 @@ data class SessionFacts(
     val permissionMode: String,
     val truncatedFields: List<String>?,
 )
+
+/**
+ * How full a conversation's context window is, as Claude last reported it (#945, pyrycode#2370/#2431/#2461) — the
+ * element type of [ConversationRepository.observeContextUsage]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § `context_usage`.
+ *
+ * [percentage] is **Claude's own number**, held verbatim and never derived from [totalTokens] / [maxTokens]; the
+ * three need not agree. It is never negative (the decoder drops a frame that says otherwise). [asOf] is non-null
+ * only on a **remembered** answer, the daemon's record of when Claude last reported it for a dormant
+ * conversation; the figure is still the last one Claude gave, so it is held like any other.
+ *
+ * The frame's inventories and its `model` are deliberately not carried: every string on it is claude-authored,
+ * and this type holds numbers only.
+ *
+ * `data` is load-bearing: structural equality is what the repository's `distinctUntilChanged` relies on.
+ */
+data class ContextUsage(
+    val totalTokens: Long,
+    val maxTokens: Long,
+    val percentage: Int,
+    val asOf: Instant?,
+)
+
+/**
+ * A file the daemon offered in a conversation (#898, pyrycode#2082/#2166) — the element type of
+ * [ConversationRepository.observeAttachmentOffers]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § Attachments → `attachment_offered`.
+ *
+ * [attachmentId] is a validated lowercase UUIDv4, the id to pass back when fetching the file. It is not a
+ * capability: the daemon re-validates it on every fetch. [displayName] is the announced file name with every
+ * ISO control character, Unicode format character (bidi overrides included), line and paragraph separator
+ * and unpaired surrogate removed, cut to 255 UTF-8 bytes. It may be empty.
+ *
+ * **SECURITY.** [displayName] is claude-authored text even after cleaning. Render it as **inert text only**:
+ * never as a path or any part of one, never as a cache key or a log line, and never choose a viewer or
+ * handler from its extension, which is not evidence of what the bytes are. [toString] leaves it out.
+ */
+data class AttachmentOffer(
+    val attachmentId: String,
+    val displayName: String,
+) {
+    override fun toString(): String = "AttachmentOffer(attachmentId=$attachmentId)"
+}
 
 /**
  * The usage-limit reading claude last reported for one conversation (#802, pyrycode#1405/#1410) — the

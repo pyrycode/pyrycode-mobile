@@ -44,12 +44,18 @@ never a link, a path to open, markup, or a log line.
 fun ToolCallRow(
     toolCall: ToolCall,
     modifier: Modifier = Modifier,
+    subagentDepth: Int = 0,
 )
 ```
 
 Unchanged across the #895 restyle: single `ToolCall` parameter (not the wrapping `Message`), `modifier`
 defaulted, no `onClick` or `expanded` parameter — tap-to-toggle is internal via `rememberSaveable`. The
 public surface stays minimal so #895 could restyle the whole render tree without touching call sites.
+
+**`subagentDepth` (since #896)**, defaulted to `0` so every pre-#896 call site is unaffected — see
+[Subagent step description](#subagent-step-description-since-896) below. `ToolCallRow` does not read its
+own indent from this value; the caller ([`MessageBubble`](./message-bubble.md)) applies the indent to the
+`modifier` it passes in, and `subagentDepth` only drives the row's own accessible description.
 
 ## How it works
 
@@ -98,11 +104,33 @@ group is `weight(1f)`**: because a `Row` measures unweighted children first, the
 always get their width and the group only gets what is left — this is what makes the subject
 ellipsize instead of pushing the status off-row when it is long.
 
+### Subagent step description (since #896)
+
+When `subagentDepth > 0`, the clickable `Column` above gains a `Modifier.semantics { contentDescription =
+… }` chained **before** `.clickable(...)`, holding the localized `cd_tool_subagent_step` string ("Subagent
+step, level %1$d") formatted with the depth. At `subagentDepth == 0` no `semantics` modifier is added — the
+row's accessibility tree is byte-for-byte what it was before #896.
+
+**The description sits on the `clickable` `Column`, not the outer `Surface`.** Putting it on the `Surface`
+instead becomes a *separate* TalkBack stop from the row's own click target — a user would hear "Subagent
+step, level 1" and then, as a second swipe, the row's actual expand/collapse announcement. The `Column` is
+already the row's merge-descendants semantics node (`clickable` creates one), so a `contentDescription` set
+there merges into that same node and TalkBack reads it together with the existing `onClickLabel` / `Role.Button`
+announcement — one stop, not two. This is why the modifier chain adds `semantics` immediately ahead of
+`clickable` rather than wrapping the whole `Surface`.
+
+The indent that makes nesting visible sighted is applied by the caller
+([`MessageBubble`](./message-bubble.md#subagent-nesting-indent-since-896)) to this composable's `modifier`
+parameter — `ToolCallRow` itself draws no indent and holds no layout state for nesting. The description is
+therefore the *only* signal a screen-reader user gets for depth; a sighted user gets the indent, a TalkBack
+user gets the level number, and neither depends on colour (the AC's requirement).
+
 ### Subject and elapsed text
 
 Both rules live in `ToolRowFormat.kt`, mirrored from desktop's `toolHeadline.ts` / `shortenPath.ts` /
-`ConversationScreen.tsx`'s `formatToolElapsed`, and are pure functions with no Compose import so a
-future ticket's composer status area can call `formatToolElapsed` directly:
+`ConversationScreen.tsx`'s `formatToolElapsed`, and are pure functions with no Compose import so the
+composer's status area ([`ThinkingIndicator`](thinking-indicator.md#the-running-tool-897), #897) can call
+`formatToolElapsed` directly:
 
 ```kotlin
 internal fun toolRowSubject(toolName: String, inputFields: Map<String, String>, input: String): String
@@ -275,6 +303,12 @@ rendering doesn't ripple into the data-layer fake.
   its own text node, unchanged by the restyle) and the kept `cd_tool_running` / `cd_tool_failed`
   descriptions. The elapsed reading depends on claude's transient heartbeats, which a durable scenario
   cannot pin, so only the unit and component tests cover its render.
+- **`subagentDepth` (#896) is not covered by `ToolCallRowTest`.** It is exercised end to end through the
+  real `ThreadScreen` fold instead: `ToolRowNestingTest` (`app/src/sharedTest/.../thread/`) asserts that a
+  matched child and a grandchild each carry their own "Subagent step, level N" description and that a
+  top-level or unmatched-parent row carries none. See [Thread screen § Subagent tool-row
+  nesting](./thread-screen-how-it-works-list-and-status-row.md#subagent-tool-row-nesting-896) and the
+  derivation's own unit coverage, `ToolNestingDepthsTest`.
 
 ## Edge cases / limitations
 
@@ -291,10 +325,10 @@ rendering doesn't ripple into the data-layer fake.
 - **No language inference from path extension** for the Input/Output code blocks — `language` is
   always `null`. Open since before #895; a future ticket could add a path-extension → language helper
   for `Read`/`Edit` fields specifically.
-- **Subagent nesting and the composer's open-tool status indicator are separate tickets**, not built
-  here — #895's scope is this row's own render. The composer indicator is the reason
+- **The composer's open-tool status indicator is a separate, not-yet-built ticket** — it's the reason
   `formatToolElapsed` lives in its own Compose-free file rather than as a private function in
-  `ToolCallRow.kt`.
+  `ToolCallRow.kt`. (Subagent nesting, listed here as open before #895, shipped in #896 — see [Subagent
+  step description](#subagent-step-description-since-896) above.)
 - **Bidi-override characters in a subject are unguarded** (security review, SHOULD NOT FIX, no
   observed failure) — a bidi-override in a subject field could visually reorder that one text node,
   but name, subject and trailing status are separate nodes so it cannot reorder the status glyph or
@@ -307,7 +341,8 @@ rendering doesn't ripple into the data-layer fake.
   glyphs), [`../codebase/387.md`](../codebase/387.md) (live status/correlation data layer)
 - Specs: `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`,
   `docs/specs/architecture/388-tool-call-row-status-affordance.md`,
-  `docs/specs/architecture/895-tool-row-restyle.md`
+  `docs/specs/architecture/895-tool-row-restyle.md`,
+  `docs/specs/architecture/896-nest-subagent-tool-rows.md`
 - Upstream:
   - [Data model](./data-model.md) — `ToolCall(toolName, input, inputFields, output, status,
     denial, elapsedSeconds, parentToolUseId)` and the `Message.toolCall` non-null-iff-`Role.Tool`
@@ -322,9 +357,13 @@ rendering doesn't ripple into the data-layer fake.
     stays at its `false` default here (whether tool content becomes copyable is still open, #658's call)
   - [development-verification](./development-verification.md) — component-test placement
     (`sharedTest` vs. `androidTest`) and the managed-device gate this row's tests run under
-- Downstream / still open:
-  - Subagent nesting under a parent tool row (split from #658, not #895)
-  - Naming the open tool in the composer's status area, reusing `formatToolElapsed` from
-    `ToolRowFormat.kt` (split from #658, not #895)
+- Downstream:
+  - **#896** — subagent tool-row nesting (split from #658): added `subagentDepth` and the "Subagent step,
+    level N" description here; the caller ([`MessageBubble`](./message-bubble.md)) owns the indent. See
+    [Subagent step description](#subagent-step-description-since-896) above.
+  - **#897** — naming the open tool in the composer's status area (split from #658): calls
+    `formatToolElapsed` directly from [`ThinkingIndicator`](thinking-indicator.md#the-running-tool-897);
+    nothing in this file changed for it.
+- Still open:
   - Language inference from path extension for `Read`/`Edit` code blocks
   - `AnimatedVisibility` around the expanded body

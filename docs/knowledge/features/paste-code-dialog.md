@@ -109,10 +109,15 @@ compatibility selection nor another host's healthy connection is consulted.
 Success requires both `RelayLinkStatus.Connected` and
 `PyrycodeLinkStatus.Connected` for that record. A bare relay socket is insufficient.
 The connection wait has a 30-second deadline; a reported `DaemonAbsent`,
-`PairingRejected` (#841) or `Offline` ends it earlier. A just-saved pairing the
-host refuses (a `4401`/`4426` close on its very first dial) therefore fails
-immediately with the same "Pairing saved. Host unavailable." feedback below,
-instead of waiting out the full 30 s — no new copy for this case.
+`PairingRejected` (#841), `UpdateRequired` (#1008) or `Offline` ends it earlier. A
+just-saved pairing the host refuses (a `4401`/`4426` close on its very first dial)
+therefore fails immediately with the same "Pairing saved. Host unavailable."
+feedback below, instead of waiting out the full 30 s — no new copy for this case.
+A just-saved pairing to a host that rejects this app build (a `4412` close) fails
+just as immediately, but with its own copy: "Pairing saved. This app is too old
+for this host. Update the app, then retry." — a retry cannot help until the app is
+updated, so the generic "Host unavailable" copy would mislead. The host's minimum
+version is not shown here (a follow-up ticket).
 
 When a matching bundle is already unavailable, `pairingStatus` subscribes to its
 coordinator before requesting `retryHost(serverId, expectedBundle)` and suppresses
@@ -132,6 +137,7 @@ feedback. The distinction between the writes matters:
 | Credential save | Existing collection unchanged; retry after storage recovers. |
 | Name write after credential save | Pairing retained, prior name unchanged; feedback says the pairing was saved but the name was not. |
 | Target unavailable or deadline | Pairing and any successful name write retained; feedback says `Pairing saved. Host unavailable. Retry or cancel.` |
+| Target too old for this app build (#1008) | Pairing and any successful name write retained; feedback says `Pairing saved. This app is too old for this host. Update the app, then retry.` |
 
 Retry returns through validation and the fingerprint gate. With the unchanged
 code, it upserts the same id without another entry. Cancel after partial success
@@ -165,7 +171,10 @@ duplicate confirmation, the persistence edit/Back lock, storage/name failures,
 retained retry, blank-name preservation, deadline and cancellation, and (#841) a
 `PairingRejected` status after save ending the wait immediately with the existing
 "Pairing saved. Host unavailable." feedback rather than after the 30 s deadline.
-Its case-sensitive peer fixture keeps `b` intact when pairing `B` with the same name.
+(#1008) adds the `UpdateRequired` sibling, `updateRequiredEndsTheConnectionWaitImmediately`: a terminal
+`UpdateRequired("1.4.0")` status after save ends the wait immediately too, with the distinct "Update the
+app" feedback, and asserts the daemon-authored minimum is **not** echoed into the copy — the same
+"immediately, not after the deadline" shape as #841's guard. Its case-sensitive peer fixture keeps `b` intact when pairing `B` with the same name.
 (#842) target mode adds: a wrong-host code (including a case variant) refused before
 confirmation with zero saves; replacing only the target host's record while a peer host
 is left equal and its stored name is kept (`setDisplayName` never called); cancel and a
@@ -216,6 +225,9 @@ remains intact. That real-daemon/live-relay scenario belongs to
   [Relay reconnect supervisor](relay-reconnect-supervisor.md) § Halt on a rejected pairing — the source
   of the `PairingRejected` status this screen's terminal predicate now checks (#841, spec:
   `docs/specs/architecture/841-rejected-pairing-relay-state.md`).
+- [Relay link status](relay-link-status.md) § `UpdateRequired` — the source of the `UpdateRequired`
+  status this screen's terminal predicate also checks, and its own distinct failure copy (#1008, spec:
+  `docs/specs/architecture/1008-update-required-halt.md`).
 - [Channel list tree and controls](channel-list-screen-tree-and-controls.md#host-row-reconnect-control-840)
   § the plug control's `PairingRejected` branch, the caller into target mode (#842, spec:
   `docs/specs/architecture/842-repair-rejected-host-from-tree-row.md`).

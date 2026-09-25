@@ -252,6 +252,54 @@ private suspend fun sendArchiveToggle(conversationId: String, type: String) {
   fresh list snapshot until a verb reply re-folds it locally. Not part of this slice; see
   [`../codebase/549.md`](../codebase/549.md) § Lessons learned.
 
+## `setMuted(conversationId, muted)` — the mute-flag write ([#1000](https://github.com/pyrycode/pyrycode-mobile/issues/1000))
+
+Sets or clears a conversation's mute flag over v2 `set_conversation_muted` (server pyrycode#2572). The
+body lives on `ConversationCommands` (`data/repository/ConversationCommands.kt`, beside `sendArchiveToggle`);
+the repository's `override suspend fun setMuted` is a one-line hand-off.
+
+```kotlin
+// ConversationCommands
+suspend fun setMuted(conversationId: String, muted: Boolean) {
+    val request = Envelope(
+        id = requests.nextRequestId(), type = TYPE_SET_CONVERSATION_MUTED, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(SetConversationMutedPayloadDto(conversationId = conversationId, muted = muted)),
+    )
+    val reply = requests.sendAndAwaitReply(request)
+    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+    conversationList.upsertConversation(conversation)
+}
+```
+
+- **`sendArchiveToggle`'s shape with a payload that carries a value, not just an id.** Same encode → await
+  correlated `conversation_updated` → #318 `ConversationResponseDto` decode → confirmed-upsert order; a
+  failure (`error`, not-Open session, or a malformed reply) throws before the fold runs, so
+  `ConversationListProjection` keeps its previous value (AC #3).
+- **`SetConversationMutedPayloadDto.muted` is a non-nullable `Boolean` with no Kotlin default**, so `false`
+  is always on the wire — the daemon refuses a frame with `muted` absent or explicit `null` as
+  `protocol.malformed` rather than reading a missing key as `false`. Contrast
+  `setSystemPromptPayload` above, which needs a hand-built `buildJsonObject` to force an explicit `null`
+  through `MobileJson`'s `explicitNulls = false`; `setMuted` needs no such workaround because neither of
+  its two fields is ever meant to be absent.
+- **The daemon pushes the same `conversation_updated` record a second time, uncorrelated, to the
+  requester** (its ordinary broadcast-on-change behaviour, not special-cased for this verb). That push
+  lands through the existing uncorrelated `conversation_updated` fold, not through this method; because
+  both frames upsert the same conversation by id, the two folds leave one row holding the new value,
+  never a duplicate or a stale second entry.
+- **No return value** — like `archive`/`unarchive`, the `ConversationRepository` contract's `setMuted` is
+  `Unit`; the decoded conversation is folded but discarded.
+- **Errors:** `conversation.not_found` → `IllegalArgumentException`, any other server code →
+  `RelayErrorException`, both via the existing `RelayRequests.mapError` — the same mapping `archive`/
+  `rename`/`setSystemPrompt` use. The fake throws the same `IllegalArgumentException` for an unknown id, so
+  a caller (#1001) can treat both repositories' refusals identically.
+- **Testing gotcha carried into `RemoteConversationRepositoryMuteTest` (its own small sibling pump, the
+  `RemoteConversationRepositorySystemPromptTest` pattern):** `RemoteConversationRepository` sends its own
+  `list_conversations` the first time `observeConversations` is collected. A test that collects the list
+  and then asserts `pump.sent.single()` fails with "more than one element" — that first frame is still in
+  `pump.sent`. Filter by `Envelope.type` instead of asserting on the whole list, and when a case needs "no
+  re-list happened," count matching frames before and after rather than asserting emptiness of the whole
+  sent log.
+
 ## `delete(conversationId)` — the eighth mutation, first REMOVE-shaped one ([#532](../codebase/532.md))
 
 Permanently deletes an existing conversation over v2 `delete_conversation` (server pyrycode#822, PR #884),
@@ -380,8 +428,10 @@ suspend fun changeWorkspace(conversationId: String, workspace: String): Session 
 Reads and writes the system prompt a conversation stores over v2 `request_system_prompt` /
 `set_system_prompt` (server pyrycode#2152). Both name a **conversation**, never a session — the read
 works while nothing is running, and the write takes effect at the conversation's next session start;
-neither call restarts or resets a running one. No UI ships in this ticket; #824's shared editing state
-and, through it, the create-channel (#666) and edit-channel (#667) modals are the consumers. Both bodies
+neither call restarts or resets a running one. No UI ships in this ticket; [`SaveAsChannelDialog`](save-as-channel-dialog.md) (#957),
+[`CreateChannelModal`](mobile-modal.md#callers) (#958) and [`EditChannelModal`](mobile-modal.md#callers) (#667) are the consumers —
+each calls `SystemPromptLimit`/`setSystemPrompt` directly rather than through #824's shared editing state,
+which stays unclaimed (see [System prompt editor](system-prompt-editor.md)). Both bodies
 now live on `SessionSettingsCommands` (#916, `data/repository/SessionSettingsCommands.kt`, beside
 `setSessionSettings` above); the repository's `override suspend fun requestSystemPrompt` /
 `setSystemPrompt` are one-line hand-offs.
@@ -465,7 +515,7 @@ suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
   [ConversationRepository — Phase 1 fake implementation](conversation-repository-fake-implementation.md)
   for the two-step, non-atomic write this needed once the conversation records and the stored prompts
   turned out to live in two separate `StateFlow`s.
-- **No UI, no e2e.** Data-layer only; #824 (shared editing state) and, through it, #666/#667 (create/edit
-  channel) are the consumers that will render this text — as plain text only, per the plan's security
-  review, since it is operator-authored content that must not be trusted as markup or interpreted as
-  instructions.
+- **No UI, no e2e (at #823).** Data-layer only then; #957, #958 and #667 render this text now — as plain
+  text only, per the plan's security review, since it is operator-authored content that must not be
+  trusted as markup or interpreted as instructions. None of the three route through #824's shared editing
+  state.

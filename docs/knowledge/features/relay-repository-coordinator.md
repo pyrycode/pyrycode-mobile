@@ -12,8 +12,9 @@ reference across connection churn and compatibility selection changes.
 
 The coordinator derives [two-part connection status](relay-repository-coordinator-seams-and-passthroughs.md#two-part-connection-status-392),
 switches [live-session events](relay-repository-coordinator-seams-and-passthroughs.md#live-session-event-seam-406) across reconnects, and
-owns [FCM push-token re-registration](#connect-time-fcm-push-token-re-registration-365)
-once per connection. Explicit [diagnostic archive requests](relay-debug-bundle-transfer.md)
+owns [FCM push-token re-registration](#connect-time-fcm-push-token-re-registration-365),
+kept current for the life of an open connection since [#361](../codebase/361.md) added token
+rotation. Explicit [diagnostic archive requests](relay-debug-bundle-transfer.md)
 also enter through this owner so admission and teardown share a connection lifetime. It also
 switches the active connection's [held clarification-question batches](relay-repository-coordinator-seams-and-passthroughs.md#question-batch-projection-822)
 — unlike `currentModal`, that state resets on every reconnect instead of surviving it. It holds the
@@ -66,7 +67,7 @@ class RelayRepositoryCoordinator(
     createPump: (RelayTransport) -> ManagedSessionPump,      // prod: { NoiseSessionPump(it, sessionFactory) }
     dispatcher: CoroutineDispatcher = Dispatchers.Default,   // injection seam (test clock); stored as a val
     deviceName: String = "",                                 // (#365) supplied through the bundle's NoiseClientInfo
-    pushToken: suspend () -> String? = { null },             // (#365) one-shot token read; null ⇒ no registration
+    pushTokens: Flow<String?> = flowOf(null),                // (#365, rotation #361) observed for the connection's life; null ⇒ no registration
 ) {
     val currentRepository: StateFlow<ConversationRepository?>  // live repo, or null between connections
     val connectionStatus: StateFlow<ConnectionStatus>         // (#392) combined {relay, pyrycode} two-part status
@@ -212,8 +213,9 @@ cancellation between starting a pump and retaining its reference.
 containing one supervisor, Noise session factory and coordinator. Its immutable
 record supplies every dial, handshake and device-key reload for that host.
 Construction starts coordinator collectors; `supervisor.connect()` starts dialing.
-The factory supplies `NoiseClientInfo.deviceName`, the one-shot `pushToken.first()`
-read, worker dispatchers and a separate key-store IO dispatcher. It owns no scope.
+The factory supplies `NoiseClientInfo.deviceName`, the `pushTokens` flow (`AppModule` wires
+`AppPreferences.pushToken` directly, so a stored rotation reaches every open bundle without a
+reconnect), worker dispatchers and a separate key-store IO dispatcher. It owns no scope.
 
 `AppModule.kt` eagerly owns `RelayConnectionRegistry` and calls `dispose()` on
 Koin close. The [observable pairing store](paired-server-store.md#wiring--usage)
@@ -288,6 +290,19 @@ contract, its 32 MiB accumulation bound and its terminal-state guarantees.
   backoff (1/2/4/8/16/30 s); a failing relay cannot drive a tight pump-rebuild loop.
 - **Availability can change after lookup.** `liveRepository()` does not keep the
   connection alive for a later operation.
+- **A one-time snapshot of `currentRepository` goes stale on a routine redial.** The live
+  e2e `InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork`
+  took `coordinator.currentRepository.first { it != null }` once after a reconnect and read
+  from that repository for 30 s. On the live relay the reconnect's fresh connection routinely
+  drops and is redialled by `RelayConnectionSupervisor` within about a second (#1039, open —
+  why it drops is unconfirmed); the snapshotted repository was already torn down, and the
+  slash-command read never completed. Every production screen instead follows the
+  `StateFlow` itself through `StableConversationRepository`, so the same drop shows there only
+  as a one-second reconnect. Fixed by #1029 with `firstOnLive` / `callOnLive`
+  (`app/src/sharedTest/java/de/pyryco/mobile/e2e/LiveConnectionReads.kt`), generic helpers that
+  read through whichever repository is *current* rather than a point-in-time snapshot; a
+  consumer of `currentRepository` across an `await`/timeout should use one of them instead of
+  `.value` or a one-shot `first { it != null }`.
 
 ## Testing
 
@@ -334,6 +349,13 @@ registers once with the live `device_name` (AC #1, exact-payload assertion), a n
 (AC #2), a reconnect re-registers once per connection (AC #3), a server `error` neither crashes nor wedges
 the connection (AC #4), and a pre-`Open` `Closed` registers nothing (boundary). The `ack`/`error`
 correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
+
+[#361](../codebase/361.md) moved all five from a `pushToken = { … }` one-shot lambda to
+`pushTokens = flowOf(…)` and added a rotation test: three coordinators share one
+`MutableStateFlow<String?>` token; two reach `Open`, one stays offline. Rotating the shared flow sends
+exactly one register call with the new token on each open pump and nothing for the offline one;
+connecting the offline one afterwards registers the then-current token once, through the ordinary
+\#365 on-`Open` path.
 
 [#822](https://github.com/pyrycode/pyrycode-mobile/issues/822) added four question-batch cases to the same file: a batch held with no
 subscriber (the eager-fold precedent `currentModal` set in #492); `observeQuestionBatch` returning only
@@ -403,11 +425,13 @@ The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status
   line (**#390**, `blockedBy #392`).
 - Specs: `docs/specs/architecture/351-connection-scoped-repository-coordinator.md` ·
-  `docs/specs/architecture/365-reregister-push-token-on-reconnect.md`.
+  `docs/specs/architecture/365-reregister-push-token-on-reconnect.md` ·
+  `docs/specs/architecture/361-fcm-push-wake.md`.
 - Push stack: [`RemoteConversationRepository.registerPushToken`](remote-conversation-repository.md)
   ([#359](../codebase/359.md), the reused sender) · [`AppPreferences.pushToken`](app-preferences.md)
-  ([#364](../codebase/364.md), the persisted token this hook reads) · Firebase #361 (the token origin via
-  `onNewToken`).
+  ([#364](../codebase/364.md), the persisted token this hook reads) ·
+  [Push messaging service](push-messaging-service.md) ([#361](../codebase/361.md), the token origin via
+  `onNewToken` and the rotation this hook now collects live).
 - Input: [Relay reconnect supervisor](relay-reconnect-supervisor.md) ([#307](../codebase/307.md)) —
   publishes `currentConnection`.
 - Built per connection: [Noise session pump](noise-session-pump.md) ([#309](../codebase/309.md), now

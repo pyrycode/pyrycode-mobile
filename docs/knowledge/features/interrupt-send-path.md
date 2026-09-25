@@ -94,8 +94,12 @@ callback and checks the send job's completion cause, proving propagation.
 
 The [affordance regression](interrupt-affordance.md#testing) checks idle absence,
 thinking/responding visibility, the recorded target and continued visibility after
-tapping until `turn_end`. These deterministic assertions and the existing curated
-live suite do not prove the cross-device outcome. [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
+tapping until `turn_end`. [#965](https://github.com/pyrycode/pyrycode-mobile/issues/965) added the
+curated live proof for the **single-device** case: a real turn held open by a command that never
+returns is stopped with the composer's Stop control, the status area shows the Interrupted outcome
+(`stop_reason == "cancelled"`), and a follow-up in the same conversation gets a real reply. Neither that
+nor these deterministic assertions prove the **cross-device** outcome.
+[#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
 owns the pending rung-3 scenario in `InteractiveStreamE2ETest`: with real turns in A
 and B and another device most recently using A, phone Stop while viewing B must end
 B while A keeps running. See the [e2e coverage follow-ups](../../e2e-interactive-stream.md#follow-ups-to-ticket).

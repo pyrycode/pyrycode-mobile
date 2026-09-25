@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.grantNotificationPermission
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -32,7 +33,7 @@ import org.koin.core.context.GlobalContext
  * `fakeclaude` backend (pyrycode #642) — **no real claude, zero claude turns** — and asserts a
  * scripted reply renders in the thread.
  *
- * Seven scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
+ * Eight scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
  * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
  *  - `ping` (default, #431) — a single-line reply renders.
  *  - `stream` (#454) — a multi-`assistant_delta` reply assembles into one message.
@@ -41,6 +42,8 @@ import org.koin.core.context.GlobalContext
  *  - `tool` (#455) — a tool step renders running mid-turn, then done after the result (two-fixture
  *    drop, same causal fence as the spinner; see the method KDoc).
  *  - `tool-failed` (#455) — a failing tool step renders failed (single terminal drop).
+ *  - `tool-progress` (#950) — the status area's running-tool label shows claude's elapsed reading after a
+ *    `tool_progress` heartbeat, then clears when the call's `tool_result` lands (see the method KDoc).
  *  - `reconnect` (#476) — an in-flight reply survives a mid-turn relay-link drop: the turn is held
  *    open (two-fixture drop, spinner-style), the phone's link is severed and restored across the gap,
  *    and the reply renders exactly once after reconnect (see the method KDoc).
@@ -75,6 +78,10 @@ import org.koin.core.context.GlobalContext
  */
 @RunWith(AndroidJUnit4::class)
 class DeterministicInteractiveStreamE2ETest {
+    init {
+        grantNotificationPermission()
+    }
+
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
@@ -103,6 +110,21 @@ class DeterministicInteractiveStreamE2ETest {
             .getInstrumentation()
             .targetContext
             .getString(R.string.cd_tool_failed)
+
+    // The status area's running-tool label (#897), the only producer of these descriptions. Keep in sync with
+    // res/values/strings.xml: cd_thread_tool_running = "Claude is running %1$s",
+    // cd_thread_tool_running_elapsed = "Claude is running %1$s, %2$s elapsed". The fixtures' heartbeat reads 30.
+    private val runningToolLabel: String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_thread_tool_running, TOOL_NAME)
+
+    private val runningToolElapsedLabel: String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_thread_tool_running_elapsed, TOOL_NAME, HEARTBEAT_ELAPSED)
 
     @Test
     fun interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread() {
@@ -188,6 +210,10 @@ class DeterministicInteractiveStreamE2ETest {
      * the running CD that was present is now absent, the failed CD never appears, and the tool row is
      * still on screen (the verbatim tool name) — a triad that uniquely identifies a running → done
      * resolution. Tolerant (presence → absence + verbatim name, generous timeout); never on timing.
+     *
+     * The same held-open window proves the status area's running-tool label without an elapsed reading
+     * (#950): drop A carries no heartbeat, so the label names the tool and nothing else, and it is gone once
+     * drop B closes the call. The `tool-progress` scenario covers the elapsed reading.
      */
     @Test
     fun interactiveTurn_seededChannel_toolStepRunsThenCompletes() {
@@ -199,6 +225,12 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasContentDescription(toolRunningDescription)).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onAllNodes(hasContentDescription(toolRunningDescription)).onFirst().assertIsDisplayed()
+        // #950: the status area names the open tool, with no elapsed reading since no heartbeat arrived. It
+        // shows once the turn reads busy, which need not be the frame the row appeared in.
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertIsDisplayed()
 
         // Message #2 → drop B → tool_result(done) + turn end. The row resolves Running → Done in place.
         // The 2nd prompt is inert for the reply (the scripted backend ignores it); it only causally
@@ -210,6 +242,42 @@ class DeterministicInteractiveStreamE2ETest {
         // Resolved to done, not failed (no failed glyph), and the row is still present (tool name shown).
         composeTestRule.onNode(hasContentDescription(toolFailedDescription)).assertDoesNotExist()
         composeTestRule.onAllNodesWithText(TOOL_NAME, substring = true).onFirst().assertIsDisplayed()
+        composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertDoesNotExist()
+    }
+
+    /**
+     * `tool-progress` scenario (#950) — the status area's running-tool label must show claude's elapsed
+     * reading once a `tool_progress` heartbeat arrived, and be gone once the call's `tool_result` lands.
+     * Drop A (`tool-progress-open.jsonl`) is the `tool` scenario's lone `tool_use` followed by one heartbeat
+     * in claude's captured shape (`heartbeat: true`, `parent_tool_use_id` = the open call's id,
+     * `elapsed_time_seconds: 30`); a heartbeat missing either key is dropped by the daemon without a trace.
+     * It is held open until the **2nd** send releases drop B (`tool-progress-result.jsonl`).
+     *
+     * Drop B is the correlated `tool_result` **alone**, with no turn end: the turn stays busy, so the label
+     * can only clear because the call closed. A label that cleared only at turn end would keep this test
+     * red, where reusing `tool-done.jsonl` would let it pass. The `tool` scenario proves the label without a
+     * reading. Tolerant (presence → absence, generous timeout); never on timing.
+     */
+    @Test
+    fun interactiveTurn_seededChannel_runningToolLabelShowsElapsedThenClears() {
+        arriveInSeededThread()
+
+        // Message #1 → drop A → tool_use + heartbeat, held open. The label reads the tool and its 30 s.
+        typeAndSend(SEND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(runningToolElapsedLabel)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(runningToolElapsedLabel)).assertIsDisplayed()
+
+        // Message #2 → drop B → the tool_result alone. The call closes while the turn is still busy, so the
+        // label leaves the status area and the tool row stops reading running.
+        typeAndSend(SECOND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(runningToolElapsedLabel)).fetchSemanticsNodes().isEmpty() &&
+                composeTestRule.onAllNodes(hasContentDescription(toolRunningDescription)).fetchSemanticsNodes().isEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertDoesNotExist()
+        composeTestRule.onNode(hasContentDescription(toolFailedDescription)).assertDoesNotExist()
     }
 
     /**
@@ -476,6 +544,9 @@ class DeterministicInteractiveStreamE2ETest {
         // the row resolved in place rather than vanishing. Does not collide with the seeded channel name
         // "e2e-seed" rendered in the top bar.
         const val TOOL_NAME = "Bash"
+
+        // The `tool-progress` heartbeat's `elapsed_time_seconds: 30`, as the label formats it (#950).
+        const val HEARTBEAT_ELAPSED = "30s"
 
         // The reconnect scenario's drop-B reply text ("reconnected reply ok" in reconnect-done.jsonl); this
         // substring is asserted to render exactly once after the mid-turn drop. A unique, self-documenting

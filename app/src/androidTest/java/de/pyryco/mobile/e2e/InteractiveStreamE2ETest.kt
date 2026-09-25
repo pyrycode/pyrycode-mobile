@@ -1,12 +1,32 @@
 package de.pyryco.mobile.e2e
 
 import android.Manifest
+import android.app.Activity
+import android.app.Instrumentation
+import android.app.Notification
+import android.app.NotificationManager
+import android.content.ClipData
+import android.content.ContentResolver
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.provider.MediaStore
+import android.service.notification.StatusBarNotification
+import android.util.Log
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -15,13 +35,17 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.isOn
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
@@ -31,43 +55,95 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
+import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
+import de.pyryco.mobile.data.network.AttachmentOfferedPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.HistoryEntryDto
+import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModalShownPayloadDto
+import de.pyryco.mobile.data.network.ToolResultPayloadDto
+import de.pyryco.mobile.data.network.ToolUsePayloadDto
+import de.pyryco.mobile.data.network.TurnEndPayloadDto
+import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.ModelMenu
+import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
+import de.pyryco.mobile.grantNotificationPermission
+import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
+import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
+import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
+import de.pyryco.mobile.ui.conversations.thread.CONTEXT_USAGE_TEST_TAG
+import de.pyryco.mobile.ui.conversations.thread.ComposerAction
+import de.pyryco.mobile.ui.conversations.thread.EFFORT_PLACEHOLDER_LABEL
+import de.pyryco.mobile.ui.conversations.thread.INHERITED_RUN_CONFIG_LABEL
+import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_WINDOW_MS
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
+import de.pyryco.mobile.ui.conversations.thread.PermissionModeOption
 import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
+import de.pyryco.mobile.ui.conversations.thread.completeSlashCommand
+import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
+import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
+import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
+import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
+import androidx.compose.ui.semantics.Role as SemanticsRole
 
 /**
  * Happy-path end-to-end test for the mobile interactive event stream (#642 rung 3, ADR 025): the
@@ -96,6 +172,10 @@ import org.koin.core.context.GlobalContext
  */
 @RunWith(AndroidJUnit4::class)
 class InteractiveStreamE2ETest {
+    init {
+        grantNotificationPermission()
+    }
+
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
@@ -123,6 +203,21 @@ class InteractiveStreamE2ETest {
             .targetContext
             .getString(R.string.cd_thread_thinking)
 
+    // #950: the status area's running-tool label, from resources. The no-reading form is matched exactly; the
+    // elapsed form by its text around the reading, since claude's heartbeat decides the seconds.
+    //   cd_thread_tool_running = "Claude is running %1$s",
+    //   cd_thread_tool_running_elapsed = "Claude is running %1$s, %2$s elapsed".
+    private val runningToolLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_tool_running, TOOL_NAME)
+    private val runningToolElapsedLabel: Regex =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_thread_tool_running_elapsed, TOOL_NAME, ELAPSED_SLOT)
+            .split(ELAPSED_SLOT)
+            .joinToString(".+") { Regex.escape(it) }
+            .toRegex()
+
     // The queued row's state description and its drop control (#849), production strings from resources:
     //   thread_queued_state_desc = "Waiting to send", cd_thread_queued_drop = "Drop this queued message".
     private val queuedStateDescription: String =
@@ -135,6 +230,29 @@ class InteractiveStreamE2ETest {
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_status_expand)
     private val runningModelUnavailable: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.status_sheet_running_model_unavailable)
+
+    // #545: the footer's model and effort controls, found by their click labels, and the state description a
+    // control carries while its write is outstanding, all from resources.
+    private val changeModelLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_model)
+    private val changeEffortLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_effort)
+    private val footerPending: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_pending)
+
+    // #687: the footer's permission control, found by its click label, and the permission prompt's Cancel.
+    private val changePermissionLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_permission)
+    private val modalCancel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.modal_cancel)
+
+    // #1016: the composer's attach action and the save notices, from resources.
+    private val attachFilesLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_attach_files)
+    private val savedNotice: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_saved)
+    private val saveFailedNotice: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_save_failed)
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
@@ -190,6 +308,31 @@ class InteractiveStreamE2ETest {
                 .joinToString("") { it.text }
         assertTrue("running-model row is empty", shown.isNotBlank())
         assertNotEquals(runningModelUnavailable, shown)
+    }
+
+    /**
+     * #946: after one real turn, the composer footer's `Cxt:` segment shows the percentage Claude reported
+     * (`context_usage`, published after every completed turn and answered on the screen's own ask). Asserts
+     * only the `Cxt: N%` shape — the figure depends on the operator's claude and is never hard-coded.
+     */
+    @Test
+    fun interactiveTurn_pingPrompt_footerShowsContextUsage() {
+        awaitChannelList()
+        awaitConnected()
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+        val reported = Regex("Cxt: \\d+%")
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
+                reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
+            }
+        }
     }
 
     /**
@@ -357,11 +500,89 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * The status area names the tool claude is running (#950, rung 3; #897's label). The rung-4 twins are
+     * the `tool` and `tool-progress` scenarios. A quick command's call closes before the phone can be sure
+     * to see it open, so the call is held open the #849 way instead: [RUNNING_TOOL_PROMPT]'s `python3`
+     * command is never auto-allowed, claude's `tool_use` arrives, and the call waits on a permission prompt
+     * that only the [SecondClientPeer] paired with `--allow-remote-permissions` can answer. While it waits
+     * the label reads `Running Bash…` with no elapsed reading; once the peer allows the command and the turn
+     * ends, the label is gone. No step depends on timing.
+     *
+     * **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool() {
+        val peer = runningToolPeer()
+        try {
+            val (conversationId, modalId) = holdToolOnPermission(peer, RUNNING_TOOL_PROMPT)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertIsDisplayed()
+
+            runBlocking {
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isEmpty()
+            }
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * The label adds claude's elapsed reading once a `tool_progress` heartbeat arrives (#950, rung 3). The
+     * call is held on a permission prompt as in [interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool];
+     * once the peer allows it, [ELAPSED_TOOL_PROMPT]'s command sleeps 45 s in the foreground, and the label
+     * should read `Running Bash… 30s` from claude's first heartbeat until the call returns. The rung-4
+     * `tool-progress` scenario proves the same label from a scripted heartbeat on every scripted run.
+     *
+     * **`@Ignore`d: it cannot be made durable here.** The first heartbeat is claude's, not ours: it arrived
+     * at 30 s on the one committed capture (claude 2.1.259), and nothing in the harness can make it come
+     * sooner or promise it comes at all. That leaves about 15 s to observe, and only if claude runs the
+     * command in the foreground as asked rather than backgrounding it; a bare `sleep` of 25 s or more is
+     * refused outright, which is why the command sleeps inside `python3`. A longer sleep would widen the
+     * window but spend more of every run. The operator un-ignores it to check the label against the
+     * current claude.
+     *
+     * **One real-claude turn**, of at least 45 s.
+     */
+    @Ignore("manual — claude's first tool_progress heartbeat comes at ~30 s and cannot be held; see KDoc")
+    @Test
+    fun interactiveTurn_longRunningTool_statusAreaShowsElapsed() {
+        val peer = runningToolPeer()
+        val elapsedLabel =
+            SemanticsMatcher("running-tool label with an elapsed reading") { node ->
+                node.config
+                    .getOrNull(SemanticsProperties.ContentDescription)
+                    .orEmpty()
+                    .any { runningToolElapsedLabel.matches(it) }
+            }
+        try {
+            val (conversationId, modalId) = holdToolOnPermission(peer, ELAPSED_TOOL_PROMPT)
+            runBlocking { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(elapsedLabel).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(elapsedLabel).assertIsDisplayed()
+
+            runBlocking { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(elapsedLabel).fetchSemanticsNodes().isEmpty()
+            }
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
      * Create-workspace-folder twin of the ping happy path (#566, Layer 3): drive the real
      * create-a-workspace-folder flow end to end against real claude, exercising the already-shipped
-     * #564 create wire and #565 recents wire. Long-press the channel-list FAB → Workspace Picker →
-     * "Create new folder…" → type a folder name → land in a fresh discussion whose workspace **is**
-     * the created folder → send the constrained ping to prove it is a usable live-session workspace →
+     * #564 create wire and #565 recents wire. Long-press the host row's add control → Add workspace
+     * (#904) → "Create new folder…" → type a folder name → the folder is selected → OK → land in a fresh
+     * discussion whose workspace **is** the created folder → send the constrained ping to prove it is a usable live-session workspace →
      * re-open the picker and confirm the folder shows in "Recent".
      *
      * **Reachability (the material difference from #537).** The create affordance is **ungated** — it
@@ -409,6 +630,14 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onNode(hasSetTextAction()).performTextInput(folderName)
         composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
+
+        // 3b. Add workspace (#904): the created folder becomes the modal's selection and starts nothing.
+        //     OK enables once the folder is selected and the host reads connected; OK starts the chat.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasText(OK_BUTTON) and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(folderName, substring = true).onFirst().assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(OK_BUTTON) and isEnabled()).onFirst().performClick()
 
         // 4. AC-1: creating the folder navigates into a fresh discussion whose cwd is the created folder.
         //    The send button marks the thread; the workspace chip reflects the folder's basename verbatim
@@ -470,7 +699,12 @@ class InteractiveStreamE2ETest {
      * turn moves on — the delimiter is a **durable** artifact that survives the turn, so it belongs in the
      * always-on gate, matching #481's durable tool-name row.
      *
-     * Real-claude cost: the ping turn plus the daemon's reset wrap-up turn when handoff notes are enabled.
+     * **The wrapping-up phase (#965).** Before the delimiter, the status area names the wrapping-up phase, and
+     * it clears once the reset is over. The daemon holds that phase for its whole wrap-up turn, which it runs
+     * for any live child whether or not handoff notes are stored. The restarting phase is not asserted: it
+     * lasts only the respawn, with nothing holding it open, so `ScriptedResettingTest` alone proves it.
+     *
+     * Real-claude cost: the ping turn plus the daemon's reset wrap-up turn.
      */
     @Test
     fun interactiveTurn_newSession_rendersSessionBoundaryDelimiter() {
@@ -508,7 +742,31 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
 
-        // 7. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
+        // 7. #965: the status area names the wrapping-up phase before any delimiter. The daemon lowers it only
+        //    once its wrap-up turn — a real claude turn writing the handoff note — has ended, so the phase is
+        //    held by that turn, not caught on timing. Restarting spans only the respawn and nothing holds it,
+        //    so it is left to ScriptedResettingTest.
+        val wrappingUp = string(R.string.thread_resetting_wrapping_up)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(wrappingUp)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
+            .assertCountEquals(0)
+
+        // 8. The phase clears: no resetting label of either phase is left in the status area.
+        val resettingLabels =
+            listOf(
+                R.string.thread_resetting_wrapping_up,
+                R.string.thread_resetting_restarting,
+                R.string.thread_resetting_restarting_written,
+                R.string.thread_resetting_restarting_skipped,
+            ).map(::string)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            resettingLabels.all { label -> composeTestRule.onAllNodes(hasContentDescription(label)).fetchSemanticsNodes().isEmpty() }
+        }
+
+        // 9. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
         //    before session_transition appends the delimiter. The explanation must still be displayed.
         composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
     }
@@ -1093,8 +1351,8 @@ class InteractiveStreamE2ETest {
      * derives thread state from `observeConversations(ConversationFilter.All)`, so a single confirmed upsert of
      * the promote reply drives all three assertions: (1) the **thread top bar**
      * ([de.pyryco.mobile.ui.conversations.thread.ThreadScreen] `title = state.displayName`), reached
-     * **immediately after submit** — unlike delete/archive there is **no PopBack** (`SaveAsChannelSubmit`
-     * dismisses the dialog and the thread stays open), so the top bar re-labels in place; (2) the
+     * **as soon as the modal closes** — unlike delete/archive there is **no PopBack** (the modal closes once its
+     * writes are confirmed and the thread stays open), so the top bar re-labels in place; (2) the
      * **[de.pyryco.mobile.ui.conversations.components.WorkspaceChip] unmount** — the `isPromoted` tier flip,
      * in-thread and free, because the chip is gated `!isPromoted && !hasMessages` and this scenario **sends no
      * message**, so `hasMessages` stays false and the chip's disappearance is attributable **solely** to the
@@ -1114,35 +1372,30 @@ class InteractiveStreamE2ETest {
      * presence/absence matchers — and its positive half is stronger than the old absence-in-a-drilldown,
      * because it names the tier the row is actually in. This is the #551 tier-membership idiom, reused.
      *
-     * **The dialog-over-thread field disambiguation (identical to #537 — reused verbatim).**
-     * [de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog] opens **over** the thread, whose
-     * composer is also an editable field, so `hasSetTextAction()` alone is ambiguous — two nodes. The dialog
-     * auto-focuses its field (`focusRequester.requestFocus()`) and the composer never requests focus, so
-     * `hasSetTextAction() and isFocused()` selects the dialog's field (`and` is a `SemanticsMatcher` member —
-     * no import). The field is **pre-filled and fully selected** (`TextRange(0, initialName.length)`) → use
-     * `performTextReplacement`, not `performTextInput` (which could leave the pre-fill concatenated). Note the
-     * pre-fill is the **constant** `"New channel"`, not `state.displayName` (the one divergence from
-     * `RenameDialog`).
+     * **The modal-over-thread field disambiguation (#537's idiom, reused).**
+     * [de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog] (#957, the `MobileModal` shell) opens
+     * **over** the thread, whose composer is also an editable field, and the modal holds a second one (the system
+     * prompt), so `hasSetTextAction()` alone is ambiguous. The form focuses its name field on open and nothing
+     * else requests focus, so `hasSetTextAction() and isFocused()` selects the name field. It is **pre-filled
+     * and fully selected** with the chat's own name → `performTextReplacement`. The prompt field is reached by
+     * its [CHANNEL_PROMPT_FIELD_TAG].
      *
-     * **The workspace radio must be moved off its default (no #537 analogue).** The dialog opens on
-     * `WorkspaceChoice.DEDICATED`, which `ThreadViewModel.resolveWorkspace` maps to
-     * `"pyry-workspace/channels/<slug>"` — submitting untouched would create a **real directory** on the
-     * operator's machine on every gate run. `SCRATCH` maps to `null` (the conversation keeps its scratch
-     * `cwd`), so step 5 **taps "Keep in scratch"** before Save: the dedicated-folder branch is already covered
-     * by #566, and this scenario stays about the promote round-trip. The radio row is a merged
-     * `Modifier.selectable(role = RadioButton)`, so the text tap resolves to it (the `RadioButton` itself is
-     * `onClick = null` by design).
+     * **In place, with a prompt (#957).** There is no location choice any more: the chat is promoted in its own
+     * `cwd` (`promote(..., workspace = null)`), so the scenario creates no folder on the operator's machine. It
+     * types a short system prompt, so the modal's second write — `set_system_prompt`, sent only after the
+     * promote is confirmed — rides the same run. The prompt applies at the next session start and this scenario
+     * starts none, so it costs no claude turn.
      *
      * **One literal collision matched exactly, not by substring.** `save_as_channel_action` is
      * `"Save as channel…"` (U+2026) while `save_as_channel_dialog_title` is `"Save as channel"` (no ellipsis),
-     * so a substring search conflates them — [SAVE_AS_CHANNEL_ITEM] is matched **exactly**. The second
-     * collision this scenario used to dodge went with the drilldown: step 8 no longer navigates, so it needs no
-     * arrival marker, and nothing can pass before the screen it asserts on is the screen already on display.
+     * so a substring search conflates them — [SAVE_AS_CHANNEL_ITEM] and [SAVE_AS_CHANNEL_TITLE] are both matched
+     * **exactly**. The second collision this scenario used to dodge went with the drilldown: step 8 no longer
+     * navigates, so it needs no arrival marker.
      *
-     * **No top-bar false match.** `SaveAsChannelSubmit` clears `pendingSaveAsChannelDialog` **synchronously
-     * before** the suspend, so the dialog (whose field held the unique name) leaves composition the instant
-     * Save is tapped, while the top bar still shows the old auto-name until the round-trip lands. The two never
-     * hold the unique name simultaneously, so step 6's first match is the top bar.
+     * **No top-bar false match.** The modal now stays open, holding the unique name in its field, until both
+     * writes are confirmed — a failure would keep it open with an error. So step 6 first waits for the modal's
+     * exact title to leave, which is the proof both writes landed, and only then reads the unique name, which
+     * can by then be only the top bar's.
      *
      * **Always-on, not `@Ignore`d.** All three post-conditions are **durable** structural facts (the recorded
      * name and the recorded `isPromoted` flag) — no transient like #482's spinner — so the scenario belongs in
@@ -1169,8 +1422,8 @@ class InteractiveStreamE2ETest {
         }
 
         // 4. Absence guard + tier before-state (both deterministic — no claude turn). The runtime-unique
-        //    channel name is not on screen yet (the top bar shows the server auto-name and the dialog's
-        //    pre-fill is the constant "New channel"), so its later appearance is attributable to the promote
+        //    channel name is not on screen yet (the top bar shows the server auto-name, which the modal
+        //    pre-fills), so its later appearance is attributable to the promote
         //    round-trip. And the WorkspaceChip IS mounted — the discussion tier — the before-state of step 6's
         //    tier-flip inversion (it stays mounted because no message is sent: !isPromoted && !hasMessages).
         val uniqueName = PROMOTE_NAME_PREFIX + System.currentTimeMillis()
@@ -1180,15 +1433,12 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onAllNodesWithText(WORKSPACE_CHIP_PREFIX, substring = true).onFirst().assertIsDisplayed()
 
-        // 5. Promote to the unique name, KEEPING THE CONVERSATION IN SCRATCH. Open the overflow, tap "Save as
-        //    channel…" (matched EXACTLY — the dialog title is the same literal minus the U+2026 ellipsis, so a
-        //    substring search would conflate them). The dialog opens OVER the thread, whose composer is also an
-        //    editable field, so hasSetTextAction() alone is ambiguous — target the dialog's field by its focus
-        //    (SaveAsChannelDialog auto-focuses on open; the composer never requested focus), waiting for focus
-        //    to land, and REPLACE the pre-filled+selected "New channel" (performTextReplacement, not
-        //    performTextInput). Then tap "Keep in scratch" — MANDATORY: the dialog defaults to DEDICATED, which
-        //    would create a real folder under the operator's ~/pyry-workspace on every gate run (that branch is
-        //    already covered by #566). Finally Save.
+        // 5. Promote to the unique name, with a system prompt. Open the overflow, tap "Save as channel…"
+        //    (matched EXACTLY — the modal title is the same literal minus the U+2026 ellipsis). The modal opens
+        //    OVER the thread, whose composer is also an editable field, and holds a second field of its own, so
+        //    target the name field by its focus (the form focuses it on open), waiting for focus to land, and
+        //    REPLACE the pre-filled+selected chat name. Type the prompt into its tagged field, then OK. There is
+        //    no location choice: the chat is promoted in its own cwd, so no folder is created.
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(SAVE_AS_CHANNEL_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1198,17 +1448,18 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
-        composeTestRule.onNodeWithText(KEEP_IN_SCRATCH_OPTION).performClick()
-        composeTestRule.onNodeWithText(SAVE_AS_CHANNEL_SAVE).performClick()
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput(SAVE_AS_CHANNEL_PROMPT)
+        composeTestRule.onNodeWithText(SAVE_AS_CHANNEL_OK).performClick()
 
-        // 6. In-thread assertions (surfaces #1 + #2). The first wait spans the promote round-trip (reply → a
-        //    confirmed upsert → observeConversations(All) re-emits → state.displayName): there is NO PopBack, so
-        //    the thread stays open and the top bar re-labels in place. The dialog has already left composition
-        //    (SaveAsChannelSubmit clears it synchronously before the suspend), so the match is the top bar. The
-        //    second wait is the tier flip — the WorkspaceChip unmounts once state.isPromoted is true, the
-        //    in-thread read of the very flag the list's tier split is computed from. Two independent waits (not
-        //    one assertion after one wait): name and flag land in the same upsert, but waiting on each keeps a
-        //    failure attributable.
+        // 6. In-thread assertions (surfaces #1 + #2). The first wait spans both writes: the modal closes only
+        //    once the promote reply and then the set_system_prompt reply are confirmed (a failure keeps it open
+        //    with an error, so this wait is the proof both landed). Only then is the unique name read — the
+        //    modal's field held it until now, so after the close the match is the top bar, re-labelled in place
+        //    (there is NO PopBack). The next wait is the tier flip — the WorkspaceChip unmounts once
+        //    state.isPromoted is true. Independent waits keep a failure attributable.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(SAVE_AS_CHANNEL_TITLE).fetchSemanticsNodes().isEmpty()
+        }
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1526,6 +1777,88 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * The composer's Stop control stops a real running turn, and the conversation carries on (#965, rung 3).
+     * The phone's own turn runs [STOP_HOLD_PROMPT]: a command that waits on an event nothing sets, so it
+     * never returns on its own and the turn stays open until it is stopped, with no timing involved. The
+     * command first raises a permission prompt, which the phone draws as a dialog over the composer; the
+     * [SecondClientPeer], paired with `--allow-remote-permissions`, allows it once so the dialog is gone and
+     * the Stop control is reachable the way an operator would reach it.
+     *
+     * After the tap the turn ends as cancelled (the peer's `turn_end`), the status area shows the Interrupted
+     * outcome, and a ping sent in the same thread gets claude's real reply. The held turn's reply token is
+     * never drawn, because the stopped turn never finished.
+     *
+     * **Two real-claude turns**: the stopped turn and the ping.
+     */
+    @Test
+    fun interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
+        try {
+            // 1. A fresh chat on the selected host, its id read off the host's repository as #849 does.
+            awaitChannelList()
+            awaitConnected()
+            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId =
+                runBlocking {
+                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+                }.single()
+
+            // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
+            //    the permission dialog leaves the composer.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            sendFromPhone(STOP_HOLD_PROMPT)
+            runBlocking {
+                val modalId = peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS)
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+            }
+
+            // 3. Tap the composer's Stop control once no dialog covers it.
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(modalCancel)).fetchSemanticsNodes().isEmpty() &&
+                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(stopControl).performClick()
+
+            // 4. AC-1: the turn ends as cancelled, the Stop control goes, and the status area says Interrupted.
+            val turnEnd = runBlocking { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
+            assertEquals(
+                "stopped turn's stop_reason",
+                "cancelled",
+                (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
+            )
+            val interrupted = hasContentDescription(string(R.string.thread_turn_outcome_interrupted), substring = true)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(interrupted).fetchSemanticsNodes().isNotEmpty() &&
+                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+            }
+
+            // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
+            //    conversation's second; the stopped turn's own reply was never drawn.
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            runBlocking { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
+            composeTestRule.onAllNodes(hasText(STOP_HOLD_REPLY, ignoreCase = true), useUnmergedTree = true).assertCountEquals(0)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
      * A loaded conversation stays readable offline and catches up on reconnect (#850, rung 3; the live
      * proof #795–#798 deferred). The phone loads a chat's history with one ping turn, then cuts its own
      * link to the host as [setHostLink] does. With the connection-scoped repository gone, readability can
@@ -1633,6 +1966,2266 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A model change made on the phone reaches only its own conversation and survives a reopen (#545).
+     * Two chats are prepared through the host's own repository: `create_conversation` binds a session, so
+     * a chat nobody has messaged can take a write. X gets a model with effort levels, Y another model and a
+     * different effort. Every model comes from the menu the host publishes for X at run time, and none is
+     * named here. Neither chat has run claude, so no model change restarts one.
+     *
+     * The "fresh reply" is a new `request_session_settings`, sent by [freshSettings] on every call.
+     *
+     * **Zero real-claude turns.**
+     */
+    @Test
+    fun interactiveTurn_modelChange_roundTripsAndStaysPerConversation() {
+        val originals = mutableMapOf<String, SessionSettings>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            clearRememberedEffort()
+            val stamp = System.currentTimeMillis()
+            val nameX = MODEL_X_NAME_PREFIX + stamp
+            val chatX = prepareChat(nameX, originals)
+            val chatY = prepareChat(MODEL_Y_NAME_PREFIX + stamp, originals)
+            val rows = usableRows(publishedMenu(chatX.id))
+            val rowA = checkNotNull(rows.firstOrNull { it.effortLevels.isNotEmpty() }) { "no published model offers effort levels" }
+            val rowB = checkNotNull(rows.firstOrNull { it.value != rowA.value }) { "the menu publishes fewer than two usable models" }
+            val target =
+                checkNotNull(rows.firstOrNull { it.value != rowA.value && it.value != rowB.value }) {
+                    "the menu publishes fewer than three usable models"
+                }
+            val effortX = rowA.effortLevels.first()
+            val effortY = rowB.effortLevels.firstOrNull { it != effortX }.orEmpty()
+            writeSettings(chatX.id, model = rowA.value, effort = effortX)
+            writeSettings(chatY.id, model = rowB.value, effort = effortY)
+            assertSaved(chatX.id, rowA.value, effortX)
+            assertSaved(chatY.id, rowB.value, effortY)
+
+            // The phone changes X's model from the footer. The label settles when the refreshed reading lands.
+            openChatRow(nameX)
+            awaitFooter(changeModelLabel, rowA.displayName.inert())
+            pickFooterOption(changeModelLabel, target.displayName.inert())
+            awaitFooter(changeModelLabel, target.displayName.inert())
+
+            assertEquals("X's saved model after the change", target.value, freshSettings(chatX.id).model)
+            assertSaved(chatY.id, rowB.value, effortY)
+
+            leaveThread()
+            openChatRow(nameX)
+            awaitFooter(changeModelLabel, target.displayName.inert())
+        } finally {
+            restoreSettings(originals)
+        }
+    }
+
+    /**
+     * Claude's applied effort reaches the footer after a real turn, starting from nothing saved and nothing
+     * remembered (#545, #889). The reply to the first fresh read after the turn must carry
+     * `effective_effort`, and an omitted key fails. The expectation is built from that reply, so no default
+     * level is assumed.
+     *
+     * The open thread re-reads its settings only on subscription, a session transition or a settled write,
+     * not at the end of a turn. The settled footer is therefore read after leaving and reopening the
+     * thread, which subscribes again.
+     *
+     * **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn() {
+        val originals = mutableMapOf<String, SessionSettings>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            clearRememberedEffort()
+            assertNull("a remembered level survived the clear", rememberedEffort())
+            val name = INHERITED_EFFORT_NAME_PREFIX + System.currentTimeMillis()
+            val chat = prepareChat(name, originals)
+            assertEquals("the fresh chat already has a saved effort", "", freshSettings(chat.id).effort)
+
+            openChatRow(name)
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            val (label, note) = appliedEffortFooter(freshSettings(chat.id).effectiveEffort)
+
+            leaveThread()
+            openChatRow(name)
+            awaitFooter(changeEffortLabel, label) { it == note }
+        } finally {
+            restoreSettings(originals)
+        }
+    }
+
+    /**
+     * An effort chosen before the first message is the one claude runs with (#545, #889). The phone picks,
+     * from the footer, a published model that offers effort levels and then one of those levels. It waits
+     * for the write to settle. Until a turn runs, the footer shows the choice and the reply reports no
+     * applied string. After the first turn, the applied value is exactly the choice, and the reopened
+     * footer shows it with no note. The note appears only when the saved value stands in for the applied one.
+     *
+     * **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_chosenEffort_appliesFromTheFirstTurn() {
+        val originals = mutableMapOf<String, SessionSettings>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            clearRememberedEffort()
+            val name = CHOSEN_EFFORT_NAME_PREFIX + System.currentTimeMillis()
+            val chat = prepareChat(name, originals)
+            val current = originals.getValue(chat.id).model
+            val row =
+                checkNotNull(usableRows(publishedMenu(chat.id)).firstOrNull { it.effortLevels.isNotEmpty() && it.value != current }) {
+                    "no other published model offers effort levels"
+                }
+            val level = row.effortLevels.first()
+
+            openChatRow(name)
+            pickFooterOption(changeModelLabel, row.displayName.inert())
+            awaitFooter(changeModelLabel, row.displayName.inert())
+            pickFooterOption(changeEffortLabel, level.inert())
+            awaitFooter(changeEffortLabel, level.inert())
+
+            val chosen = freshSettings(chat.id)
+            assertEquals("saved effort after the tap", level, chosen.effort)
+            assertTrue("claude reports an applied effort before any turn", chosen.effectiveEffort !is EffectiveEffort.Applied)
+            awaitFooter(changeEffortLabel, level.inert())
+
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            assertEquals(EffectiveEffort.Applied(level), freshSettings(chat.id).effectiveEffort)
+
+            leaveThread()
+            openChatRow(name)
+            awaitFooter(changeEffortLabel, level.inert()) { it == null }
+        } finally {
+            restoreSettings(originals)
+        }
+    }
+
+    /**
+     * The remembered effort level survives an app restart and is applied to a fresh chat and a fresh
+     * channel (#545, #686):
+     *  * A tap on a priming chat's effort control is acknowledged, and its level becomes the remembered one.
+     *  * The app restarts as it does in [interactiveTurn_twoHostsCollidingConversationId_stayPerHost]: the
+     *    object graph is rebuilt over the same on-device state.
+     *  * A fresh chat and a fresh channel, never messaged and with no saved effort, then get the
+     *    remembered level through the recall before their first message. The reply confirms it, and the
+     *    footer shows it. After one real turn in each, claude applies exactly that level.
+     *  * A conversation with its own saved effort keeps it.
+     *
+     * No fixture has a model override: every saved model stays `""`, so the levels come from the published
+     * `default` row (#972).
+     *
+     * **Two real-claude turns**: one in the fresh chat and one in the fresh channel.
+     */
+    @Test
+    fun interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val originals = mutableMapOf<String, SessionSettings>()
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            awaitChannelList()
+            awaitConnected()
+            clearRememberedEffort()
+            val stamp = System.currentTimeMillis()
+
+            // 1. A tapped level on the priming chat becomes the remembered level once the daemon acks it.
+            val primingName = RECALL_PRIMING_NAME_PREFIX + stamp
+            val priming = prepareChat(primingName, originals)
+            val row =
+                checkNotNull(
+                    usableRows(publishedMenu(priming.id)).firstOrNull {
+                        it.value == "default" &&
+                            it.effortLevels.distinct().size >= 2
+                    },
+                ) {
+                    "the published default row does not offer two effort levels"
+                }
+            val remembered = row.effortLevels.first()
+            val explicit = row.effortLevels.last { it != remembered }
+            assertSaved(priming.id, "", "")
+            openChatRow(primingName)
+            awaitFooter(changeModelLabel, INHERITED_RUN_CONFIG_LABEL)
+            pickFooterOption(changeEffortLabel, remembered.inert())
+            awaitFooter(changeEffortLabel, remembered.inert())
+            assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
+            leaveThread()
+
+            // 2. The fixtures: a fresh chat and a fresh channel with no saved effort, and a chat with its own.
+            val chatName = RECALL_CHAT_NAME_PREFIX + stamp
+            val chat = prepareChat(chatName, originals)
+            val channelName = RECALL_CHANNEL_NAME_PREFIX + stamp
+            val channel = prepareChannel(channelName, chat.cwd, originals)
+            val explicitName = RECALL_EXPLICIT_NAME_PREFIX + stamp
+            val explicitChat = prepareChat(explicitName, originals)
+            writeSettings(explicitChat.id, effort = explicit)
+            assertSaved(chat.id, "", "")
+            assertSaved(channel.id, "", "")
+            assertSaved(explicitChat.id, "", explicit)
+
+            // 3. Restart. No activity may outlive the graph it resolved, so the rule's activity goes first.
+            composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+            instrumentation.runOnMainSync {
+                (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+            }
+            relaunched = ActivityScenario.launch(MainActivity::class.java)
+            awaitChannelList()
+            awaitConnected()
+            assertEquals("the remembered level after the restart", remembered, rememberedEffort())
+
+            // 4. The fresh chat, then the fresh channel: recalled before the first message, applied after it.
+            openChatRow(chatName)
+            assertRecalledThenApplied(chat.id, remembered)
+            leaveThread()
+            openRow(channelName)
+            assertRecalledThenApplied(channel.id, remembered)
+            leaveThread()
+
+            // 5. A saved effort of its own is kept: settled on it, confirmed by the reply, and still settled.
+            openChatRow(explicitName)
+            awaitFooter(changeEffortLabel, explicit.inert())
+            assertEquals("the explicit saved effort was overwritten", explicit, freshSettings(explicitChat.id).effort)
+            composeTestRule.waitForIdle()
+            awaitFooter(changeEffortLabel, explicit.inert())
+        } finally {
+            restoreSettings(originals)
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * The phone never describes an operator-bypass child as enforcing approvals (#687, pyrycode#2510). The
+     * scenario runs on a dedicated daemon that `scripts/e2e-emulator.sh` starts under its own HOME, with the
+     * stdio prompt surface on and its children launched in operator bypass (stored mode `default`). The phone
+     * pairs with it by code and stays unprivileged. A peer paired `--allow-remote-permissions` to the same
+     * daemon answers the one prompt. The chat is made with `createDiscussion`: the daemon builds a minted
+     * session from the bootstrap's template, so its child launches in bypass too.
+     *  * **Bypass reads as bypass.** After a tool-free turn, a fresh reading reports `bypassPermissions`,
+     *    and the reopened footer reads Bypass approvals, never Manual approval.
+     *  * **An acknowledgement is not a confirmation.** Manual approval sends a `default` write, which the
+     *    daemon acknowledges without touching a child whose stored mode is already `default`. The control
+     *    stays pending for the whole settle window and ends on Bypass approvals. A refusal would clear the
+     *    pending mark at once. Plan, Bypass approvals and Manual approval then each settle on their own
+     *    label once a fresh reading reports them, on the same session with no turn in between.
+     *  * **Manual approval enforces.** A Read of a file outside the workspace raises a prompt on the phone
+     *    that names the Read. The peer allows it, and the reply carries the file's token, which the prompt
+     *    never contains.
+     *
+     * An unmet prerequisite of the dedicated daemon fails here with its name, never a skip.
+     *
+     * **Two real-claude turns**: the tool-free ping and the Read.
+     */
+    @Test
+    fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val args = InstrumentationRegistry.getArguments()
+        args.getString(ARG_BYPASS_UNMET)?.let { throw AssertionError(bypassUnmetMessage(it)) }
+        val serverId = bypassArg(ARG_BYPASS_SERVER_ID)
+        val pairCode = bypassArg(ARG_BYPASS_PAIR_CODE)
+        val tokenFile = bypassArg(ARG_BYPASS_TOKEN_FILE)
+        val token = bypassArg(ARG_BYPASS_TOKEN)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = bypassArg(ARG_BYPASS_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = bypassArg(ARG_BYPASS_SERVER_STATIC_PUBLIC_KEY),
+                ),
+            )
+        val bypass = PermissionModeOption.Bypass
+        val manual = PermissionModeOption.Default
+        try {
+            // 1. Pair the dedicated host by code, create a chat on it, and run one tool-free turn.
+            awaitChannelList()
+            awaitConnected()
+            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+            pairHostByCode(pairCode, BYPASS_HOST_NAME)
+            val name = BYPASS_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            val repository = hostRepository(serverId)
+            val chat = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.rename(repository.createDiscussion().id, name) } }
+            openChatRow(name)
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+            // 2. AC-1: the thread re-reads its settings on subscription, not at turn end, so reopen it first.
+            leaveThread()
+            openChatRow(name)
+            val sessionId = awaitPermissionReading(serverId, chat.id, bypass.wire).sessionId
+            awaitFooter(changePermissionLabel, bypass.label)
+            composeTestRule.onAllNodes(footerControl(changePermissionLabel) and hasText(manual.label)).assertCountEquals(0)
+
+            // 3. AC-2: the no-op `default` write. Pending proves the tap sent it; lasting the settle window
+            //    proves it was acknowledged, and no re-read in that window reported `default`.
+            pickFooterOption(changePermissionLabel, manual.label)
+            awaitFooter(changePermissionLabel, bypass.label) { it == footerPending }
+            val pendingSince = SystemClock.elapsedRealtime()
+            awaitFooter(changePermissionLabel, bypass.label)
+            val pendingFor = SystemClock.elapsedRealtime() - pendingSince
+            assertTrue(
+                "the Manual approval write settled after $pendingFor ms: refused, or confirmed by a reading",
+                pendingFor >= PERMISSION_SETTLE_WINDOW_MS - SETTLE_SLACK_MS,
+            )
+            assertEquals("a fresh reading after the acknowledged no-op", bypass.wire, freshSettings(chat.id, serverId).permissionMode)
+
+            // 4. AC-2: real changes on the same child, each confirmed by a fresh reading and then the footer.
+            listOf(PermissionModeOption.Plan, bypass, manual).forEach { mode ->
+                pickFooterOption(changePermissionLabel, mode.label)
+                val reading = awaitPermissionReading(serverId, chat.id, mode.wire)
+                assertEquals("the conversation moved to another session", sessionId, reading.sessionId)
+                awaitFooter(changePermissionLabel, mode.label)
+            }
+
+            // 5. AC-3: a Read outside the workspace raises a prompt that names it; the peer allows it once.
+            val prompt = READ_PROMPT_TEMPLATE.format(tokenFile)
+            assertTrue("the Read prompt contains the witness token", token !in prompt)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            sendFromPhone(prompt)
+            awaitReadPrompt(tokenFile.substringAfterLast('/'))
+            // #977: the turn must end before the phone is judged, and a missing token says why.
+            val mark = peer.recorded(chat.id).size
+            runBlocking {
+                val modalId = peer.awaitPermissionModal(chat.id, REPLY_TIMEOUT_MS)
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+            }
+            val allowedAt = SystemClock.elapsedRealtime()
+            val turnEnd =
+                try {
+                    runBlocking { peer.awaitFrame(chat.id, "turn_end", REPLY_TIMEOUT_MS) }
+                } catch (e: TimeoutCancellationException) {
+                    throw AssertionError(
+                        "the allowed Read's turn never ended: no turn_end for the chat within $REPLY_TIMEOUT_MS ms of the allow",
+                        e,
+                    )
+                }
+            val endedAfterMs = SystemClock.elapsedRealtime() - allowedAt
+            val reply = hasText(token, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+            try {
+                composeTestRule.waitUntil(PHONE_TRAIL_MS) {
+                    composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError(
+                    "the allowed Read's reply never carried the file's token: " +
+                        readReplyDiagnosis(peer.recorded(chat.id), mark, token, turnEnd, endedAfterMs) +
+                        " threadHeldToken=${threadHoldsReply(repository, chat.id, token)}",
+                    e,
+                )
+            }
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
+     * A permission answer from the phone reaches the conversation that asked, and only that one (#966, rung 3).
+     * The scenario runs on the dedicated answer daemon `scripts/e2e-emulator.sh` starts under its own HOME with
+     * the stdio prompt surface on, the one path that offers don't-ask-again. The phone pairs with it by code
+     * `--allow-remote-permissions`; it is the only host where the phone may answer. A peer paired the same way
+     * records every frame and allows the last prompt.
+     *  * **Only the asking thread shows it.** Chat A's command raises a prompt the phone draws in A with its
+     *    decision context, and not in chat B.
+     *  * **The phone's allow reaches A's claude.** Ticking don't-ask-again and allowing on the phone ends A's
+     *    turn, and claude's reply carries the command's output, which no prompt contains.
+     *  * **Don't-ask-again holds.** The same command in A runs again with no second prompt.
+     *  * **Resolved elsewhere closes it.** The same command in B prompts there, since B's session holds no
+     *    grant; the peer allows it and the phone's dialog closes with no tap.
+     *
+     * Claude's reply is read from the `assistant_delta` frames the peer records for the chat, not from a phone
+     * bubble: #981 tracks a reply that is not composed after an allowed prompt. An unmet prerequisite of the
+     * dedicated daemon fails here with its name, never a skip.
+     *
+     * **Three real-claude turns**: A's allowed command, its repeat, and B's command.
+     */
+    @Test
+    fun interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation() {
+        val (serverId, peer) = answerHostPeer()
+        try {
+            pairAnswerHost()
+            val (chatA, nameA) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "a-")
+            val (chatB, nameB) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "b-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 1. AC-1: A's command raises a prompt in A that carries claude's context and a don't-ask-again offer.
+            openChatRow(nameA)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            val shown =
+                runBlocking {
+                    MobileJson.decodeFromJsonElement(
+                        ModalShownPayloadDto.serializer(),
+                        peer.awaitFrame(chatA, "modal_shown", REPLY_TIMEOUT_MS).payload,
+                    )
+                }
+            assertEquals("the prompt's class", PERMISSION_CLASS, shown.modalClass)
+            awaitPromptDialog()
+            assertContextDrawn(shown)
+            assertEquals(
+                "the prompt's don't-ask-again offer",
+                "true",
+                (shown.alwaysAllow as? JsonObject)?.get("offered")?.jsonPrimitive?.contentOrNull,
+            )
+
+            // 2. AC-1: the prompt belongs to A. B's thread draws none; A's draws it again.
+            leaveThread()
+            openChatRow(nameB)
+            composeTestRule.waitForIdle()
+            SystemClock.sleep(SCOPE_SETTLE_MS)
+            composeTestRule.onAllNodes(promptDialog()).assertCountEquals(0)
+            leaveThread()
+            openChatRow(nameA)
+            awaitPromptDialog()
+
+            // 3. AC-1 / AC-2: tick don't-ask-again, then allow on the phone (a non-default option arms first).
+            val offer = hasText(string(R.string.modal_always_allow_label)) and hasClickAction()
+            composeTestRule.onNode(offer).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(offer and isOn()).fetchSemanticsNodes().isNotEmpty()
+            }
+            val allow = hasText(shown.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
+            composeTestRule.onNode(allow).performClick()
+            val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(allow).performClick()
+
+            // 4. AC-1: the daemon took the phone's answer for this prompt, A's turn ends, and claude's reply
+            //    carries the command's output. The dialog leaves the thread.
+            val dismissed = runBlocking { peer.awaitModalDismissed(shown.modalId, THREAD_TIMEOUT_MS) }
+            assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissed, "source"))
+            assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissed, "outcome"))
+            awaitTurnEnd(peer, chatA, 1, "A's allowed turn")
+            assertBashRan(peer, chatA, 0, "A's allowed turn")
+            assertTrue("A's reply does not carry the command's output", ANSWER_PERMISSION_TOKEN in assistantText(peer, chatA))
+            awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
+
+            // 5. AC-2: the same command in A runs again with no second prompt. Claude could repeat the number
+            //    from context, so the proof is a successful Bash call in this turn, not the reply alone.
+            val mark = peer.recorded(chatA).size
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            awaitTurnEnd(peer, chatA, 2, "A's repeat")
+            assertBashRan(peer, chatA, mark, "A's repeat")
+            assertEquals("prompts raised in A", 1, peer.recorded(chatA).count { it.type == "modal_shown" })
+            assertTrue("A's repeat reply does not carry the command's output", ANSWER_PERMISSION_TOKEN in assistantText(peer, chatA, mark))
+
+            // 6. AC-4: the same command prompts in B; the peer allows it and the phone's dialog closes untouched.
+            leaveThread()
+            openChatRow(nameB)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            awaitPromptDialog()
+            runBlocking {
+                val modalId = peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS)
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+            }
+            awaitNoPromptDialog("B's dialog stayed after the peer allowed it")
+            awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn")
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
+     * A clarification answer from the phone reaches the conversation that asked (#966, rung 3), on the same
+     * dedicated answer daemon as [interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation]; the
+     * daemon gates a question answer on the same `--allow-remote-permissions` bit as a permission answer.
+     *  * **The phone's choice reaches claude.** Claude asks one AskUserQuestion with two labels; the phone
+     *    picks [QUESTION_PICK] and continues, and claude's reply is that label and not the other one.
+     *  * **Resolved elsewhere closes it.** Asked again, the peer answers; the phone's modal closes with no tap.
+     *
+     * The reply is read from the peer's `assistant_delta` frames, as in the permission method.
+     *
+     * **Two real-claude turns**: the phone-answered question and the peer-answered one.
+     */
+    @Test
+    fun interactiveTurn_questionAnswer_reachesTheAskingConversation() {
+        val (serverId, peer) = answerHostPeer()
+        try {
+            pairAnswerHost()
+            val (chat, name) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "q-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+
+            // 1. AC-3: claude asks in this chat, and the phone draws the question.
+            sendFromPhone(QUESTION_PROMPT)
+            val batchId = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS) }
+            awaitQuestionModal()
+
+            // 2. AC-3: the phone picks one option and continues; the daemon takes it as this batch's answer.
+            val mark = peer.recorded(chat).size
+            composeTestRule
+                .onAllNodes(hasText(QUESTION_PICK, substring = true) and hasClickAction() and inPromptDialog())
+                .onFirst()
+                .performClick()
+            val continueButton = hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(continueButton).performClick()
+            val dismissed = runBlocking { peer.awaitQuestionDismissed(batchId, THREAD_TIMEOUT_MS) }
+            assertEquals("who resolved the question", REMOTE_SOURCE, peer.field(dismissed, "source"))
+            assertEquals("the question's outcome", ANSWERED, peer.field(dismissed, "outcome"))
+
+            // 3. AC-3: the turn ends and claude's reply names the chosen option, not the other one.
+            awaitTurnEnd(peer, chat, 1, "the phone-answered turn")
+            val reply = assistantText(peer, chat, mark)
+            assertTrue("the reply does not name the chosen option", QUESTION_PICK in reply)
+            assertTrue("the reply names the option the phone did not choose", QUESTION_OTHER !in reply)
+            awaitNoQuestionModal("the question stayed after the phone answered it")
+
+            // 4. AC-4: asked again, the peer answers, and the phone's modal closes with no tap.
+            sendFromPhone(QUESTION_PROMPT)
+            val second = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS, occurrence = 2) }
+            awaitQuestionModal()
+            runBlocking { peer.answerQuestion(second, 0, QUESTION_OTHER, THREAD_TIMEOUT_MS) }
+            awaitNoQuestionModal("the question stayed after the peer answered it")
+            awaitTurnEnd(peer, chat, 2, "the peer-answered turn")
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
+     * The composer footer's readings and a model change survive a cut-and-restore of the phone's link (#967).
+     * The chat is prepared as #545's are: nothing remembered and no saved model.
+     *  * **The context reading goes with the link.** After a real turn the footer shows `Cxt: N%`. The reading
+     *    belongs to the connection and nothing asks for it (#946), so after the reconnect it shows `Cxt: n/a`.
+     *  * **The readings come back.** Model, effort and permission settle, none pending, on what a fresh
+     *    reading taken on the new connection reports.
+     *  * **A fresh context reading.** A turn on the new connection brings `Cxt: N%` back.
+     *  * **A change is confirmed.** A published model picked from the footer is the saved model a fresh
+     *    reading reports. It is picked after the last turn, so no turn runs on a model the account may not serve.
+     *
+     * **Two real-claude turns**: the ping before the cut and the ping after it.
+     */
+    @Test
+    fun interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive() {
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val originals = mutableMapOf<String, SessionSettings>()
+        try {
+            // 1. One real turn in a fresh chat; the footer shows the post-turn context reading.
+            awaitChannelList()
+            awaitConnected()
+            clearRememberedEffort()
+            val name = RECONNECT_FOOTER_NAME_PREFIX + System.currentTimeMillis()
+            val chat = prepareChat(name, originals)
+            openChatRow(name)
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
+
+            // 2. Cut and restore the link. The old connection's context reading goes with it.
+            setHostLink(serverId, up = false)
+            setHostLink(serverId, up = true)
+            val unavailable = string(R.string.thread_footer_context_unavailable)
+            awaitContextSegment(THREAD_TIMEOUT_MS, "'$unavailable' after the reconnect") { it == unavailable }
+
+            // 3. Model, effort and permission settle on a fresh reading taken on the new connection.
+            val fresh = freshSettings(chat.id)
+            assertEquals("the fixture's saved model", "", fresh.model)
+            val (effortLabel, effortNote) = appliedEffortFooter(fresh.effectiveEffort)
+            val mode = fresh.permissionMode
+            assertTrue("the fresh reading after a real turn confirms no permission mode", mode.isNotEmpty())
+            awaitFooter(changeModelLabel, INHERITED_RUN_CONFIG_LABEL)
+            awaitFooter(changeEffortLabel, effortLabel) { it == effortNote }
+            awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
+
+            // 4. A turn on the new connection brings a fresh context reading, pushed when the turn ends.
+            sendFromPhone(PING_PROMPT)
+            awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the turn on the new connection") { CONTEXT_REPORTED.matches(it) }
+
+            // 5. A model picked from the published menu is confirmed by a fresh reading.
+            val target =
+                checkNotNull(
+                    usableRows(publishedMenu(chat.id)).firstOrNull { it.value != INHERITED_MODEL_VALUE && it.value != fresh.model },
+                ) {
+                    "the menu publishes no usable model besides the inherited default"
+                }
+            pickFooterOption(changeModelLabel, target.displayName.inert())
+            awaitFooter(changeModelLabel, target.displayName.inert())
+            assertEquals("the saved model after the change", target.value, freshSettings(chat.id).model)
+        } finally {
+            restoreSettings(originals)
+        }
+    }
+
+    /**
+     * The slash-command suggestions and the Actions menu's Compact session still work after a cut-and-restore
+     * of the phone's link (#967; #885, #884, #874).
+     *  * **The commands come back.** After a real turn and the reconnect, typing `/` lists the commands the host
+     *    publishes for the chat on the new connection, and picking the first puts its completion in the
+     *    composer. The rows, labels and completion come from the production rules, not restated here.
+     *  * **Compaction feedback.** Compact session shows the compacting indicator, then the divider for a
+     *    compaction by you, and the indicator goes.
+     *
+     * **Two real-claude turns**: the ping and the compaction.
+     */
+    @Test
+    fun interactiveTurn_reconnect_slashCommandsAndCompactStillWork() {
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+
+        // 1. One real turn spawns claude, which publishes its commands; then cut and restore the link.
+        awaitChannelList()
+        awaitConnected()
+        val (chatId, name) = answerChat(serverId, RECONNECT_COMMANDS_NAME_PREFIX)
+        openChatRow(name)
+        sendFromPhone(PING_PROMPT)
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        cycleHostLink(serverId)
+
+        // 2. AC-2: `/` lists the published commands; picking the first completes it into the composer. The
+        //    menu is read off the host's live connection: the reconnect's fresh connection can drop and be
+        //    redialled within a second (#1029, #1039), and the app follows the redial, so the read does too.
+        val published =
+            try {
+                val live =
+                    checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        live.coordinator.currentRepository.firstOnLive({ it.observeSlashCommandMenu(chatId) }) { it.rows.isNotEmpty() }
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw AssertionError("the host published no slash commands for the chat after the reconnect", e)
+            }
+        val rows = slashCommandTypeAheadRows("/", published.rows)
+        val labels = slashCommandOptions(rows).map { it.label }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput("/")
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(slashRow(labels.first())).fetchSemanticsNodes().isNotEmpty()
+        }
+        labels.take(SLASH_ROWS_CHECKED).forEachIndexed { index, label ->
+            assertTrue(
+                "the suggestions do not list published command ${index + 1} of ${labels.size}",
+                composeTestRule.onAllNodes(slashRow(label)).fetchSemanticsNodes().isNotEmpty(),
+            )
+        }
+        composeTestRule.onAllNodes(slashRow(labels.first())).onFirst().performClick()
+        val completed = completeSlashCommand(rows.first())
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composerText() == completed }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("the pick did not complete the command into the composer (${composerText().length} chars shown)", e)
+        }
+        composeTestRule.onAllNodes(slashRow(labels.first())).assertCountEquals(0)
+        composeTestRule.onNode(hasSetTextAction()).performTextReplacement("")
+
+        // 3. AC-2: Compact session shows compaction progress, then the divider for a compaction by you.
+        openActions()
+        val compact = actionRow { it == ComposerAction.CompactSession.label }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(compact).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(
+            "Compact session is greyed out: the published menu proves /compact absent",
+            composeTestRule.onAllNodes(compact and isEnabled()).fetchSemanticsNodes().isNotEmpty(),
+        )
+        composeTestRule.onAllNodes(compact).onFirst().performClick()
+        val compacting = hasContentDescription(string(R.string.cd_thread_compacting))
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(compacting).fetchSemanticsNodes().isNotEmpty() }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("the compacting indicator never showed after Compact session", e)
+        }
+        val divider = hasText(COMPACTION_DIVIDER, substring = true) and hasAnyAncestor(hasScrollToNodeAction())
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(divider).fetchSemanticsNodes().isNotEmpty() }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("no compaction divider followed the compacting indicator", e)
+        }
+        val dividerText =
+            composeTestRule
+                .onAllNodes(divider)
+                .onFirst()
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.Text]
+                .joinToString("") { it.text }
+        assertTrue("the divider does not credit the compaction to you", dividerText.endsWith(COMPACTION_BY_YOU))
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(compacting).fetchSemanticsNodes().isEmpty() }
+    }
+
+    /**
+     * A background task real claude starts shows in the Actions menu's count and in the panel, and the count
+     * returns to 0 when the task finishes (#967, #678). The phone asks for one backgrounded `sleep`; a
+     * permission prompt for it is allowed through the main daemon's privileged peer, the #950 path. The peer's
+     * recorded frames supply only timing and the task's identity: the count and the panel are read off the phone.
+     *
+     * **One real-claude turn**: the prompt that starts the task.
+     */
+    @Test
+    fun interactiveTurn_backgroundTask_countsInActionsMenuAndPanel() {
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val peer = runningToolPeer()
+        try {
+            // 1. Claude starts a background task in a fresh chat.
+            awaitChannelList()
+            awaitConnected()
+            val (chatId, name) = answerChat(serverId, BACKGROUND_NAME_PREFIX)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            sendFromPhone(BACKGROUND_PROMPT)
+            val allowed = mutableSetOf<String>()
+            val startedFrame =
+                allowPromptsUntil(peer, chatId, REPLY_TIMEOUT_MS, "claude started no background task", allowed) {
+                    it.type ==
+                        "background_task_started"
+                }
+            val started = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), startedFrame.payload)
+            assertTrue("the started task names no type", started.taskType.isNotBlank())
+
+            // 2. AC-3: the Actions menu counts it, and the panel lists it.
+            openActions()
+            openBackgroundTasks { it >= 1 }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
+            closeBackgroundTasks()
+
+            // 3. AC-3: once the task finishes, the count is 0 and the panel no longer lists the task as live. It
+            //    labels the task finished until the empty roster claude sends after a finish drops it (#677's
+            //    `applyRoster`), then says there are no tasks; the live gate saw the empty roster win.
+            allowPromptsUntil(peer, chatId, BACKGROUND_FINISH_TIMEOUT_MS, "the background task never finished", allowed) { frame ->
+                frame.type == "background_task_updated" &&
+                    runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskUpdatedPayloadDto.serializer(), frame.payload) }
+                        .getOrNull()
+                        ?.let { it.taskId == started.taskId && it.status.isNotEmpty() } == true
+            }
+            openActions()
+            openBackgroundTasks { it == 0 }
+            val finishedOrGone =
+                (hasText(string(R.string.background_tasks_finished)) or hasText(string(R.string.background_tasks_empty))) and
+                    inBackgroundPanel()
+            try {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(finishedOrGone).fetchSemanticsNodes().isNotEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the panel neither labelled the finished task nor showed no tasks", e)
+            }
+            composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
+            closeBackgroundTasks()
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * A real push wakes the backgrounded app for a turn that ended while it was away, posts one alert, and
+     * the alert's tap opens that conversation's thread (#955, #685). The turn is held on a permission
+     * prompt the #950 way while the phone is in front, so the prompt's own alert is spent in the
+     * foreground. The app then goes to the background, which closes its host link. The peer allows the
+     * command, and the turn ends while the phone is absent. The daemon asks the production relay to wake
+     * the phone, and FCM delivers the data message. The wake reconnects, the missed `turn_end` replays,
+     * and the notifier posts.
+     *
+     * LIVE only: the loopback relay cannot send FCM. **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread() {
+        assumeLiveRelay()
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val ruleActivity = composeTestRule.activity
+        val peer = runningToolPeer()
+        val watch = CoroutineScope(Dispatchers.Default)
+        var held: Pair<String, String>? = null
+        try {
+            cancelAlerts()
+            // 1. A named chat with a real turn held on a permission prompt, while the phone is in front.
+            awaitChannelList()
+            awaitConnected()
+            val connectedAt = SystemClock.elapsedRealtime()
+            val (chatId, name) = answerChat(serverId, PUSH_TURN_NAME_PREFIX)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            sendFromPhone(RUNNING_TOOL_PROMPT)
+            val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            held = chatId to modalId
+            awaitPushRegistered(serverId, connectedAt)
+
+            // 2. The app goes to the background; the turn ends while the phone is absent.
+            val woke = sendAppToBackground(serverId, watch)
+            runBlocking {
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                held = null
+                peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+            }
+
+            // 3. AC-1: the push wakes the app and exactly one turn alert shows.
+            val alert = awaitAlert(string(R.string.notification_turn_completed), woke)
+
+            // 4. AC-1: the tap, the notification's own content intent, opens that conversation's thread.
+            checkNotNull(alert.notification.contentIntent) { "the alert carries no tap" }.send()
+            try {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasText(name)).fetchSemanticsNodes().isNotEmpty() &&
+                        composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
+                        composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the alert's tap did not open the conversation's thread", e)
+            }
+        } finally {
+            watch.cancel()
+            // A failure before the allow must not leave a claude turn waiting on the prompt for later scenarios.
+            held?.let { (chatId, modalId) ->
+                runBlocking {
+                    runCatching {
+                        peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                        peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                    }
+                }
+            }
+            peer.close()
+            cancelAlerts()
+            finishActivitiesBesides(ruleActivity)
+        }
+    }
+
+    /**
+     * A permission prompt that surfaces while the app is in the background is alerted exactly once, even
+     * across a second reconnect inside the push's wake window (#955, #685). The phone creates a named chat
+     * and goes to the background. The peer then starts a turn in that chat whose command waits on a
+     * permission prompt. The prompt surfaces while the phone is absent, so the daemon wakes the phone and
+     * the wake posts the alert. The test then cuts and restores the host link, and the daemon shows the
+     * still-outstanding prompt again. That repeat must not post again, so one notification stays, with
+     * the same post time. The source raises no second alert for a retained permission modal, and the
+     * notifier's ledger would drop one if it did. A second `notify` for the same tag would replace the
+     * notification and change its post time, which a count alone cannot see.
+     *
+     * LIVE only: the loopback relay cannot send FCM. **One real-claude turn**: the peer's held command.
+     */
+    @Test
+    fun interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect() {
+        assumeLiveRelay()
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val peer = runningToolPeer()
+        val watch = CoroutineScope(Dispatchers.Default)
+        var held: Pair<String, String>? = null
+        try {
+            cancelAlerts()
+            // 1. A named chat, the peer open and the push token on the daemon, while the phone is in front.
+            awaitChannelList()
+            awaitConnected()
+            val connectedAt = SystemClock.elapsedRealtime()
+            val (chatId, _) = answerChat(serverId, PUSH_PROMPT_NAME_PREFIX)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitPushRegistered(serverId, connectedAt)
+
+            // 2. The app goes to the background; the peer's turn raises a prompt while the phone is absent.
+            val woke = sendAppToBackground(serverId, watch)
+            runBlocking { peer.sendMessage(chatId, RUNNING_TOOL_PROMPT, THREAD_TIMEOUT_MS) }
+            val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            held = chatId to modalId
+
+            // 3. AC-2: the push wakes the app and exactly one prompt alert shows.
+            val first = awaitAlert(string(R.string.notification_prompt), woke)
+
+            // 4. AC-2: a second reconnect inside the wake window re-shows the prompt, and nothing is posted again.
+            // The retained permission modal emits no new alert for the re-show, so nothing observable marks its
+            // arrival: settle long enough for the daemon's `modal_shown` to reach the phone and the notifier.
+            cycleHostLink(serverId)
+            SystemClock.sleep(RECONNECT_SETTLE_MS)
+            val after = attentionAlerts()
+            assertEquals("alerts after the reconnect", 1, after.size)
+            assertEquals("the prompt's alert was posted again across the reconnect", first.postTime, after.single().postTime)
+        } finally {
+            watch.cancel()
+            held?.let { (chatId, modalId) ->
+                runBlocking {
+                    runCatching {
+                        peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                        peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                    }
+                }
+            }
+            peer.close()
+            cancelAlerts()
+        }
+    }
+
+    /** The push scenarios (#955) need the production relay, which alone can send FCM. */
+    private fun assumeLiveRelay() {
+        val relayUrl = InstrumentationRegistry.getArguments().getString(ARG_RELAY_URL).orEmpty()
+        assumeTrue("push needs the production relay (LIVE=1); the loopback relay cannot send FCM", relayUrl.startsWith("wss://"))
+    }
+
+    /**
+     * Make sure the daemon holds this phone's FCM token and can wake it now (#955). The token comes from
+     * Play services. Cycling the link then makes the #365 connect-time registration send it. The daemon
+     * sends a device no second wake within 30 s of the last one. The phone has been connected since
+     * [connectedAt], so no wake has reached it since then, and waiting out the rest of the window keeps
+     * an earlier scenario's wake from absorbing this one.
+     */
+    private fun awaitPushRegistered(
+        serverId: String,
+        connectedAt: Long,
+    ) {
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val deadline = SystemClock.elapsedRealtime() + PUSH_TOKEN_TIMEOUT_MS
+        // A fresh read each pass: a collector that starts during the first write can miss it (#968).
+        while (runBlocking { preferences.pushToken.first() }.isNullOrEmpty()) {
+            if (SystemClock.elapsedRealtime() > deadline) {
+                throw AssertionError("no FCM token — does the device image have Play services? (#955)")
+            }
+            SystemClock.sleep(POLL_MS)
+        }
+        cycleHostLink(serverId)
+        val remaining = connectedAt + PUSH_WAKE_COALESCE_MS - SystemClock.elapsedRealtime()
+        if (remaining > 0) SystemClock.sleep(remaining)
+    }
+
+    /**
+     * Go Home, as the operator does when leaving the app, and wait until the app's host link closes. The
+     * `google-atd` image has a Home activity but no Settings activity. `ActivityScenario.moveToState`
+     * would put an androidx.test activity in front, in this process, and the process would still count
+     * as started. Returns a flag that turns true once a wake reopens the link, set by a watcher launched in
+     * [watch], which the caller cancels when the scenario ends.
+     */
+    private fun sendAppToBackground(
+        serverId: String,
+        watch: CoroutineScope,
+    ): AtomicBoolean {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val home = "am start -W -a android.intent.action.MAIN -c android.intent.category.HOME"
+        val started =
+            ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(home)).use {
+                it.readBytes().decodeToString()
+            }
+        if (started.contains("Error")) throw AssertionError("Home did not start: $started")
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        // The awaited value is itself null, so the block returns a flag: withTimeoutOrNull's null means only a timeout.
+        runBlocking {
+            withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+                bundle.coordinator.currentRepository
+                    .first { it == null }
+                    .let { true }
+            }
+        }
+            ?: throw AssertionError("the app did not go to the background: its host link stayed open ($started)")
+        val woke = AtomicBoolean(false)
+        watch.launch {
+            withTimeoutOrNull(PUSH_TIMEOUT_MS + WAIT_TURN_TIMEOUT_MS) {
+                bundle.coordinator.currentRepository.first { it != null }
+                woke.set(true)
+            }
+        }
+        return woke
+    }
+
+    /** The app's posted attention alerts: `activeNotifications` lists only this app's own. */
+    private fun attentionAlerts(): List<StatusBarNotification> =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getSystemService(NotificationManager::class.java)
+            .activeNotifications
+            .filter { it.notification.channelId == ATTENTION_CHANNEL_ID }
+
+    private fun cancelAlerts() {
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getSystemService(NotificationManager::class.java)
+            .cancelAll()
+    }
+
+    /**
+     * Wait for the first alert and assert it is the only one and reads [text]. The failure says whether a
+     * wake ever reopened the host link: if it did not, the push never arrived.
+     */
+    private fun awaitAlert(
+        text: String,
+        woke: AtomicBoolean,
+    ): StatusBarNotification {
+        val deadline = SystemClock.elapsedRealtime() + PUSH_TIMEOUT_MS
+        while (attentionAlerts().isEmpty()) {
+            if (SystemClock.elapsedRealtime() > deadline) {
+                throw AssertionError(
+                    if (woke.get()) {
+                        "a push woke the app, but no alert was posted"
+                    } else {
+                        "no push woke the app: its host link never reopened (relay, FCM project or daemon older than v0.23.0?)"
+                    },
+                )
+            }
+            SystemClock.sleep(POLL_MS)
+        }
+        val alerts = attentionAlerts()
+        assertEquals("alerts posted", 1, alerts.size)
+        assertEquals(
+            "the alert's text",
+            text,
+            alerts
+                .single()
+                .notification.extras
+                .getCharSequence(Notification.EXTRA_TEXT)
+                ?.toString(),
+        )
+        return alerts.single()
+    }
+
+    /** Finish the activities a tap started. The tap's `CLEAR_TASK` replaced the rule's own, so the rule cannot. */
+    private fun finishActivitiesBesides(ruleActivity: MainActivity) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+            listOf(Stage.RESUMED, Stage.PAUSED, Stage.STOPPED)
+                .flatMap { monitor.getActivitiesInStage(it) }
+                .filter { it !== ruleActivity }
+                .forEach { it.finish() }
+        }
+    }
+
+    /**
+     * Files the phone attaches reach another client with their exact bytes (#1016, rung 3). In chat X the
+     * phone picks a small PNG and a ~100 KB document through the composer's **Attach files** action — the
+     * system picker answered by an [ActivityIntentStub] with `MediaStore` URIs, since the app refuses any
+     * authority of its own, the test APK's included — and sends one message. Then the [SecondClientPeer], the
+     * desktop stand-in, sees exactly what the desktop would:
+     *  * X's history holds exactly one user message, naming two attachment ids;
+     *  * `request_attachment` for each of those ids returns bytes whose SHA-256 digests are the two fixtures'
+     *    digests;
+     *  * chat Y on the same host gains no message.
+     * The document spans three 45000-byte chunks, so the phone's chunking and the daemon's reassembly both run.
+     * The turn may Read the named files; the peer allows each prompt until the turn ends.
+     *
+     * The name places it last in JUnit's default order, which sorts by name hash. Peers opened on the first
+     * daemon after it stopped carrying frames in two live runs, so it runs after every other scenario on that
+     * daemon until that is explained.
+     *
+     * **One real-claude turn**: the phone's message.
+     */
+    @Test
+    fun interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        try {
+            val stamp = System.currentTimeMillis()
+            val png = pngFixture()
+            val document = documentFixture("phone-$stamp")
+            val pngName = ATTACH_FILE_PREFIX + "phone-$stamp.png"
+            val documentName = ATTACH_FILE_PREFIX + "phone-$stamp.txt"
+            val picked =
+                listOf(insertDownload(pngName, "image/png", png, inserted), insertDownload(documentName, TEXT_MIME, document, inserted))
+            stub.answer(Intent.ACTION_OPEN_DOCUMENT) {
+                val clip = ClipData.newRawUri(null, picked.first()).apply { picked.drop(1).forEach { addItem(ClipData.Item(it)) } }
+                Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { clipData = clip })
+            }
+
+            // 1. The peer records from here on; X and Y are fresh named chats, and the phone opens X.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            val (chatY, _) = answerChat(serverId, ATTACH_OTHER_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+
+            // 2. Pick both fixtures through the composer's attach action, and send them with one message.
+            composeTestRule.onNode(hasContentDescription(attachFilesLabel)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                listOf(pngName, documentName).all {
+                    composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+            sendFromPhone(PING_PROMPT)
+
+            // 3. The message reaches claude, and its turn ends: the host logs the user turn on delivery.
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the attachment turn in X did not end") { it.type == "turn_end" }
+
+            // 4. AC-1: the peer's view of X holds one user message naming two ids, each fetching its fixture's
+            // exact bytes; Y gained nothing.
+            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
+            assertEquals("user messages in the peer's view of X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids named by X's user message", 2, ids.distinct().size)
+            val digests = ids.map { id -> sha256(runBlocking { peer.retrieveAttachment(chatX, id, REPLY_TIMEOUT_MS) }.bytes) }
+            assertEquals("digests of the files the peer fetched", setOf(sha256(png), sha256(document)), digests.toSet())
+            assertEquals("user messages in the other conversation", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+        }
+    }
+
+    /**
+     * Another client's file opens and saves on the phone after a history reload (#1016, rung 3). The
+     * [SecondClientPeer] uploads a ~100 KB document into chat X — three chunks, so the phone's reassembly
+     * runs — and names it on a message, as the desktop does. The phone never opens X before a restart
+     * ([E2eTestApplication.rebuildGraph]) with X's thread cache cleared, so X's rows can only come from
+     * history replay, whose user `message` entry keeps the id but no name (#1020). Then:
+     *  * the row shows the uploaded filename, which only retrieval supplies, exactly once;
+     *  * a tap hands `ACTION_VIEW` a content URI whose bytes have the fixture's digest;
+     *  * a long-press writes the same bytes to the `ACTION_CREATE_DOCUMENT` target.
+     * Both system activities are answered by an [ActivityIntentStub]; the save target is a `MediaStore` entry.
+     *
+     * **One real-claude turn**: the peer's message.
+     */
+    @Test
+    fun interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            val stamp = System.currentTimeMillis()
+            val document = documentFixture("peer-$stamp")
+            val documentName = ATTACH_FILE_PREFIX + "peer-$stamp.txt"
+
+            // 1. X is a fresh named chat the phone does not open; the peer uploads into it and names the file.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            runBlocking {
+                val id = peer.uploadAttachment(chatX, documentName, TEXT_MIME, document, REPLY_TIMEOUT_MS)
+                peer.sendMessage(chatX, PING_PROMPT, THREAD_TIMEOUT_MS, attachmentIds = listOf(id))
+            }
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the peer's attachment turn in X did not end") { it.type == "turn_end" }
+
+            // 2. Restart with X's thread cache cleared, so the row can only come from history replay.
+            relaunched =
+                restartApp {
+                    val cache = GlobalContext.get().get<ConversationCache>()
+                    runBlocking {
+                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
+                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                    }
+                }
+            awaitChannelList()
+            awaitConnected()
+            openChatRow(nameX)
+
+            // 3. AC-2: the retrieved name shows once, and open and save both carry the fixture's bytes.
+            awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
+            assertOpensAndSaves(stub, documentName, sha256(document), inserted)
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * A file claude offers stays on the phone across a restart (#1016, rung 3). With the phone in chat X, the
+     * phone's message has claude write a file of known content with a shell command and hand it over with
+     * the daemon's `send_file` tool (the `pyry_files` MCP server), which only takes a path inside the
+     * conversation's workspace. The [SecondClientPeer] allows each permission prompt until the turn ends.
+     *  * the peer's `attachment_offered` for X announces the file's name;
+     *  * the phone draws an attachment row with that name, and its thread cache holds it as an assistant row;
+     *  * after [E2eTestApplication.rebuildGraph] the row is still there once, and open and save both yield
+     *    the content's digest.
+     * The offer is live-only, with no replay: after the restart the row comes from the phone's own thread
+     * cache. A fresh device, or a cleared cache, would not show it, by design, and that is not asserted.
+     *
+     * The name places it before the background-task scenario in JUnit's default order, which sorts by name
+     * hash. In two live runs every peer opened before that point carried frames.
+     *
+     * **One real-claude turn**: the phone's message.
+     */
+    @Test
+    fun interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            val stamp = System.currentTimeMillis()
+            val content = OFFER_CONTENT_PREFIX + stamp
+            val fileName = ATTACH_FILE_PREFIX + "offer-$stamp.txt"
+
+            // 1. The phone is attached to X when claude calls the tool: the offer is never replayed.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+            sendFromPhone(offerPrompt(content, fileName))
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the send_file turn in X did not end") { it.type == "turn_end" }
+
+            // 2. AC-3: the offer names the file, and the phone draws it as an assistant-side row it caches.
+            val offer =
+                peer.recorded(chatX).firstOrNull { it.type == "attachment_offered" }?.let {
+                    MobileJson.decodeFromJsonElement(AttachmentOfferedPayloadDto.serializer(), it.payload)
+                }
+            checkNotNull(offer) { "claude's turn in X offered no file" }
+            assertTrue("the offer announced another file name", offer.filename == fileName)
+            awaitReadyAttachmentRow(fileName, REPLY_TIMEOUT_MS)
+            awaitCachedOffer(serverId, chatX, offer.attachmentId)
+
+            // 3. AC-3: after a restart the cached row is still there once, and open and save carry the content.
+            leaveThread()
+            relaunched = restartApp()
+            awaitChannelList()
+            awaitConnected()
+            openChatRow(nameX)
+            awaitReadyAttachmentRow(fileName, REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(readyAttachmentRow(fileName)).assertCountEquals(1)
+            assertOpensAndSaves(stub, fileName, sha256(content.toByteArray()), inserted)
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * A markdown link in claude's reply opens the note in the in-app reader, read live (#1050, rung 3). Claude
+     * writes a markdown note in its workspace with one `printf` and replies with a link to it. A tap on the
+     * link shows the note's heading and its file name in the reader, with the thread's composer gone. While the
+     * reader stays open, the peer has claude rewrite the note, and the reader's Refresh (#1067) shows the new
+     * heading and not the old one. Back returns to the thread, and the same link shows the new heading too:
+     * the reader reads the host's file on every open and keeps nothing between opens.
+     *
+     * **Two real-claude turns**: the note and the rewrite.
+     */
+    @Test
+    fun interactiveTurn_markdownLink_opensLiveNoteInReader() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        try {
+            val stamp = System.currentTimeMillis()
+            val fileName = NOTE_FILE_PREFIX + "$stamp.md"
+            val linkText = NOTE_LINK_PREFIX + stamp
+            val first = NOTE_MARKER_PREFIX + "$stamp-first"
+            val second = NOTE_MARKER_PREFIX + "$stamp-second"
+            val allowed = mutableSetOf<String>()
+
+            // 1. A fresh chat X; claude writes the note and replies with a link to it.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, NOTE_CHAT_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+            sendFromPhone(notePrompt(first, fileName, "reply with exactly this markdown link and nothing else: [$linkText]($fileName)"))
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the note turn in X did not end", allowed) { it.type == "turn_end" }
+
+            // 2. AC-1, AC-3: the tap opens the reader on the note as it is now, named by its file.
+            assertLinkOpensNote(linkText, fileName, first, stale = null)
+
+            // 3. #1067: with the reader still open, the peer has claude rewrite the note; Refresh shows it.
+            runBlocking { peer.sendMessage(chatX, notePrompt(second, fileName, "reply with a single short word"), THREAD_TIMEOUT_MS) }
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the rewrite turn in X did not end", allowed) {
+                it.type == "turn_end" && peer.recorded(chatX).count { frame -> frame.type == "turn_end" } >= 2
+            }
+            assertRefreshShowsNote(second, stale = first)
+
+            // 4. AC-3: back returns to the same thread.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitThreadComposer()
+
+            // 5. AC-2, AC-5: the same link now shows the new content only.
+            assertLinkOpensNote(linkText, fileName, second, stale = first)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitThreadComposer()
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * The #1050 note prompt: write a one-heading markdown note [marker] to [fileName] in the workspace with one
+     * shell command, then [reply]. `printf` with a quoted literal keeps the bytes exactly as written.
+     */
+    private fun notePrompt(
+        marker: String,
+        fileName: String,
+        reply: String,
+    ): String =
+        "Run this exact shell command with your tools: `printf '# $marker\\n' > $fileName`. " +
+            "Do not use Write or Edit, and do not create any other file. After the command returns, $reply."
+
+    /**
+     * Tap the first [linkText] link in claude's reply and wait for the reader: the note's [marker] heading
+     * under a bar named [fileName], the composer gone, and never the [stale] heading.
+     */
+    private fun assertLinkOpensNote(
+        linkText: String,
+        fileName: String,
+        marker: String,
+        stale: String?,
+    ) {
+        val link = hasText(linkText, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                runCatching {
+                    scrollListTo(link)
+                    composeTestRule.onAllNodes(link, useUnmergedTree = true).onFirst().performFirstLinkClick()
+                }.isSuccess
+            }
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(marker)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("tapping the link to $fileName did not show the note $marker in the reader", e)
+        }
+        // Past the navigation transition, so the thread beneath (whose prompts name both markers) is gone.
+        composeTestRule.waitForIdle()
+        composeTestRule.onNode(hasText(marker)).assertIsDisplayed()
+        composeTestRule.onNode(hasText(fileName)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).assertCountEquals(0)
+        stale?.let { composeTestRule.onAllNodes(hasText(it)).assertCountEquals(0) }
+    }
+
+    /**
+     * Choose Refresh from the open reader's overflow (#1067) and wait for the note's [marker] heading, read
+     * again from the host: never the [stale] heading, and no could-not-open notice.
+     */
+    private fun assertRefreshShowsNote(
+        marker: String,
+        stale: String,
+    ) {
+        val openFailed = string(R.string.thread_attachment_open_failed)
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.onNode(hasText(string(R.string.markdown_reader_refresh))).performClick()
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(openFailed)).fetchSemanticsNodes().isNotEmpty() ||
+                    composeTestRule.onAllNodes(hasText(marker)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("Refresh in the reader did not show the rewritten note $marker", e)
+        }
+        composeTestRule.onAllNodes(hasText(openFailed)).assertCountEquals(0)
+        composeTestRule.onNode(hasText(marker)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(stale)).assertCountEquals(0)
+    }
+
+    /** Wait until the open thread's composer is back. */
+    private fun awaitThreadComposer() {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * The #1016 offer prompt: write [content] to [fileName] in the workspace with one shell command, then hand
+     * it over with `send_file`. The file must be in the workspace, since `send_file` refuses any other path,
+     * and `printf` with a quoted literal and no newline keeps its bytes exactly [content].
+     */
+    private fun offerPrompt(
+        content: String,
+        fileName: String,
+    ): String =
+        "Run this exact shell command with your tools: `printf '$content' > $fileName`. " +
+            "Then hand that file to the operator by calling the send_file tool from the pyry_files MCP server, " +
+            "passing path $fileName. Do not use Write or Edit, and do not change the file. " +
+            "After the tool returns, reply with a single short word."
+
+    /** A 4 × 4 PNG in one flat colour: generated, a few dozen bytes. */
+    private fun pngFixture(): ByteArray {
+        val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(FIXTURE_COLOR)
+        return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+    }
+
+    /** A generated text document of [DOCUMENT_BYTES] or a little more, so it spans more than one chunk. */
+    private fun documentFixture(label: String): ByteArray {
+        val text = StringBuilder()
+        var line = 0
+        while (text.length < DOCUMENT_BYTES) {
+            text
+                .append("e2e1016 ")
+                .append(label)
+                .append(" line ")
+                .append(line++)
+                .append('\n')
+        }
+        return text.toString().toByteArray().also { check(it.size > ATTACHMENT_CHUNK_BYTES) { "the document fixture fits one chunk" } }
+    }
+
+    /**
+     * A `MediaStore` download named [name] holding [bytes], or empty when [bytes] is null, recorded in
+     * [inserted] for [deleteFixtures]. This app owns it, so it reads and writes it without a permission, and
+     * its `media` authority is another app's, which is what the picker and the upload read accept.
+     */
+    private fun insertDownload(
+        name: String,
+        mimeType: String,
+        bytes: ByteArray?,
+        inserted: MutableList<Uri>,
+    ): Uri {
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        val values =
+            ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+            }
+        val uri = checkNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)) { "MediaStore refused a fixture" }
+        inserted += uri
+        if (bytes != null) checkNotNull(resolver.openOutputStream(uri, "wt")) { "a fixture is not writable" }.use { it.write(bytes) }
+        return uri
+    }
+
+    /** Delete the `MediaStore` entries [insertDownload] made; one already gone is ignored. */
+    private fun deleteFixtures(inserted: List<Uri>) {
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        inserted.forEach { runCatching { resolver.delete(it, null, null) } }
+    }
+
+    /** All the bytes behind [uri], read through this app's own resolver. */
+    private fun readUri(uri: Uri): ByteArray =
+        checkNotNull(
+            InstrumentationRegistry
+                .getInstrumentation()
+                .targetContext.contentResolver
+                .openInputStream(uri),
+        ) {
+            "a content URI opened no stream"
+        }.use { it.readBytes() }
+
+    /** Lowercase hex SHA-256 of [bytes]. */
+    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /**
+     * The user messages in a history. The host logs the operator's turn as a `message` entry with role `user`
+     * when it is delivered; a stored `send_message` counts too, the shape the phone's reducer also reads.
+     */
+    private fun userMessages(history: List<HistoryEntryDto>): Int = history.count { it.isUserMessage() }
+
+    /** The `attachment_ids` of each user message in a history, in log order; empty for a message naming none. */
+    private fun userMessageAttachmentIds(history: List<HistoryEntryDto>): List<List<String>> =
+        history.filter { it.isUserMessage() }.map { entry ->
+            ((entry.payload as? JsonObject)?.get("attachment_ids") as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
+        }
+
+    private fun HistoryEntryDto.isUserMessage(): Boolean =
+        type == "send_message" || (type == "message" && (payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
+
+    /**
+     * Fail fast, and say so, when [peer]'s open session carries no frames: one `request_history` for
+     * [conversationId] must be answered. Two live runs had peers whose handshake the daemon accepted and which
+     * then saw nothing, so a permission prompt went unanswered until the turn timed out as a feature failure.
+     */
+    private fun assertPeerAnswers(
+        peer: SecondClientPeer,
+        conversationId: String,
+    ) {
+        try {
+            runBlocking { peer.history(conversationId, THREAD_TIMEOUT_MS) }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("the peer's open session answered no request within $THREAD_TIMEOUT_MS ms: a relay or daemon fault", e)
+        }
+    }
+
+    /** A message attachment's file row named [name] that is ready to act: tap opens, long-press saves. */
+    private fun readyAttachmentRow(name: String): SemanticsMatcher =
+        hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG) and hasText(name) and hasClickAction()
+
+    /** Scroll the thread until [readyAttachmentRow] for [name] is on screen. The name is a fixture's. */
+    private fun awaitReadyAttachmentRow(
+        name: String,
+        timeoutMs: Long,
+    ) {
+        try {
+            composeTestRule.waitUntil(timeoutMs) { runCatching { scrollListTo(readyAttachmentRow(name)) }.isSuccess }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("no ready attachment row named $name within $timeoutMs ms", e)
+        }
+    }
+
+    /**
+     * Tap the ready row named [name] and read what `ACTION_VIEW` was handed; then long-press it and read what
+     * was written to the `ACTION_CREATE_DOCUMENT` target. Both must have [digest]. [stub] answers both.
+     */
+    private fun assertOpensAndSaves(
+        stub: ActivityIntentStub,
+        name: String,
+        digest: String,
+        inserted: MutableList<Uri>,
+    ) {
+        stub.answer(Intent.ACTION_VIEW) { Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null) }
+        val views = stub.answered.count { it.action == Intent.ACTION_VIEW }
+        composeTestRule.onNode(readyAttachmentRow(name)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { stub.answered.count { it.action == Intent.ACTION_VIEW } > views }
+        val view = stub.answered.last { it.action == Intent.ACTION_VIEW }
+        val opened = checkNotNull(view.data) { "ACTION_VIEW carried no URI" }
+        assertEquals("the scheme of the URI handed to the viewer", ContentResolver.SCHEME_CONTENT, opened.scheme)
+        assertTrue("the viewer got no read grant", (view.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0)
+        assertEquals("digest of the opened file", digest, sha256(readUri(opened)))
+
+        val target = insertDownload(ATTACH_FILE_PREFIX + "saved-${System.nanoTime()}.bin", "application/octet-stream", null, inserted)
+        stub.answer(Intent.ACTION_CREATE_DOCUMENT) { Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(target)) }
+        composeTestRule.onNode(readyAttachmentRow(name)).performTouchInput { longClick() }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            listOf(savedNotice, saveFailedNotice).any { composeTestRule.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty() }
+        }
+        composeTestRule.onAllNodesWithText(saveFailedNotice).assertCountEquals(0)
+        assertEquals("digest of the saved file", digest, sha256(readUri(target)))
+    }
+
+    /**
+     * Restart the app as [E2eTestApplication.rebuildGraph] can (#1016, after #847): the rule's activity goes
+     * first, since no activity may outlive the graph it resolved; [beforeLaunch] runs on the new graph before
+     * the relaunch. Close the returned scenario in the test's `finally`.
+     */
+    private fun restartApp(beforeLaunch: () -> Unit = {}): ActivityScenario<MainActivity> {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+        instrumentation.runOnMainSync {
+            (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+        }
+        beforeLaunch()
+        return ActivityScenario.launch(MainActivity::class.java)
+    }
+
+    /** Wait until the phone's thread cache for [conversationId] holds an assistant row carrying [attachmentId]. */
+    private fun awaitCachedOffer(
+        serverId: String,
+        conversationId: String,
+        attachmentId: String,
+    ) {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        try {
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    while (cache.readThread(serverId, conversationId).none { item ->
+                            item is ThreadItem.MessageItem &&
+                                item.message.role == Role.Assistant &&
+                                item.message.attachments.any { it.attachmentId == attachmentId }
+                        }
+                    ) {
+                        delay(CACHE_POLL_MS)
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("the phone's thread cache holds no assistant row with the offered file", e)
+        }
+    }
+
+    /**
+     * Wait until the footer's `Cxt:` segment shows text that passes [shows]. The failure names [what] was
+     * expected and what the segment showed; the text is the app's own, never claude's.
+     */
+    private fun awaitContextSegment(
+        timeoutMs: Long,
+        what: String,
+        shows: (String) -> Boolean,
+    ) {
+        fun shown(): List<String> =
+            composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().map { node ->
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    .orEmpty()
+                    .joinToString("") { it.text }
+            }
+        try {
+            composeTestRule.waitUntil(timeoutMs) { shown().any(shows) }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("the footer's context segment never showed $what; it shows ${shown()}", e)
+        }
+    }
+
+    /** A slash-command suggestion labelled [label]; the composer, whose text a pick can equal, is excluded. */
+    private fun slashRow(label: String): SemanticsMatcher = hasText(label) and hasClickAction() and !hasSetTextAction()
+
+    /** The composer's current text. */
+    private fun composerText(): String =
+        composeTestRule
+            .onNode(hasSetTextAction())
+            .fetchSemanticsNode()
+            .config
+            .getOrNull(SemanticsProperties.EditableText)
+            ?.text
+            .orEmpty()
+
+    /** Open the footer's Actions menu (#884). */
+    private fun openActions() {
+        val control = footerControl(string(R.string.thread_footer_open_actions))
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(control).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(control).onFirst().performClick()
+    }
+
+    /** An Actions menu row, a button whose label passes [label]. */
+    private fun actionRow(label: (String) -> Boolean): SemanticsMatcher =
+        SemanticsMatcher.expectValue(SemanticsProperties.Role, SemanticsRole.Button) and hasClickAction() and
+            SemanticsMatcher("action row") { node ->
+                label(
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .joinToString("") { it.text },
+                )
+            }
+
+    /**
+     * In the open Actions menu, wait until the Background tasks row's live count passes [count], then open the
+     * panel from it (#678). The failure names the labels the menu showed; they are the app's own.
+     */
+    private fun openBackgroundTasks(count: (Int) -> Boolean) {
+        val prefix = ComposerAction.BackgroundTasks.label + " ("
+        val row =
+            actionRow {
+                it.startsWith(prefix) &&
+                    it.endsWith(")") &&
+                    it
+                        .removePrefix(prefix)
+                        .removeSuffix(")")
+                        .toIntOrNull()
+                        ?.let(count) == true
+            }
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
+        } catch (e: ComposeTimeoutException) {
+            val shown =
+                composeTestRule.onAllNodes(actionRow { it.startsWith(prefix) }).fetchSemanticsNodes().map {
+                    it.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .joinToString("") { text -> text.text }
+                }
+            throw AssertionError("the Actions menu's background-task count never passed the check; it shows $shown", e)
+        }
+        composeTestRule.onAllNodes(row).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** A node inside the open background-task panel, the window holding its Close. */
+    private fun inBackgroundPanel(): SemanticsMatcher =
+        hasAnyAncestor(hasAnyDescendant(hasText(string(R.string.background_tasks_close)) and hasClickAction()))
+
+    /** Close the background-task panel and wait until it is gone. */
+    private fun closeBackgroundTasks() {
+        composeTestRule.onNode(hasText(string(R.string.background_tasks_close)) and hasClickAction()).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /**
+     * Poll [peer]'s frames for [conversationId] until one passes [done], and return it. Every permission prompt
+     * raised there on the way is allowed once through the peer, the main daemon's privileged device (#950).
+     * [allowed] holds the modal ids already answered; share it across calls on one peer so a prompt still in
+     * its recorded frames is not answered twice. The failure names [failure] and a count, never a frame's text.
+     */
+    private fun allowPromptsUntil(
+        peer: SecondClientPeer,
+        conversationId: String,
+        timeoutMs: Long,
+        failure: String,
+        allowed: MutableSet<String> = mutableSetOf(),
+        done: (Envelope) -> Boolean,
+    ): Envelope =
+        try {
+            runBlocking {
+                withTimeout(timeoutMs) {
+                    var found: Envelope? = null
+                    while (found == null) {
+                        val frames = peer.recorded(conversationId)
+                        found = frames.firstOrNull(done)
+                        if (found == null) {
+                            frames
+                                .filter { it.type == "modal_shown" }
+                                .mapNotNull {
+                                    runCatching {
+                                        MobileJson.decodeFromJsonElement(
+                                            ModalShownPayloadDto.serializer(),
+                                            it.payload,
+                                        )
+                                    }.getOrNull()
+                                }.filter { shown ->
+                                    shown.modalClass == PERMISSION_CLASS &&
+                                        shown.modalId !in allowed &&
+                                        shown.options.any { it.id == ALLOW_ONCE }
+                                }.forEach { shown ->
+                                    allowed += shown.modalId
+                                    peer.allowOnce(shown.modalId, THREAD_TIMEOUT_MS)
+                                }
+                            delay(CACHE_POLL_MS)
+                        }
+                    }
+                    checkNotNull(found)
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("$failure within $timeoutMs ms (permission prompts allowed: ${allowed.size})", e)
+        }
+
+    /**
+     * The answer daemon's server id and a peer for it (#966), or the failure for its unmet prerequisite. The
+     * peer is built here and opened by the test; nothing is paired yet.
+     */
+    private fun answerHostPeer(): Pair<String, SecondClientPeer> {
+        val args = InstrumentationRegistry.getArguments()
+        args.getString(ARG_ANSWER_UNMET)?.let {
+            throw AssertionError(
+                "the answer daemon (#966) did not start: " + (ANSWER_UNMET_REASONS[it] ?: "unmet prerequisite '$it'") +
+                    ". See scripts/e2e-emulator.sh § 4a' and its log.",
+            )
+        }
+        val serverId = answerArg(ARG_ANSWER_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = answerArg(ARG_ANSWER_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = answerArg(ARG_ANSWER_SERVER_STATIC_PUBLIC_KEY),
+                ),
+            )
+        return serverId to peer
+    }
+
+    /** Pair the answer daemon by code, as #687 pairs its host. This pairing is the phone's only privileged one. */
+    private fun pairAnswerHost() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        awaitChannelList()
+        awaitConnected()
+        instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+        pairHostByCode(answerArg(ARG_ANSWER_PAIR_CODE), ANSWER_HOST_NAME)
+    }
+
+    /**
+     * A new chat on [serverId] with a run-unique name starting [prefix]: its id and name. A connection that
+     * drops mid-request is retried on the host's redial (#1029); that can leave one unnamed stray chat, which
+     * no scenario finds, because each finds its chat by this name.
+     */
+    private fun answerChat(
+        serverId: String,
+        prefix: String,
+    ): Pair<String, String> {
+        val name = prefix + System.currentTimeMillis()
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        val chat =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    bundle.coordinator.currentRepository.callOnLive(REDIAL_WAIT_MS) { it.rename(it.createDiscussion().id, name) }
+                }
+            }
+        return chat.id to name
+    }
+
+    /** An answer-daemon argument (#966), failing with the script that passes it. */
+    private fun answerArg(key: String): String =
+        requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
+            "missing instrumentation arg '$key' — scripts/e2e-emulator.sh passes it once the answer daemon (#966) is up"
+        }
+
+    /** A modal's Cancel, which every open prompt dialog draws. */
+    private fun promptDialog(): SemanticsMatcher = hasText(modalCancel) and hasClickAction()
+
+    /** A node inside the open prompt dialog, the window holding its Cancel. */
+    private fun inPromptDialog(): SemanticsMatcher = hasAnyAncestor(hasAnyDescendant(promptDialog()))
+
+    private fun awaitPromptDialog() {
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    private fun awaitNoPromptDialog(failure: String) {
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isEmpty() }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError(failure, e)
+        }
+    }
+
+    private fun awaitQuestionModal() {
+        val title = hasText(string(R.string.question_modal_title))
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(title).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    private fun awaitNoQuestionModal(failure: String) {
+        val title = hasText(string(R.string.question_modal_title))
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(title).fetchSemanticsNodes().isEmpty() }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError(failure, e)
+        }
+    }
+
+    /**
+     * The phone draws a decision-context row for the context [shown] carries (#817). A frame carrying none
+     * fails here: claude sent the prompt without the context this proof needs.
+     */
+    private fun assertContextDrawn(shown: ModalShownPayloadDto) {
+        val reason = shown.reason.toString().takeUnless { it == "\"\"" || it == "null" }
+        assertTrue(
+            "the prompt's modal_shown carried no decision context (reason, reason_type, description, blocked_path)",
+            reason != null || shown.reasonType != null || shown.description != null || shown.blockedPath != null,
+        )
+        val labels =
+            listOf(
+                string(R.string.modal_context_reason),
+                string(R.string.modal_context_reason_classifier),
+                string(R.string.modal_context_reason_rule),
+                InstrumentationRegistry
+                    .getInstrumentation()
+                    .targetContext
+                    .getString(R.string.modal_context_reason_type, "")
+                    .trim(),
+                string(R.string.modal_context_description),
+                string(R.string.modal_context_blocked_path),
+            )
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                labels.any { label ->
+                    composeTestRule.onAllNodes(hasText(label, substring = true) and inPromptDialog()).fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("the prompt dialog draws no decision-context row for the context its frame carried", e)
+        }
+    }
+
+    /** Wait for [conversationId]'s [occurrence]th `turn_end` on the peer, naming [what] on a timeout. */
+    private fun awaitTurnEnd(
+        peer: SecondClientPeer,
+        conversationId: String,
+        occurrence: Int,
+        what: String,
+    ) {
+        try {
+            runBlocking { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS, occurrence) }
+        } catch (e: TimeoutCancellationException) {
+            val prompts = peer.recorded(conversationId).count { it.type == "modal_shown" || it.type == "question_shown" }
+            throw AssertionError("$what never ended within $REPLY_TIMEOUT_MS ms (prompts raised in the chat: $prompts)", e)
+        }
+    }
+
+    /**
+     * Claude's reply text in [conversationId] as the peer recorded it, from the [from]th recorded frame on:
+     * its `assistant_delta` texts joined. Compared in the test only, never put into a message.
+     */
+    private fun assistantText(
+        peer: SecondClientPeer,
+        conversationId: String,
+        from: Int = 0,
+    ): String =
+        peer
+            .recorded(conversationId)
+            .drop(from)
+            .filter { it.type == "assistant_delta" }
+            .mapNotNull {
+                runCatching {
+                    MobileJson
+                        .decodeFromJsonElement(
+                            AssistantDeltaPayloadDto.serializer(),
+                            it.payload,
+                        ).text
+                }.getOrNull()
+            }.joinToString("")
+
+    /**
+     * Assert that claude ran a command in [conversationId]'s turn from the [from]th recorded frame on: the
+     * peer recorded a `Bash` `tool_use` there and a `tool_result` for that call with `is_error` false. The
+     * failure names counts and booleans only.
+     */
+    private fun assertBashRan(
+        peer: SecondClientPeer,
+        conversationId: String,
+        from: Int,
+        what: String,
+    ) {
+        val frames = peer.recorded(conversationId).drop(from)
+        val bashIds =
+            frames
+                .filter { it.type == "tool_use" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolUsePayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.name == TOOL_NAME }
+                .map { it.toolUseId }
+                .toSet()
+        val results =
+            frames
+                .filter { it.type == "tool_result" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolResultPayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.toolUseId in bashIds }
+        assertTrue(
+            "$what ran no successful Bash call (Bash calls: ${bashIds.size}, their results: ${results.size}, " +
+                "any error: ${results.any { it.isError }})",
+            results.any { !it.isError },
+        )
+    }
+
+    /**
+     * Wait until the open thread shows a permission prompt that names this Read: a node in the prompt's
+     * dialog, the one holding its Cancel, whose text carries the file's [baseName] or the tool name `Read`.
+     * The phone's own message names both, so the dialog scope is what makes the match the prompt's.
+     */
+    private fun awaitReadPrompt(baseName: String) {
+        val inPrompt = hasAnyAncestor(hasAnyDescendant(hasText(modalCancel) and hasClickAction()))
+        val namesRead =
+            SemanticsMatcher("names the Read of $baseName") { node ->
+                val text =
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .joinToString("") { it.text }
+                baseName in text || READ_TOOL_WORD.containsMatchIn(text)
+            }
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(namesRead and inPrompt).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            val shown = composeTestRule.onAllNodes(hasText(modalCancel) and hasClickAction()).fetchSemanticsNodes().size
+            throw AssertionError("no permission prompt naming the Read appeared on the phone (prompts with Cancel: $shown)", e)
+        }
+    }
+
+    /**
+     * Why the ended Read turn left no token on the phone (#977): the phone's bubbles, the peer's [frames]
+     * for the chat (opened just before the Read was sent, so all of them are this turn's; the allow was
+     * sent at index [mark]), and the [turnEnd] that ended it [endedAfterMs] after the allow. Counts,
+     * booleans and the turn's bounded enum-like fields only; never bubble text, payload text or [token].
+     */
+    private fun readReplyDiagnosis(
+        frames: List<Envelope>,
+        mark: Int,
+        token: String,
+        turnEnd: Envelope,
+        endedAfterMs: Long,
+    ): String {
+        val bubbles =
+            composeTestRule
+                .onAllNodes(hasTestTag(MESSAGE_BUBBLE_TEST_TAG), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .map { it.textOfTree() }
+        val afterAllow = frames.drop(mark)
+        val readIds =
+            frames
+                .filter { it.type == "tool_use" }
+                .mapNotNull { runCatching { MobileJson.decodeFromJsonElement(ToolUsePayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it.name == "Read" }
+                .map { it.toolUseId }
+                .toSet()
+        val readResults =
+            frames
+                .filter { it.type == "tool_result" }
+                .map { runCatching { MobileJson.decodeFromJsonElement(ToolResultPayloadDto.serializer(), it.payload) }.getOrNull() }
+                .filter { it == null || it.toolUseId in readIds }
+        val readResultIsError =
+            when {
+                readResults.isEmpty() -> "absent"
+                readResults.any { it == null } -> "undecodable"
+                else -> readResults.map { it?.isError }.distinct().joinToString("/")
+            }
+        val end = runCatching { MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), turnEnd.payload) }.getOrNull()
+        val endFields =
+            end?.let { "stop_reason=${it.stopReason.inert()} outcome=${it.outcome.inert()} is_error=${it.isError}" }
+                ?: "turn_end undecodable"
+        return "bubbles=${bubbles.size} bubbleLengths=${bubbles.map { it.length }} " +
+            "anyBlocked=${bubbles.any { it.trim().equals(BLOCKED_REPLY, ignoreCase = true) }} " +
+            "readResultIsError=$readResultIsError $endFields endedAfterMs=$endedAfterMs " +
+            "peerFramesAfterAllow=${afterAllow.size} peerFramesWithToken=${afterAllow.any { token in it.payload.toString() }}"
+    }
+
+    /**
+     * Whether the phone's own thread for [conversationId] holds an assistant row carrying [token] (#981):
+     * true names the screen (the row was kept but never shown), false names the repository fold. A
+     * boolean only; never the row's text.
+     */
+    private fun threadHoldsReply(
+        repository: ConversationRepository,
+        conversationId: String,
+        token: String,
+    ): String =
+        runCatching {
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repository.observeMessages(conversationId).first().any {
+                        it is ThreadItem.MessageItem && it.message.role == Role.Assistant && token in it.message.content
+                    }
+                }
+            }
+        }.fold(onSuccess = { it.toString() }, onFailure = { "unread" })
+
+    /** The concatenated `Text` of this node and its descendants, in tree order. */
+    private fun SemanticsNode.textOfTree(): String =
+        config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString("") { it.text } +
+            children.joinToString("") { it.textOfTree() }
+
+    /**
+     * Poll fresh readings for [conversationId] on [serverId] until one reports [mode], and return it. The
+     * mode comes from the child's own confirmation, which can trail a write or a turn by a moment.
+     */
+    private fun awaitPermissionReading(
+        serverId: String,
+        conversationId: String,
+        mode: String,
+    ): SessionSettings {
+        var last: SessionSettings? = null
+        return try {
+            runBlocking {
+                withTimeout(PERMISSION_READING_TIMEOUT_MS) {
+                    var reading = freshSettings(conversationId, serverId)
+                    while (reading.permissionMode != mode) {
+                        last = reading
+                        delay(PERMISSION_POLL_MS)
+                        reading = freshSettings(conversationId, serverId)
+                    }
+                    reading
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError(
+                "no fresh reading reported '$mode'; the last reported '${last?.permissionMode?.inert()}' yolo=${last?.yolo}",
+                e,
+            )
+        }
+    }
+
+    /** A dedicated-daemon argument (#687), failing with the script that passes it. */
+    private fun bypassArg(key: String): String =
+        requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
+            "missing instrumentation arg '$key' — scripts/e2e-emulator.sh passes it once the operator-bypass daemon (#687) is up"
+        }
+
+    /** The failure for an unmet dedicated-daemon prerequisite: the script's code, and what it means. */
+    private fun bypassUnmetMessage(code: String): String =
+        "the operator-bypass daemon (#687) did not start: " + (BYPASS_UNMET_REASONS[code] ?: "unmet prerequisite '$code'") +
+            ". See scripts/e2e-emulator.sh § 4a and its log."
+
+    /**
+     * The effort control's label and note for [applied], a reading taken after a real turn (#545, #889). A
+     * reading that omits `effective_effort` fails.
+     */
+    private fun appliedEffortFooter(applied: EffectiveEffort): Pair<String, String?> =
+        when (applied) {
+            EffectiveEffort.Unavailable -> throw AssertionError("the reply after a real turn omitted effective_effort")
+            EffectiveEffort.NotReported -> EFFORT_PLACEHOLDER_LABEL to string(R.string.thread_effort_note_not_reported)
+            is EffectiveEffort.Applied ->
+                if (applied.value.isEmpty()) {
+                    EFFORT_PLACEHOLDER_LABEL to string(R.string.thread_effort_note_default_unavailable)
+                } else {
+                    applied.value.inert() to null
+                }
+        }
+
+    /**
+     * In the open thread of [conversationId]: the recall settles the footer on [level], a fresh reply's saved
+     * effort is [level], and after one real turn claude applies exactly [level].
+     */
+    private fun assertRecalledThenApplied(
+        conversationId: String,
+        level: String,
+    ) {
+        awaitFooter(changeEffortLabel, level.inert())
+        assertEquals("the recalled saved effort before the first message", level, freshSettings(conversationId).effort)
+        sendFromPhone(PING_PROMPT)
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        assertEquals(EffectiveEffort.Applied(level), freshSettings(conversationId).effectiveEffort)
+    }
+
+    /**
+     * A paired host's current repository, by default the harness's first host, read from the current graph
+     * so it survives a restart.
+     */
+    private fun hostRepository(
+        serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
+    ): ConversationRepository {
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        return runBlocking { withTimeout(CONNECT_TIMEOUT_MS) { checkNotNull(bundle.coordinator.currentRepository.first { it != null }) } }
+    }
+
+    /**
+     * A new `request_session_settings` for [conversationId] and its reply: each collection sends its own read.
+     * [serverId] is the host that holds the conversation, by default the harness's first host.
+     */
+    private fun freshSettings(
+        conversationId: String,
+        serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
+    ): SessionSettings {
+        val repository = hostRepository(serverId)
+        return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeSessionSettings(conversationId).filterNotNull().first() } }
+    }
+
+    /** The model menu the host publishes for [conversationId]; the first collection asks for it. */
+    private fun publishedMenu(conversationId: String): ModelMenu {
+        val repository = hostRepository()
+        return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeModelMenu(conversationId).filterNotNull().first() } }
+    }
+
+    /**
+     * The rows the footer can offer and the daemon will accept: nothing the scenario reads was cut, and the
+     * label names one row only, so tapping it cannot pick another.
+     */
+    private fun usableRows(menu: ModelMenu): List<ModelMenuRow> =
+        menu.rows.filter { row ->
+            row.truncatedFields.orEmpty().none { it in CUT_FIELDS_IN_USE } &&
+                row.displayName.inert().isNotBlank() &&
+                menu.rows.count { it.displayName.inert() == row.displayName.inert() } == 1
+        }
+
+    /**
+     * Create a chat on the host, named [name] so its row can be found, and record its first reading in
+     * [originals] for [restoreSettings].
+     */
+    private fun prepareChat(
+        name: String,
+        originals: MutableMap<String, SessionSettings>,
+    ): Conversation {
+        val repository = hostRepository()
+        val created =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    val id = repository.createDiscussion().id
+                    repository.rename(id, name)
+                }
+            }
+        originals[created.id] = freshSettings(created.id)
+        return created
+    }
+
+    /** Create a channel named [name] in [workspace] on the host and record its first reading in [originals]. */
+    private fun prepareChannel(
+        name: String,
+        workspace: String,
+        originals: MutableMap<String, SessionSettings>,
+    ): Conversation {
+        val repository = hostRepository()
+        val created = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.createChannel(name, workspace) } }
+        originals[created.id] = freshSettings(created.id)
+        return created
+    }
+
+    /** Write [model] and [effort] (`null` leaves one unchanged) to the session a fresh reply names. */
+    private fun writeSettings(
+        conversationId: String,
+        model: String? = null,
+        effort: String? = null,
+    ) {
+        val sessionId = freshSettings(conversationId).sessionId
+        check(sessionId.isNotEmpty()) { "the conversation has no session to write to" }
+        val repository = hostRepository()
+        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.setSessionSettings(sessionId, model = model, effort = effort) } }
+    }
+
+    /** A fresh reply for [conversationId] carries exactly [model] and [effort] as the saved choices. */
+    private fun assertSaved(
+        conversationId: String,
+        model: String,
+        effort: String,
+    ) {
+        val saved = freshSettings(conversationId)
+        assertEquals("saved model", model, saved.model)
+        assertEquals("saved effort", effort, saved.effort)
+    }
+
+    /**
+     * Write each changed conversation's first reading back to it and clear the remembered level, so the
+     * scenario leaves nothing for a later one. A later new chat would otherwise send a recall write. A
+     * failed restore is logged and does not replace the scenario's own failure.
+     */
+    private fun restoreSettings(originals: Map<String, SessionSettings>) {
+        originals.forEach { (conversationId, original) ->
+            runCatching {
+                val now = freshSettings(conversationId)
+                val model = original.model.takeIf { it != now.model }
+                val effort = original.effort.takeIf { it != now.effort }
+                if (model != null || effort != null) {
+                    val repository = hostRepository()
+                    runBlocking {
+                        withTimeout(
+                            THREAD_TIMEOUT_MS,
+                        ) { repository.setSessionSettings(now.sessionId, model = model, effort = effort) }
+                    }
+                }
+            }.onFailure { Log.w("E2E", "settings restore failed: ${it::class.simpleName}") }
+        }
+        runCatching { clearRememberedEffort() }.onFailure { Log.w("E2E", "remembered effort clear failed: ${it::class.simpleName}") }
+    }
+
+    private fun clearRememberedEffort() {
+        runBlocking {
+            GlobalContext
+                .get()
+                .get<AppPreferences>()
+                .clearRememberedEffort()
+                .getOrThrow()
+        }
+    }
+
+    private fun rememberedEffort(): String? =
+        runBlocking {
+            GlobalContext
+                .get()
+                .get<AppPreferences>()
+                .rememberedEffort
+                .first()
+        }
+
+    private fun string(id: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
+
+    /** A footer control, found by the click label its merged node announces (#808). */
+    private fun footerControl(clickLabel: String): SemanticsMatcher =
+        SemanticsMatcher("footer control '$clickLabel'") { it.config.getOrNull(SemanticsActions.OnClick)?.label == clickLabel }
+
+    /**
+     * Wait until the footer control [clickLabel] shows exactly [label] and its state description passes
+     * [state]. By default that means no write is pending. The failure names what the control showed.
+     */
+    private fun awaitFooter(
+        clickLabel: String,
+        label: String,
+        state: (String?) -> Boolean = { it != footerPending },
+    ) {
+        fun shown(): List<Pair<String, String?>> =
+            composeTestRule.onAllNodes(footerControl(clickLabel)).fetchSemanticsNodes().map { node ->
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    .orEmpty()
+                    .joinToString("") { it.text } to
+                    node.config.getOrNull(SemanticsProperties.StateDescription)
+            }
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { shown().any { (text, description) -> text == label && state(description) } }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("footer '$clickLabel' never settled on '$label'; it shows ${shown()}", e)
+        }
+    }
+
+    /** Open the footer control [clickLabel] once it is enabled, and tap the overlay's [optionLabel] choice. */
+    private fun pickFooterOption(
+        clickLabel: String,
+        optionLabel: String,
+    ) {
+        val control = footerControl(clickLabel) and isEnabled()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(control).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(control).onFirst().performClick()
+        val option = hasText(optionLabel) and SemanticsMatcher.expectValue(SemanticsProperties.Role, SemanticsRole.RadioButton)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(option).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(option).onFirst().performClick()
+    }
+
+    /** Tap the Chats row whose name contains [name] and wait for its thread, as [openRow] does for channels. */
+    private fun openChatRow(name: String) {
+        val row = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(row) }.isSuccess }
+        composeTestRule.onAllNodes(row).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** Leave the open thread for the channel list. */
+    private fun leaveThread() {
+        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+        awaitChannelList()
+    }
+
+    /**
      * Wait until the phone's thread cache for [conversationId] holds an assistant reply. The cache only
      * ever holds settled rows, and the open thread's collector writes them after drawing them, so this is
      * the phone's own proof that the reply settled — not another device's copy of `turn_end`.
@@ -1711,6 +4304,46 @@ class InteractiveStreamE2ETest {
             .mapTo(mutableSetOf()) { it.id }
     }
 
+    /** The #849 peer on the first test daemon, the one device allowed to answer its permission prompts. */
+    private fun runningToolPeer(): SecondClientPeer {
+        val args = InstrumentationRegistry.getArguments()
+        return SecondClientPeer(
+            PairedServer(
+                serverId = twoHostArg(ARG_SERVER_ID),
+                token = twoHostArg(ARG_PEER_TOKEN),
+                relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+            ),
+        )
+    }
+
+    /**
+     * Create a chat, open [peer], send [prompt] from the phone and wait until claude's command waits on a
+     * permission prompt (#950). Returns the chat's id and the prompt's modal id; the tool call stays open
+     * until the peer answers.
+     */
+    private fun holdToolOnPermission(
+        peer: SecondClientPeer,
+        prompt: String,
+    ): Pair<String, String> {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        awaitChannelList()
+        awaitConnected()
+        val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val conversationId =
+            runBlocking {
+                withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+            }.single()
+        runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+        sendFromPhone(prompt)
+        val modalId = runBlocking { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+        return conversationId to modalId
+    }
+
     /** A two-host instrumentation argument (#847), failing with the script that passes it. */
     private fun twoHostArg(key: String): String =
         requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
@@ -1768,7 +4401,10 @@ class InteractiveStreamE2ETest {
      * every state offers a paste link ([PASTE_CODE_LINK]), which opens `PairCodeScreen`. Pair → confirm the
      * fingerprint → the screen waits for Connected and returns to the list.
      */
-    private fun pairHostByCode(pairCode: String) {
+    private fun pairHostByCode(
+        pairCode: String,
+        hostName: String = HOST_B_NAME,
+    ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val pairControl =
             context.getString(R.string.cd_tree_section_pair_host, context.getString(R.string.channels_section_header))
@@ -1781,7 +4417,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNode(hasSetTextAction() and hasText(HOST_NAME_FIELD)).performTextInput(HOST_B_NAME)
+        composeTestRule.onNode(hasSetTextAction() and hasText(HOST_NAME_FIELD)).performTextInput(hostName)
         composeTestRule.onNode(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).performTextInput(pairCode)
         composeTestRule.onNode(hasText(PAIR_BUTTON) and hasClickAction()).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -1930,8 +4566,8 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Long-press the same control to open the Workspace Picker — a *tap* would create a scratch chat
-     * instead (the long press routes to `ChannelListEvent.TreeHostAddLongPressed`,
+     * Long-press the same control to open that host's Add workspace modal (#904) — a *tap* would create
+     * a scratch chat instead (the long press routes to `ChannelListEvent.TreeHostAddLongPressed`,
      * `combinedClickable.onLongClick`).
      */
     private fun openWorkspacePicker() {
@@ -2012,6 +4648,9 @@ class InteractiveStreamE2ETest {
         const val CREATE_FOLDER_ROW = "Create new folder under pyry-workspace"
         const val CREATE_BUTTON = "Create"
         const val RECENT_SECTION = "Recent"
+
+        // #904: Add workspace's submit — MobileModal's fixed footer label.
+        const val OK_BUTTON = "OK"
 
         // Collision-resistant folder-name prefix: a clean single path element (lowercase alphanumerics +
         // dash — the daemon rejects empty / absolute / separator-bearing / ".." names). Suffixed with
@@ -2094,24 +4733,22 @@ class InteractiveStreamE2ETest {
         // collide as a substring with top-bar / list chrome the assertion also matches.
         const val RENAME_NAME_PREFIX = "e2e537-"
 
-        // #581 save-as-channel (promote) scenario. Reuses the overflow opener (CD_MORE_ACTIONS) and the list /
-        // thread markers; adds these six. SAVE_AS_CHANNEL_ITEM is matched EXACTLY — the production menu item
-        // ends in a real U+2026 ellipsis and the dialog title is the same literal WITHOUT it, so substring
-        // matching would conflate them (the opposite choice from CHANGE_WORKSPACE_ITEM, whose literal has no
-        // such twin). KEEP_IN_SCRATCH_OPTION is MANDATORY, not optional polish: the dialog opens on
-        // WorkspaceChoice.DEDICATED, which resolves to a real "pyry-workspace/channels/<slug>" directory on the
-        // operator's machine — SCRATCH resolves to null, keeping the conversation's existing scratch cwd (the
-        // dedicated branch is already covered by #566). SAVE_AS_CHANNEL_SAVE is the same literal as RENAME_SAVE
-        // but a different dialog, declared separately (the shared companion forbids reusing it as a name).
-        // WORKSPACE_CHIP_PREFIX is the in-thread isPromoted tier signal: the WorkspaceChip's label is a
-        // hardcoded literal ("Workspace: <label> (change)"), not a string resource, so this prefix is the
-        // matchable token — mounted before the promote, unmounted after. The tier read needs no constant of its own: it
-        // matches the row test tags the assembling screen sets (#731). Keep in sync with res/values/strings.xml:
-        // save_as_channel_action = "Save as channel…",
-        // save_as_channel_dialog_workspace_scratch = "Keep in scratch", save_as_channel_dialog_save = "Save".
+        // #581 save-as-channel (promote) scenario, driven through the #957 modal. Reuses the overflow opener
+        // (CD_MORE_ACTIONS) and the list / thread markers. SAVE_AS_CHANNEL_ITEM and SAVE_AS_CHANNEL_TITLE are
+        // matched EXACTLY — the production menu item ends in a real U+2026 ellipsis and the modal title is the
+        // same literal WITHOUT it, so substring matching would conflate them. SAVE_AS_CHANNEL_OK is the
+        // MobileModal footer's submit label. SAVE_AS_CHANNEL_PROMPT is typed into the prompt field so the
+        // post-promote set_system_prompt write rides the run; it takes effect at the next session start, which
+        // this scenario never reaches. WORKSPACE_CHIP_PREFIX is the in-thread isPromoted tier signal: the
+        // WorkspaceChip's label is a hardcoded literal ("Workspace: <label> (change)"), not a string resource, so
+        // this prefix is the matchable token — mounted before the promote, unmounted after. The tier read needs no
+        // constant of its own: it matches the row test tags the assembling screen sets (#731). Keep in sync with
+        // res/values/strings.xml: save_as_channel_action = "Save as channel…",
+        // save_as_channel_dialog_title = "Save as channel".
         const val SAVE_AS_CHANNEL_ITEM = "Save as channel…"
-        const val KEEP_IN_SCRATCH_OPTION = "Keep in scratch"
-        const val SAVE_AS_CHANNEL_SAVE = "Save"
+        const val SAVE_AS_CHANNEL_TITLE = "Save as channel"
+        const val SAVE_AS_CHANNEL_OK = "OK"
+        const val SAVE_AS_CHANNEL_PROMPT = "e2e957: answer briefly."
         const val WORKSPACE_CHIP_PREFIX = "Workspace:"
 
         // Runtime-unique promote target: "e2e581-" + System.currentTimeMillis(). Distinct prefix (the shared
@@ -2147,6 +4784,18 @@ class InteractiveStreamE2ETest {
             "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
                 "with exactly: pyrywait. Command: python3 -c \"print(849)\""
         const val DROP_PROMPT = "Reply with exactly: pyrydropped"
+
+        // #950 running-tool label. Both hold claude's Bash call on WAIT_PROMPT's permission lever; the second
+        // command then runs past claude's first tool_progress heartbeat. The sleep sits inside python3
+        // because claude's Bash tool refuses a bare `sleep` of 25 s or more. ELAPSED_SLOT stands in for the
+        // reading when the elapsed label's text is turned into a pattern.
+        const val RUNNING_TOOL_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
+                "with exactly: pyryran. Command: python3 -c \"print(950)\""
+        const val ELAPSED_TOOL_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, and wait " +
+                "for it to finish, then reply with exactly: pyryran. Command: python3 -c \"import time; time.sleep(45)\""
+        const val ELAPSED_SLOT = "\u0000"
         const val DROP_REPLY = "pyrydropped"
         const val PEER_QUEUED_PROMPT = "Reply with exactly: pyrypeerdropped"
         const val PEER_QUEUED_REPLY = "pyrypeerdropped"
@@ -2157,6 +4806,15 @@ class InteractiveStreamE2ETest {
         const val OFFLINE_PROMPT = "Reply with exactly: pyryoffline"
         const val OFFLINE_REPLY = "pyryoffline"
         const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
+
+        // #965 stop scenario. The command waits on an event nothing sets, so only the phone's Stop (or, far
+        // outside the test's step, claude's own Bash timeout) ends it; no time value is involved. It is a
+        // `python3` command, so it needs permission, which the peer grants — see WAIT_PROMPT for why it is not
+        // a `sleep`. STOP_HOLD_REPLY is a token no other prompt asks for; neither text contains "ping".
+        const val STOP_HOLD_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, and without " +
+                "a timeout, then reply with exactly: pyryheld. Command: python3 -c \"import threading; threading.Event().wait()\""
+        const val STOP_HOLD_REPLY = "pyryheld"
 
         // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is
         // the common tail of all three scanner states' paste links — "Trouble scanning? Paste the pairing
@@ -2179,12 +4837,190 @@ class InteractiveStreamE2ETest {
         // Runtime-unique rename target for host A's seeded conversation, distinct from #537's prefix.
         const val RENAMED_NAME_PREFIX = "e2e847-renamed-"
 
+        // #545 settings scenarios. Run-unique names for the chats and channel each method prepares on the host,
+        // none containing "ping" or another scenario's prefix.
+        const val MODEL_X_NAME_PREFIX = "e2e545-model-x-"
+        const val MODEL_Y_NAME_PREFIX = "e2e545-model-y-"
+        const val INHERITED_EFFORT_NAME_PREFIX = "e2e545-inherited-"
+        const val CHOSEN_EFFORT_NAME_PREFIX = "e2e545-chosen-"
+        const val RECALL_PRIMING_NAME_PREFIX = "e2e545-priming-"
+        const val RECALL_CHAT_NAME_PREFIX = "e2e545-recall-chat-"
+        const val RECALL_CHANNEL_NAME_PREFIX = "e2e545-recall-channel-"
+        const val RECALL_EXPLICIT_NAME_PREFIX = "e2e545-explicit-"
+
+        // #687 operator-bypass scenario. The arguments scripts/e2e-emulator.sh passes once its dedicated
+        // daemon is up, or ARG_BYPASS_UNMET naming the prerequisite it lacked. The pair code and the peer
+        // token carry pairing tokens: never log them. The witness token authorizes nothing.
+        const val ARG_BYPASS_UNMET = "bypassUnmet"
+        const val ARG_BYPASS_SERVER_ID = "bypassServerId"
+        const val ARG_BYPASS_PAIR_CODE = "bypassPairCode"
+        const val ARG_BYPASS_PEER_TOKEN = "bypassPeerToken"
+        const val ARG_BYPASS_SERVER_STATIC_PUBLIC_KEY = "bypassServerStaticPublicKey"
+        const val ARG_BYPASS_TOKEN_FILE = "bypassTokenFile"
+        const val ARG_BYPASS_TOKEN = "bypassToken"
+
+        // What each of the script's BYPASS_UNMET codes means.
+        val BYPASS_UNMET_REASONS =
+            mapOf(
+                "no_credential" to "no Claude credential; set CLAUDE_CODE_OAUTH_TOKEN (the live gate's route) or ANTHROPIC_API_KEY",
+                "claude_json_unreadable" to
+                    "CLAUDE_CODE_OAUTH_TOKEN is set but ~/.claude.json, copied into the isolated HOME, is unreadable",
+                "revision_unavailable" to "the daemon revision is unavailable, so it cannot be shown to contain pyrycode 475c406a",
+                "revision_unverifiable" to
+                    "the daemon revision cannot be checked for pyrycode 475c406a; set PYRYCODE_SRC to a checkout holding both",
+                "revision_lacks_475c406a" to "the daemon revision does not contain pyrycode 475c406a",
+                "claude_missing" to "claude is not on PATH",
+                "instance_name" to "the dedicated instance name is not a test instance name",
+                "isolated_home" to "the isolated HOME, its config or the token file could not be written",
+                "daemon_not_ready" to "the dedicated daemon did not answer `pyry status` within 15 s",
+                "pairing" to "the phone's pairing with the dedicated daemon could not be minted",
+                "peer_pairing" to "the peer's --allow-remote-permissions pairing could not be minted",
+            )
+
+        // #966 answer daemon. The arguments scripts/e2e-emulator.sh passes once it is up, or ARG_ANSWER_UNMET
+        // naming the prerequisite it lacked. The pair code and the peer token carry pairing tokens, and the
+        // phone's code is privileged: never log them.
+        const val ARG_ANSWER_UNMET = "answerUnmet"
+        const val ARG_ANSWER_SERVER_ID = "answerServerId"
+        const val ARG_ANSWER_PAIR_CODE = "answerPairCode"
+        const val ARG_ANSWER_PEER_TOKEN = "answerPeerToken"
+        const val ARG_ANSWER_SERVER_STATIC_PUBLIC_KEY = "answerServerStaticPublicKey"
+
+        // What each of the script's ANSWER_UNMET codes means.
+        val ANSWER_UNMET_REASONS =
+            mapOf(
+                "no_credential" to "no Claude credential; set CLAUDE_CODE_OAUTH_TOKEN (the live gate's route) or ANTHROPIC_API_KEY",
+                "claude_json_unreadable" to
+                    "CLAUDE_CODE_OAUTH_TOKEN is set but ~/.claude.json, copied into the isolated HOME, is unreadable",
+                "claude_missing" to "claude is not on PATH",
+                "instance_name" to "the answer daemon's instance name is not a test instance name",
+                "isolated_home" to "the isolated HOME or its config could not be written",
+                "daemon_not_ready" to "the answer daemon did not answer `pyry status` within 15 s",
+                "pairing" to "the phone's --allow-remote-permissions pairing could not be minted",
+                "peer_pairing" to "the peer's --allow-remote-permissions pairing could not be minted",
+            )
+
+        // The answer host's display name and its chats' run-unique prefix: neither contains "ping".
+        const val ANSWER_HOST_NAME = "Answer e2e host"
+        const val ANSWER_CHAT_NAME_PREFIX = "e2e966-"
+
+        // #1016: the attachment exchange. Fixture names are plain ASCII, which the daemon stores unchanged, and
+        // run-unique, so MediaStore never renames one. The document is about 100 KB: three 45000-byte chunks.
+        const val ATTACH_CHAT_NAME_PREFIX = "e2e1016-"
+        const val ATTACH_OTHER_NAME_PREFIX = "e2e1016-other-"
+        const val ATTACH_FILE_PREFIX = "e2e1016-"
+        const val OFFER_CONTENT_PREFIX = "pyrycode-mobile-offer-"
+        const val TEXT_MIME = "text/plain"
+        const val DOCUMENT_BYTES = 100_000
+        const val FIXTURE_COLOR = 0xFF2A6FDB.toInt()
+
+        // #1050: the live-note link. Run-unique names; the markers are what the note's heading renders as.
+        const val NOTE_CHAT_NAME_PREFIX = "e2e1050-"
+        const val NOTE_FILE_PREFIX = "e2e1050-note-"
+        const val NOTE_LINK_PREFIX = "e2e1050-open-"
+        const val NOTE_MARKER_PREFIX = "pyrycode-mobile-note-"
+
+        // A `python3` command, so it needs permission (see WAIT_PROMPT). The token is its output, which no
+        // prompt contains; claude could still compute it, so the tests prove the run by a successful Bash
+        // tool_result (assertBashRan) and the token only shows the reply reports it.
+        const val ANSWER_PERMISSION_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
+                "with exactly the number it printed and nothing else. Command: python3 -c \"print(966 * 7)\""
+        const val ANSWER_PERMISSION_TOKEN = "6762"
+
+        // One clarification question with two labels; the phone picks QUESTION_PICK, the peer QUESTION_OTHER.
+        const val QUESTION_PICK = "pyrymagenta"
+        const val QUESTION_OTHER = "pyrycyan"
+        const val QUESTION_PROMPT =
+            "Use your AskUserQuestion tool exactly once to ask me one single-choice question with exactly two " +
+                "options, labelled $QUESTION_OTHER and $QUESTION_PICK. Do not use any other tool. After I answer, " +
+                "reply with exactly the label I chose and nothing else."
+
+        // Wire sentinels the #966 checks compare: the allow option id, and a dismissal's source and outcome.
+        const val PERMISSION_CLASS = "permission"
+        const val ALLOW_ONCE = "allow_once"
+        const val REMOTE_SOURCE = "remote"
+        const val ANSWERED = "answered"
+
+        // How long the other thread gets to draw a prompt that is not its own before the check that it did not.
+        const val SCOPE_SETTLE_MS = 3_000L
+
+        // #967: the reconnect and background-task scenarios' run-unique chat prefixes; none contains "ping".
+        const val RECONNECT_FOOTER_NAME_PREFIX = "e2e967-footer-"
+        const val RECONNECT_COMMANDS_NAME_PREFIX = "e2e967-commands-"
+        const val BACKGROUND_NAME_PREFIX = "e2e967-background-"
+
+        // #955: the push scenarios' chat names, and their waits. The daemon sends a device no second wake
+        // within 30 s of the last (pyrycode cmd/pyry/push_wake.go, pushWakeWindow); the margin covers clock
+        // skew between the phone and the daemon. The first FCM token can take a while on a fresh image.
+        const val PUSH_TURN_NAME_PREFIX = "e2e955-turn-"
+        const val PUSH_PROMPT_NAME_PREFIX = "e2e955-prompt-"
+        const val PUSH_WAKE_COALESCE_MS = 32_000L
+        const val PUSH_TOKEN_TIMEOUT_MS = 60_000L
+        const val PUSH_TIMEOUT_MS = 60_000L
+
+        // After a reconnect, the time for the daemon's re-shown `modal_shown` to reach the phone and the
+        // notifier. Nothing observable marks its arrival: the retained modal raises no second alert.
+        const val RECONNECT_SETTLE_MS = 5_000L
+        const val POLL_MS = 250L
+
+        // The published row value of the inherited-default model (#972), which the model change skips.
+        const val INHERITED_MODEL_VALUE = "default"
+
+        // The footer's `Cxt:` segment with a reported percentage (#946), the app's own format.
+        val CONTEXT_REPORTED = Regex("Cxt: \\d+%")
+
+        // How many of the published commands the suggestions must list after the reconnect.
+        const val SLASH_ROWS_CHECKED = 3
+
+        // The compaction divider's client-owned label (#874): it starts with the first and, for a manual
+        // compaction, ends with the second.
+        const val COMPACTION_DIVIDER = "Conversation compacted"
+        const val COMPACTION_BY_YOU = " by you"
+
+        // A `python3` command, so it needs permission (see WAIT_PROMPT) and no `sleep` refusal applies, run in
+        // the background so it outlives the turn. Forty seconds is long enough to open the menu while it runs.
+        const val BACKGROUND_PROMPT =
+            "Run this exact shell command with your tools in the background (run_in_background), then stop " +
+                "without commentary: python3 -c \"import time; time.sleep(40)\""
+        const val BACKGROUND_FINISH_TIMEOUT_MS = 180_000L
+
+        // The dedicated host's display name and its chat's run-unique name: neither contains "ping" or
+        // another scenario's prefix.
+        const val BYPASS_HOST_NAME = "Bypass e2e host"
+        const val BYPASS_CHAT_NAME_PREFIX = "e2e687-"
+
+        // pyrycode#2510's outside-workspace Read, with the path filled in. The token is in the file only.
+        const val READ_PROMPT_TEMPLATE =
+            "Use the Read tool once to read the file at %s, then reply with its exact contents and nothing else. " +
+                "Do not use any other tool. If the read is denied or fails, do not retry it and reply with the single word blocked."
+        val READ_TOOL_WORD = Regex("""\bRead\b""")
+
+        // #977: the word the template asks for on a failed Read, and how long the phone may trail the
+        // peer's turn_end before the missing token is diagnosed.
+        const val BLOCKED_REPLY = "blocked"
+        const val PHONE_TRAIL_MS = 15_000L
+
+        // How long a fresh reading may take to report a mode, how often it is re-asked, and how early a
+        // settle may end and still count as having run its window.
+        const val PERMISSION_READING_TIMEOUT_MS = 30_000L
+        const val PERMISSION_POLL_MS = 500L
+        const val SETTLE_SLACK_MS = 5_000L
+
+        // A model row whose `truncated_fields` names any of these cannot be used: its value would not be
+        // accepted, its levels would be incomplete, or its label would be cut.
+        val CUT_FIELDS_IN_USE = setOf("value", "effort_levels", "display_name")
+
         // The pair-code screen waits up to 30 s for the new host to connect before it returns to the list.
         const val PAIR_TIMEOUT_MS = 60_000L
 
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
+
+        // How long a failed one-shot waits for the host's redial (#1029): the supervisor's first three
+        // backoffs are at most 1.2 + 2.4 + 4.8 s, plus a dial.
+        const val REDIAL_WAIT_MS = 10_000L
 
         // How often the #850 cut re-reads the thread cache while it waits for the settled reply.
         const val CACHE_POLL_MS = 200L

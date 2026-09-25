@@ -26,8 +26,8 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   relaxed each projection from single-writer to **collector + confirmed fold(s)**: `sendMessage` (#346) is
   the second writer of `lastMessages` and `threadByConversation`; `createDiscussion` (#347) and `promote`
   ([#348](../codebase/348.md)) both write the list `projection` via `upsertConversation`. [#721](remote-conversation-repository-reads-and-thread-store.md#721-apply-workspace-label-updates-and-the-conversation_updated-split)
-  adds two more writers **inside the collector itself**: an unsolicited `conversation_updated` reuses
-  `upsertConversation`, and `workspace_updated` writes through the new `applyWorkspaceLabel` fold. Data-safety
+  adds two more writers **inside the collector itself**: a `conversation_updated` fold reuses
+  `upsertConversation` (unsolicited frames only until #996, every well-formed frame since), and `workspace_updated` writes through the new `applyWorkspaceLabel` fold. Data-safety
   holds in every case: each write goes through an atomic `MutableStateFlow.update {}` (CAS) over a **pure**
   fold (`recordLastMessage`'s strictly-greater rule / `appendMessages`'s id-dedup / `upsertConversation`'s
   id-upsert / `applyWorkspaceLabel`'s cwd-keyed relabel), so concurrent writes from the caller coroutines
@@ -38,9 +38,10 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   lock-free snapshot) to resolve the cwd; the read-then-upsert pair is intentionally **not**
   atomic-as-a-pair — the resolved cwd is request data, not a guarded invariant, so a concurrent snapshot
   landing between only changes which authoritative cwd the request carries (benign — no TOCTOU of
-  consequence). `#721`'s unsolicited-`conversation_updated` arm reads `RelayRequests.waiter(id)` after a caller
-  may have already removed its own entry in `finally`; a duplicate reply arriving in that window is treated
-  as unsolicited and folds as an idempotent re-upsert of the same record by the same id — benign by
+  consequence). Since #996 the `conversation_updated` arm folds every well-formed frame before it looks up
+  `RelayRequests.waiter(id)`, so a correlated reply is written twice, once by the collector and once by the
+  caller if it resumes, and a duplicate reply arriving after the caller removed its entry in `finally` is a
+  third write of the same record. All are idempotent re-upserts by the same id — benign by
   `ConversationListProjection.upsertConversation`'s dedup, not a new race. The KDoc on every affected field was updated to name its
   writers (and, for `projection`, `promote`'s read).
 - **The `pendingRequests` registry (#346), since #914 owned by `RelayRequests`** (`data/repository/RelayRequests.kt`;
@@ -52,16 +53,18 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   entry per in-flight send, removed on success/error/cancellation). On collector termination,
   `RelayRequests.failAllPending` also fails and removes registered requests so connection loss does not
   strand an awaiting caller (#488). The repository still owns `onInbound`: it looks up a waiter through
-  `RelayRequests.waiter` and decides how to complete it, so the `conversation_updated` fold-only-when-uncorrelated
-  rule and the `workspace_updated` apply-then-complete order live in the repository, not in `RelayRequests`.
+  `RelayRequests.waiter` and decides how to complete it, so the `conversation_updated` fold-then-complete order
+  (#996) and the `workspace_updated` apply-then-complete order live in the repository, not in `RelayRequests`.
 - **`RelayRequests.waiter` hands back the pending `CompletableDeferred` itself, not a `complete(id, payload):
   Boolean` helper.** A `complete`-style helper looked tidier when #914 moved this plumbing, but
   `Deferred.complete` returns `false` for an already-completed waiter with no other signal — the
   `conversation_updated` arm would then have folded a **duplicate** correlated reply into the list (no
   existing test catches a duplicate reply, since the daemon does not normally send one), a behaviour change
   the move must not introduce. Returning the waiter lets each `onInbound` arm keep its own completion
-  decision — `conversation_updated` tests for a waiter before deciding to fold, `workspace_updated` fails a
-  waiter on a malformed frame and completes it only after the apply — exactly as before the move.
+  decision — at the time `conversation_updated` tested for a waiter before deciding to fold, `workspace_updated`
+  failed a waiter on a malformed frame and completed it only after the apply — exactly as before the move.
+  Since #996 `conversation_updated` folds first and completes any waiter afterwards, so a duplicate reply now
+  folds by design, harmlessly.
 - **Diagnostic archive transfers** use the same `RelayRequests.nextRequestId` allocator and sole
   inbound collector, with a separate synchronized `DebugBundleTransfer` retained
   for the connection lifetime — since #915 the admission logic and the retained transfer live on
@@ -97,7 +100,7 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 | `pump.send` returns `false` (session not `Open`) | request (`list_conversations` or `backfill_since`) silently not sent (no throw); the projection stays empty until a later subscribe succeeds or a push arrives — the live stream still fills the thread, and the next subscribe re-issues |
 | `pump.inbound` completes (teardown) | collector completes; last projections retained; live `StateFlow` collectors simply stop receiving updates (do not complete) |
 | Unknown `Envelope.type` | no-op — `backfill_done` (informational) falls to the intentional `else`; `messages` (a never-defined type) stays ignored. `conversation_created` has no unsolicited half (the daemon never broadcasts a create), so an unmatched one is a harmless no-op in its own correlated-only arm |
-| Malformed `conversation_updated` payload, **unsolicited** (no `in_reply_to`, or matching no pending request, #721) | decode via `ConversationResponseDto.toConversation()` throws `IllegalArgumentException` (⊃ `SerializationException`) before any fold; envelope **dropped**; collector survives; `projection` unchanged. A *correlated* `conversation_updated` (matches a pending request) is **not** decoded by the collector at all — the payload is handed verbatim to the waiter, which decodes in the caller's coroutine, so it can never throw inside this collector |
+| Malformed `conversation_updated` payload, correlated or unsolicited (#721, #996) | decode via `ConversationResponseDto.toConversation()` throws `IllegalArgumentException` (⊃ `SerializationException`), caught before any fold; nothing is folded; collector survives; `projection` unchanged. A matching waiter still receives the raw payload and throws in its own decode in the caller's coroutine, as before #996. The catch logs nothing, since the payload carries the conversation's name and cwd |
 | Malformed `workspace_updated` payload — missing/wrong-typed `path` (#721) | `WorkspaceUpdatedPayloadDto` decode throws `IllegalArgumentException` (⊃ `SerializationException`), caught before `applyWorkspaceLabel` runs; envelope **dropped**; collector survives; `projection` unchanged; a later valid `workspace_updated` still applies. Neither `path` nor `label` is logged on this or any other branch |
 | `workspace_updated` / unsolicited `conversation_updated` whose `path` / `id` matches no row (#721) | no-op by `StateFlow` conflation (the fold returns an element-equal list) — not an error; nothing re-emits |
 | `sendMessage` — server `error` `conversation.not_found` (#346) | `IllegalArgumentException` (fake parity); **no projection mutated** (the confirmed-insert runs only after a successful `ack`) |

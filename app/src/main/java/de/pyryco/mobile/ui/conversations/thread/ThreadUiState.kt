@@ -1,9 +1,11 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.SlashCommandMenuRow
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.datetime.Instant
 
@@ -34,23 +36,38 @@ sealed interface ThreadEvent {
 
     data object SaveAsChannel : ThreadEvent
 
+    /**
+     * OK on the Save as channel modal (#957): promote in place under the trimmed [name], then store a
+     * non-blank [systemPrompt] verbatim. [toString] is overridden: the generated one would print the
+     * prompt, which may hold a pasted credential, into any crash trace or logged event.
+     */
     data class SaveAsChannelSubmit(
         val name: String,
-        val workspace: WorkspaceChoice,
-    ) : ThreadEvent
+        val systemPrompt: String,
+    ) : ThreadEvent {
+        override fun toString(): String = "SaveAsChannelSubmit(name=$name, systemPrompt=<redacted>)"
+    }
 
     data object SaveAsChannelDismiss : ThreadEvent
 }
 
-enum class WorkspaceChoice { DEDICATED, SCRATCH }
-
 sealed interface ThreadNavigation {
     data object PopBack : ThreadNavigation
+
+    /** Open the in-app reader on a markdown attachment of this thread (#1027): its id, never a name or path. */
+    data class OpenMarkdown(
+        val attachmentId: String,
+    ) : ThreadNavigation
+
+    /** Open the reader on the workspace note a link named (#1050). It carries nothing: the ViewModel holds the note. */
+    data object OpenLinkedMarkdown : ThreadNavigation
 }
 
 data class ThreadUiState(
     val conversationId: String,
     val displayName: String,
+    // #957: the conversation's own name, before [displayName]'s fallback; `null` when it has none.
+    val conversationName: String? = null,
     val isPromoted: Boolean = false,
     val hasMessages: Boolean = false,
     val workspaceLabel: String = "scratch",
@@ -76,11 +93,33 @@ data class ThreadUiState(
     // the screen asks, the VM decides whether the ask is honoured, and a second copy of that decision in
     // Compose would be a second place to get it wrong.
     val historyTail: ThreadHistoryTail = ThreadHistoryTail.None,
+    // #884: the Actions menu's commands this conversation's published slash-command menu proves absent,
+    // greyed out in the menu.
+    val absentActions: Set<ComposerAction> = emptySet(),
+    // #678: this conversation's background-task roster on the open host — `null` when nothing has been
+    // reported — and its live count (unfinished tasks plus dropped ones), which the Actions row shows.
+    val backgroundTasks: BackgroundTaskRoster? = null,
+    val backgroundTaskCount: Int = 0,
+    // #885: this conversation's published slash commands, verbatim and in daemon order, or null while no
+    // menu has been received. The composer's type-ahead reads them. They are workspace-authored, so they
+    // reach the screen only through slashCommandOptions' inert display text, and a pick inserts the name.
+    val slashCommands: List<SlashCommandMenuRow>? = null,
 )
 
+/**
+ * The Save as channel modal's seed and flags (#957). No typed value lives here — the name and prompt are
+ * the modal's own buffers — so a failure publishes a flag, never a daemon message, and no prompt reaches
+ * a logged state. [promoted] is a promote the daemon confirmed: a retry then writes only the prompt.
+ */
 data class SaveAsChannelDialogState(
     val initialName: String,
+    val saving: Boolean = false,
+    val promoted: Boolean = false,
+    val failure: SaveAsChannelFailure? = null,
 )
+
+/** Which write of Save as channel failed (#957); each resolves its own static string on screen. */
+enum class SaveAsChannelFailure { Promote, SystemPrompt }
 
 /**
  * One selectable model (#807) — a [de.pyryco.mobile.data.repository.ModelMenuRow] reduced to what the
@@ -144,6 +183,9 @@ data class ThreadEffortChoice(
  *   outranks [savedEffort] on screen and is never sent back.
  * @param running What claude says it runs (#891), for the Status sheet only. Independent of the selection:
  *   it is never derived from [savedModel] or [pendingModel], and nothing falls back to them.
+ * @param contextPercent How full the context window is, as Claude last reported it (#946), verbatim. `null` is
+ *   the unavailable state: no reading yet, a refused ask, a reconnect or a session transition. The footer and
+ *   the Status sheet both read it, and it is never derived from token totals or the settings' figures.
  */
 data class ThreadRunConfig(
     val choices: List<ThreadModelChoice> = emptyList(),
@@ -160,6 +202,7 @@ data class ThreadRunConfig(
     val pendingPermission: String? = null,
     val appliedEffort: EffectiveEffort = EffectiveEffort.Unavailable,
     val running: ThreadRunningModel = ThreadRunningModel(),
+    val contextPercent: Int? = null,
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
@@ -193,8 +236,14 @@ data class ThreadRunConfig(
     val selectedChoice: ThreadModelChoice? get() = choices.firstOrNull { it.value == selectedModel }
 
     /** The effort levels **the selected row** supports. Empty is a positive statement that this model
-     *  exposes no effort control — never a cue to substitute the `Effort` entries. */
-    val effortChoices: List<ThreadEffortChoice> get() = selectedChoice?.effortChoices.orEmpty()
+     *  exposes no effort control — never a cue to substitute the `Effort` entries. With no model override
+     *  (`""`) the row is the inherited default's, published as `default` (#972, desktop `effortRowFor`).
+     *  Only this lookup substitutes: [selectedChoice] and everything reading it stay unwidened. */
+    val effortChoices: List<ThreadEffortChoice>
+        get() {
+            val model = selectedModel.ifEmpty { INHERITED_DEFAULT_MODEL_VALUE }
+            return choices.firstOrNull { it.value == model }?.effortChoices.orEmpty()
+        }
 
     /** Whether a model or effort write is outstanding: the surfaces keep it visibly distinct from confirmed
      *  state. A permission write is [pendingPermission], kept apart so it gates only its own control. */
@@ -236,6 +285,9 @@ data class ThreadRunConfig(
 internal const val UNKNOWN_RUN_CONFIG_LABEL = "unknown"
 
 internal const val INHERITED_RUN_CONFIG_LABEL = "default"
+
+/** The published row `value` the daemon gives the inherited-default model (#972). A lookup key, not a label. */
+private const val INHERITED_DEFAULT_MODEL_VALUE = "default"
 
 internal const val EFFORT_PLACEHOLDER_LABEL = "Effort"
 

@@ -12,6 +12,8 @@ data class Conversation(
     val lastUsedAt: Instant,
     val isSleeping: Boolean = false,
     val archived: Boolean = false,
+    /** The host's per-conversation mute; `false` when an older daemon omits it, so alerts still fire. */
+    val muted: Boolean = false,
     /** Opaque daemon-authored display text; independent of [cwd] and never a path. */
     val workspaceLabel: String? = null,
 )

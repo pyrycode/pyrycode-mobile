@@ -33,14 +33,15 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 // target is 48dp and centres the glyph inside it, leaving `BarTouchSlack` on every side. Each of the
 // design's offsets is therefore taken less that slack, which puts the glyphs where the design draws
 // them — the same derivation `ChannelListTopBar` uses for the list's own bar in this design language.
-private val BarGlyphSize = 24.dp
-private val BarTouchSize = 48.dp
-private val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
-private val BarGutter = 20.dp
-private val BarTopGap = 24.dp - BarTouchSlack
-private val BarRuleGap = 16.dp - BarTouchSlack
-private val BarBottomGap = 16.dp
-private const val BAR_RULE_ALPHA = 0.60f
+// Internal since #1027: the markdown reader's bar is this bar without the overflow.
+internal val BarGlyphSize = 24.dp
+internal val BarTouchSize = 48.dp
+internal val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
+internal val BarGutter = 20.dp
+internal val BarTopGap = 24.dp - BarTouchSlack
+internal val BarRuleGap = 16.dp - BarTouchSlack
+internal val BarBottomGap = 16.dp
+internal const val BAR_RULE_ALPHA = 0.60f
 
 /**
  * The thread's own bar (#643): back control, conversation title, overflow entry, and the rule that
@@ -67,7 +68,6 @@ fun ThreadTopAppBar(
     overflowExpanded: Boolean,
     onOverflowDismiss: () -> Unit,
     onOverflowEvent: (ThreadEvent) -> Unit,
-    onShowLiteralScreen: () -> Unit,
     isPromoted: Boolean,
     modifier: Modifier = Modifier,
     mutationsSupported: Boolean = true,
@@ -117,7 +117,6 @@ fun ThreadTopAppBar(
                     mutationsSupported = mutationsSupported,
                     onDismiss = onOverflowDismiss,
                     onEvent = onOverflowEvent,
-                    onShowLiteralScreen = onShowLiteralScreen,
                 )
             }
         }
@@ -150,7 +149,6 @@ private fun ThreadTopAppBarLightPreview() {
             overflowExpanded = false,
             onOverflowDismiss = {},
             onOverflowEvent = {},
-            onShowLiteralScreen = {},
             isPromoted = true,
         )
     }
@@ -168,7 +166,6 @@ private fun ThreadTopAppBarDarkPreview() {
             overflowExpanded = false,
             onOverflowDismiss = {},
             onOverflowEvent = {},
-            onShowLiteralScreen = {},
             isPromoted = true,
         )
     }

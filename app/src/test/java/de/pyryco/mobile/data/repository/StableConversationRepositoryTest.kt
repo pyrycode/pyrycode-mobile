@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.CompletableDeferred
@@ -172,6 +173,7 @@ class StableConversationRepositoryTest {
             val facade = StableConversationRepository(current)
 
             assertTrue(runCatching { facade.createDiscussion("/ws") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.createChannel("Chan", "/ws") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.sendMessage("c1", "hi") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.promote("c1", "Name", null) }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestScreenSnapshot("c1") }.exceptionOrNull() is IllegalStateException)
@@ -181,6 +183,20 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.setSystemPrompt("c1", "x") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.renameWorkspace("/w", "x") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.archiveWorkspace("/w") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.setMuted("c1", true) }.exceptionOrNull() is IllegalStateException)
+        }
+
+    // #1000: set and clear reach the live repo untouched — false is a write of its own, not an omission.
+    @Test
+    fun setMuted_whenLive_delegatesVerbatim() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(repoA))
+
+            facade.setMuted("c3", true)
+            facade.setMuted("c3", false)
+
+            assertEquals(listOf("c3" to true, "c3" to false), repoA.setMutedCalls)
         }
 
     // #663: the workspace verbs reach this host's live repo with the path and label untouched — the
@@ -229,11 +245,14 @@ class StableConversationRepositoryTest {
             val current = MutableStateFlow<ConversationRepository?>(null)
             val facade = StableConversationRepository(current)
 
-            assertTrue(runCatching { facade.sendMessage("c1", "hi", listOf("a")) }.exceptionOrNull() is IllegalStateException)
+            assertTrue(
+                runCatching { facade.sendMessage("c1", "hi", listOf(MessageAttachment("a"))) }.exceptionOrNull() is IllegalStateException,
+            )
 
             current.value = repoA
-            assertSame(sent, facade.sendMessage("c1", "hi", listOf("b", "a", "b")))
-            assertEquals(listOf(Triple("c1", "hi", listOf("b", "a", "b"))), repoA.sendWithAttachmentsCalls)
+            val attachments = listOf(MessageAttachment("b", "b.png", "image/png"), MessageAttachment("a"), MessageAttachment("b"))
+            assertSame(sent, facade.sendMessage("c1", "hi", attachments))
+            assertEquals(listOf(Triple("c1", "hi", attachments)), repoA.sendWithAttachmentsCalls)
             assertTrue("the two-argument send was not used", repoA.sendMessageCalls.isEmpty())
         }
 
@@ -247,6 +266,24 @@ class StableConversationRepositoryTest {
                 AttachmentUploadResult.TooLarge,
                 facade.uploadAttachment("c1", ByteArray(AttachmentUploadLimit.MAX_BYTES + 1), "a", "b"),
             )
+        }
+
+    // #899: a fetch with no live connection is a retryable failure, not a throw.
+    @Test
+    fun fetchAttachment_whileAbsent_isUnavailable() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            assertEquals(AttachmentRetrievalResult.Unavailable, facade.fetchAttachment("c1", "a1"))
+        }
+
+    // #1049: a workspace read with no live connection is a retryable failure, not a throw.
+    @Test
+    fun readWorkspaceFile_whileAbsent_isUnavailable() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            assertEquals(AttachmentRetrievalResult.Unavailable, facade.readWorkspaceFile("c1", "notes.md"))
         }
 
     // #829: the upload runs on the connection live at entry; a later change of connection does not move it.
@@ -279,12 +316,15 @@ class StableConversationRepositoryTest {
             val created = conversation("created")
             val sent = message("m1")
             repoA.createDiscussionResult = created
+            val channel = conversation("channel")
+            repoA.createChannelResult = channel
             repoA.sendMessageResult = sent
             repoA.requestScreenSnapshotResult = "screen!"
             val current = MutableStateFlow<ConversationRepository?>(repoA)
             val facade = StableConversationRepository(current)
 
             val createResult = facade.createDiscussion("/ws")
+            val channelResult = facade.createChannel("  Chan ", "/ws/chan")
             val sendResult = facade.sendMessage("c1", "hi")
             val snapshotResult = facade.requestScreenSnapshot("c9")
             facade.dropQueuedMessage("c7", 99L)
@@ -293,11 +333,13 @@ class StableConversationRepositoryTest {
             val historyResult = facade.requestHistory("c8", cursor = "OPAQUE==", limit = 25)
 
             assertEquals(listOf<String?>("/ws"), repoA.createDiscussionCalls)
+            assertEquals(listOf("  Chan " to "/ws/chan"), repoA.createChannelCalls)
             assertEquals(listOf("c1" to "hi"), repoA.sendMessageCalls)
             assertEquals(listOf("c9"), repoA.requestScreenSnapshotCalls)
             assertEquals(listOf("c7" to 99L), repoA.dropQueuedMessageCalls)
             assertEquals(listOf(Triple("c8", "OPAQUE==", 25)), repoA.requestHistoryCalls)
             assertSame(created, createResult)
+            assertSame(channel, channelResult)
             assertSame(sent, sendResult)
             assertEquals("screen!", snapshotResult)
             assertSame(repoA.requestHistoryResult, historyResult)
@@ -558,6 +600,82 @@ class StableConversationRepositoryTest {
             runCurrent()
             assertEquals(listOf(null, model, null), models)
             assertEquals(listOf(null, sessionFacts, null), facts)
+        }
+
+    // ---- #945: observeContextUsage delegates, and a switch drops the previous connection's reading ------
+
+    // Absent reads as unavailable, never as a zero reading.
+    @Test
+    fun observeContextUsage_whileAbsent_emitsNull() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { facade.observeContextUsage("c1").collect { readings += it } }
+            runCurrent()
+
+            assertEquals(listOf<ContextUsage?>(null), readings)
+        }
+
+    @Test
+    fun observeContextUsage_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<ContextUsage?>()
+            backgroundScope.launch { facade.observeContextUsage("c1").collect { readings += it } }
+            runCurrent()
+
+            val reading = ContextUsage(totalTokens = 50_000, maxTokens = 200_000, percentage = 25, asOf = null)
+            repoA.pushContextUsage(reading)
+            runCurrent()
+            assertEquals(listOf(null, reading), readings)
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, reading, null), readings)
+        }
+
+    // ---- #898: observeAttachmentOffers delegates and tracks connection churn ---------------------
+
+    @Test
+    fun observeAttachmentOffers_whileAbsent_emitsEmpty() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val offers = mutableListOf<List<AttachmentOffer>>()
+            backgroundScope.launch { facade.observeAttachmentOffers("c1").collect { offers += it } }
+            runCurrent()
+
+            assertEquals(listOf(emptyList<AttachmentOffer>()), offers)
+        }
+
+    // Offers are live-only: a reconnect or a host switch publishes a fresh repository, and the switch drops
+    // the previous connection's offers, so one host's file is never offered as the next one's.
+    @Test
+    fun observeAttachmentOffers_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val offers = mutableListOf<List<AttachmentOffer>>()
+            backgroundScope.launch { facade.observeAttachmentOffers("c1").collect { offers += it } }
+            runCurrent()
+
+            val offer = AttachmentOffer("b8e0c374-2f61-4a95-8d0e-5c37a91b6e28", "report.png")
+            repoA.pushAttachmentOffers(listOf(offer))
+            runCurrent()
+            assertEquals(listOf(emptyList(), listOf(offer)), offers)
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(emptyList(), listOf(offer), emptyList()), offers)
         }
 
     // ---- #802: observeUsageLimit delegates and tracks connection churn ---------------------------
@@ -829,12 +947,14 @@ class StableConversationRepositoryTest {
         private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
 
         val createDiscussionCalls = mutableListOf<String?>()
+        val createChannelCalls = mutableListOf<Pair<String, String>>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
         val requestScreenSnapshotCalls = mutableListOf<String>()
         val dropQueuedMessageCalls = mutableListOf<Pair<String, Long>>()
         val requestHistoryCalls = mutableListOf<Triple<String, String, Int>>()
 
         var createDiscussionResult: Conversation = conversation("created")
+        var createChannelResult: Conversation = conversation("created-channel")
         var sendMessageResult: Message = message("sent")
         var requestScreenSnapshotResult: String = "snapshot-text"
         var requestHistoryResult: HistoryPage = HistoryPage(entries = emptyList(), cursor = "", atStart = true)
@@ -843,6 +963,7 @@ class StableConversationRepositoryTest {
         val setSystemPromptCalls = mutableListOf<Pair<String, String?>>()
         val renameWorkspaceCalls = mutableListOf<Pair<String, String?>>()
         val archiveWorkspaceCalls = mutableListOf<String>()
+        val setMutedCalls = mutableListOf<Pair<String, Boolean>>()
 
         fun pushConversations(value: List<Conversation>) {
             conversations.value = value
@@ -906,6 +1027,22 @@ class StableConversationRepositoryTest {
 
         override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFacts
 
+        private val contextUsage = MutableStateFlow<ContextUsage?>(null)
+
+        fun pushContextUsage(value: ContextUsage?) {
+            contextUsage.value = value
+        }
+
+        override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsage
+
+        private val attachmentOffers = MutableStateFlow<List<AttachmentOffer>>(emptyList())
+
+        fun pushAttachmentOffers(value: List<AttachmentOffer>) {
+            attachmentOffers.value = value
+        }
+
+        override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> = attachmentOffers
+
         override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimit
 
         private val thinkingProgress = MutableStateFlow<ThinkingProgress?>(null)
@@ -951,6 +1088,14 @@ class StableConversationRepositoryTest {
             return createDiscussionResult
         }
 
+        override suspend fun createChannel(
+            name: String,
+            workspace: String,
+        ): Conversation {
+            createChannelCalls += name to workspace
+            return createChannelResult
+        }
+
         override suspend fun promote(
             conversationId: String,
             name: String,
@@ -965,14 +1110,14 @@ class StableConversationRepositoryTest {
             return sendMessageResult
         }
 
-        val sendWithAttachmentsCalls = mutableListOf<Triple<String, String, List<String>>>()
+        val sendWithAttachmentsCalls = mutableListOf<Triple<String, String, List<MessageAttachment>>>()
 
         override suspend fun sendMessage(
             conversationId: String,
             text: String,
-            attachmentIds: List<String>,
+            attachments: List<MessageAttachment>,
         ): Message {
-            sendWithAttachmentsCalls += Triple(conversationId, text, attachmentIds)
+            sendWithAttachmentsCalls += Triple(conversationId, text, attachments)
             return sendMessageResult
         }
 
@@ -1019,6 +1164,13 @@ class StableConversationRepositoryTest {
 
         override suspend fun archiveWorkspace(path: String) {
             archiveWorkspaceCalls += path
+        }
+
+        override suspend fun setMuted(
+            conversationId: String,
+            muted: Boolean,
+        ) {
+            setMutedCalls += conversationId to muted
         }
 
         override suspend fun requestScreenSnapshot(conversationId: String): String {

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.preferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
@@ -22,10 +23,15 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.AttachmentContent
+import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.StableConversationRepository
+import de.pyryco.mobile.data.repository.SystemPromptLimit
+import de.pyryco.mobile.data.repository.SystemPromptReading
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationConnection
@@ -426,35 +432,193 @@ class HostChannelListViewModelTest {
         }
 
     @Test
-    fun pickerCapturesHostOverridesPreferenceClearsSynchronouslyAndDismissesWithoutCreating() =
+    fun addWorkspaceReadsAndWritesOnlyItsOwnHostAndStartsInTheCreatedFolder() =
         runTest(dispatcher) {
             val f = fixture(flow { error("preference must not be read") })
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-            f.vm.openHostWorkspacePicker("Host")
-            runCurrent()
-            assertEquals("Host", f.vm.hostState.value.workspacePickerServerId)
+            f.a.repo.recents.value = listOf("/a/recent")
+            f.b.repo.recents.value = listOf("/b/recent")
+            // The selected adapter points at the other host: nothing below may follow it.
             f.selected.value = f.b.repo
-            val completion = CompletableDeferred<Unit>()
-            f.a.repo.createGate = completion
-            f.vm.pickHostWorkspace("explicit")
-            f.vm.pickHostWorkspace("duplicate")
+
+            f.vm.openAddWorkspace("Host")
             runCurrent()
-            assertNull(f.vm.hostState.value.workspacePickerServerId)
-            assertEquals(listOf("explicit"), f.a.repo.workspaces)
-            assertTrue(f.nav.isEmpty())
-            completion.complete(Unit)
+            assertEquals(AddWorkspaceState("Host"), f.vm.hostState.value.addWorkspace)
+            assertEquals(listOf("/a/recent"), f.vm.hostState.value.addWorkspaceRecent)
+
+            // A created folder becomes the selection and starts nothing.
+            f.vm.createAddWorkspaceFolder("  fresh  ")
             runCurrent()
-            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
-            f.vm.openHostWorkspacePicker("host")
-            f.vm.dismissHostWorkspacePicker()
-            f.vm.pickHostWorkspace("dismissed")
-            runCurrent()
-            assertNull(f.vm.hostState.value.workspacePickerServerId)
+            assertEquals(listOf("fresh"), f.a.repo.createdFolders)
+            assertEquals(AddWorkspaceState("Host", selected = "/Host/fresh"), f.vm.hostState.value.addWorkspace)
             assertTrue(
-                f.b.repo.workspaces
+                f.a.repo.workspaces
                     .isEmpty(),
             )
+            assertTrue(f.nav.isEmpty())
+
+            // OK starts exactly that folder on that host, closes and opens the thread.
+            f.vm.submitAddWorkspace()
+            runCurrent()
+            assertEquals(listOf<String?>("/Host/fresh"), f.a.repo.workspaces)
+            assertNull(f.vm.hostState.value.addWorkspace)
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+            assertEquals(HostConversationTarget("Host", "returned-id"), f.vm.hostState.value.selected)
+
+            // A recent folder of the second host, opened on the second host, goes to the second host.
+            f.vm.openAddWorkspace("host")
+            runCurrent()
+            assertEquals(listOf("/b/recent"), f.vm.hostState.value.addWorkspaceRecent)
+            f.vm.selectAddWorkspaceFolder("/b/recent")
+            f.vm.submitAddWorkspace()
+            runCurrent()
+            assertEquals(listOf<String?>("/b/recent"), f.b.repo.workspaces)
+            assertEquals(listOf<String?>("/Host/fresh"), f.a.repo.workspaces)
+            assertTrue(
+                f.b.repo.createdFolders
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun addWorkspaceRecentsNeverShowAnotherHostsListAndAreCapped() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.recents.value = (1..80).map { "/a/$it" }
+            f.b.repo.recents.value = listOf("/b/only")
+            f.vm.openAddWorkspace("Host")
+            runCurrent()
+            assertEquals((1..50).map { "/a/$it" }, f.vm.hostState.value.addWorkspaceRecent)
+
+            // Retargeted without closing: the first host's list is never published with the second's state.
+            val seen = mutableListOf<HostChannelListState>()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect { seen += it } }
+            f.vm.openAddWorkspace("host")
+            runCurrent()
+            assertTrue(seen.none { it.addWorkspace?.serverId == "host" && it.addWorkspaceRecent.any { path -> path.startsWith("/a/") } })
+            assertEquals(listOf("/b/only"), f.vm.hostState.value.addWorkspaceRecent)
+
+            // Closed: no list.
+            f.vm.dismissAddWorkspace()
+            runCurrent()
+            assertTrue(
+                f.vm.hostState.value.addWorkspaceRecent
+                    .isEmpty(),
+            )
+
+            // An unknown host opens nothing.
+            f.vm.openAddWorkspace("HOST")
+            runCurrent()
+            assertNull(f.vm.hostState.value.addWorkspace)
+        }
+
+    @Test
+    fun addWorkspaceFailuresStayOpenWithSelectionAndStaticFlags() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.recents.value = listOf("/a/secret-path")
+            f.vm.openAddWorkspace("Host")
+            f.vm.selectAddWorkspaceFolder("/a/secret-path")
+            runCurrent()
+
+            f.a.repo.failure = RelayErrorException("server.error", false, "server-secret")
+            f.vm.createAddWorkspaceFolder("typed-secret")
+            runCurrent()
+            assertEquals(
+                AddWorkspaceState("Host", selected = "/a/secret-path", createFailed = true),
+                f.vm.hostState.value.addWorkspace,
+            )
+
+            f.vm.submitAddWorkspace()
+            runCurrent()
+            assertEquals(
+                AddWorkspaceState("Host", selected = "/a/secret-path", startFailed = true),
+                f.vm.hostState.value.addWorkspace,
+            )
+            assertTrue(f.nav.isEmpty())
+            assertTrue(logs.any { "add_workspace_create_failed" in it } && logs.any { "add_workspace_start_failed" in it })
+            assertTrue(
+                "no server message, path, name or id may reach a log line: $logs",
+                logs.none { "server-secret" in it || "secret-path" in it || "typed-secret" in it || "Host" in it },
+            )
+
+            // A new selection clears the failure; a retry that succeeds closes and navigates.
+            f.a.repo.failure = null
+            f.vm.selectAddWorkspaceFolder("/a/secret-path")
+            assertEquals(AddWorkspaceState("Host", selected = "/a/secret-path"), f.vm.hostState.value.addWorkspace)
+            f.vm.submitAddWorkspace()
+            runCurrent()
+            assertNull(f.vm.hostState.value.addWorkspace)
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+        }
+
+    @Test
+    fun addWorkspaceIgnoresPressesWhileBusyAndALateResultCannotReopenOrNavigate() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+
+            // Nothing is open, or nothing is selected: nothing is sent.
+            f.vm.submitAddWorkspace()
+            f.vm.createAddWorkspaceFolder("orphan")
+            f.vm.openAddWorkspace("Host")
+            f.vm.submitAddWorkspace()
+            f.vm.createAddWorkspaceFolder("   ")
+            runCurrent()
+            assertTrue(
+                f.a.repo.workspaces
+                    .isEmpty() &&
+                    f.a.repo.createdFolders
+                        .isEmpty(),
+            )
+
+            f.vm.selectAddWorkspaceFolder("/first")
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.createGate = gate
+            f.vm.submitAddWorkspace()
+            f.vm.submitAddWorkspace()
+            f.vm.createAddWorkspaceFolder("mid-flight")
+            f.vm.selectAddWorkspaceFolder("/second")
+            runCurrent()
+            val busy = requireNotNull(f.vm.hostState.value.addWorkspace)
+            assertTrue(busy.busy)
+            assertEquals("/first", busy.selected)
+            assertEquals(listOf<String?>("/first"), f.a.repo.workspaces)
+            assertTrue(
+                f.a.repo.createdFolders
+                    .isEmpty(),
+            )
+
+            // Cancel while in flight: the late result neither reopens nor navigates.
+            f.vm.dismissAddWorkspace()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.addWorkspace)
+            assertTrue(f.nav.isEmpty())
+
+            // A folder created after a dismissal and reopen cannot overwrite the new state.
+            f.a.repo.createGate = null
+            val folderGate = CompletableDeferred<Unit>()
+            f.a.repo.folderGate = folderGate
+            f.vm.openAddWorkspace("Host")
+            f.vm.createAddWorkspaceFolder("late")
+            runCurrent()
+            f.vm.dismissAddWorkspace()
+            f.vm.openAddWorkspace("Host")
+            folderGate.complete(Unit)
+            runCurrent()
+            assertEquals(AddWorkspaceState("Host"), f.vm.hostState.value.addWorkspace)
+
+            // Dismissing sends nothing.
+            f.vm.selectAddWorkspaceFolder("/third")
+            f.vm.dismissAddWorkspace()
+            runCurrent()
+            assertEquals(listOf<String?>("/first"), f.a.repo.workspaces)
         }
 
     @Test
@@ -470,14 +634,20 @@ class HostChannelListViewModelTest {
                 f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
                 val target = if (reason == "unknown") "HOST" else "Host"
                 f.vm.createHostDiscussion(target)
-                f.vm.openHostWorkspacePicker(target)
+                f.vm.openAddWorkspace(target)
+                f.vm.selectAddWorkspaceFolder("explicit")
                 f.a.available = false
                 if (reason == "removed") f.hosts.value = listOf(f.b.entry)
                 if (reason == "disconnected") f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
                 if (reason == "handshaking") f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking)
                 preferences.emit(emptyPreferences())
-                f.vm.pickHostWorkspace("explicit")
+                f.vm.createAddWorkspaceFolder("folder")
+                f.vm.submitAddWorkspace()
                 runCurrent()
+                // A known host that is unavailable at the press fails it and stays open.
+                f.vm.hostState.value.addWorkspace
+                    ?.let { assertTrue(it.startFailed) }
+                f.vm.dismissAddWorkspace()
             }
             assertTrue(
                 f.a.repo.workspaces
@@ -513,9 +683,11 @@ class HostChannelListViewModelTest {
                         f.a.repo.actionJob!!
                             .isCancelled,
                     )
-                    f.vm.openHostWorkspacePicker("Host")
-                    f.vm.pickHostWorkspace("explicit")
+                    f.vm.openAddWorkspace("Host")
+                    f.vm.selectAddWorkspaceFolder("explicit")
+                    f.vm.submitAddWorkspace()
                     runCurrent()
+                    f.vm.dismissAddWorkspace()
                     assertEquals(
                         failure is CancellationException,
                         f.a.repo.actionJob!!
@@ -1074,6 +1246,83 @@ class HostChannelListViewModelTest {
         }
 
     @Test
+    fun confirmingUnpairRemovesThatHostsAttachmentFilesBeforeTheConfirmationCloses() =
+        runTest(dispatcher) {
+            // #900, driven from the gesture through the production removal hook.
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            // "Host" and "host" differ only in case and keep an attachment of the same ids.
+            for (id in listOf("Host", "host")) keepAttachment(f, id)
+
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+            f.vm.confirmHostUnpair()
+
+            // The pairing is gone but the store's removal is still queued: the confirmation stays open.
+            assertNull(f.store.loadById("Host"))
+            assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).confirmingUnpair)
+            assertEquals(2, f.attachmentsRoot.listFiles()?.size)
+
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+            assertEquals(1, f.attachmentsRoot.listFiles()?.size)
+            var fetches = 0
+            f.seeding.retrieve("Host", ATTACHMENT_CONVERSATION, ATTACHMENT) {
+                fetches++
+                attachmentBytes()
+            }
+            assertEquals("the removed host's file is gone, so it is fetched again", 1, fetches)
+            // Every other paired host keeps its files.
+            f.seeding.retrieve("host", ATTACHMENT_CONVERSATION, ATTACHMENT) { error("must not fetch") }
+            assertTrue(
+                "no server id or attachment id may reach a log line: $logs",
+                logs.none { "Host" in it || ATTACHMENT in it },
+            )
+        }
+
+    @Test
+    fun aFailedAttachmentRemovalIsLoggedWithoutAnIdAndTheUnpairStillSucceeds() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            keepAttachment(f, "Host")
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+
+            // A read-only root cannot lose the host's directory.
+            f.attachmentsRoot.setWritable(false)
+            try {
+                f.vm.confirmHostUnpair()
+                runCurrent()
+            } finally {
+                f.attachmentsRoot.setWritable(true)
+            }
+
+            assertNull(f.store.loadById("Host"))
+            assertNull(f.vm.hostState.value.hostEditor)
+            assertTrue(logs.contains("event=host_attachments_remove_failed"))
+            assertTrue(logs.none { it.contains("host_unpair_failed") })
+            assertTrue(
+                "no server id or attachment id may reach a log line: $logs",
+                logs.none { "Host" in it || ATTACHMENT in it },
+            )
+        }
+
+    private suspend fun keepAttachment(
+        f: Fixture,
+        serverId: String,
+    ) {
+        f.seeding.retrieve(serverId, ATTACHMENT_CONVERSATION, ATTACHMENT) { attachmentBytes() }
+    }
+
+    private fun attachmentBytes() =
+        AttachmentFetchResult.Fetched(AttachmentContent(listOf(byteArrayOf(1, 2, 3))), "notes.txt", "text/plain")
+
+    @Test
     fun aFailedUnpairStaysOnTheConfirmationAndChangesNothing() =
         runTest(dispatcher) {
             val f = fixture()
@@ -1533,6 +1782,825 @@ class HostChannelListViewModelTest {
         }
 
     /**
+     * Both hosts hold rows at the same exact `cwd` (#905), labelled differently, so a workspace write sent
+     * to the wrong host — or keyed on the shown name — cannot pass. A second path on host A proves the
+     * write is path-exact too.
+     */
+    private fun Fixture.seedCollidingWorkspaces() {
+        a.repo.rows.value =
+            listOf(
+                row("a-chat", label = "Shared"),
+                row("a-channel", promoted = true, label = "Shared"),
+                row("a-other", cwd = "/elsewhere"),
+            )
+        b.repo.rows.value = listOf(row("b-chat", label = "B label"))
+    }
+
+    private val sharedCwd = " /same/../Path "
+
+    private fun Fixture.workspaceWrites() = a.repo.workspaceRenames + b.repo.workspaceRenames
+
+    @Test
+    fun workspaceEditorOpensOnTheRowsOwnHostAndCwdSeededWithItsShownName() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            runCurrent()
+
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            runCurrent()
+            assertEquals(WorkspaceEditorState("Host", sharedCwd, "Shared"), f.vm.hostState.value.workspaceEditor)
+
+            f.vm.openWorkspaceEditor("host", sharedCwd)
+            runCurrent()
+            assertEquals(WorkspaceEditorState("host", sharedCwd, "B label"), f.vm.hostState.value.workspaceEditor)
+
+            // An unlabelled workspace opens on its folder's own name, as its row shows it.
+            f.vm.openWorkspaceEditor("Host", "/elsewhere")
+            runCurrent()
+            assertEquals(
+                "elsewhere",
+                f.vm.hostState.value.workspaceEditor
+                    ?.initialName,
+            )
+
+            // A path the host holds no row at, or a host the list does not hold, opens nothing.
+            f.vm.dismissWorkspaceEditor()
+            for ((serverId, cwd) in listOf("host" to "/elsewhere", "Host" to "/same/../Path", "gone" to sharedCwd)) {
+                f.vm.openWorkspaceEditor(serverId, cwd)
+                runCurrent()
+                assertNull(f.vm.hostState.value.workspaceEditor)
+            }
+
+            assertNull(f.vm.hostState.value.selected)
+            assertTrue(f.nav.isEmpty())
+            assertTrue(f.workspaceWrites().isEmpty())
+        }
+
+    @Test
+    fun workspaceSubmitRenamesOnlyTheEditorsHostAndCwdByTheLabelRuleAndCloses() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            // No open editor: nothing to rename.
+            f.vm.submitWorkspaceName("orphan")
+            runCurrent()
+            assertTrue(f.workspaceWrites().isEmpty())
+
+            f.vm.openWorkspaceEditor("host", sharedCwd)
+            runCurrent()
+            f.vm.submitWorkspaceName("  Renamed  ")
+            runCurrent()
+            assertEquals(listOf(sharedCwd to "Renamed"), f.b.repo.workspaceRenames)
+            // The other host holding the same cwd is never addressed.
+            assertTrue(
+                f.a.repo.workspaceRenames
+                    .isEmpty(),
+            )
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            val renamed =
+                f.vm.hostState.value.hosts
+                    .single { it.host.serverId == "host" }
+            assertEquals("Renamed", renamed.chatGroups.single().displayName)
+            assertEquals(
+                "Shared",
+                f.vm.hostState.value.hosts
+                    .single { it.host.serverId == "Host" }
+                    .chatGroups
+                    .first()
+                    .displayName,
+            )
+
+            // A blank name and the folder's own name both clear the label.
+            for ((cwd, clearing) in listOf(sharedCwd to "   ", "/elsewhere" to " elsewhere ")) {
+                f.vm.openWorkspaceEditor("Host", cwd)
+                runCurrent()
+                f.vm.submitWorkspaceName(clearing)
+                runCurrent()
+                assertNull(f.vm.hostState.value.workspaceEditor)
+            }
+            // The folder's own name is compared exactly: this path's is "Path " with its trailing space.
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            runCurrent()
+            f.vm.submitWorkspaceName("Path")
+            runCurrent()
+            assertEquals(listOf(sharedCwd to null, "/elsewhere" to null, sharedCwd to "Path"), f.a.repo.workspaceRenames)
+
+            // Over the daemon's byte bound: nothing is sent and the modal stays as it was.
+            f.vm.openWorkspaceEditor("Host", "/elsewhere")
+            runCurrent()
+            val open = f.vm.hostState.value.workspaceEditor
+            f.vm.submitWorkspaceName("ö".repeat(65))
+            runCurrent()
+            assertEquals(open, f.vm.hostState.value.workspaceEditor)
+            assertEquals(3, f.a.repo.workspaceRenames.size)
+        }
+
+    @Test
+    fun failedOrUnavailableWorkspaceRenameStaysOpenQuietlyAndALateCompletionCannotReopen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            runCurrent()
+
+            // Lost between the last status and the press: nothing is sent.
+            f.a.available = false
+            f.vm.submitWorkspaceName("Typed")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).failed)
+            assertTrue(f.workspaceWrites().isEmpty())
+            f.a.available = true
+
+            for (error in listOf(
+                RelayErrorException("protocol.malformed", false, "server-secret"),
+                IllegalStateException("not connected secret"),
+            )) {
+                f.a.repo.failure = error
+                f.vm.submitWorkspaceName("Typed")
+                runCurrent()
+                val failed = requireNotNull(f.vm.hostState.value.workspaceEditor)
+                assertTrue(failed.failed)
+                assertFalse(failed.saving)
+                assertFalse(failed.archiveFailed)
+            }
+            assertTrue(logs.any { "workspace_rename_failed" in it })
+            assertTrue(
+                "no label, path, id or server message may reach a log line: $logs",
+                logs.none { "secret" in it || "Typed" in it || "Shared" in it || "Path" in it || "Host" in it },
+            )
+
+            // A write landing after a dismissal must not resurrect the modal, and a second OK mid-write is ignored.
+            f.a.repo.failure = null
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.workspaceGate = gate
+            f.vm.submitWorkspaceName("Later")
+            f.vm.submitWorkspaceName("Twice")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).saving)
+            f.vm.dismissWorkspaceEditor()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            assertEquals(listOf(sharedCwd to "Later"), f.a.repo.workspaceRenames)
+        }
+
+    @Test
+    fun workspaceArchiveAsksFirstAndArchivesOnlyTheEditorsHostAndCwd() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            runCurrent()
+
+            // Confirming with no request pending sends nothing.
+            f.vm.confirmWorkspaceArchive()
+            runCurrent()
+            assertTrue(
+                f.a.repo.workspaceArchives
+                    .isEmpty(),
+            )
+
+            f.vm.requestWorkspaceArchive()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).confirmingArchive)
+            assertTrue(
+                f.a.repo.workspaceArchives
+                    .isEmpty(),
+            )
+
+            // Declining returns to the editor and sends nothing.
+            f.vm.declineWorkspaceArchive()
+            runCurrent()
+            assertEquals(WorkspaceEditorState("Host", sharedCwd, "Shared"), f.vm.hostState.value.workspaceEditor)
+            assertTrue(
+                f.a.repo.workspaceArchives
+                    .isEmpty(),
+            )
+
+            f.vm.requestWorkspaceArchive()
+            f.vm.confirmWorkspaceArchive()
+            runCurrent()
+            assertEquals(listOf(sharedCwd), f.a.repo.workspaceArchives)
+            // The other host holding the same cwd is never addressed, and no rename rides along.
+            assertTrue(
+                f.b.repo.workspaceArchives
+                    .isEmpty(),
+            )
+            assertTrue(f.workspaceWrites().isEmpty())
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            val (hostA, hostB) = f.vm.hostState.value.hosts
+            assertEquals(listOf("a-other"), hostA.host.chats.map { it.id })
+            assertTrue(hostA.host.channels.isEmpty())
+            assertEquals(listOf("b-chat"), hostB.host.chats.map { it.id })
+            assertTrue(logs.any { "workspace_archived" in it })
+
+            // Cancel, Close and Back send nothing.
+            f.vm.openWorkspaceEditor("host", sharedCwd)
+            runCurrent()
+            f.vm.requestWorkspaceArchive()
+            f.vm.dismissWorkspaceEditor()
+            runCurrent()
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            assertTrue(
+                f.b.repo.workspaceArchives
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun failedWorkspaceArchiveStaysConfirmingQuietlyAndALateCompletionCannotReopen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingWorkspaces()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openWorkspaceEditor("Host", sharedCwd)
+            f.vm.requestWorkspaceArchive()
+            runCurrent()
+
+            f.a.available = false
+            f.vm.confirmWorkspaceArchive()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).archiveFailed)
+            assertTrue(
+                f.a.repo.workspaceArchives
+                    .isEmpty(),
+            )
+            f.a.available = true
+
+            f.a.repo.failure = RelayErrorException("server.error", false, "server-secret")
+            f.vm.confirmWorkspaceArchive()
+            runCurrent()
+            val failed = requireNotNull(f.vm.hostState.value.workspaceEditor)
+            assertTrue(failed.archiveFailed)
+            assertTrue(failed.confirmingArchive)
+            assertFalse(failed.failed)
+            assertFalse(failed.saving)
+            assertTrue(logs.any { "workspace_archive_failed" in it })
+            assertTrue(logs.none { "secret" in it || "Shared" in it || "Path" in it || "Host" in it })
+
+            // Declining clears the archive's failure and returns to the editor.
+            f.vm.declineWorkspaceArchive()
+            runCurrent()
+            assertEquals(WorkspaceEditorState("Host", sharedCwd, "Shared"), f.vm.hostState.value.workspaceEditor)
+
+            // Mid-write, a decline, a second confirm and a rename are all ignored; a late result cannot reopen.
+            f.a.repo.failure = null
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.workspaceGate = gate
+            f.vm.requestWorkspaceArchive()
+            f.vm.confirmWorkspaceArchive()
+            f.vm.declineWorkspaceArchive()
+            f.vm.confirmWorkspaceArchive()
+            f.vm.submitWorkspaceName("Twice")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.workspaceEditor).saving)
+            f.vm.dismissWorkspaceEditor()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.workspaceEditor)
+            assertEquals(listOf(sharedCwd), f.a.repo.workspaceArchives)
+            assertTrue(f.workspaceWrites().isEmpty())
+        }
+
+    /**
+     * Both hosts hold a channel at the same exact `cwd` (#958), so a create sent to the wrong host cannot
+     * pass. Host A also holds a chat-only path, which has no Channels-section row to open from.
+     */
+    private fun Fixture.seedCollidingChannels() {
+        a.repo.rows.value = listOf(row("a-channel", promoted = true), row("a-chat", cwd = "/chat-only"))
+        b.repo.rows.value = listOf(row("b-channel", promoted = true))
+    }
+
+    private fun Fixture.channelCreates() = a.repo.channelCreates + b.repo.channelCreates
+
+    private fun Fixture.promptWrites() = a.repo.promptWrites + b.repo.promptWrites
+
+    @Test
+    fun createChannelOpensOnlyOnTheRowsOwnHostAndAChannelCwd() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannels()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            runCurrent()
+
+            f.vm.openCreateChannel("Host", sharedCwd)
+            runCurrent()
+            assertEquals(CreateChannelState("Host", sharedCwd), f.vm.hostState.value.createChannel)
+
+            f.vm.openCreateChannel("host", sharedCwd)
+            runCurrent()
+            assertEquals(CreateChannelState("host", sharedCwd), f.vm.hostState.value.createChannel)
+
+            // A chat-only path, an inexact path or a host the list does not hold opens nothing.
+            f.vm.dismissCreateChannel()
+            for ((serverId, cwd) in listOf("Host" to "/chat-only", "Host" to "/same/../Path", "gone" to sharedCwd)) {
+                f.vm.openCreateChannel(serverId, cwd)
+                runCurrent()
+                assertNull(f.vm.hostState.value.createChannel)
+            }
+
+            assertNull(f.vm.hostState.value.selected)
+            assertTrue(f.nav.isEmpty())
+            assertTrue(f.channelCreates().isEmpty())
+        }
+
+    @Test
+    fun createChannelCreatesOnlyOnTheModalsHostAtItsCwdWritesAPromptToTheCreatedOneAndOpensIt() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannels()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            // The selected adapter points at the other host: nothing below may follow it.
+            f.selected.value = f.a.repo
+            runCurrent()
+
+            // A blank or whitespace-only prompt sends no write.
+            f.vm.openCreateChannel("host", sharedCwd)
+            f.vm.submitCreateChannel("  New channel  ", "  \n\t ")
+            runCurrent()
+            assertEquals(listOf("New channel" to sharedCwd), f.b.repo.channelCreates)
+            assertTrue(
+                f.a.repo.channelCreates
+                    .isEmpty(),
+            )
+            assertTrue(f.promptWrites().isEmpty())
+            assertNull(f.vm.hostState.value.createChannel)
+            assertEquals(listOf(HostConversationTarget("host", "host-created-1")), f.nav)
+            assertEquals(HostConversationTarget("host", "host-created-1"), f.vm.hostState.value.selected)
+
+            // Other text is written verbatim, after the create, to the created conversation on the same host.
+            f.vm.openCreateChannel("Host", sharedCwd)
+            f.vm.submitCreateChannel("Other", "  Keep my spaces  ")
+            runCurrent()
+            assertEquals(listOf("Other" to sharedCwd), f.a.repo.channelCreates)
+            assertEquals(listOf<Pair<String, String?>>("Host-created-1" to "  Keep my spaces  "), f.a.repo.promptWrites)
+            assertEquals(listOf("create", "prompt"), f.a.repo.channelCalls)
+            assertTrue(
+                f.b.repo.promptWrites
+                    .isEmpty(),
+            )
+            assertNull(f.vm.hostState.value.createChannel)
+            assertEquals(HostConversationTarget("Host", "Host-created-1"), f.nav.last())
+        }
+
+    @Test
+    fun createChannelFailuresStayOpenAndAPromptRetryNeverCreatesTwice() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannels()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.vm.openCreateChannel("Host", sharedCwd)
+            runCurrent()
+
+            // A failed create keeps the modal with a static flag, and OK creates again.
+            f.a.repo.createChannelFailures = 1
+            f.vm.submitCreateChannel("Named", "Prompt text")
+            runCurrent()
+            assertEquals(CreateChannelState("Host", sharedCwd, createFailed = true), f.vm.hostState.value.createChannel)
+            assertTrue(f.channelCreates().isEmpty())
+            assertTrue(f.promptWrites().isEmpty())
+
+            // A failed prompt write after a confirmed create keeps the modal, holding the created id.
+            f.a.repo.promptFailures = 1
+            f.vm.submitCreateChannel("Named", "Prompt text")
+            runCurrent()
+            assertEquals(
+                CreateChannelState("Host", sharedCwd, createdConversationId = "Host-created-1", promptFailed = true),
+                f.vm.hostState.value.createChannel,
+            )
+            assertEquals(listOf("Named" to sharedCwd), f.a.repo.channelCreates)
+            assertTrue(f.nav.isEmpty())
+
+            // OK retries only the prompt write, to the created conversation — never a second create.
+            f.vm.submitCreateChannel("Changed", "Prompt again")
+            runCurrent()
+            assertEquals(listOf("Named" to sharedCwd), f.channelCreates())
+            assertEquals(listOf<Pair<String, String?>>("Host-created-1" to "Prompt again"), f.promptWrites())
+            assertNull(f.vm.hostState.value.createChannel)
+            assertEquals(listOf(HostConversationTarget("Host", "Host-created-1")), f.nav)
+
+            assertTrue(logs.any { "create_channel_failed" in it } && logs.any { "create_channel_prompt_failed" in it })
+            assertTrue(
+                "no name, path, prompt, id or server message may reach a log line: $logs",
+                logs.none {
+                    "secret" in it || "Named" in it || "Prompt" in it || "Path" in it || "Host" in it || "created-1" in it
+                },
+            )
+        }
+
+    @Test
+    fun createChannelSendsNothingWhenUnavailableInvalidInFlightOrDismissed() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannels()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+
+            // No open modal: nothing to create.
+            f.vm.submitCreateChannel("Orphan", "")
+            runCurrent()
+
+            // Cancel, Close and Back before OK send nothing.
+            f.vm.openCreateChannel("Host", sharedCwd)
+            f.vm.dismissCreateChannel()
+            runCurrent()
+            assertNull(f.vm.hostState.value.createChannel)
+
+            // Lost between the last status and the press: a static flag, nothing sent.
+            f.vm.openCreateChannel("Host", sharedCwd)
+            f.a.available = false
+            f.vm.submitCreateChannel("Named", "")
+            runCurrent()
+            assertEquals(CreateChannelState("Host", sharedCwd, createFailed = true), f.vm.hostState.value.createChannel)
+            f.a.available = true
+
+            // A blank name or a prompt over the byte limit is ignored outright.
+            val open = f.vm.hostState.value.createChannel
+            f.vm.submitCreateChannel("   ", "")
+            f.vm.submitCreateChannel("Named", "é".repeat(SystemPromptLimit.MAX_BYTES / 2 + 1))
+            runCurrent()
+            assertEquals(open, f.vm.hostState.value.createChannel)
+            assertTrue(f.channelCreates().isEmpty())
+
+            // A second OK mid-write is ignored, and a result landing after a dismissal cannot reopen or navigate.
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.channelGate = gate
+            f.vm.submitCreateChannel("Late", "Late prompt")
+            f.vm.submitCreateChannel("Twice", "")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.createChannel).saving)
+            f.vm.dismissCreateChannel()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.createChannel)
+            assertEquals(listOf("Late" to sharedCwd), f.channelCreates())
+            // The operator pressed OK before dismissing, so the chain still finishes its prompt write.
+            assertEquals(listOf<Pair<String, String?>>("Host-created-1" to "Late prompt"), f.promptWrites())
+            assertTrue(f.nav.isEmpty())
+            assertNull(f.vm.hostState.value.selected)
+        }
+
+    /**
+     * Both hosts hold a channel with the same id and different names and stored prompts (#667), so a read,
+     * rename or prompt write sent to the wrong host cannot pass. Host A also holds a chat.
+     */
+    private fun Fixture.seedCollidingChannelEditors() {
+        a.repo.rows.value = listOf(row("same", promoted = true).copy(name = "A channel"), row("a-chat"))
+        b.repo.rows.value = listOf(row("same", promoted = true).copy(name = "B channel"))
+        a.repo.storedPrompts["same"] = "  A prompt\n"
+        b.repo.storedPrompts["same"] = "B prompt"
+    }
+
+    private fun Fixture.channelRenames() = a.repo.renames + b.repo.renames
+
+    private fun Fixture.channelEditor() = vm.hostState.value.channelEditor
+
+    @Test
+    fun channelEditorOpensOnTheRowsOwnHostAndReadsItsOwnPromptWithoutSelectingOrWriting() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.b.repo.promptStatus = SessionPromptStatus.Differs
+            val gate = CompletableDeferred<Unit>()
+            f.b.repo.promptReadGate = gate
+            runCurrent()
+
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            // The name is on screen while the prompt is still being read.
+            assertEquals(ChannelEditorState("host", "same", "B channel", ChannelPromptReading.Reading), f.channelEditor())
+            gate.complete(Unit)
+            runCurrent()
+            assertEquals(ChannelPromptReading.Read("B prompt", SessionPromptStatus.Differs), f.channelEditor()?.prompt)
+
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            assertEquals(
+                ChannelEditorState("Host", "same", "A channel", ChannelPromptReading.Read("  A prompt\n", SessionPromptStatus.Matches)),
+                f.channelEditor(),
+            )
+
+            // A chat, a channel id on a host that has none, or an unknown host opens nothing.
+            f.vm.dismissChannelEditor()
+            for (target in listOf(
+                HostConversationTarget("Host", "a-chat"),
+                HostConversationTarget("host", "a-chat"),
+                HostConversationTarget("gone", "same"),
+            )) {
+                f.vm.openChannelEditor(target)
+                runCurrent()
+                assertNull(f.channelEditor())
+            }
+
+            assertNull(f.vm.hostState.value.selected)
+            assertTrue(f.nav.isEmpty())
+            assertEquals(listOf("same"), f.a.repo.promptReads)
+            assertEquals(listOf("same"), f.b.repo.promptReads)
+            assertTrue(f.channelRenames().isEmpty())
+            assertTrue(f.promptWrites().isEmpty())
+            assertTrue(
+                f.a.repo.archives
+                    .isEmpty() &&
+                    f.b.repo.archives
+                        .isEmpty(),
+            )
+            // The reading's toString never carries the prompt.
+            assertFalse(ChannelPromptReading.Read("A prompt", SessionPromptStatus.Matches).toString().contains("A prompt"))
+        }
+
+    @Test
+    fun channelPromptIsReadOnceItsHostConnectsAndAFailedOrOversizeReadIsUnavailable() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.available = false
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+            runCurrent()
+
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            assertEquals(ChannelPromptReading.Reading, f.channelEditor()?.prompt)
+            assertTrue(
+                f.a.repo.promptReads
+                    .isEmpty(),
+            )
+
+            f.a.available = true
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+            runCurrent()
+            assertEquals(ChannelPromptReading.Read("  A prompt\n", SessionPromptStatus.Matches), f.channelEditor()?.prompt)
+
+            f.b.repo.promptReadFailures = 1
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            assertEquals(ChannelPromptReading.Unavailable, f.channelEditor()?.prompt)
+
+            // A reply over the byte limit is never put in the field, so it can never be written back.
+            f.b.repo.storedPrompts["same"] = "é".repeat(SystemPromptLimit.MAX_BYTES / 2 + 1)
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            assertEquals(ChannelPromptReading.Unavailable, f.channelEditor()?.prompt)
+        }
+
+    @Test
+    fun channelSubmitSendsOnlyWhatChangedToTheEditorsOwnHostAndCloses() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+
+            // An untouched form sends nothing and closes.
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            f.vm.submitChannelEdit("B channel", "B prompt")
+            runCurrent()
+            assertNull(f.channelEditor())
+            assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty())
+
+            // The name alone: one rename, trimmed.
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            f.vm.submitChannelEdit("  Renamed  ", "B prompt")
+            runCurrent()
+            assertEquals(listOf("same" to "Renamed"), f.b.repo.renames)
+            assertTrue(f.promptWrites().isEmpty())
+            assertNull(f.channelEditor())
+
+            // The prompt alone: one verbatim write.
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            f.vm.submitChannelEdit("Renamed", "  New prompt  ")
+            runCurrent()
+            assertEquals(listOf("same" to "Renamed"), f.b.repo.renames)
+            assertEquals(listOf<Pair<String, String?>>("same" to "  New prompt  "), f.b.repo.promptWrites)
+            assertNull(f.channelEditor())
+
+            // Both, on the other host; an emptied box over stored text is a real change, sent as "".
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.vm.submitChannelEdit("Both", "")
+            runCurrent()
+            assertEquals(listOf("same" to "Both"), f.a.repo.renames)
+            assertEquals(listOf<Pair<String, String?>>("same" to ""), f.a.repo.promptWrites)
+
+            // No stored prompt and an empty box: nothing to write.
+            f.a.repo.storedPrompts
+                .remove("same")
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.vm.submitChannelEdit("Both", "")
+            runCurrent()
+            assertEquals(1, f.a.repo.promptWrites.size)
+            assertEquals(1, f.a.repo.renames.size)
+            assertNull(f.channelEditor())
+
+            assertTrue(f.nav.isEmpty())
+            assertNull(f.vm.hostState.value.selected)
+        }
+
+    @Test
+    fun channelSubmitFailuresStayOpenAndARetryNeverRepeatsAConfirmedRename() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            val read = ChannelPromptReading.Read("  A prompt\n", SessionPromptStatus.Matches)
+
+            f.a.repo.failure = IllegalStateException("rename secret")
+            f.vm.submitChannelEdit("Renamed", "New prompt")
+            runCurrent()
+            assertEquals(ChannelEditorState("Host", "same", "A channel", read, failed = true), f.channelEditor())
+            assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty())
+
+            // The rename lands, the prompt write fails: the modal stays, holding the confirmed name.
+            f.a.repo.failure = null
+            f.a.repo.promptFailures = 1
+            f.vm.submitChannelEdit("Renamed", "New prompt")
+            runCurrent()
+            assertEquals(ChannelEditorState("Host", "same", "Renamed", read, failed = true), f.channelEditor())
+            assertEquals(listOf("same" to "Renamed"), f.a.repo.renames)
+            assertTrue(f.promptWrites().isEmpty())
+
+            // OK retries only the prompt.
+            f.vm.submitChannelEdit("Renamed", "New prompt")
+            runCurrent()
+            assertEquals(listOf("same" to "Renamed"), f.a.repo.renames)
+            assertEquals(listOf<Pair<String, String?>>("same" to "New prompt"), f.a.repo.promptWrites)
+            assertNull(f.channelEditor())
+            assertTrue(
+                f.b.repo.renames
+                    .isEmpty() &&
+                    f.b.repo.promptWrites
+                        .isEmpty(),
+            )
+
+            assertTrue(logs.any { "channel_rename_failed" in it } && logs.any { "channel_prompt_write_failed" in it })
+            assertTrue(
+                "no name, prompt, id or server message may reach a log line: $logs",
+                logs.none {
+                    "secret" in it || "Renamed" in it || "New prompt" in it || "A prompt" in it || "A channel" in it || "same" in it
+                },
+            )
+        }
+
+    @Test
+    fun anUnreadPromptNeverWritesAndNeverBlocksTheNameOrArchive() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.promptReadGate = gate
+
+            // Still reading: the name saves, and whatever the modal sent as a prompt is not written.
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.vm.submitChannelEdit("Renamed", "typed over nothing")
+            runCurrent()
+            assertEquals(listOf("same" to "Renamed"), f.a.repo.renames)
+            assertNull(f.channelEditor())
+
+            // Still reading: archive works.
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.vm.archiveChannel()
+            runCurrent()
+            assertEquals(listOf("same"), f.a.repo.archives)
+            assertNull(f.channelEditor())
+            // The read landing after the close reopens nothing.
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.channelEditor())
+
+            // A failed read: the name saves, no prompt is written.
+            f.b.repo.promptReadFailures = 1
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            assertEquals(ChannelPromptReading.Unavailable, f.channelEditor()?.prompt)
+            f.vm.submitChannelEdit("B renamed", "")
+            runCurrent()
+            assertEquals(listOf("same" to "B renamed"), f.b.repo.renames)
+            assertTrue(f.promptWrites().isEmpty())
+            assertNull(f.channelEditor())
+        }
+
+    @Test
+    fun channelArchiveArchivesOnlyItsOwnHostAndFailuresStayOpen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+
+            f.b.repo.failure = IllegalStateException("archive secret")
+            f.vm.archiveChannel()
+            runCurrent()
+            assertTrue(requireNotNull(f.channelEditor()).archiveFailed)
+            assertTrue(
+                f.b.repo.archives
+                    .isEmpty(),
+            )
+
+            f.b.repo.failure = null
+            f.vm.archiveChannel()
+            runCurrent()
+            assertEquals(listOf("same"), f.b.repo.archives)
+            assertTrue(
+                f.a.repo.archives
+                    .isEmpty(),
+            )
+            assertNull(f.channelEditor())
+            // The channel leaves Channels on its own host only; nothing is deleted or restored.
+            val hosts = f.vm.hostState.value.hosts
+            assertTrue(
+                hosts
+                    .single { it.host.serverId == "host" }
+                    .host.channels
+                    .isEmpty(),
+            )
+            assertEquals(
+                listOf("same"),
+                hosts
+                    .single { it.host.serverId == "Host" }
+                    .host.channels
+                    .map { it.id },
+            )
+            assertTrue(
+                f.a.repo.others
+                    .isEmpty() &&
+                    f.b.repo.others
+                        .isEmpty(),
+            )
+            assertTrue(logs.none { "secret" in it })
+        }
+
+    @Test
+    fun channelEditorSendsNothingWhenUnavailableInvalidInFlightOrDismissed() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            // No open modal: nothing to send.
+            f.vm.submitChannelEdit("Orphan", null)
+            f.vm.archiveChannel()
+            runCurrent()
+
+            // Lost between the last status and the press: static flags, nothing sent.
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.a.available = false
+            f.vm.submitChannelEdit("Named", null)
+            assertTrue(requireNotNull(f.channelEditor()).failed)
+            f.vm.archiveChannel()
+            assertTrue(requireNotNull(f.channelEditor()).archiveFailed)
+            f.a.available = true
+
+            // A blank name or a prompt over the byte limit is ignored outright.
+            val open = f.channelEditor()
+            f.vm.submitChannelEdit("   ", null)
+            f.vm.submitChannelEdit("Named", "é".repeat(SystemPromptLimit.MAX_BYTES / 2 + 1))
+            runCurrent()
+            assertEquals(open, f.channelEditor())
+
+            // A second OK mid-write is ignored, and a result landing after a dismissal cannot reopen.
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.renameGate = gate
+            f.vm.submitChannelEdit("Late", null)
+            f.vm.submitChannelEdit("Twice", null)
+            f.vm.archiveChannel()
+            runCurrent()
+            assertTrue(requireNotNull(f.channelEditor()).saving)
+            f.vm.dismissChannelEditor()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.channelEditor())
+            assertEquals(listOf("same" to "Late"), f.channelRenames())
+            assertTrue(f.promptWrites().isEmpty())
+            assertTrue(
+                f.a.repo.archives
+                    .isEmpty(),
+            )
+        }
+
+    /**
      * Reads the supplied snapshot until something writes, then the written value.
      *
      * The unpair path clears the removed host's cached workspace through `DataStore.edit`, which the
@@ -1621,6 +2689,15 @@ class HostChannelListViewModelTest {
         // #798: the real file cache, so a test can seed conversation content and read back which host's
         // content survived an unpair. Bound through the production hook below, not a restatement of it.
         val cache = FileConversationCache(tmp.newFolder(), dispatcher)
+
+        // #900: the real attachment store, on a queued dispatcher over the test's scheduler so a test can
+        // observe the unpair confirmation still open while the host's files are being removed.
+        val attachmentsRoot = tmp.newFolder()
+        val attachments = AttachmentStore(attachmentsRoot, StandardTestDispatcher(dispatcher.scheduler))
+
+        // Seeds and reads back over the same root without leaving the test's unconfined dispatcher: a test
+        // body resumed from the queued one runs inside its task, where the view model's launches never start.
+        val seeding = AttachmentStore(attachmentsRoot, dispatcher)
         val app =
             KoinApplication.init().modules(
                 appModule,
@@ -1632,7 +2709,12 @@ class HostChannelListViewModelTest {
                     // this fixture previously bypassed — the removal-driven draft eviction lives on it.
                     // Transparent to every other case here: delegation forwards the reads, and the
                     // revision it bumps has no observer in this file.
-                    single<PairedServerCollectionStore> { ObservablePairedServerStore(store, forgetRemovedHost(drafts, lazyOf(cache))) }
+                    single<PairedServerCollectionStore> {
+                        ObservablePairedServerStore(
+                            store,
+                            forgetRemovedHost(drafts, lazyOf(cache), lazyOf(attachments)),
+                        )
+                    }
                 },
             )
         val vm = app.koin.get<ChannelListViewModel>()
@@ -1642,7 +2724,7 @@ class HostChannelListViewModelTest {
     private class Host(
         id: String,
     ) {
-        val repo = Repo()
+        val repo = Repo(id)
         var available = true
         val live = MutableStateFlow<ConversationRepository?>(repo)
         val status = MutableStateFlow(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected))
@@ -1700,13 +2782,27 @@ class HostChannelListViewModelTest {
         }
     }
 
-    private class Repo : ConversationRepository by FakeConversationRepository() {
+    private class Repo(
+        val hostId: String = "replacement",
+    ) : ConversationRepository by FakeConversationRepository() {
         val rows = MutableStateFlow<List<Conversation>?>(null)
         val previews = mutableMapOf<String, Flow<Message?>>()
         val workspaces = mutableListOf<String?>()
         var failure: Throwable? = null
         var actionJob: Job? = null
         var createGate: CompletableDeferred<Unit>? = null
+        val recents = MutableStateFlow<List<String>>(emptyList())
+        val createdFolders = mutableListOf<String>()
+        var folderGate: CompletableDeferred<Unit>? = null
+
+        override fun recentWorkspaces(): Flow<List<String>> = recents
+
+        override suspend fun createWorkspaceFolder(name: String): String {
+            folderGate?.await()
+            failure?.let { throw it }
+            createdFolders += name
+            return "/$hostId/$name"
+        }
 
         override fun observeConversations(filter: ConversationFilter) =
             rows.filterNotNull().map { rows ->
@@ -1765,9 +2861,88 @@ class HostChannelListViewModelTest {
         val archives = mutableListOf<String>()
         val others = mutableListOf<String>()
         var archiveGate: CompletableDeferred<Unit>? = null
+
+        // #905: records every workspace write by exact path; a rename relabels this repo's own rows at it.
+        override suspend fun renameWorkspace(
+            path: String,
+            label: String?,
+        ) {
+            workspaceGate?.await()
+            failure?.let { throw it }
+            workspaceRenames += path to label
+            rows.value = rows.value?.map { if (it.cwd == path) it.copy(workspaceLabel = label) else it }
+        }
+
+        override suspend fun archiveWorkspace(path: String) {
+            workspaceGate?.await()
+            failure?.let { throw it }
+            workspaceArchives += path
+            rows.value = rows.value?.map { if (it.cwd == path) it.copy(archived = true) else it }
+        }
+
+        val workspaceRenames = mutableListOf<Pair<String, String?>>()
+        val workspaceArchives = mutableListOf<String>()
+        var workspaceGate: CompletableDeferred<Unit>? = null
+
+        // #958: records every channel create and prompt write, in call order; a create adds a promoted row
+        // at its cwd and returns an id naming this host, so a write to the wrong host's id cannot pass.
+        override suspend fun createChannel(
+            name: String,
+            workspace: String,
+        ): Conversation {
+            channelGate?.await()
+            if (createChannelFailures > 0) {
+                createChannelFailures--
+                throw IllegalStateException("create secret")
+            }
+            channelCreates += name to workspace
+            channelCalls += "create"
+            val created = row("$hostId-created-${channelCreates.size}", promoted = true, cwd = workspace).copy(name = name)
+            rows.value = rows.value.orEmpty() + created
+            return created
+        }
+
+        // #667: a scripted stored prompt per conversation id, readable once a gate opens, or failing.
+        override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {
+            promptReadGate?.await()
+            promptReads += conversationId
+            if (promptReadFailures > 0) {
+                promptReadFailures--
+                throw IllegalStateException("read secret")
+            }
+            return SystemPromptReading(storedPrompts[conversationId], promptStatus)
+        }
+
+        val storedPrompts = mutableMapOf<String, String>()
+        val promptReads = mutableListOf<String>()
+        var promptStatus = SessionPromptStatus.Matches
+        var promptReadFailures = 0
+        var promptReadGate: CompletableDeferred<Unit>? = null
+
+        override suspend fun setSystemPrompt(
+            conversationId: String,
+            systemPrompt: String?,
+        ) {
+            if (promptFailures > 0) {
+                promptFailures--
+                throw IllegalStateException("prompt secret")
+            }
+            promptWrites += conversationId to systemPrompt
+            channelCalls += "prompt"
+        }
+
+        val channelCreates = mutableListOf<Pair<String, String>>()
+        val promptWrites = mutableListOf<Pair<String, String?>>()
+        val channelCalls = mutableListOf<String>()
+        var createChannelFailures = 0
+        var promptFailures = 0
+        var channelGate: CompletableDeferred<Unit>? = null
     }
 
     companion object {
+        private const val ATTACHMENT_CONVERSATION = "9d4e7a21-8c05-4f3b-b6e2-1a7c9e30d5f4"
+        private const val ATTACHMENT = "7c1d5e92-4a30-4b8f-9e21-6d4c3b0a8f55"
+
         private fun row(
             id: String,
             promoted: Boolean = false,

@@ -313,6 +313,27 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
+    fun createChannel_isPromoted_withVerbatimName_andWorkspace() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val c = repo.createChannel(name = "  Weekly planning ", workspace = "/work/wp")
+            assertEquals(true, c.isPromoted)
+            assertEquals("  Weekly planning ", c.name)
+            assertEquals("/work/wp", c.cwd)
+        }
+
+    @Test
+    fun createChannel_appearsIn_Channels_filter_butNotIn_Discussions() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val created = repo.createChannel(name = "Weekly planning", workspace = "/work/wp")
+            val channels = repo.observeConversations(ConversationFilter.Channels).first()
+            assertEquals(created, channels.single { it.id == created.id })
+            val discussions = repo.observeConversations(ConversationFilter.Discussions).first()
+            assertTrue(discussions.none { it.id == created.id })
+        }
+
+    @Test
     fun promote_flipsIsPromoted_andApplies_name_and_workspace() =
         runBlocking {
             val repo = FakeConversationRepository()
@@ -399,6 +420,43 @@ class FakeConversationRepositoryTest {
             // expected
         }
     }
+
+    @Test
+    fun setMuted_setsAndClearsTheFlagOnTheRow() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val created = repo.createDiscussion()
+
+            repo.setMuted(created.id, true)
+            assertTrue(
+                repo
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single { it.id == created.id }
+                    .muted,
+            )
+
+            repo.setMuted(created.id, false)
+            assertFalse(
+                repo
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single { it.id == created.id }
+                    .muted,
+            )
+        }
+
+    @Test
+    fun setMuted_onUnknownId_throwsAndChangesNothing() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val before = repo.observeConversations(ConversationFilter.All).first()
+
+            val thrown = runCatching { repo.setMuted("nope", true) }.exceptionOrNull()
+
+            assertTrue(thrown is IllegalArgumentException)
+            assertEquals(before, repo.observeConversations(ConversationFilter.All).first())
+        }
 
     @Test
     fun archive_isIdempotent() =

@@ -3,7 +3,7 @@
 Split from [Dependency injection](dependency-injection.md) — read that first for Koin
 wiring, `appModule`, the flag-gated selector pattern, testing and configuration. This
 document covers how `HostConversationSource` aggregates per-host state and how host-qualified
-destinations (thread, literal, settings, archive) get their exact-host dependencies: host
+destinations (thread, settings, archive) get their exact-host dependencies: host
 identity and snapshots, snapshot lifetime, on-disk restore, attention state (#877), exact-host
 repository access, destination ownership, exact-host retry and the demo binding.
 
@@ -176,6 +176,43 @@ low impact today because nothing draws attention yet, so it did not block. The f
 with whichever ticket next touches `launchAttention`'s restore branch (candidate: fold
 `opened` for this host's `viewing.viewed` entries right after `restored`).
 
+### Attention alerts (#685)
+
+`HostConversationSource.alerts: SharedFlow<AttentionAlert>` is `attention`'s sibling output, for a
+consumer that needs identities rather than states — a state map alone cannot tell a new turn from a
+still-running one, or a re-shown prompt from a fresh one. `AttentionAlert(serverId, conversationId, kind, key)`
+names one thing that may deserve a notification: `Kind.TurnCompleted` with `key = turnId`, or
+`Kind.Prompt` with `key = "modal:$modalId"` / `"batch:$questionBatchId"`. Every field but `serverId` is
+daemon-authored and used only as an equality key, exactly like the ids [§ Attention state](#attention-state-877)'s
+own fold treats the same way.
+
+- **Turn:** emitted inside `updateAttention`'s live-event collector, immediately after the fold's
+  `onEvent` call, by comparing `attention.counted[conversationId]` before and after. It fires only when
+  the fold counts that `TurnEnd` for the first time — reusing [§ Attention state](#attention-state-877)'s
+  once-per-turn rule verbatim (a blank or oversized turn id never counts; a re-delivered turn is a no-op;
+  a restored `positions` entry recognises the latest turn after process death). Emitted whether or not
+  the conversation is viewed — a backgrounded thread composition can stay alive.
+- **Prompt:** emitted inside the modal/batches collector by diffing the current prompt-key set
+  (the private `promptKeys(modal, batches)`) against `Held.prompts`, the previous set for that
+  generation; only keys new since the last emission alert. A `StateFlow` re-publish of the same modal or
+  batch therefore emits nothing. Whether a reconnect re-emits depends on whether the key actually left
+  `Held.prompts` in between: a question batch that a reconnect drops and then shows again *does* re-emit,
+  because its id left the held set while it was gone — suppressing that repeat is the consumer's job (see
+  [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685)),
+  not this flow's. A **retained permission modal does not re-emit across a reconnect**: `currentModal`
+  carries the same open modal straight across the gap, so `modal:$modalId` never leaves `Held.prompts`
+  and a re-shown copy with the same id (even with different prompt text) is not a new key —
+  `HostConversationSourceAttentionTest.aPromptAlertsOncePerModalOrBatchAndABlankConversationPromptAlertsNothing`
+  pins this (`#955`) by re-publishing `open.copy(prompt = "re-shown")` for `m1` and asserting no second
+  alert. A consumer that needs to notice a reconnect's re-show of a still-open permission prompt cannot
+  rely on this flow for it. `promptKeys` drops a blank-`conversationId` modal or batch, the same way
+  `resolve` above does — its tap could never route to anything.
+- **Hot, not replayed, bounded:** `MutableSharedFlow(extraBufferCapacity = 64, onBufferOverflow = DROP_OLDEST)`,
+  emitted with `tryEmit` under the same class monitor `updateAttention` already holds — no new lock and
+  no suspension inside the fold. A late subscriber sees nothing emitted before it subscribed; the one
+  production consumer, `AttentionNotifier`, is bound `createdAtStart` so it is always already subscribed
+  before any host can connect.
+
 ### Exact-host repository access
 
 `repositoryFor(serverId)` resolves `RelayConnectionRegistry.connectionFor` by exact
@@ -195,15 +232,16 @@ of the check; a later disconnect can still make an operation fail. See the
 ### Destination ownership
 
 `ThreadDestinationFactory` is a scope-free singleton in `hostConversationModule`.
-The Koin `viewModel` definitions call `thread(handle, preferences)` and
-`literal(handle)`; the factory reads `serverId` from the destination's
+The Koin `viewModel` definition calls `thread(handle, preferences)`
+(`literal(handle)`, the matching method for the now-retired literal-screen
+destination, was removed by [#883](../../specs/architecture/883-retire-literal-screen.md)); the factory reads `serverId` from the destination's
 `SavedStateHandle`, while each ViewModel reads its unchanged host-local
 `conversationId`. [Navigation](navigation.md#host-qualified-destinations) supplies
 both arguments and scopes ViewModels to individual back-stack entries.
 
 `ThreadDestinationFactory.settings(handle, preferences)` (#749; dropped its third `repository`
 parameter in #715) is the third destination method, in the same shape but with two deliberate
-differences from `thread`/`literal`: the owner it reads from the `SavedStateHandle` is **optional**
+differences from `thread`: the owner it reads from the `SavedStateHandle` is **optional**
 (`handle.get<String>("serverId").orEmpty()` — a blank owner is a valid destination state, not an
 error), and it never resolves that id to a connection bundle — `SettingsViewModel` reads a saved
 host's identity and status only, so a saved-but-disconnected owner is still its owner. `preferences`
@@ -268,8 +306,7 @@ connection cannot substitute for A's unavailable one.
 The same bundle supplies the thread's supervisor state, live-session events,
 current modal, modal answer/cancel and interrupt callbacks. Repository-backed
 session/queue state, Send, Reset session, queue drop and existing thread actions
-use the owner facade. Literal Request/Retry use a facade over that same host's
-coordinator. Compatibility selection cannot change an open prompt's display or
+use the owner facade. Compatibility selection cannot change an open prompt's display or
 answer target, even with colliding conversation/modal ids. App preferences remain
 shared. The navigation guard waits for saved-host initialization and rejects
 unknown/removed hosts before constructing their ViewModels; there is no fallback
@@ -298,8 +335,7 @@ retired or background owner, and it never retries another selected host.
 Checking identity before calling the supervisor outside this monitor leaves a
 check/use race: bundle teardown closes the supervisor but does not permanently
 disable its `retry()`/`connect()` path. Keep validation and the nonblocking call
-under one lifecycle boundary. Literal-screen Retry is a separate snapshot re-fetch;
-it retains the destination repository and existing snapshot error mapping.
+under one lifecycle boundary.
 
 The tree's per-host reconnect control (#840) mirrors this same pairing rather
 than adding a second one. `HostConversationSource.relay(...)` gained a trailing
@@ -321,7 +357,7 @@ states `Connected`. Lists and exact lookup use the existing
 relay hosts never enter these snapshots or lookups, even though their connection
 owners still exist.
 
-Demo thread, literal and picker repositories also resolve that same singleton.
+Demo thread and picker repositories also resolve that same singleton.
 The thread gets `FakeConnectionStateSource` (`Connected`) and its inert default
 live-event, hidden-modal and control dependencies. Saved real hosts never supply
 demo content, permissions or controls. `selectedServerId()` returns `demo` in this

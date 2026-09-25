@@ -62,10 +62,11 @@ interface RelayConnectionController {
  * is out of scope; a future ticket may refine `Connected` to mean end-to-end readiness if wanted.
  *
  * Emits no logs: the outward signal is the typed [RelayLinkStatus] relay leg (and its derived 4-case
- * [ConnectionState]) — no strings beyond `secondsRemaining`, and `DaemonAbsent` / `PairingRejected`
- * are static objects carrying no relay-supplied text. `PairedServer`, the relay URL, the transport, and
- * `Down`'s code/reason/cause are never logged; the 4404 / 4401 / 4426 branches read `Down.code` only to
- * compare it, never to log it.
+ * [ConnectionState]) — no strings beyond `secondsRemaining`, `DaemonAbsent` / `PairingRejected`
+ * are static objects carrying no relay-supplied text, and `UpdateRequired`'s minimum comes only from the
+ * sealed daemon error, validated in [recordClientMinimum]. `PairedServer`, the relay URL, the transport,
+ * the minimum, and `Down`'s code/reason/cause are never logged; the 4404 / 4401 / 4426 / 4412 branches
+ * read `Down.code` only to compare it, never to log it, and no branch reads the close reason.
  */
 class RelayConnectionSupervisor(
     private val transportFactory: RelayTransportFactory,
@@ -92,6 +93,14 @@ class RelayConnectionSupervisor(
     val relayStatus: StateFlow<RelayLinkStatus> = state.asStateFlow()
 
     private var loopJob: Job? = null
+
+    // The current dial's transport and the app minimum its sealed `client.update_required` error named
+    // (#1008). The error is decrypted by the pump while the `4412` close arrives here, in either order, so
+    // the minimum is latched per dial and read at the halt. Guarded by [dialLock], as is every write of
+    // [RelayLinkStatus.UpdateRequired] to [state].
+    private val dialLock = Any()
+    private var dialTransport: RelayTransport? = null
+    private var dialMinimum: String? = null
 
     // Legacy single-signal surface (#197 banner): the 4-case [ConnectionState] derived per-collector
     // from the relay leg, so every existing consumer is untouched (DaemonAbsent -> nearest, Offline).
@@ -140,9 +149,14 @@ class RelayConnectionSupervisor(
             }
             state.value = RelayLinkStatus.Connecting
             val transport = transportFactory.create(paired)
+            synchronized(dialLock) {
+                dialTransport = transport
+                dialMinimum = null
+            }
             var sawUp = false
             var daemonAbsent = false
             var pairingRejected = false
+            var updateRequired = false
             val stableReached = AtomicBoolean(false)
             var stabilityTimer: Job? = null
             try {
@@ -163,13 +177,14 @@ class RelayConnectionSupervisor(
                             // #308 seam: a 4404 "no server" close (relay reachable, no daemon
                             // registered) branches to DaemonAbsent; a 4401 invalid-token or 4426
                             // handshake-failed close is a rejected pairing that halts the redial
-                            // (#841); every other code and a null dial failure stay on the uniform
-                            // retry path. Read-only: the code is compared against the constants,
-                            // never logged (no-log contract).
+                            // (#841), and a 4412 app-too-old close halts it too (#1008); every other
+                            // code and a null dial failure stay on the uniform retry path. Read-only:
+                            // the code is compared against the constants, never logged (no-log contract).
                             daemonAbsent = event.code == RELAY_NO_DAEMON_CLOSE
                             pairingRejected =
                                 event.code == RELAY_TOKEN_REJECTED_CLOSE ||
                                 event.code == HANDSHAKE_FAILED_CLOSE
+                            updateRequired = event.code == CLIENT_UPDATE_REQUIRED_CLOSE
                         }
                     }
                     // events completes after the single terminal Down (#306), ending collect.
@@ -186,7 +201,11 @@ class RelayConnectionSupervisor(
             }
             if (sawUp && stableReached.get()) attempt = 0
             attempt += 1
-            if (pairingRejected) haltUntilRetry() else backoff(attempt, daemonAbsent)
+            when {
+                pairingRejected -> haltUntilRetry { RelayLinkStatus.PairingRejected }
+                updateRequired -> haltUntilRetry { RelayLinkStatus.UpdateRequired(dialMinimum) }
+                else -> backoff(attempt, daemonAbsent)
+            }
         }
     }
 
@@ -221,13 +240,32 @@ class RelayConnectionSupervisor(
         }
     }
 
-    /** A rejected pairing (#841): the refused credential cannot succeed on a redial, so wait with no
-     *  timeout until [retry] asks for one more dial. [close] cancels the wait; the next foreground
-     *  [connect] then starts a fresh loop. Consumes no jitter, so later backoffs keep their schedule. */
-    private suspend fun haltUntilRetry() {
+    /** A rejected pairing (#841) or app build (#1008): a redial cannot succeed, so publish [halted] and
+     *  wait with no timeout until [retry] asks for one more dial. [close] cancels the wait; the next
+     *  foreground [connect] then starts a fresh loop. Consumes no jitter, so later backoffs keep their
+     *  schedule. [halted] is read under [dialLock] so a minimum recorded concurrently is never lost. */
+    private suspend fun haltUntilRetry(halted: () -> RelayLinkStatus) {
         drainStaleRetrySignals()
-        state.value = RelayLinkStatus.PairingRejected
+        synchronized(dialLock) { state.value = halted() }
         retrySignal.receive()
+    }
+
+    /**
+     * Records the app minimum [transport]'s host named in its sealed `client.update_required` error
+     * (#1008), for the halt that host's `4412` close causes. A value that is not three bounded decimal
+     * parts is dropped, as is one from a transport that is no longer the current dial. When the halt
+     * already happened, the state gains the minimum; this never halts by itself. No log.
+     */
+    internal fun recordClientMinimum(
+        transport: RelayTransport,
+        minClientVersion: String,
+    ) {
+        val valid = validMinClientVersion(minClientVersion) ?: return
+        synchronized(dialLock) {
+            if (transport !== dialTransport) return
+            dialMinimum = valid
+            if (state.value is RelayLinkStatus.UpdateRequired) state.value = RelayLinkStatus.UpdateRequired(valid)
+        }
     }
 
     /** Drains any stale retry signal buffered while no wait was in progress (#498): a retry() issued
@@ -254,6 +292,9 @@ class RelayConnectionSupervisor(
 
         /** The daemon's close for a failed handshake: the saved server static key is stale. */
         const val HANDSHAKE_FAILED_CLOSE = 4426
+
+        /** The daemon's close for an app build below its configured minimum (pyrycode#2576). */
+        const val CLIENT_UPDATE_REQUIRED_CLOSE = 4412
     }
 }
 
@@ -272,6 +313,7 @@ internal fun RelayLinkStatus.toConnectionState(): ConnectionState =
         is RelayLinkStatus.Reconnecting -> ConnectionState.Reconnecting(secondsRemaining)
         RelayLinkStatus.DaemonAbsent -> ConnectionState.Offline
         RelayLinkStatus.PairingRejected -> ConnectionState.Offline
+        is RelayLinkStatus.UpdateRequired -> ConnectionState.Offline
         RelayLinkStatus.Offline -> ConnectionState.Offline
     }
 

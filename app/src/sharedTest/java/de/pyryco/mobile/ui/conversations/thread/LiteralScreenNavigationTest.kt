@@ -1,6 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -9,7 +11,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.preferencesOf
 import androidx.lifecycle.ViewModel
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
@@ -28,6 +32,7 @@ import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.InertAttachmentStore
 import de.pyryco.mobile.di.InertConversationCache
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.RelayConnectionFactory
@@ -75,7 +80,6 @@ class LiteralScreenNavigationTest {
     @Test fun hostStreamsBackReopenAndRestorationKeepDestinationIdentity() {
         val restoration = start()
         lateinit var first: ThreadViewModel
-        lateinit var firstLiteral: LiteralScreenViewModel
         compose.runOnIdle {
             val list = model<ChannelListViewModel>()
             list.onHostRowTapped(a)
@@ -93,15 +97,6 @@ class LiteralScreenNavigationTest {
         compose.runOnIdle { first = model() }
         restoration.emulateSavedInstanceStateRestore()
         awaitTarget(a, Routes.CONVERSATION_THREAD)
-        compose.onNodeWithContentDescription("More actions").performClick()
-        compose.onNodeWithText("Show the literal screen").performClick()
-        awaitTarget(a, Routes.LITERAL_SCREEN)
-        compose.runOnIdle { firstLiteral = model() }
-        compose.onNodeWithText("Try again").performClick()
-        awaitTarget(a, Routes.LITERAL_SCREEN)
-        compose.runOnIdle { assertTrue(model<LiteralScreenViewModel>().state.value is LiteralScreenUiState.Error) }
-        compose.runOnIdle { nav.popBackStack() }
-        awaitTarget(a, Routes.CONVERSATION_THREAD)
         compose.runOnIdle { nav.popBackStack() }
         compose.runOnIdle {
             assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
@@ -111,16 +106,9 @@ class LiteralScreenNavigationTest {
         compose.runOnIdle { model<DiscussionListViewModel>().onHostRowTapped(b) }
         awaitTarget(b, Routes.CONVERSATION_THREAD)
         compose.runOnIdle { assertNotSame(first, model<ThreadViewModel>()) }
-        compose.onNodeWithContentDescription("More actions").performClick()
-        compose.onNodeWithText("Show the literal screen").performClick()
-        awaitTarget(b, Routes.LITERAL_SCREEN)
-        compose.runOnIdle { assertNotSame(firstLiteral, model<LiteralScreenViewModel>()) }
         restoration.emulateSavedInstanceStateRestore()
-        awaitTarget(b, Routes.LITERAL_SCREEN)
-        compose.runOnIdle {
-            nav.popBackStack()
-            nav.popBackStack()
-        }
+        awaitTarget(b, Routes.CONVERSATION_THREAD)
+        compose.runOnIdle { nav.popBackStack() }
         compose.waitForIdle()
         compose.runOnIdle { model<DiscussionListViewModel>().onHostRowTapped(a) }
         awaitTarget(a, Routes.CONVERSATION_THREAD)
@@ -132,8 +120,6 @@ class LiteralScreenNavigationTest {
         compose.runOnIdle { nav.navigate(Routes.thread(a)) }
         awaitTarget(a, Routes.CONVERSATION_THREAD)
         compose.runOnIdle { runBlocking { store.remove(a.serverId) } }
-        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CHANNEL_LIST }
-        compose.runOnIdle { nav.navigate(Routes.literal(a)) }
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CHANNEL_LIST }
         compose.runOnIdle { nav.navigate(Routes.thread(b)) }
         awaitTarget(b, Routes.CONVERSATION_THREAD)
@@ -180,11 +166,15 @@ class LiteralScreenNavigationTest {
     @Test fun flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges() {
         start(live = true)
         select(a.serverId)
-        compose.runOnIdle { model<ChannelListViewModel>().openHostWorkspacePicker(a.serverId) }
+        compose.runOnIdle { model<ChannelListViewModel>().openAddWorkspace(a.serverId) }
         assertOwnerPicker()
         select(b.serverId)
         assertOwnerPicker()
+        // Add workspace (#904): a created folder is only selected; OK starts the chat in it.
         createFolder()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("OK") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.runOnIdle { assertTrue(peers.getValue(a.serverId).outbound.none { it.type == "create_conversation" }) }
+        compose.onNode(hasText("OK")).performClick()
         awaitTarget(a, Routes.CONVERSATION_THREAD)
         compose.runOnIdle {
             assertEquals(1, peers.getValue(a.serverId).outbound.count { it.type == "create_conversation" })
@@ -281,7 +271,9 @@ class LiteralScreenNavigationTest {
         val preferences =
             AppPreferences(
                 object : DataStore<Preferences> {
-                    override val data = flowOf(emptyPreferences())
+                    // Already asked: on a device the channel list would otherwise raise the one-time
+                    // notification prompt (#685) over the test activity.
+                    override val data = flowOf(preferencesOf(booleanPreferencesKey("notification_permission_asked") to true))
 
                     override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
                 },
@@ -298,6 +290,9 @@ class LiteralScreenNavigationTest {
                     // ConversationCache (#796) whose real binding needs one. See InertConversationCache
                     // for why these containers override it rather than supply the Context.
                     single<ConversationCache> { InertConversationCache }
+                    single { InertAttachmentStore }
+                    // The real reader needs androidContext() for its ContentResolver (#932).
+                    single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                 },
             )
         return StateRestorationTester(compose).also { tester ->

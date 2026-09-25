@@ -3,9 +3,11 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
@@ -14,6 +16,8 @@ import de.pyryco.mobile.data.model.scopedTo
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
+import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
+import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -23,15 +27,21 @@ import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionSettings
+import de.pyryco.mobile.data.repository.SlashCommandMenu
+import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.conversations.components.AttachmentSource
+import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -40,6 +50,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -52,6 +63,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.scan
@@ -103,6 +115,10 @@ class ThreadViewModel(
     questionBatch: (conversationId: String) -> Flow<QuestionBatch?> = { flowOf(null) },
     private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
     private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
+    // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
+    // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
+    backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
+    backgroundTaskCount: (conversationId: String) -> Flow<Int> = { flowOf(0) },
     // #861: whether this thread's host has a live repository published — for a relay host, the
     // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
     // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
@@ -112,9 +128,15 @@ class ThreadViewModel(
     // which [connectionStateSource]'s legacy four cases fold into Offline. Defaulted to never, as the
     // demo path's fake host is never rejected.
     pairingRejected: Flow<Boolean> = flowOf(false),
+    // #932: reads a pending attachment's bytes through its content URI at send time. Defaulted to a reader
+    // that can read nothing, so the fake-backed graph and existing tests stay inert; production passes
+    // ContentResolverAttachmentReader.
+    private val attachmentReader: AttachmentReader = AttachmentReader { AttachmentRead.Unreadable },
     // #686: the phone's one remembered effort level, recalled once per opening by [effortRecall].
     // Defaulted to a store that remembers nothing, so the demo path and existing tests stay inert.
     rememberedEffort: RememberedEffortStore = RememberedEffortStore.None,
+    // #1027: where a markdown attachment's kept file is read before the reader opens.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -154,6 +176,45 @@ class ThreadViewModel(
                 SharingStarted.Eagerly,
                 draftStore.draftFor(serverId, conversationId),
             )
+
+    /**
+     * This chat's pending attachments (#932) in the order added, empty when it has none. Read from
+     * [draftStore] beside [draft], exposed the same way and for the same reasons.
+     */
+    val pendingAttachments: StateFlow<List<PendingAttachment>> =
+        draftStore.attachments
+            .map { it[serverId]?.get(conversationId).orEmpty() }
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                draftStore.attachmentsFor(serverId, conversationId),
+            )
+
+    private val _attachmentsSending = MutableStateFlow(false)
+
+    /**
+     * Whether a send carrying attachments is uploading or sending right now (#933). The strip shows it, and
+     * [sendMessage] refuses a second tap while it holds, so one snapshot is never uploaded twice. Written on
+     * the main thread only, and cleared however the send ends.
+     */
+    val attachmentsSending: StateFlow<Boolean> = _attachmentsSending.asStateFlow()
+
+    private val attachmentRefusalChannel = Channel<AttachmentRefusal>(capacity = Channel.BUFFERED)
+
+    /**
+     * One notice per pick that had entries refused (#933), with how many were refused for each reason. Counts
+     * only, never a name, URI or type, so the snackbar it drives shows fixed local text.
+     */
+    val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
+
+    private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
+
+    /**
+     * Each shown message attachment's state by id (#984). An id is absent until its row is first shown,
+     * which is what starts its load ([onAttachmentShown]); the screen draws an absent id as loading. A
+     * sibling flow for the same reason as [draft].
+     */
+    val attachmentStates: StateFlow<Map<String, AttachmentViewState>> = _attachmentStates.asStateFlow()
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -247,7 +308,8 @@ class ThreadViewModel(
     /**
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
-     * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine.
+     * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine, and
+     * Claude's reported context usage (#946) by a third; the repository clears that reading itself.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -259,6 +321,32 @@ class ThreadViewModel(
         ) { settings, menu, model, effort, permission ->
             runConfig(settings, menu, model, effort, permission)
         }.combine(runningModel) { config, running -> config.copy(running = running) }
+            .combine(repository.observeContextUsage(conversationId)) { config, usage ->
+                config.copy(contextPercent = usage?.percentage)
+            }
+
+    /**
+     * This conversation's published slash-command menu (#882), feeding both the Actions menu's absent
+     * commands (#884) and the composer's type-ahead (#885). Seeded `null` so a repository that never emits
+     * cannot stall [state].
+     */
+    private val slashCommandMenu: Flow<SlashCommandMenu?> =
+        repository
+            .observeSlashCommandMenu(conversationId)
+            .onStart { emit(null) }
+            .distinctUntilChanged()
+
+    /**
+     * This conversation's background-task roster and live count on this thread's host (#678). Each arm is
+     * seeded so a source that never emits cannot stall [state]. The task strings stay inside the roster:
+     * nothing here reads, logs or keys on them.
+     */
+    private val backgroundTaskReading: Flow<Pair<BackgroundTaskRoster?, Int>> =
+        combine(
+            backgroundTasks(conversationId).onStart { emit(null) },
+            backgroundTaskCount(conversationId).onStart { emit(0) },
+            ::Pair,
+        ).distinctUntilChanged()
 
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
@@ -338,6 +426,7 @@ class ThreadViewModel(
             ThreadUiState(
                 conversationId = conversationId,
                 displayName = conv?.displayName() ?: conversationId,
+                conversationName = conv?.name,
                 isPromoted = conv?.isPromoted ?: false,
                 hasMessages = content.items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = workspaceDisplayName(cwd = conv?.cwd ?: "", label = conv?.workspaceLabel),
@@ -355,6 +444,10 @@ class ThreadViewModel(
                 mutationsSupported = mutationsSupported,
                 historyTail = content.historyTail,
             )
+        }.combine(slashCommandMenu) { uiState, menu ->
+            uiState.copy(absentActions = absentComposerActions(menu), slashCommands = menu?.rows)
+        }.combine(backgroundTaskReading) { uiState, (roster, count) ->
+            uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -763,6 +856,20 @@ class ThreadViewModel(
      */
     val archiveErrors: Flow<Unit> = archiveErrorChannel.receiveAsFlow()
 
+    private val markdownOpenFailureChannel = Channel<Unit>(capacity = Channel.BUFFERED)
+
+    /**
+     * One-shot "this markdown file cannot be read" signal (#1027), the [archiveErrors] idiom: no payload, so
+     * the screen shows the fixed open-failed sentence and nothing from the file.
+     */
+    val markdownOpenFailures: Flow<Unit> = markdownOpenFailureChannel.receiveAsFlow()
+
+    // #1027: the open in flight, so a double tap cannot buffer a second navigation that fires on return.
+    private var markdownOpenJob: Job? = null
+
+    // #1050: the linked note just read live, held in memory only until the operator is back on the thread.
+    private var linkedMarkdownNote: LinkedMarkdown? = null
+
     private val changeWorkspaceErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
 
     /**
@@ -1047,12 +1154,257 @@ class ThreadViewModel(
      * between them.
      */
     fun sendMessage(text: String) {
+        if (_attachmentsSending.value) return
+        val attachments = draftStore.attachmentsFor(serverId, conversationId)
+        if (attachments.isNotEmpty()) return sendWithAttachments(text, attachments)
         if (text.isBlank()) return
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
             repository.sendMessage(state.value.conversationId, text)
             if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+        }
+    }
+
+    /**
+     * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
+     * (#932). Blank text is allowed here: a message may carry attachments alone.
+     *
+     * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
+     * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that
+     * upload. One file's bytes are live at a time. The first failed read or upload stops the send before
+     * anything else is uploaded or sent; a thrown upload or send is swallowed by [launchGuardedRepoCall].
+     * Either way the text and every entry stay in the draft — the way a failed text send is reported.
+     *
+     * On success the text clears under [sendMessage]'s in-flight guard, and only the snapshot's entries
+     * are removed, so an attachment added while this send was in flight survives it.
+     */
+    private fun sendWithAttachments(
+        text: String,
+        attachments: List<PendingAttachment>,
+    ) {
+        _attachmentsSending.value = true
+        launchGuardedRepoCall {
+            try {
+                val target = state.value.conversationId
+                val references = mutableListOf<MessageAttachment>()
+                val originals = mutableMapOf<String, String>()
+                for (entry in attachments) {
+                    val id = entry.attachmentId ?: upload(target, entry) ?: return@launchGuardedRepoCall
+                    // #983: the thread row names each file as it was uploaded.
+                    references += MessageAttachment(id, entry.displayName, entry.mimeType)
+                    originals[id] = entry.uri
+                }
+                // #984: before the send, because the confirmed row can be drawn while it is suspended. A
+                // send that then fails leaves harmless entries: its retry names the same ids.
+                draftStore.recordSentOriginals(serverId, conversationId, originals)
+                // #686: a message sent while this opening's recall write is outstanding follows it.
+                effortRecall.awaitWrite()
+                repository.sendMessage(target, text, references)
+                if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+                draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
+            } finally {
+                // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
+                _attachmentsSending.value = false
+            }
+        }
+    }
+
+    /** Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not. */
+    private suspend fun upload(
+        target: String,
+        entry: PendingAttachment,
+    ): String? {
+        val bytes =
+            when (val read = attachmentReader.read(entry.uri)) {
+                is AttachmentRead.Bytes -> read.bytes
+                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large")
+                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed")
+            }
+        val result = repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType)
+        if (result !is AttachmentUploadResult.Stored) return attachmentSendFailed("upload_failed")
+        draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
+        return result.attachmentId
+    }
+
+    private fun attachmentSendFailed(outcome: String): String? {
+        RelayLog.d { "event=composer_attachment_send outcome=$outcome" }
+        return null
+    }
+
+    /**
+     * Add a file to this chat's pending attachments (#932). The outcome is returned so the UI can show a
+     * refusal; a refusal is also logged, by static code only — never the URI, name or type.
+     */
+    fun addAttachment(
+        uri: String,
+        displayName: String,
+        mimeType: String,
+        size: Long?,
+    ): AttachmentAddOutcome {
+        val outcome = draftStore.addAttachment(serverId, conversationId, uri, displayName, mimeType, size)
+        when (outcome) {
+            AttachmentAddOutcome.ADDED -> Unit
+            AttachmentAddOutcome.TOO_LARGE -> RelayLog.d { "event=composer_attachment_add outcome=too_large" }
+            AttachmentAddOutcome.TOO_MANY -> RelayLog.d { "event=composer_attachment_add outcome=too_many" }
+        }
+        return outcome
+    }
+
+    /**
+     * Add what the picker returned (#933), in its order, through [addAttachment]. Refused entries are skipped
+     * and the rest still added; when any were refused, one [attachmentRefusals] notice counts them by reason.
+     */
+    fun addPickedAttachments(picked: List<PickedAttachment>) {
+        var tooLarge = 0
+        var tooMany = 0
+        for (entry in picked) {
+            when (addAttachment(entry.uri, entry.displayName, entry.mimeType, entry.size)) {
+                AttachmentAddOutcome.ADDED -> Unit
+                AttachmentAddOutcome.TOO_LARGE -> tooLarge++
+                AttachmentAddOutcome.TOO_MANY -> tooMany++
+            }
+        }
+        if (tooLarge > 0 || tooMany > 0) attachmentRefusalChannel.trySend(AttachmentRefusal(tooLarge, tooMany))
+    }
+
+    /**
+     * A message attachment's row is on screen (#984): start its load unless it already has a state. The
+     * claim is a compare-and-set, so a row shown twice loads once, and a failure waits for [onRetryAttachment].
+     */
+    fun onAttachmentShown(attachmentId: String) {
+        if (claimAttachment(attachmentId) { it == null }) loadAttachment(attachmentId)
+    }
+
+    /** The retry control of a failed attachment (#984). Not found is final and has none. */
+    fun onRetryAttachment(attachmentId: String) {
+        if (claimAttachment(attachmentId) { it == AttachmentViewState.Failed }) loadAttachment(attachmentId)
+    }
+
+    /** Set [attachmentId] to loading if its state passes [claimable]; whether this call did. */
+    private fun claimAttachment(
+        attachmentId: String,
+        claimable: (AttachmentViewState?) -> Boolean,
+    ): Boolean {
+        var claimed = false
+        _attachmentStates.update { states ->
+            claimed = claimable(states[attachmentId])
+            if (claimed) states + (attachmentId to AttachmentViewState.Loading) else states
+        }
+        return claimed
+    }
+
+    /**
+     * Show the phone's own original while it can still be read, else retrieve the bytes from this
+     * thread's host (#984). Logs the id and a static outcome only: never a name, URI or path.
+     */
+    private fun loadAttachment(attachmentId: String) {
+        viewModelScope.launch {
+            val (state, outcome) =
+                try {
+                    val original = draftStore.sentOriginal(serverId, conversationId, attachmentId)
+                    if (original != null && attachmentReader.canRead(original)) {
+                        AttachmentViewState.Ready(AttachmentSource.Original(original), null, null) to "original"
+                    } else {
+                        retrieved(repository.retrieveAttachment(conversationId, attachmentId))
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A repository that keeps no files throws; its message is not read.
+                    AttachmentViewState.Failed to "failed"
+                }
+            RelayLog.d { "event=thread_attachment_load id=$attachmentId outcome=$outcome" }
+            _attachmentStates.update { it + (attachmentId to state) }
+        }
+    }
+
+    private fun retrieved(result: AttachmentRetrievalResult): Pair<AttachmentViewState, String> =
+        when (result) {
+            is AttachmentRetrievalResult.Retrieved ->
+                AttachmentViewState.Ready(AttachmentSource.Kept(result.file), result.displayName, result.mimeType) to "retrieved"
+            AttachmentRetrievalResult.NotFound -> AttachmentViewState.NotFound to "not_found"
+            AttachmentRetrievalResult.TooLarge,
+            AttachmentRetrievalResult.Invalid,
+            AttachmentRetrievalResult.Unavailable,
+            -> AttachmentViewState.Failed to "failed"
+        }
+
+    /**
+     * A ready markdown attachment was tapped (#1027): read and strictly decode its kept file first, so a file
+     * that cannot be shown leaves the operator here with the open-failed notice, and only a readable one opens
+     * the reader, by id alone. Ignored while an earlier open is still reading. Logs the id and a static outcome.
+     */
+    fun onOpenMarkdownAttachment(attachmentId: String) {
+        if (markdownOpenJob?.isActive == true) return
+        markdownOpenJob =
+            viewModelScope.launch {
+                val document = readMarkdownAttachment(repository, conversationId, attachmentId, ioDispatcher)
+                RelayLog.d { "event=thread_attachment_open id=$attachmentId outcome=${if (document != null) "reader" else "failed"}" }
+                if (document != null) {
+                    navigationChannel.send(ThreadNavigation.OpenMarkdown(attachmentId))
+                } else {
+                    markdownOpenFailureChannel.send(Unit)
+                }
+            }
+    }
+
+    /**
+     * A markdown link in an assistant reply was tapped (#1050): read [path] live from this conversation's
+     * workspace, one request per open, and open the reader only on a note it can show; anything else leaves
+     * the operator here with the open-failed notice. Ignored while any open is still reading, so a second tap
+     * sends nothing. The note is held for the reader's destination ([linkedMarkdown]), never saved. Logs a
+     * static outcome only: never the path, the name or the text.
+     */
+    fun onOpenMarkdownLink(path: String) {
+        if (markdownOpenJob?.isActive == true) return
+        linkedMarkdownNote = null
+        markdownOpenJob =
+            viewModelScope.launch {
+                val document = readLinkedMarkdown(repository, conversationId, path)
+                RelayLog.d { "event=thread_markdown_link_open outcome=${if (document != null) "reader" else "failed"}" }
+                if (document != null) {
+                    linkedMarkdownNote = LinkedMarkdown(path, document)
+                    navigationChannel.send(ThreadNavigation.OpenLinkedMarkdown)
+                } else {
+                    markdownOpenFailureChannel.send(Unit)
+                }
+            }
+    }
+
+    /**
+     * The note [onOpenMarkdownLink] last read, with the path it read, for the reader it opens (#1050) and that
+     * reader's Refresh (#1067); `null` once released.
+     */
+    fun linkedMarkdown(): LinkedMarkdown? = linkedMarkdownNote
+
+    /** Drop the held note (#1050): the operator is back on the thread, so its reader has closed. */
+    fun releaseLinkedMarkdown() {
+        linkedMarkdownNote = null
+    }
+
+    /** Remove one pending attachment from this chat (#932), leaving the rest in order. */
+    fun removeAttachment(key: Long) {
+        draftStore.removeAttachment(serverId, conversationId, key)
+    }
+
+    /**
+     * Send the Actions menu's [action] command (#884) as an ordinary message to this conversation, through
+     * the same guarded send [sendMessage] runs, so a failed send is handled exactly as a composer message's.
+     * It leaves the typed draft alone, so there is no clear on success. A command the published menu proves
+     * absent is refused here too, behind the greyed-out row. Reset session carries no command and never
+     * comes this way. Logs static codes only.
+     */
+    fun onComposerCommand(action: ComposerAction) {
+        val command = action.command ?: return
+        if (action in state.value.absentActions) {
+            RelayLog.d { "event=composer_action action=${action.value} outcome=absent" }
+            return
+        }
+        launchGuardedRepoCall {
+            effortRecall.awaitWrite()
+            repository.sendMessage(conversationId, command)
+            RelayLog.d { "event=composer_action action=${action.value} outcome=sent" }
         }
     }
 
@@ -1585,24 +1937,84 @@ class ThreadViewModel(
                 }
             }
             ThreadEvent.RenameDismiss -> pendingRenameDialog.value = false
-            ThreadEvent.SaveAsChannel ->
+            ThreadEvent.SaveAsChannel -> {
                 pendingSaveAsChannelDialog.value =
-                    SaveAsChannelDialogState(initialName = AUTO_SUGGESTED_CHANNEL_NAME)
-            is ThreadEvent.SaveAsChannelSubmit -> {
-                pendingSaveAsChannelDialog.value = null
-                launchGuardedRepoCall {
-                    repository.promote(
-                        state.value.conversationId,
-                        event.name,
-                        resolveWorkspace(event.name, event.workspace),
+                    SaveAsChannelDialogState(
+                        initialName = state.value.conversationName?.takeIf { it.isNotBlank() } ?: DEFAULT_CHANNEL_NAME,
                     )
-                }
+                RelayLog.d { "event=save_as_channel_opened" }
             }
-            ThreadEvent.SaveAsChannelDismiss -> pendingSaveAsChannelDialog.value = null
+            is ThreadEvent.SaveAsChannelSubmit -> submitSaveAsChannel(event.name, event.systemPrompt)
+            ThreadEvent.SaveAsChannelDismiss -> {
+                pendingSaveAsChannelDialog.value = null
+                RelayLog.d { "event=save_as_channel_dismissed" }
+            }
             ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true
             ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
+        }
+    }
+
+    /**
+     * Save as channel's OK (#957): promote this conversation **in place** under the trimmed [name] — the
+     * `workspace = null` promote keeps its `cwd`, id and history — then, once the promote is confirmed,
+     * store a non-blank [systemPrompt] verbatim. A blank prompt writes nothing, so a prompt the chat
+     * already stores is kept. The modal closes only when every write it asked for has been confirmed.
+     *
+     * A failure keeps the modal open with a [SaveAsChannelFailure] flag, never the exception's message.
+     * A confirmed promote is recorded as [SaveAsChannelDialogState.promoted], so OK after a failed prompt
+     * write retries only that write and never sends a second promote. Every terminal transition is a
+     * `compareAndSet` against the state published before it, so a result landing after Cancel cannot
+     * resurrect the modal; the writes themselves carry on, since the operator already pressed OK.
+     *
+     * Logs static event names only — never the name, the prompt, the id or an exception message.
+     */
+    private fun submitSaveAsChannel(
+        name: String,
+        systemPrompt: String,
+    ) {
+        val dialog = pendingSaveAsChannelDialog.value ?: return
+        if (dialog.saving) return
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || !SystemPromptLimit.fits(systemPrompt)) {
+            RelayLog.d { "event=save_as_channel_rejected" }
+            return
+        }
+        val pending = dialog.copy(saving = true, failure = null)
+        pendingSaveAsChannelDialog.value = pending
+        viewModelScope.launch {
+            if (!dialog.promoted) {
+                RelayLog.d { "event=save_as_channel_promote_started" }
+                try {
+                    repository.promote(conversationId, trimmed, null)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    RelayLog.d { "event=save_as_channel_promote_failed" }
+                    pendingSaveAsChannelDialog.compareAndSet(pending, pending.copy(saving = false, failure = SaveAsChannelFailure.Promote))
+                    return@launch
+                }
+            }
+            if (systemPrompt.isBlank()) {
+                pendingSaveAsChannelDialog.compareAndSet(pending, null)
+                RelayLog.d { "event=save_as_channel_saved" }
+                return@launch
+            }
+            val promoted = pending.copy(promoted = true)
+            pendingSaveAsChannelDialog.compareAndSet(pending, promoted)
+            try {
+                repository.setSystemPrompt(conversationId, systemPrompt)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                RelayLog.d { "event=save_as_channel_prompt_failed" }
+                pendingSaveAsChannelDialog.compareAndSet(
+                    promoted,
+                    promoted.copy(saving = false, failure = SaveAsChannelFailure.SystemPrompt),
+                )
+                return@launch
+            }
+            pendingSaveAsChannelDialog.compareAndSet(promoted, null)
+            RelayLog.d { "event=save_as_channel_saved" }
         }
     }
 
@@ -1671,29 +2083,34 @@ private fun usageLimitRereads(): Flow<Unit> =
         }
     }
 
-private const val AUTO_SUGGESTED_CHANNEL_NAME = "New channel"
-
-private fun resolveWorkspace(
-    name: String,
-    choice: WorkspaceChoice,
-): String? =
-    when (choice) {
-        WorkspaceChoice.DEDICATED -> "pyry-workspace/channels/${name.toChannelSlug()}"
-        WorkspaceChoice.SCRATCH -> null
-    }
-
-private fun String.toChannelSlug(): String =
-    lowercase()
-        .replace(Regex("\\s+"), "-")
-        .replace(Regex("[^a-z0-9-]"), "")
-        .trim('-')
-        .ifEmpty { "channel" }
+/** Save as channel's name seed for a conversation that has no name of its own (#957). */
+private const val DEFAULT_CHANNEL_NAME = "New channel"
 
 // ---- #544: Model / Effort → set_session_settings wire strings (file-private) ---------------------
 //
 // #807 deleted `Effort.wire()` / `Model.wire()`, the two enum-to-daemon-string mappers #544 added here.
 // Their premise was that the phone knows the server's vocabulary; it does not. Every argument sent now
 // comes from `ModelMenuRow.value` / `effortLevels` — the server's own strings, forwarded verbatim.
+
+/**
+ * The Actions menu's commands that [menu] proves absent (#884), after desktop's
+ * `composerActionAvailability`. Proof needs a menu, a dropped count of exactly 0, no row with a truncated
+ * `name` or `aliases`, and no row whose name or alias equals the command without its slash. Anything less
+ * proves nothing, and every row stays enabled. [ComposerAction.ResetSession] is never absent.
+ *
+ * The published strings are workspace-authored. They are only compared here, never returned, rendered,
+ * logged or sent.
+ */
+internal fun absentComposerActions(menu: SlashCommandMenu?): Set<ComposerAction> {
+    if (menu == null || menu.droppedCommands != 0) return emptySet()
+    val rows = menu.rows
+    if (rows.any { row -> row.truncatedFields.orEmpty().any { it == "name" || it == "aliases" } }) return emptySet()
+    return ComposerAction.entries
+        .filter { action ->
+            val name = action.command?.removePrefix("/") ?: return@filter false
+            rows.none { it.name == name || name in it.aliases }
+        }.toSet()
+}
 
 /**
  * The client's share of the #791 trust boundary: one daemon-authored string reduced to inert display

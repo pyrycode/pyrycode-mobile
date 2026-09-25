@@ -57,6 +57,7 @@ class NoiseSessionPump(
     handshakeTimeoutMs: Long = 10_000,                      // protocol step 4: the noise_resp deadline
     rekeyIntervalMs: Long = 3_600_000,                      // #304: the 1-hour re-key cadence; injected small in tests
     rekeyRespTimeoutMs: Long = 30_000,                      // #495: bounded re-key noise_resp deadline (Go WS-4426 mirror)
+    onClientMinimum: (String) -> Unit = {},                 // #1008: raw min_client_version from a sealed client.update_required error
 ) : ManagedSessionPump {                     // #351: inbound/send (SessionPump) + start/close (the lifecycle view)
     val state: StateFlow<PumpState>          // handshake-completion + lifecycle signal (pump-specific, not in the contract)
     val inbound: Flow<Envelope>              // hot, single-consumer, decrypted app frames
@@ -134,6 +135,51 @@ the pump scope that:
 - **`else`** → teardown. The ordered encrypted stream **cannot skip a frame**, so a genuinely unknown type
   — or a base64 / `decrypt` / `Envelope`-parse failure on a `noise_msg` — tears the session down rather
   than dropping the frame.
+
+## Capturing the update-required minimum (#1008)
+
+A host that refuses this app build as too old sends a sealed `error` envelope
+(`code == "client.update_required"`, `retryable: false`) before the [supervisor](relay-reconnect-supervisor.md)
+observes the `4412` close that follows — pyrycode#2576's rejection. The dispatch above does **not** grow
+a fourth branch for it: `"error"` still falls through the `noise_msg` arm's **default** (envelope types
+other than `"rekey_request"` are forwarded to `inbound` unchanged), so an `error` for any other code is
+untouched by this ticket. What #1008 adds is a **side effect on the way to forwarding**: after a
+successful decrypt + parse, and only when `envelope.type == "error"`, a private `captureClientMinimum`
+decodes the payload as `ErrorPayload` and — if `code == ERROR_CLIENT_UPDATE_REQUIRED` and
+`minClientVersion` is present — invokes `onClientMinimum(raw)` with the **raw, unvalidated** string. The
+envelope is still emitted on `inbound` either way; the repository already treats an uncorrelated `error`
+(no matching `in_reply_to`) as a no-op, so forwarding it is harmless.
+
+```kotlin
+private fun captureClientMinimum(envelope: Envelope) {
+    val error = try {
+        MobileJson.decodeFromJsonElement(ErrorPayload.serializer(), envelope.payload)
+    } catch (e: SerializationException) {
+        return
+    } catch (e: IllegalArgumentException) {
+        return
+    }
+    if (error.code != ERROR_CLIENT_UPDATE_REQUIRED) return
+    error.minClientVersion?.let(onClientMinimum)
+}
+```
+
+**Fail-open by design, unlike every other frame in this dispatch.** A malformed `error` payload — one
+that isn't a valid `ErrorPayload` at all — is caught and simply skipped; it does **not** fall through to
+the `else` teardown the way an unparseable `noise_msg` envelope does. The frame the AEAD layer already
+authenticated is not otherwise faulty, so tearing the session down over a decode failure in a field this
+capture doesn't even need would make a malformed `error` a session killer it isn't today.
+
+**The pump does not validate `min_client_version`.** It hands the raw daemon string to `onClientMinimum`
+unchanged; validation (`internal fun validMinClientVersion` in `MobileWireModels.kt` — exactly three
+`.`-separated ASCII-decimal parts, each 1–6 digits) happens once, at the one production call site that
+can build `RelayLinkStatus.UpdateRequired` with a non-null value: the supervisor's `recordClientMinimum`
+(see [Relay reconnect supervisor § The per-dial minimum latch](relay-reconnect-supervisor.md#the-per-dial-minimum-latch-1008)).
+`onClientMinimum` defaults to a no-op `{}`, so every pre-#1008 construction site is untouched;
+production wires it in `di/RelayConnectionFactory.kt`'s `RelayConnectionBundle`, closing over the
+transport the pump was built for so the supervisor can tell which dial a late callback belongs to.
+
+No log: the value is daemon-authored and render-only.
 
 ## Outbound `send` — ordering is the load-bearing invariant
 
@@ -235,6 +281,35 @@ named: it re-loads `s` fresh per re-key (mirroring `create()`'s load + zero disc
 caching it on the multi-hour pump — preserving #298/#303's bounded device-key RAM window across every
 hourly rotation.
 
+## Logging (#1039)
+
+`teardown(trigger, cause)` — the single idempotent path every ending funnels into (below) — writes
+exactly one [`RelayLog`](relay-log.md) line before it sets `Closed`:
+
+`event=pump_teardown trigger=<label>[ cause=<SimpleClassName>]`
+
+| `trigger` | Funnel |
+|---|---|
+| `session_create_failed` | `sessionFactory.create()` threw |
+| `handshake_deadline` | no frame arrived before the `noise_resp` deadline |
+| `handshake_transport_down` | the transport went `Down` before any frame arrived |
+| `handshake_wrong_first_frame` | the first inbound frame was not `noise_resp` |
+| `handshake_resp_rejected` | `readResp` / base64 threw |
+| `open_decrypt_failed` | a `noise_msg`'s base64 decode or AEAD decrypt threw |
+| `open_parse_failed` | the decrypted plaintext failed to parse as an `Envelope` |
+| `open_unexpected_frame_type` | an open-state frame was neither `noise_msg` nor `noise_resp` |
+| `open_unexpected_noise_resp` | a `noise_resp` arrived with no re-key in flight |
+| `rekey_resp_rejected` | the re-key `readRekeyResp` threw |
+| `open_frame_failed` | any other exception out of the open-frame collector |
+| `rekey_deadline` | the bounded re-key response watchdog (§ Re-key triggers) fired |
+| `transport_down` | `transport.inbound` completed cleanly |
+| `close` | the app's own `close()` |
+
+`cause` is the exception's class name, never its message (a message can carry frame content). Level is
+`i` when `cause == null`, `w` otherwise. The pump's own `transport.close()` inside `teardown` then shows
+up in [the transport's line](relay-ws-transport.md#logging-1039) as a local `1000` close; this line is
+what explains that local close.
+
 ## State & concurrency model
 
 - **One connection-scoped scope** (`CoroutineScope(SupervisorJob() + dispatcher)`, `Dispatchers.Default`
@@ -310,22 +385,32 @@ review against the diff:
 - **Ordering discipline** — the `outboundLock` spans the full encrypt→enqueue pair (a reorder is an
   availability bug → session death → reconnect, not a confidentiality break); the re-key `noise_init` is
   **outside** the lock (it carries no transport-AEAD payload, so it is outside the nonce-order invariant).
-- **No logs, category-only causes** — every failure surfaces only via `Closed(cause)`, whose message is
-  category-only (no `frame.data` / plaintext / token interpolated). A downstream caller that logs `cause`
-  inherits the guarantee.
+- **Category-only causes, one teardown line** — every failure surfaces via `Closed(cause)`, whose message
+  is category-only (no `frame.data` / plaintext / token interpolated). [#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039)
+  added exactly one `event=pump_teardown` line per teardown (§ Logging below), carrying a fixed trigger
+  label and the cause's class name only — never `cause`'s message. A downstream caller that logs `cause`
+  directly still inherits the category-only guarantee.
 - **The 10 s `noise_resp` deadline closes a silent-hang hole** — #306's `readTimeout` is deliberately 0
   (a long-lived WS footgun guard), so a relay that accepts the WS but never answers `noise_init` would
   otherwise hang the session in `Handshaking` forever with no `Down`. `handshakeTimeoutMs` bounds it.
 - **Inherited, not re-implemented**: the inbound frame-size cap (`MAX_INBOUND_FRAME_CHARS = 128 KiB`) is
   #306's; TLS/timeouts/cert-pinning are #306's. The `v != 2` / `4421` close-code validation is **deferred**
   (the transport's `close()` is parameterless; the pump closes normally and the supervisor reconnects).
+- **The update-required capture reads only an already-authenticated frame** ([#1008](#capturing-the-update-required-minimum-1008))
+  — `captureClientMinimum` runs after the same decrypt + `Envelope` parse every other `noise_msg` goes
+  through, so it cannot be reached by a relay that lacks the session key. Its own decode failure is
+  caught rather than torn down (a deliberate narrowing of the "any bad frame kills the session" rule,
+  scoped to this one field), and the raw string it extracts is handed to the caller **unvalidated** — the
+  pump makes no trust claim about its shape, only about its authenticity. No log.
 
 ## Edge cases & limitations
 
 - **Handshake failure** (timeout, wrong first frame, `noise_resp` MAC failure, factory failure) → `Closed`
   + `transport.close()`; the supervisor reconnects with a fresh handshake.
 - **Any undecryptable / unparseable / unknown open-state frame** → `Closed` (the stream can't skip a
-  frame). Not a silent drop.
+  frame). Not a silent drop. **Exception**: an `error` envelope whose payload doesn't decode as
+  `ErrorPayload` is skipped by `captureClientMinimum` without tearing the session down ([#1008](#capturing-the-update-required-minimum-1008))
+  — the envelope itself decrypted and parsed fine; only the inner capture attempt failed.
 - **`send` before `Open` / after `Closed` / racing teardown** → `false`, no throw, no frame.
 - **Re-key failure** (rotated `rs` / MITM `noise_resp`, or a stray `noise_resp` with no re-key in flight)
   → `Closed`; the supervisor reconnects with a fresh handshake (#304, see § Re-key triggers). A device-key
@@ -373,6 +458,14 @@ runCurrent()`, never `advanceUntilIdle()`** — the latter now fast-forwards thr
 watchdog and tears the session down (see [`codebase/495.md`](../codebase/495.md) § Lessons learned and
 [`codebase/304.md`](../codebase/304.md) § Lessons learned).
 
+**[#1008](#capturing-the-update-required-minimum-1008) added** the sealed-`client.update_required`
+scenarios (spec: `docs/specs/architecture/1008-update-required-halt.md`): a sealed error carrying a
+minimum → `onClientMinimum` receives the raw value and the envelope is still forwarded on `inbound`; the
+same error with no `min_client_version` → no callback, envelope still forwarded; a different `code` → no
+callback; a payload that fails to decode as `ErrorPayload` → no callback, no teardown, pump stays `Open`
+(the fail-open exception to the "any bad frame tears down" rule). None of these consume a re-key
+timer/watchdog tick, so they compose freely with the existing re-key scenarios in the same fixture.
+
 > **Test-harness note (reusable):** a "no leaked coroutine" assertion that collects `inbound` and checks
 > `job.isCompleted` must launch the collector as a **foreground child of the test scope** (not
 > `backgroundScope` — those are deliberately *not* drained by `advanceUntilIdle()`), so `advanceUntilIdle()`
@@ -385,10 +478,13 @@ watchdog and tears the session down (see [`codebase/495.md`](../codebase/495.md)
   [`../codebase/309.md`](../codebase/309.md) (the pump itself) +
   [`../codebase/304.md`](../codebase/304.md) (the re-key triggers built on it) +
   [`../codebase/495.md`](../codebase/495.md) (the bounded re-key response watchdog) — files/line refs,
-  patterns, lessons, verification.
+  patterns, lessons, verification. #1008 (the update-required capture) landed after the per-ticket
+  archive was frozen (2026-09-05); its spec is below instead.
 - Specs: `docs/specs/architecture/309-noise-session-pump.md` + `docs/specs/architecture/304-noise-ik-rekey-triggers.md`
   + `docs/specs/architecture/495-rekey-response-watchdog.md`
-  (§ Design, § State + concurrency model, § Error handling, § Security review — all Verdict PASS).
+  (§ Design, § State + concurrency model, § Error handling, § Security review — all Verdict PASS) +
+  `docs/specs/architecture/1008-update-required-halt.md` (the sealed-error capture half; the halt itself
+  lives in the supervisor, § Security review — Verdict PASS).
 - Sits on: [Relay WebSocket transport](relay-ws-transport.md) ([#306](../codebase/306.md)) — collects
   `inbound`, sends `InnerFrameV2`, keys off `inbound` completion for `Down`; never `events`.
   [Noise_IK session](noise-ik-session.md) ([#303](../codebase/303.md)/[#298](../codebase/298.md)) via
@@ -398,7 +494,11 @@ watchdog and tears the session down (see [`codebase/495.md`](../codebase/495.md)
   — `Envelope`, `InnerFrameV2`, `MobileJson`, `base64StdEncode`/`base64StdDecode`.
 - Siblings / consumers: [reconnect supervisor](relay-reconnect-supervisor.md) ([#307](../codebase/307.md))
   — the same connection's `events`; publishes `currentConnection` (the per-connection seam); **no
-  blocker**. [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) ([#351](../codebase/351.md),
+  blocker** for `events`/`inbound` (still separate streams), but since #1008 the supervisor is this
+  callback's sole caller: `onClientMinimum` closes over the dial's transport so `recordClientMinimum`
+  can identify which dial a late minimum belongs to (see [Relay reconnect supervisor § The per-dial
+  minimum latch](relay-reconnect-supervisor.md#the-per-dial-minimum-latch-1008)).
+  [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) ([#351](../codebase/351.md),
   **landed**) — builds + `start()`s a pump per connection and `close()`s it on drop; owns the
   `: ManagedSessionPump` declaration. **#278** (`RemoteConversationRepository` — the one external
   `inbound`/`send` consumer; see the send

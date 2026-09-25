@@ -82,6 +82,15 @@ cannot give it:
 - work on a background dispatcher that Robolectric's paused main clock does not
   drive, like `ScriptedUnrecognizedMessageTest`.
 
+A Compose test goes in plain `app/src/test`, not `sharedTest`, when it must never run
+on a real device even though it drives a Composable: `sharedTest` also runs on the
+emulator in the in-depth run, and a test that exercises a real system surface — like
+Android's own permission dialog — would trigger that surface for real there instead
+of hitting Robolectric's shadow. `NotificationPermissionPromptTest` (#685, driving
+`rememberNotificationPermissionRequest` under `createAndroidComposeRule<ComponentActivity>()`)
+is the first such case — see
+[Push messaging service § Testing](push-messaging-service.md#testing-685).
+
 A test in the wrong folder fails safe. A device-only test placed in `sharedTest`
 fails in `./gradlew test`. A Robolectric-capable test placed in `androidTest` still
 runs on every verifier pass, only slower.
@@ -202,6 +211,68 @@ the rendered text being removed. This covers production, JVM tests and
 `androidTest` call sites in one pass. Record the graph gap when it affects the
 blast-radius decision.
 
+A `BasicTextField(state: TextFieldState, ...)` field (Compose foundation 1.10.4,
+found migrating [`ThreadInputBar`](thread-input-bar.md#draft-binding--cursor-at-end-undo-and-redo-885-934)
+for #934) is not a drop-in replacement for the `value`/`onValueChange` overload in
+tests, in three ways:
+
+- It exposes a `ScrollBy` semantics action the legacy field never did. A selector
+  that finds "the" scrollable node with `hasScrollAction()` then matches two nodes
+  once such a field and a scrollable list share a screen. Match the list with a
+  more specific action instead, e.g. `hasScrollToIndexAction()` or
+  `hasScrollToNodeAction()`, if only the list should carry it.
+- Undo and redo bypass `InputTransformation` — they write the field's buffer
+  directly and never call `commitEditAsUser`. A binding that reports edits only
+  through the transformation misses them; see the linked section for the
+  `snapshotFlow`/`accountedText` fix this required.
+- `SemanticsActions.PasteText`, unlike undo/redo, **does** route through
+  `Modifier.contentReceiver` the same way a real user Paste does — both under
+  Robolectric and on the device — so a paste test needs no text-toolbar
+  workaround.
+
+Robolectric's `KeyCharacterMap` ignores the Ctrl meta state, so a test that sends
+a hardware Ctrl+Z to a Compose field there actually types a plain "z" and can pass
+green without exercising undo at all. A test that must prove undo or redo — as
+opposed to typing or pasting — needs a device.
+
+A device's `ClipboardManager` throws `SecurityException` when a test puts a
+`content://` URI on the clip that the calling app cannot read; Robolectric's
+clipboard does not model this permission check, so the same test passes there and
+fails only on the device sweep (#992). Production code must keep refusing the
+app's own content URIs (`AttachmentReader.isForeignContentUri`), so granting the
+test app read access is not an option. Guard the device run instead —
+`assumeTrue("<reason>", Build.FINGERPRINT == "robolectric")` on the affected
+method — and name the device-only harness that still proves the real path in the
+skip reason and a KDoc line, e.g. `ComposerImagePasteDeviceTest`, which inserts a
+real `MediaStore` image, pastes it and removes it afterward.
+
+On a device, a real drag that ends with the finger still down past a scroll edge
+can hold the stretch overscroll effect, which keeps drawing frames — `waitForIdle`
+then never returns, because the instrumentation idle check treats those redraws as
+ongoing activity. Robolectric draws no such frames, so the same test passes there
+while hanging the managed device (`ThreadScreenNewestRowTest`, #992; a thread dump
+located the hang inside `waitForIdle`). The fix is
+`CompositionLocalProvider(LocalOverscrollFactory provides null)` around the test's
+`setContent`, which drops only the visual stretch: drags still reach the list as
+`NestedScrollSource.UserInput` through the nested-scroll chain, so a test
+asserting scroll-yield or auto-follow behavior is unaffected.
+
+`captureToImage()` → `forceRedraw` waits 2000 ms for a fresh frame and throws
+`ComposeTimeoutException` on a loaded emulator, independently of whether the
+layout assertions around it already passed — seen four times against
+`ScannerFrameTest` and `PairCodeScreenTest` (#1038), including once after
+`PairCodeScreenTest`'s existing leading `rule.waitForIdle()`, so waiting for idle
+first is not sufficient on its own. The screenshot PNG is a review artifact, not
+part of the contract under test, so a capture-only helper should retry
+(`ComposeTestRule.saveScreenshot` in
+`app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/ScreenshotCapture.kt`
+retries up to three times with `waitForIdle()` before each retry) and log +
+skip the PNG rather than fail the test when every attempt still times out. Catch
+only `ComposeTimeoutException`; any other exception from the capture should still
+fail the test. The retry cannot be proven on a healthy emulator because the
+timeout does not reproduce on demand — the focused device run only proves the
+PNGs are still written when capture succeeds, not that the skip path fires.
+
 ## Test scheduling and harnesses
 
 The routine UI gate excludes `de.pyryco.mobile.e2e` through the instrumentation
@@ -218,11 +289,38 @@ really advances virtual time. When adding a finite watchdog or timeout, drive on
 the intended deadline with `advanceTimeBy(...)` followed by `runCurrent()`;
 `advanceUntilIdle()` also advances newly armed watchdogs.
 
+A fake repository seed backed by a `MutableStateFlow` — `FakeConversationRepository.setSlashCommandMenu`,
+for example — needs `advanceUntilIdle()` before a `ViewModel.state.value` assertion sees it, even with an
+`UnconfinedTestDispatcher` installed as `Main` (#884): the write still has to propagate through whatever
+`map` / `combine` / `stateIn` chain sits between the fake's `MutableStateFlow` and the cached `state.value`.
+A scripted fake's plain `MutableSharedFlow.emit`, by contrast, does not need it.
+
 A plain-Kotlin controller constructed with `runTest`'s `backgroundScope` as its owner scope (rather
 than the `TestScope` itself) never leaves its initial state under `advanceUntilIdle()` —
 `backgroundScope` coroutines are not what that call drains, so every assertion fails on the test's own
 setup, not on the code under test (#824). Pass the `TestScope` as the owner scope, or call
-`runCurrent()` after launching in `backgroundScope`.
+`runCurrent()` after launching in `backgroundScope`. The same gap bit a DataStore built with
+`PreferenceDataStoreFactory.create(scope = backgroundScope, ...)` in a test (#953): its write actor
+never ran under `advanceUntilIdle()`, so a read straight after saw the old value. Give the store its
+own `CoroutineScope(StandardTestDispatcher(testScheduler) + Job())` instead and cancel it at the end —
+see [Push messaging service § Testing](push-messaging-service.md#testing) for the full case. More
+generally, a `first { predicate }` wrapped in `withTimeout` against a live DataStore or other
+in-memory `StateFlow` is not a safe "wait a bit": if the collector's first read overlaps the write it
+is waiting for, the read returns the pre-write value and the emission it needed is never replayed, so
+the wait times out no matter how high the timeout is. Prefer owning every coroutine the write uses and
+reading once with a plain `first()` after draining the scheduler, over racing a wall clock against
+writer code the test does not control.
+
+A test that simulates an app restart by cancelling one `DataStore`'s owner scope and immediately
+opening a second `PreferenceDataStoreFactory.create` on the same file must `join()` the first scope's
+`Job`, not merely `cancel()` it: DataStore unregisters a file from its process-wide active-file set only
+when the owning scope's job *completes*, and `cancel()` only requests that — it returns before the job
+finishes. A second store opened in the gap sees the file still registered and its first read throws
+`IllegalStateException: There are multiple DataStores active for the same file`, reproducing every time
+the affected test runs alone (#1075, mirroring the pattern `AppPreferencesTest.rememberedEffort_survivesProcessDeath`
+and `HostWorkspacePreferencesTest` — see [App preferences § Testing](app-preferences.md#testing) —
+already used correctly). Hold the first scope's `Job` in a named `val` and call `job1.join()` right after
+`scope1.cancel()`, before constructing the second store.
 
 A JVM unit test that constructs or resolves a component backed by `Dispatchers.Default` — a Koin
 singleton reached without an injected test dispatcher, for example — must stop it before that test
@@ -281,6 +379,24 @@ incoming status, uses explicit optional branches, and returns that status.
 `test_e2e_emulator_cleanup.py` exercises success and failure with and without an
 isolated home, including retention of failure artifacts. Check both the process
 status and executed XML results; neither overrides a disagreement with the other.
+
+A post-test diagnostic step needs its own status capture, distinct from that
+teardown. Appending `|| STATUS=$?` to the Gradle test invocation (`STATUS=0` set
+just before it) captures the test task's exit code before `set -euo pipefail` can
+exit the script, so a following diagnostic step still runs; the step's own
+explicit `exit "${STATUS}"` then keeps the run non-zero. A helper called from that
+step must be written with `if` statements, never a trailing `cond && grep` chain —
+`set -e` kills the run at the call site when such a chain's last command finds
+nothing, which for a log scan is the common, successful case
+(`report_stale_pairing_codes` in `e2e-emulator.sh`, #993).
+
+Splitting a Gradle build step ahead of the device test task, to keep build time out
+of a time-limited window elsewhere in the harness (#993 moved e2e pairing-code
+minting after `assembleDebug assembleDebugAndroidTest`, so a slow build no longer
+burns the daemon's 15-minute redemption window), is not defeated by the test
+task's own `--rerun` (`PYRY_FORCE_TEST_RUN=1`): that flag reruns only the test task
+itself, not its dependencies, so the compile and package tasks the split build
+already ran still report `UP-TO-DATE` in the test task's `--console=plain` output.
 
 The Android gate must search only the report path selected by `DEVICE`:
 `connected/debug` for `connected`, otherwise `managedDevice/debug/<DEVICE>`, under
@@ -381,6 +497,17 @@ preview slot cannot prove CameraX binding or that the preview respects the Compo
 overlay. For relay and Noise changes, combine deterministic JVM coverage with the
 appropriate UI or post-verifier live path; do not claim the latter ran unless its
 output identifies the executed scenario and XML evidence.
+
+A device gate run (`ui`, `scripted`, `scripted-all` or `live`) copies each fresh
+per-test `logcat-*.txt` into that run's `build/dispatcher-tests/<mode>-*` artifact
+directory next to the XML it already copies (`fresh_logcats` in
+`scripts/android-test-gate.py`, the sibling of `fresh_reports`) — the next run
+overwrites AGP's originals under `androidTest-results/`, so this is the only place
+they survive (#1039). To diagnose a relay connection drop, read those
+[`RelayLog`](relay-log.md) `event=transport_end` / `event=pump_teardown` lines
+alongside the daemon's `daemon.log` by timestamp; neither side logs the other's
+cause, so correlating by time is what tells a phone-side, relay-side or network
+ending apart.
 
 ## Documentation evidence
 

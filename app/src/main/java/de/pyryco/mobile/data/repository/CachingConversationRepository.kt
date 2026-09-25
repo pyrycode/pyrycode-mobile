@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.cache.settledThreadRows
@@ -18,11 +19,12 @@ import java.util.concurrent.ConcurrentHashMap
  * queue, API retry, compaction, thinking, usage limit, modals, one-shots — is plain delegation, so
  * nothing restored can reopen a prompt or restart an indicator. That live state is not thread state.
  *
- * The drawn thread is `live.mergeHistoryRows(restored)`: the restore is the history merge from the
- * other side, with the live projection as receiver and the cached rows as the older set. That is the
- * one dedup — one join key per row kind — so a restored row the daemon re-delivers is never drawn
- * twice, and merging into an empty live projection returns the restored rows verbatim, which is the
- * disconnected case with no branch of its own. The history walk is untouched: it reads only a page's
+ * The drawn thread is `live.mergeCachedRows(restored)`: the history merge's join from the other side,
+ * with the live projection as receiver and the cached rows as the older set. That is the one dedup —
+ * one join key per row kind — so a restored row the daemon re-delivers is never drawn twice, and
+ * merging into an empty live projection returns the restored rows verbatim, which is the disconnected
+ * case with no branch of its own. A row only the cache holds, such as an attachment offer the daemon
+ * never replays, stays beside the cached row above it (#983). The history walk is untouched: it reads only a page's
  * cursor and `atStart`, so restored rows cannot tell it the log has started.
  *
  * The restored set is read **once per collection**, so a later failed read cannot blank rows already
@@ -48,12 +50,17 @@ import java.util.concurrent.ConcurrentHashMap
  * wrapper's own [serverId], captured from the destination that issued the call, never a global
  * selection. Archive and unarchive stay plain delegation: they are not removals.
  *
+ * [retrieveAttachment] keeps a fetched file for this same [serverId] (#899) through [attachments], the
+ * app's one host-keyed store; the fetch itself runs on the delegate's live connection. With no store it is
+ * plain delegation.
+ *
  * Never logs a row, a conversation id or a server id.
  */
 class CachingConversationRepository(
     private val delegate: ConversationRepository,
     private val cache: ConversationCache,
     private val serverId: String,
+    private val attachments: AttachmentStore? = null,
 ) : ConversationRepository by delegate {
     // Ids this destination deleted. The thread that issued the delete keeps collecting until its PopBack,
     // and a write from that collector after the removal would put the rows straight back.
@@ -66,7 +73,7 @@ class CachingConversationRepository(
             var lastDrawn = base
             delegate.observeMessages(conversationId).collect { live ->
                 if (live.isEmpty()) base = settledThreadRows(lastDrawn)
-                val drawn = live.mergeHistoryRows(base)
+                val drawn = live.mergeCachedRows(base)
                 lastDrawn = drawn
                 emit(drawn)
                 val cacheable = cacheableThreadRows(drawn)
@@ -80,6 +87,13 @@ class CachingConversationRepository(
                 }
             }
         }
+
+    override suspend fun retrieveAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentRetrievalResult =
+        attachments?.retrieve(serverId, conversationId, attachmentId) { delegate.fetchAttachment(conversationId, attachmentId) }
+            ?: delegate.retrieveAttachment(conversationId, attachmentId)
 
     /**
      * Deletes on the daemon first; only once that succeeded does the cached copy go. A refused delete

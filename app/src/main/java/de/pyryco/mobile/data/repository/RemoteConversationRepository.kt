@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
@@ -156,11 +157,23 @@ class RemoteConversationRepository(
     private val sessionFactsProjection = SessionFactsProjection()
 
     /**
+     * The context-usage reading of every conversation (#945). [onInbound] hands it `context_usage` behind the
+     * `interactive` gate and the `session_transition` clear. It sends nothing: see [ContextUsageProjection].
+     */
+    private val contextUsageProjection = ContextUsageProjection()
+
+    /**
      * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
      * with every write that folds a thread row. [onInbound] hands it the thread frames behind the
      * `interactive` gate, and [sendMessage], [dropQueuedMessage] and [requestHistory] record into it.
      */
     private val threadProjection = ThreadProjection()
+
+    /**
+     * The files the daemon offered in each conversation on this connection (#898), each also appended to
+     * [threadProjection] as a row the first time it arrives (#983). Declared after it for that reason.
+     */
+    private val attachmentOfferProjection = AttachmentOfferProjection(threadProjection)
 
     /**
      * The model menu of every conversation (#913): the retained menus, the one-shot `request_model_list`
@@ -216,6 +229,17 @@ class RemoteConversationRepository(
             conversationList = conversationListProjection,
             threadProjection = threadProjection,
             queueProjection = queueProjection,
+        )
+
+    /**
+     * The attachment retrievals of this connection (#899): one `request_attachment` at a time, answered by chunks
+     * or an `error` naming it. [onInbound] offers each frame to it after the upload, and the [init] collector's
+     * `finally` ends it beside the upload.
+     */
+    private val attachmentRetrievals =
+        AttachmentRetrievals(
+            nextRequestId = { relayRequests.nextRequestId() },
+            send = pump::send,
         )
 
     /**
@@ -333,6 +357,7 @@ class RemoteConversationRepository(
             } finally {
                 endDebugBundle()
                 messageCommands.endAttachmentUploads()
+                attachmentRetrievals.end()
                 relayRequests.failAllPending()
             }
         }
@@ -341,6 +366,7 @@ class RemoteConversationRepository(
     private fun onInbound(envelope: Envelope) {
         if (messageCommands.routeDebugBundle(envelope)) return
         if (messageCommands.routeAttachmentUpload(envelope)) return
+        if (attachmentRetrievals.route(envelope)) return
         recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS ->
@@ -385,32 +411,30 @@ class RemoteConversationRepository(
                 threadProjection.appendMessages(rows)
             }
             TYPE_CONVERSATION_UPDATED -> {
-                // TWO kinds of producer, and the protocol requires a client to accept both (#721).
-                // A *correlated* reply (promote / rename / archive / unarchive / change_workspace /
-                // set_system_prompt) goes to its waiter verbatim, exactly as the shared arm below does
-                // — the awaiting mutation decodes and upserts its own typed return, so folding here too
-                // would be a redundant second write to the same row.
-                // An *unsolicited push* (`pyry channel new` on the host, or the one-shot auto-naming of
-                // a never-named conversation) carries no `in_reply_to` at all — and a duplicate reply
-                // arriving after its waiter deregistered matches no pending entry — so correlating on
-                // the type alone would drop it. Both fold by the payload's own `id`, which is what
-                // makes a rename made on another client reach this phone's live list (and, since #720,
-                // carries that row's `workspace_label` with it) instead of waiting for the next
-                // snapshot. Decode-or-drop precedes the fold, so a malformed push mutates nothing and
-                // the single inbound consumer survives; drop silently — the record carries the
-                // conversation's name and cwd, so nothing here logs the payload.
-                val waiter = relayRequests.waiter(envelope.inReplyTo)
-                if (waiter != null) {
-                    waiter.complete(envelope.payload)
-                } else {
-                    val conversation =
-                        try {
-                            MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload).toConversation()
-                        } catch (e: IllegalArgumentException) {
-                            return
-                        }
-                    conversationListProjection.upsertConversation(conversation)
-                }
+                // TWO kinds of producer, and the protocol requires a client to accept both (#721): a
+                // *correlated* reply (promote / rename / archive / unarchive / change_workspace /
+                // set_system_prompt), and an *unsolicited push* (`pyry channel new` on the host, or the
+                // one-shot auto-naming of a never-named conversation) that carries no `in_reply_to`.
+                // Both fold here by the payload's own `id`, which is what makes a rename made on another
+                // client reach this phone's live list (and, since #720, carries that row's
+                // `workspace_label` with it) instead of waiting for the next snapshot.
+                // A correlated reply folds here too, before its waiter completes (#996). The waiter's
+                // own upsert runs on the caller's scope, and a thread popped straight after Save
+                // cancels that scope between this completion and the caller's resumption, so the
+                // reply had no other writer and the list kept the old name. The caller's later upsert
+                // writes the same row again, which the projection's conflation absorbs.
+                // Decode-or-drop guards the fold only: a malformed payload mutates nothing, still reaches
+                // its waiter verbatim (whose own decode then throws), and the single inbound consumer
+                // survives. Drop silently — the record carries the conversation's name and cwd, so
+                // nothing here logs the payload.
+                val conversation =
+                    try {
+                        MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload).toConversation()
+                    } catch (e: IllegalArgumentException) {
+                        null
+                    }
+                conversation?.let(conversationListProjection::upsertConversation)
+                relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
             }
             TYPE_WORKSPACE_UPDATED -> {
                 // A workspace-label notification (#721). Like `conversation_updated` it has two kinds of
@@ -621,6 +645,13 @@ class RemoteConversationRepository(
                     sessionFactsProjection.apply(envelope)
                 }
             }
+            TYPE_CONTEXT_USAGE -> {
+                // How full this conversation's context window is, pushed after a turn or answering the phone's own
+                // ask (#945): see [ContextUsageProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    contextUsageProjection.apply(envelope)
+                }
+            }
             TYPE_SESSION_TRANSITION -> {
                 // A session boundary (#336, pyrycode#656/#657/#740). Same `interactive` gate as the
                 // live-session / `stall` / `queue_state` siblings: a non-interactive phone never decodes a
@@ -664,6 +695,9 @@ class RemoteConversationRepository(
                         // an absent key.
                         announcedModelProjection.clear(conversationId)
                         sessionFactsProjection.clear(conversationId)
+                        // Eighth write since #945: the context reading described the replaced session, so it is
+                        // dropped until the new session's first turn ends. Same routing.
+                        contextUsageProjection.onSessionTransition(conversationId)
                     }
                 }
             }
@@ -751,8 +785,20 @@ class RemoteConversationRepository(
                     questionBatchProjection.apply(envelope)
                 }
             }
-            TYPE_BACKGROUND_TASK_STARTED, TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER -> {
-                // Background work claude left running past its turn (#677): see [BackgroundTaskProjection.apply].
+            TYPE_ATTACHMENT_OFFERED ->
+                // A file claude produced (#898): see [AttachmentOfferProjection.apply]. Deliberately NOT behind
+                // the `interactive` gate: the daemon delivers it to every attached client, outside the
+                // interactive family, like the upload leg's `attachment_stored`. The daemon routes nothing, so
+                // the projection filters on the payload's conversation_id. A first offer of an id is also a
+                // thread row (#983); no stall touched.
+                attachmentOfferProjection.apply(envelope)
+            TYPE_BACKGROUND_TASK_STARTED,
+            TYPE_BACKGROUND_TASK_UPDATED,
+            TYPE_BACKGROUND_TASK_ROSTER,
+            TYPE_BACKGROUND_TASK_PROGRESS,
+            -> {
+                // Background work claude left running past its turn (#677, progress #1042): see
+                // [BackgroundTaskProjection.apply].
                 // Same `interactive` gate as the question arm. Daemon state, not turn content: no thread row, and
                 // it clears no stall. Drop silently: the command lines and summaries are never logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
@@ -1020,6 +1066,11 @@ class RemoteConversationRepository(
 
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 
+    override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsageProjection.observe(conversationId)
+
+    override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> =
+        attachmentOfferProjection.observe(conversationId)
+
     override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimitProjection.observe(conversationId)
 
     override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> =
@@ -1032,6 +1083,12 @@ class RemoteConversationRepository(
 
     /** Create an unpromoted discussion (#347); see [ConversationCommands.createDiscussion]. */
     override suspend fun createDiscussion(workspace: String?): Conversation = conversationCommands.createDiscussion(workspace)
+
+    /** Create a named, promoted channel (#956); see [ConversationCommands.createChannel]. */
+    override suspend fun createChannel(
+        name: String,
+        workspace: String,
+    ): Conversation = conversationCommands.createChannel(name, workspace)
 
     /** Promote a conversation into a named channel (#348); see [ConversationCommands.promote]. */
     override suspend fun promote(
@@ -1046,12 +1103,12 @@ class RemoteConversationRepository(
         text: String,
     ): Message = messageCommands.sendMessage(conversationId, text)
 
-    /** The same send naming [attachmentIds] (#830); see [MessageCommands.sendMessage]. */
+    /** The same send naming [attachments] (#830, #983); see [MessageCommands.sendMessage]. */
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
-        attachmentIds: List<String>,
-    ): Message = messageCommands.sendMessage(conversationId, text, attachmentIds)
+        attachments: List<MessageAttachment>,
+    ): Message = messageCommands.sendMessage(conversationId, text, attachments)
 
     /** Upload [bytes] as `attachment_chunk` frames (#829); see [MessageCommands.uploadAttachment]. */
     override suspend fun uploadAttachment(
@@ -1060,6 +1117,18 @@ class RemoteConversationRepository(
         filename: String,
         mimeType: String,
     ): AttachmentUploadResult = messageCommands.uploadAttachment(conversationId, bytes, filename, mimeType)
+
+    /** Fetch one stored file over `request_attachment` (#899); see [AttachmentRetrievals.fetch]. */
+    override suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult = attachmentRetrievals.fetch(conversationId, attachmentId)
+
+    /** Read one workspace file live over `read_workspace_file` (#1049); see [AttachmentRetrievals.readWorkspaceFile]. */
+    override suspend fun readWorkspaceFile(
+        conversationId: String,
+        path: String,
+    ): AttachmentFetchResult = attachmentRetrievals.readWorkspaceFile(conversationId, path)
 
     /** Request the rendered claude screen (#375); see [MessageCommands.requestScreenSnapshot]. */
     override suspend fun requestScreenSnapshot(conversationId: String): String = messageCommands.requestScreenSnapshot(conversationId)
@@ -1125,6 +1194,12 @@ class RemoteConversationRepository(
 
     /** Restore over `unarchive_conversation` (#549); see [ConversationCommands.unarchive]. */
     override suspend fun unarchive(conversationId: String): Unit = conversationCommands.unarchive(conversationId)
+
+    /** Set or clear the mute flag over `set_conversation_muted` (#1000); see [ConversationCommands.setMuted]. */
+    override suspend fun setMuted(
+        conversationId: String,
+        muted: Boolean,
+    ): Unit = conversationCommands.setMuted(conversationId, muted)
 
     /** Permanently delete a conversation (#532); see [ConversationCommands.delete]. */
     override suspend fun delete(conversationId: String): Unit = conversationCommands.delete(conversationId)
@@ -1251,6 +1326,9 @@ class RemoteConversationRepository(
 
         /** Request: restore an archived conversation (#549, #881, shares `ArchiveConversationPayload`). Reply is `conversation_updated`. */
         const val TYPE_UNARCHIVE_CONVERSATION = "unarchive_conversation"
+
+        /** Request: set or clear a conversation's mute flag (#1000, pyrycode#2572). Reply is `conversation_updated`, also pushed uncorrelated. */
+        const val TYPE_SET_CONVERSATION_MUTED = "set_conversation_muted"
 
         /** Request: permanently delete an existing conversation (#532, #822 `DeleteConversationPayload`). */
         const val TYPE_DELETE_CONVERSATION = "delete_conversation"
@@ -1466,6 +1544,23 @@ class RemoteConversationRepository(
         const val TYPE_SESSION_FACTS = "session_facts"
 
         /**
+         * Capability-gated status event: how full a conversation's context window is, `{conversation_id, model,
+         * total_tokens, max_tokens, percentage, <inventories>, as_of?}` (#945, pyrycode#2371) — pyrycode
+         * `docs/protocol-mobile.md` § `context_usage`. Pushed after every completed turn, and also the correlated
+         * answer to [TYPE_REQUEST_CONTEXT_USAGE]. Only the scalars are decoded. Opens, closes and alters no turn.
+         */
+        const val TYPE_CONTEXT_USAGE = "context_usage"
+
+        /**
+         * Phone → daemon: ask for a fresh [TYPE_CONTEXT_USAGE] reading of one conversation (#945, pyrycode#2431).
+         * Payload is the single `conversation_id` key; the reply is a [TYPE_CONTEXT_USAGE] correlated by
+         * `in_reply_to`, or an `error` carrying [ERROR_CONVERSATION_NOT_FOUND] or [ERROR_CONTEXT_USAGE_UNAVAILABLE].
+         * Interactive-gated: a conn without it is answered with nothing at all. The phone does not send it until
+         * pyrycode#2563 stops a mid-turn ask from holding up the connection's later frames (#946).
+         */
+        const val TYPE_REQUEST_CONTEXT_USAGE = "request_context_usage"
+
+        /**
          * Capability-gated thread event: a session transition `{conversation_id, previous_session_id,
          * new_session_id, reason, occurred_at, workspace_cwd}` (#336, pyrycode#656/#657/#740) — folds a
          * [ThreadItem.SessionBoundary] into the conversation thread (keyed by `conversation_id`) in
@@ -1567,6 +1662,12 @@ class RemoteConversationRepository(
         /** Capability-gated snapshot of a conversation's background tasks `{conversation_id, tasks, dropped_tasks}` (#677). */
         const val TYPE_BACKGROUND_TASK_ROSTER = "background_task_roster"
 
+        /**
+         * Capability-gated current activity of a running background task `{conversation_id, task_id, description,
+         * subagent_type, last_tool_name, total_tokens, tool_uses, duration_ms, truncated_fields}` (#1042).
+         */
+        const val TYPE_BACKGROUND_TASK_PROGRESS = "background_task_progress"
+
         /** Outbound answer to a held question batch `{question_batch_id, answer_token, answers}` (#825); no reply. */
         const val TYPE_QUESTION_ANSWER = "question_answer"
 
@@ -1616,6 +1717,12 @@ class RemoteConversationRepository(
         const val TYPE_ERROR = "error"
         const val TYPE_ATTACHMENT_CHUNK = "attachment_chunk"
 
+        /**
+         * Outbound push naming a file claude produced (#898): `{conversation_id, attachment_id, filename}`, no
+         * bytes, delivered to every attached client and live-only. See [AttachmentOfferProjection].
+         */
+        const val TYPE_ATTACHMENT_OFFERED = "attachment_offered"
+
         /** Server `error.code` for an unknown conversation → [IllegalArgumentException] (#346, AC #3). */
         const val ERROR_CONVERSATION_NOT_FOUND = "conversation.not_found"
 
@@ -1627,6 +1734,14 @@ class RemoteConversationRepository(
          * two are branched on rather than merged.
          */
         const val ERROR_MODEL_LIST_UNAVAILABLE = "model_list.unavailable"
+
+        /**
+         * Server `error.code` refusing a [TYPE_REQUEST_CONTEXT_USAGE] because the daemon hosts the conversation but
+         * has neither a fresh nor a remembered reading (#945, pyrycode#2431/#2461). Retryable after a backoff, but
+         * the phone does not retry: the reading stays absent until the next turn-end frame, so nothing branches on
+         * this code and [ContextUsageProjection] handles no refusal at all.
+         */
+        const val ERROR_CONTEXT_USAGE_UNAVAILABLE = "context_usage.unavailable"
 
         /** Client-side synthetic code for an undecodable `error` payload (#346 fallback, never hangs). */
         const val ERROR_MALFORMED_REPLY = "error.malformed_reply"

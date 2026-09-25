@@ -13,12 +13,14 @@ class RelayLinkDisconnectedTest {
                 RelayLinkStatus.Offline,
                 RelayLinkStatus.DaemonAbsent,
                 RelayLinkStatus.PairingRejected,
+                RelayLinkStatus.UpdateRequired(null),
+                RelayLinkStatus.UpdateRequired("1.4.0"),
                 // Idle is a deliberate background close, not an error.
                 RelayLinkStatus.Idle,
                 RelayLinkStatus.Connecting,
                 RelayLinkStatus.Connected,
             ).map { it.isDisconnected() }
 
-        assertEquals(listOf(true, true, true, true, false, false, false), classified)
+        assertEquals(listOf(true, true, true, true, true, true, false, false, false), classified)
     }
 }

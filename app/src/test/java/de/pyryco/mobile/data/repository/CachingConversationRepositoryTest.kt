@@ -1,10 +1,12 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ConversationCacheException
 import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -27,7 +29,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 /**
- * The thread restore (#797): cached rows merged under the live projection through [mergeHistoryRows],
+ * The thread restore (#797): cached rows merged under the live projection through [mergeCachedRows],
  * settled rows written back only when they change, every other flow pure delegation.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -174,6 +176,84 @@ class CachingConversationRepositoryTest {
             job.cancel()
         }
 
+    // ---- #983: a row only the cache holds keeps its place ---------------------------------------
+
+    private val offer =
+        ThreadItem.MessageItem(attachmentOfferRow(AttachmentOffer(ATTACHMENT_ID, "report.pdf"), Instant.parse("2026-09-22T10:00:01Z")))
+
+    @Test
+    fun `a cold restore keeps an offer row between the rows around it and writes that order back`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = RecordingCache(listOf(message("m1"), message("a1"), offer, message("a2")))
+            val emissions = mutableListOf<List<ThreadItem>>()
+            val job =
+                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+
+            // The daemon never replays the offer: the first page holds only its neighbours.
+            live.value = listOf(message("m1"), message("a1"), message("a2"))
+            assertEquals(listOf(message("m1"), message("a1"), offer, message("a2")), emissions.last())
+
+            live.value = listOf(message("m1"), message("a1"), message("a2"), message("m3"))
+            val drawn = listOf(message("m1"), message("a1"), offer, message("a2"), message("m3"))
+            assertEquals(drawn, emissions.last())
+            assertEquals(drawn, cache.writes.last())
+            job.cancel()
+        }
+
+    @Test
+    fun `a reconnect keeps an offer row drawn during the connection in arrival order`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = RecordingCache(emptyList())
+            val emissions = mutableListOf<List<ThreadItem>>()
+            val job =
+                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+
+            live.value = listOf(message("m1"), message("a1"), offer, message("a2"))
+            live.value = emptyList()
+            live.value = listOf(message("m1"), message("a1"), message("a2"))
+
+            val drawn = listOf(message("m1"), message("a1"), offer, message("a2"))
+            assertEquals(drawn, emissions.last())
+            assertEquals(drawn, cache.writes.last())
+            job.cancel()
+        }
+
+    @Test
+    fun `cache-only rows with no row above them on the live page still draw in front`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = RecordingCache(listOf(offer, message("m1"), message("m2")))
+            val emissions = mutableListOf<List<ThreadItem>>()
+            val job =
+                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+
+            // A page that does not overlap the cache at all: every cached row goes above it, in cached order.
+            live.value = listOf(message("m3"))
+
+            assertEquals(listOf(offer, message("m1"), message("m2"), message("m3")), emissions.last())
+            job.cancel()
+        }
+
+    @Test
+    fun `a sent row re-delivered by history takes its attachment names back from the cache`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val named = MessageAttachment(ATTACHMENT_ID, "photo.jpg", "image/jpeg")
+
+            fun sent(attachment: MessageAttachment) =
+                ThreadItem.MessageItem(
+                    Message("s1", "", Role.User, "", Instant.parse("2026-09-22T10:00:00Z"), false, attachments = listOf(attachment)),
+                )
+            val cache = RecordingCache(listOf(sent(named)))
+            val emissions = mutableListOf<List<ThreadItem>>()
+            val job =
+                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+
+            live.value = listOf(sent(MessageAttachment(ATTACHMENT_ID)), message("a1"))
+
+            assertEquals(listOf(sent(named), message("a1")), emissions.last())
+            assertEquals(listOf(sent(named), message("a1")), cache.writes.last())
+            job.cancel()
+        }
+
     @Test
     fun `an in-flight turn writes nothing until it settles`() =
         runTest(UnconfinedTestDispatcher()) {
@@ -231,6 +311,44 @@ class CachingConversationRepositoryTest {
             stall.value = false
             assertEquals(false, repository.observeStall("conv-1").first())
             assertEquals(0, cache.reads)
+        }
+
+    // #899: a retrieval is kept under this wrapper's own host, fetched through the delegate's connection.
+    @Test
+    fun `a retrieved attachment is fetched through the delegate and kept for this host`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val fetches = mutableListOf<Pair<String, String>>()
+            val fetching =
+                object : ConversationRepository by delegate {
+                    override suspend fun fetchAttachment(
+                        conversationId: String,
+                        attachmentId: String,
+                    ): AttachmentFetchResult {
+                        fetches += conversationId to attachmentId
+                        return AttachmentFetchResult.Fetched(AttachmentContent(listOf(byteArrayOf(1, 2, 3))), "a.txt", "text/plain")
+                    }
+                }
+            val store = AttachmentStore(tmp.newFolder("attachments"), UnconfinedTestDispatcher(testScheduler))
+            val repository = CachingConversationRepository(fetching, RecordingCache(emptyList()), "server-a", store)
+
+            val first = repository.retrieveAttachment(CONVERSATION_ID, ATTACHMENT_ID) as AttachmentRetrievalResult.Retrieved
+            val again =
+                CachingConversationRepository(
+                    fetching,
+                    RecordingCache(emptyList()),
+                    "server-a",
+                    store,
+                ).retrieveAttachment(CONVERSATION_ID, ATTACHMENT_ID)
+            CachingConversationRepository(
+                fetching,
+                RecordingCache(emptyList()),
+                "server-b",
+                store,
+            ).retrieveAttachment(CONVERSATION_ID, ATTACHMENT_ID)
+
+            assertEquals(listOf(1, 2, 3), first.file.readBytes().map { it.toInt() })
+            assertEquals(first, again)
+            assertEquals("one fetch per host", listOf(CONVERSATION_ID to ATTACHMENT_ID, CONVERSATION_ID to ATTACHMENT_ID), fetches)
         }
 
     @Test
@@ -381,3 +499,6 @@ class CachingConversationRepositoryTest {
         }
     }
 }
+
+private const val CONVERSATION_ID = "9d4e7a21-8c05-4f3b-b6e2-1a7c9e30d5f4"
+private const val ATTACHMENT_ID = "7c1d5e92-4a30-4b8f-9e21-6d4c3b0a8f55"

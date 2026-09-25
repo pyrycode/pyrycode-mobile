@@ -92,11 +92,22 @@ used, for the same reason: an M3 `IconButton` composes its own inner `clickable`
   [Navigation](navigation.md#manual-pairing-entry-and-return).
 - **`TreeHostRow`** gained `serverId: String`, `onAddTapped: () -> Unit` and `onAddLongPressed: () -> Unit`.
   Tap emits `TreeHostAddTapped(serverId)` (the route calls `vm.createHostDiscussion(serverId)`); long-press
-  emits `TreeHostAddLongPressed(serverId)` (`vm.openHostWorkspacePicker(serverId)`) — the row's **own** host,
-  the same discipline `TreeRowTapped` already used for taps, never `ThreadDestinationFactory.selectedServerId()`.
-  Its two content descriptions (`cd_tree_host_new_chat` / `cd_tree_host_pick_workspace`) are formatted with
-  the row's already-`boundedRowText`-clamped display name — computed once and passed down, so no path formats
-  an unbounded daemon-authored name into a description.
+  emits `TreeHostAddLongPressed(serverId)` — the row's **own** host, the same discipline `TreeRowTapped`
+  already used for taps, never `ThreadDestinationFactory.selectedServerId()`. Its two content descriptions
+  (`cd_tree_host_new_chat` / `cd_tree_host_pick_workspace`) are formatted with the row's already-
+  `boundedRowText`-clamped display name — computed once and passed down, so no path formats an unbounded
+  daemon-authored name into a description.
+
+**Long-press opens Add workspace, not a sheet (#904).** `TreeHostAddLongPressed(serverId)` now maps to
+`vm.openAddWorkspace(serverId)`, which opens [`AddWorkspaceModal`](mobile-modal.md#callers) — the shared
+`MobileModal` shell — on that row's own host rather than the bottom-sheet `WorkspacePicker` the control
+opened before. Picking a recent folder or creating one there, then OK, starts an unpromoted chat in exactly
+that folder on that host and opens its thread; a failure keeps the modal open instead of surfacing after a
+sheet that has already closed. The control itself, its content description, its long-press affordance and
+`treeHostAddTestTag(serverId)` are unchanged — only what the long-press opens moved. See
+[`ChannelListViewModel`](channel-list-viewmodel.md#wiring) for `AddWorkspaceState` and its five transitions,
+and [`WorkspacePicker`](workspace-picker.md#consumers) for why the thread's and Settings' pickers, reached
+through other controls, are unaffected.
 
 **Naming rule.** Both controls repeat down the screen — one section header per section, one host row per
 host — so each has to say which section or host it acts on, the way the fold controls already name their
@@ -129,10 +140,13 @@ deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTre
 header's own band grows from the design's bare 20dp text line to 48dp for the same reason — it carries a
 control now, not just a label.
 
-**Not in this slice.** `TreeWorkspaceRow` draws no add control — adding a workspace, both the control and
-its modal content, is #664's, deliberately a tier above the host row's plus. #663 (the same phase) adds
-`renameWorkspace` / `archiveWorkspace` to the host-owned repository that #664's Edit workspace modal calls,
-but draws no UI itself. This slice supplies only the section-header and host-row controls and their target.
+**#905 added the pencil; #958 added a plus, but only on Channels rows.** #663 (the same phase as #905) added
+`renameWorkspace` / `archiveWorkspace` to the host-owned repository with no UI caller; #905 is that caller —
+see [Workspace row edit and archive control (#905)](#workspace-row-edit-and-archive-control-905) below. The
+host row's own plus (a tier above, opening [`AddWorkspaceModal`](mobile-modal.md#callers) in #904) still
+creates an unpromoted chat in a picked or new folder; the workspace row's plus, added later, creates a
+**promoted channel** directly at that row's own folder — see
+[Workspace row create-channel control (#958)](#workspace-row-create-channel-control-958) below.
 
 ## Host row edit control (#744)
 
@@ -163,10 +177,11 @@ methods, the ordering that keeps a failed store write from clearing the host's c
 
 `RelayLinkStatus.isDisconnected()` (`ConversationTreeRows.kt`, `internal`) classifies a host row's relay
 leg: an exhaustive `when` with no `else`, so a case added to `RelayLinkStatus` later has to be classified
-here rather than silently falling through. `Reconnecting`, `Offline`, `DaemonAbsent` and (#841)
-`PairingRejected` are disconnected; `Idle` (a deliberate background close, not an error), `Connecting`
-and `Connected` are not. The exhaustive `when` is what forced `PairingRejected` to be classified rather
-than silently falling through to "connected".
+here rather than silently falling through. `Reconnecting`, `Offline`, `DaemonAbsent`, (#841)
+`PairingRejected` and (#1008) `UpdateRequired` are disconnected; `Idle` (a deliberate background close,
+not an error), `Connecting` and `Connected` are not. The exhaustive `when` is what forced
+`PairingRejected` and `UpdateRequired` to each be classified rather than silently falling through to
+"connected".
 
 **The plug control's target diverges by state (#842).** `Reconnecting`, `Offline` and `DaemonAbsent` still
 read and route through the original path: `TreeHostReconnectTapped(serverId)` → `vm.reconnectHost(serverId)`
@@ -177,6 +192,13 @@ branches on `host.connectionStatus.relay == RelayLinkStatus.PairingRejected` and
 `navController.navigate(Routes.pairCode(serverId))`, opening the code-pair flow scoped to that host rather
 than retrying. The row's visual treatment and classification are unchanged — only the tap target differs.
 See [pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-842).
+
+**`UpdateRequired` keeps the original retry target, deliberately, for now (#1008).** Unlike
+`PairingRejected`, an `UpdateRequired` row's plug control still dispatches `TreeHostReconnectTapped` →
+`retryHost` → `retry()` — a retry that cannot succeed until the app is updated, same as before this
+ticket. The ticket's own technical notes call this out as intentional: the row-level minimum + a Play
+Store action is a separate follow-up (split from #1004) that needs its own Figma frame, and that ticket
+is what changes this control's target the way #842 changed it for `PairingRejected`.
 
 `TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
@@ -220,11 +242,14 @@ and the pencil's `R.string.cd_tree_chat_edit` content description — the same o
 host row's controls use, and for the same reason: two identical accessible names on the same screen would
 be indistinguishable to TalkBack.
 
-**Only Chats rows draw it.** `treeSection` in [ChannelListScreen](channel-list-screen.md) passes
-`onEditTapped` from an exhaustive `when (section)` — `null` for `ConversationTreeSection.Channels`,
-`{ onEvent(TreeChatEditTapped(target)) }` for `Chats` — rather than a parameter on the section itself, so
-a channel's own editor (#667) can be added later without touching this row. `target` is the row's own
-`HostConversationTarget`, resolved the same way `TreeRowTapped`'s already is, never the selected host.
+**Both sections draw it, each to its own modal (#827, then #667).** `treeSection` in
+[ChannelListScreen](channel-list-screen.md) passes `onEditTapped` from an exhaustive `when (section)` —
+originally `null` for `ConversationTreeSection.Channels` and `{ onEvent(TreeChatEditTapped(target)) }`
+for `Chats` — rather than a parameter on the section itself, which is exactly what let
+[Edit channel](#channels-row-edit-control-667) (#667) add the `Channels` arm later, binding
+`TreeChannelEditTapped(target)` and its own `editDescription`, without touching this row's shape at all.
+`target` is the row's own `HostConversationTarget`, resolved the same way `TreeRowTapped`'s already is,
+never the selected host.
 
 Opening the modal from that target, resolving which host renames it, and following that host's connection
 live are the view model's job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring) — and the
@@ -233,12 +258,94 @@ its first caller. Archive chat was wired in #828, the same placeholder-then-wire
 Unpair action carried between #744 and #745 — but unlike Unpair, Archive takes no confirmation step,
 since the host's own Archive screen restores the chat.
 
+## Channels row edit control (#667)
+
+`TreeConversationRow` gained a fifth parameter, `@StringRes editDescription: Int =
+R.string.cd_tree_chat_edit`, generalising the pencil's content description that #827 hard-wired to the
+chat string: `treeSection`'s exhaustive `when (section)` now passes `cd_tree_chat_edit` for `Chats` (as
+before) and `cd_tree_channel_edit` for `Channels`, alongside `{ onEvent(TreeChannelEditTapped(target)) }`
+in place of the `null` every Channels row passed until this ticket — the pencil itself, its permanent
+(non-hover) drawing and its own merging-semantics node inside `FoldableTreeRow`'s `clickable` are
+unchanged from #827's chat-row shape, since both tiers share one row composable. `target` is the row's
+own `HostConversationTarget`, the same targeting discipline every row control in this file uses.
+
+Opening [`EditChannelModal`](mobile-modal.md#callers) from that target, reading the channel's stored
+prompt once the row's host has a live repository, and resolving which host renames, writes the prompt or
+archives are `ChannelListViewModel`'s job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring).
+Unlike every other row control here, the modal cannot fill its second field synchronously at open: the
+name comes from the row's own host snapshot the way `EditChatModal`'s and `EditWorkspaceModal`'s seeds
+do, but the system prompt is a separate daemon round trip, so the field opens **disabled** with a static
+reading line until that read lands. `ChannelFormFields` gained the two parameters this needs —
+`promptEnabled: Boolean = true` and `promptNote: String? = null`, the note drawn as `supportingText` in
+the same slot the over-limit message already used, so a caller that never passes a note is unaffected —
+rather than teaching the shared form to run its own read, keeping `ChannelFormFields` itself as inert as
+`EditChatModal`'s field always was. See [Mobile modal § Callers](mobile-modal.md#callers) for the full
+caller contract: the target-tagged prompt reading, the `null`-until-shown prompt draft that keeps an
+unread prompt from ever being overwritten, and the outlined Archive action with no confirmation step.
+
+## Workspace row edit and archive control (#905)
+
+`TreeWorkspaceRow` gained a fourth parameter, `onEditTapped: (() -> Unit)? = null`, and — same shape as
+the host and chat rows' pencils — a non-null value draws a permanent `TreeRowControl(Icons.Filled.Edit,
+…)` in `FoldableTreeRow`'s trailing slot rather than only on hover, since the phone has no hover. The
+workspace name is clamped once through `boundedRowText` and reused for both the row's `Text` and the
+pencil's `R.string.cd_tree_workspace_edit` content description, the same one-clamp-two-uses shape every
+other row control uses. `TreeRowControl` keeps its own merging-semantics node inside `FoldableTreeRow`'s
+own `clickable`, so a tap on the pencil edits the workspace without folding the row.
+
+`treeSection` binds `onEditTapped` on every workspace row in both sections to
+`{ onEvent(TreeWorkspaceEditTapped(group.serverId, group.cwd)) }` — `HostWorkspaceGroup`'s own `serverId`
+and `cwd`, never `displayName`, the same targeting discipline every other row control in this file uses.
+Two workspaces on different hosts can show the same folder name, so the shown name is display text only
+and never the write target.
+
+Opening [`EditWorkspaceModal`](mobile-modal.md#callers) from that target, applying the label rule and
+resolving which host writes are its `ChannelListViewModel` job — see
+[ChannelListViewModel](channel-list-viewmodel.md#wiring). `openWorkspaceEditor(serverId, cwd)` reads the
+shown name from that host's own snapshot rather than from the row: it looks up the first channel or chat
+whose `cwd` matches exactly (a `HostWorkspaceGroup` carries no label of its own to reopen with), and opens
+nothing for a host or `cwd` the snapshot does not hold. OK sends one `renameWorkspace` through
+`workspaceLabelFor` (`ui/workspace/WorkspaceDisplayName.kt`): the trimmed input, `null` to clear when it
+is blank or matches the folder's own name (including a clamped cut of an overlong folder name, but only
+when the clamp actually cut it — an uncut folder name is compared exactly, untrimmed). Archive workspace
+swaps the modal's content for a confirmation in place, the same shape `EditHostModal`'s unpair step uses;
+confirming calls `archiveWorkspace` for that host and `cwd` only, and a partial failure keeps the
+confirmation open so a retry archives only the rows still active — see the operation's own contract in
+`ConversationRepository.kt`. See [Mobile modal § Callers](mobile-modal.md#callers) for the modal's own
+field, its label-rule edge case and a Compose semantics trap in its test.
+
+## Workspace row create-channel control (#958)
+
+`TreeWorkspaceRow` gained a fifth parameter, `onAddTapped: (() -> Unit)? = null`, drawn as a second,
+trailing `TreeRowControl(Icons.Filled.Add, …)` **after** the #905 pencil — the row now carries dots-free
+pencil-then-plus, the same left-to-right order the host row's edit-then-add pair established in #744. Both
+controls keep their own merging-semantics node inside `FoldableTreeRow`'s `clickable`, so tapping either
+neither folds the row nor triggers the other.
+
+`treeSection` passes `onAddTapped` only for `ConversationTreeSection.Channels` rows, bound to
+`{ onEvent(TreeWorkspaceAddTapped(group.serverId, group.cwd)) }` — `HostWorkspaceGroup`'s own `serverId`
+and `cwd`, the same targeting discipline the #905 pencil uses. Chats-section rows pass `null` and draw no
+plus: a chat's workspace is not yet a channel, so there is nothing to promote it *from* at that tier (Save
+as channel, on the chat itself, is the promotion path there — see
+[Save as channel dialog](save-as-channel-dialog.md)). The content description
+(`R.string.cd_tree_workspace_new_channel`, "New channel in %1$s") reuses the row's already-`boundedRowText`-
+clamped name, the same one-clamp-two-uses shape the pencil's description uses.
+
+Opening [`CreateChannelModal`](mobile-modal.md#callers) from that target, resolving the repository at the
+press and running the two-write create-then-prompt sequence are `ChannelListViewModel`'s job — see
+[ChannelListViewModel](channel-list-viewmodel.md#wiring). `openCreateChannel(serverId, cwd)` opens only when
+that host's snapshot holds an active **channel** at exactly `cwd` — the same source a Channels-section row's
+existence already implies, so the plus's own visibility and the open guard agree by construction. OK sends
+one `createChannel(name, cwd)`; a non-blank system prompt is then written with `setSystemPrompt` to the
+**created** conversation, never read back. See [System prompt editor § intro](system-prompt-editor.md) for
+why this write bypasses that editor entirely.
+
 ## Attention dot (#878)
 
 `TreeConversationRow` gained `attention: ConversationAttention = ConversationAttention.Idle`
-(`di/ConversationAttention.kt`, #877) — the row's one state, declared after `onEditTapped` rather than
-directly after `modifier`; it is still a trailing defaulted parameter, so every existing positional call
-site still compiles. The row's leading slot, previously `IdleStatusDot` and always the design's plain
+(`di/ConversationAttention.kt`, #877) — the row's one state, declared last, after #667's `editDescription`,
+rather than directly after `modifier`; it is still a trailing defaulted parameter, so every existing
+positional call site still compiles. The row's leading slot, previously `IdleStatusDot` and always the design's plain
 ring, became `ConversationStatusDot(attention)`: the same 8dp box and 1dp `primary` ring on every state
 (`TreeDotSize`, `TreeDotRingWidth`), now filled by an exhaustive `when` — mirrors desktop's
 `ConversationStatusDot` (`pyrycode-desktop/src/renderer/src/screens/channels/ConversationStatusDot.tsx`)
