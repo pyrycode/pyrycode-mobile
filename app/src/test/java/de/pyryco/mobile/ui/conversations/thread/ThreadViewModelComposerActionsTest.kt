@@ -5,8 +5,11 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.SessionCapabilities
+import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SlashCommandMenuRow
 import kotlinx.coroutines.Dispatchers
@@ -223,6 +226,53 @@ class ThreadViewModelComposerActionsTest {
 
             assertEquals(emptyList<Pair<String, String>>(), repo.sent)
         }
+
+    // #1111: a session whose capability list reports `slash_commands` false greys both commands and refuses
+    // the send; true, a list without the flag, and no list at all grey nothing.
+    @Test
+    fun slashCommandsFalse_marksBothCommandsAbsent_andSendsNothing() =
+        runTest {
+            val repo = RecordingRepo()
+            val vm = collectedVm(repo)
+
+            repo.fake.setSessionSettingsReading(CONV, settings(SessionCapabilities(emptyList(), emptyList(), slashCommands = false)))
+            advanceUntilIdle()
+
+            assertEquals(setOf(ComposerAction.CompactSession, ComposerAction.KnowledgeCapture), vm.state.value.absentActions)
+            vm.onComposerCommand(ComposerAction.CompactSession)
+            vm.onComposerCommand(ComposerAction.KnowledgeCapture)
+            assertEquals(emptyList<Pair<String, String>>(), repo.sent)
+        }
+
+    @Test
+    fun slashCommandsTrue_orNoList_leavesBothCommandsAvailable() =
+        runTest {
+            val repo = RecordingRepo()
+            val vm = collectedVm(repo)
+
+            repo.fake.setSessionSettingsReading(CONV, settings(SessionCapabilities(emptyList(), emptyList())))
+            advanceUntilIdle()
+            assertEquals(emptySet<ComposerAction>(), vm.state.value.absentActions)
+
+            repo.fake.setSessionSettingsReading(CONV, settings(capabilities = null))
+            advanceUntilIdle()
+            assertEquals(emptySet<ComposerAction>(), vm.state.value.absentActions)
+            vm.onComposerCommand(ComposerAction.CompactSession)
+            assertEquals(listOf(CONV to "/compact"), repo.sent)
+        }
+
+    private fun settings(capabilities: SessionCapabilities?) =
+        SessionSettings(
+            sessionId = "sess-a",
+            model = "",
+            effort = "",
+            effectiveEffort = EffectiveEffort.Unavailable,
+            permissionMode = "default",
+            yolo = false,
+            usedTokens = 0,
+            windowTokens = 0,
+            capabilities = capabilities,
+        )
 
     private companion object {
         const val CONV = "seed-channel-personal"

@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import kotlinx.coroutines.CompletableDeferred
@@ -123,6 +124,21 @@ class ThreadViewModelPermissionTest {
             vm.onPermissionModeSelected("auto") // the selected row does not support it
 
             assertTrue(repo.calls.isEmpty())
+        }
+
+    // #1111: a capability list narrows what is sent to the modes it names; Bypass rides yolo and stays.
+    @Test
+    fun aModeTheCapabilityListOmits_isNotSent_butBypassStillIs() =
+        runTest {
+            val repo = ScriptedRepo()
+            val listed = reading("plan").copy(capabilities = SessionCapabilities(emptyList(), listOf("default", "plan")))
+            val vm = collectedVm(repo, listed)
+
+            vm.onPermissionModeSelected("acceptEdits")
+            assertTrue(repo.calls.isEmpty())
+
+            vm.onPermissionModeSelected("bypassPermissions")
+            assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, yolo = true)), repo.calls)
         }
 
     @Test

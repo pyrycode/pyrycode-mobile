@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.data.repository.SessionSettings
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -94,8 +95,8 @@ data class RequestSessionSettingsPayloadDto(
  * boundary that turns the untrusted [Envelope.payload] of a `session_settings` envelope into a domain
  * [SessionSettings] via [toSessionSettings].
  *
- * **Every field here is required, with no default.** The wire emits all seven unconditionally (no
- * omission tag), so an absent key is a malformed reply rather than a silently-defaulted one — and each
+ * **Every original field here is required, with no default** — only #1111's [capabilities] object is
+ * optional. The wire emits all seven originals unconditionally (no omission tag), so an absent key is a malformed reply rather than a silently-defaulted one — and each
  * zero is a *read* answer rather than a manufactured one. That matters most for [permissionMode], whose
  * `""` means "no current-child confirmation is available" and must never be punned into the write half's
  * `"default"`; a defaulted field would report Manual approval for a session whose posture is unknown.
@@ -124,6 +125,26 @@ data class SessionSettingsPayloadDto(
     @SerialName("permission_mode") val permissionMode: String,
     @SerialName("used_tokens") val usedTokens: Long,
     @SerialName("window_tokens") val windowTokens: Long,
+    /**
+     * #1111: the one optional object key. The wire omits it for a conn without `multi_agent` and for a
+     * reply that resolved no session, so absence decodes as "no list" rather than failing the frame.
+     */
+    val capabilities: SessionCapabilitiesDto? = null,
+)
+
+/**
+ * The `session_settings` reply's `capabilities` object (#1111, pyrycode #2646), declaring only the keys this
+ * client reads; [MobileJson] ignores the rest. Both arrays are required because the daemon always sends
+ * them, so an object missing one fails the frame. [slashCommands] defaults to `true` so an object from a
+ * daemon without pyrycode #2670 still decodes and disables nothing.
+ *
+ * Wire SSOT: `../pyrycode/docs/protocol-mobile.md` § `capabilities` (multi_agent, #2646).
+ */
+@Serializable
+data class SessionCapabilitiesDto(
+    @SerialName("effort_levels") val effortLevels: List<String>,
+    @SerialName("permission_modes") val permissionModes: List<String>,
+    @SerialName("slash_commands") val slashCommands: Boolean = true,
 )
 
 /**
@@ -157,6 +178,7 @@ fun JsonElement.toSessionSettings(): SessionSettings {
         yolo = dto.yolo,
         usedTokens = dto.usedTokens,
         windowTokens = dto.windowTokens,
+        capabilities = dto.capabilities?.let { SessionCapabilities(it.effortLevels, it.permissionModes, it.slashCommands) },
     )
 }
 

@@ -113,9 +113,10 @@ commands). In `ThreadViewModel`, the flow that used to feed only
 `absentComposerActions` is now named `slashCommandMenu: Flow<SlashCommandMenu?>`
 (`observeSlashCommandMenu(conversationId).onStart { emit(null) }.distinctUntilChanged()`)
 and feeds both `slashCommands = menu?.rows` and `absentActions =
-absentComposerActions(menu)` from the same `combine` arm — one observation, two
-consumers. See [Thread composer footer § Actions menu](thread-composer-footer.md#actions-menu-884)
-for the sibling consumer of the same menu.
+absentComposerActions(menu, slashCommandsAccepted)` from the same `combine` arm — one
+observation, two consumers. The second argument (#1111) is `uiState.runConfig.capabilities?.slashCommands
+?: true`, unrelated to the menu itself — see [Thread composer footer § Actions
+menu](thread-composer-footer-actions-menu.md#actions-menu-884) for the sibling consumer of the same menu.
 
 ## Trust boundary
 
@@ -169,7 +170,7 @@ label in the codebase, not specific to this feature.
   cursor-placement fix a pick's outside change required.
 - [Options overlay](options-overlay.md) — the shared popup this renders through,
   including the new `detail` secondary line.
-- [Thread composer footer](thread-composer-footer.md#actions-menu-884) — the sibling
+- [Thread composer footer — Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884) — the sibling
   consumer of the same [#882](https://github.com/pyrycode/pyrycode-mobile/issues/882)
   slash-command menu, reading it only for an absence verdict rather than for display
   text.

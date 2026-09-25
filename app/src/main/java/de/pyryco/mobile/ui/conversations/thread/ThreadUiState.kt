@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.data.repository.SlashCommandMenuRow
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.datetime.Instant
@@ -190,6 +191,8 @@ data class ThreadEffortChoice(
  * @param contextPercent How full the context window is, as Claude last reported it (#946), verbatim. `null` is
  *   the unavailable state: no reading yet, a refused ask, a reconnect or a session transition. The footer and
  *   the Status sheet both read it, and it is never derived from token totals or the settings' figures.
+ * @param capabilities What the session accepts (#1111), or `null` when the reading carried no list. A list
+ *   narrows [effortChoices], the permission menu and the Actions commands; `null` narrows nothing.
  */
 data class ThreadRunConfig(
     val choices: List<ThreadModelChoice> = emptyList(),
@@ -207,6 +210,7 @@ data class ThreadRunConfig(
     val appliedEffort: EffectiveEffort = EffectiveEffort.Unavailable,
     val running: ThreadRunningModel = ThreadRunningModel(),
     val contextPercent: Int? = null,
+    val capabilities: SessionCapabilities? = null,
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
@@ -242,11 +246,15 @@ data class ThreadRunConfig(
     /** The effort levels **the selected row** supports. Empty is a positive statement that this model
      *  exposes no effort control — never a cue to substitute the `Effort` entries. With no model override
      *  (`""`) the row is the inherited default's, published as `default` (#972, desktop `effortRowFor`).
-     *  Only this lookup substitutes: [selectedChoice] and everything reading it stay unwidened. */
+     *  Only this lookup substitutes: [selectedChoice] and everything reading it stay unwidened. With a
+     *  [capabilities] list (#1111), only the levels it also names: the footer, the Status sheet and the
+     *  effort recall all read this one lookup. */
     val effortChoices: List<ThreadEffortChoice>
         get() {
             val model = selectedModel.ifEmpty { INHERITED_DEFAULT_MODEL_VALUE }
-            return choices.firstOrNull { it.value == model }?.effortChoices.orEmpty()
+            val levels = choices.firstOrNull { it.value == model }?.effortChoices.orEmpty()
+            val accepted = capabilities?.effortLevels ?: return levels
+            return levels.filter { it.value in accepted }
         }
 
     /** Whether a model or effort write is outstanding: the surfaces keep it visibly distinct from confirmed

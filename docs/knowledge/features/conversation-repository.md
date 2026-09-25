@@ -105,6 +105,11 @@ data class ResetStatus(val phase: Phase, val handoff: Handoff) {  // #871 — el
 data class SessionSettings(  // #590 — return element of observeSessionSettings
     val sessionId: String, val model: String, val effort: String, val effectiveEffort: EffectiveEffort,
     val permissionMode: String, val yolo: Boolean, val usedTokens: Long, val windowTokens: Long,
+    val capabilities: SessionCapabilities? = null,  // #1111, trailing/defaulted — null means no list (a non-multi_agent conn or an unresolved session), never "nothing accepted"
+)
+
+data class SessionCapabilities(  // #1111 — what the session accepts; daemon-authored strings, compared only, never rendered or logged
+    val effortLevels: List<String>, val permissionModes: List<String>, val slashCommands: Boolean = true,
 )
 
 data class SystemPromptReading(  // #823 — return of requestSystemPrompt
