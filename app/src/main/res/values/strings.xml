@@ -131,44 +131,52 @@
     <string name="cd_context_usage">Context usage %1$d%%</string>
     <string name="cd_context_usage_unavailable">Context usage unavailable</string>
     <string name="thread_effort_note_selected_unavailable">Selected effort. The running effort is unavailable.</string>
-    <string name="thread_effort_note_default_unavailable">Claude\'s default applies. The running effort is unavailable.</string>
-    <string name="thread_effort_note_not_reported">Claude reports no effort parameter.</string>
+    <string name="thread_effort_note_default_unavailable">%1$s\'s default applies. The running effort is unavailable.</string>
+    <string name="thread_effort_note_not_reported">%1$s reports no effort parameter.</string>
     <string name="thread_options_not_listed">+%1$d not listed</string>
     <string name="cd_options_overlay_dismiss">Close options</string>
     <string name="thread_thinking_label">Thinking…</string>
     <string name="cd_thread_thinking">Agent is thinking</string>
     <string name="thread_thinking_progress_label">Thinking… ~%1$d tokens this step</string>
     <string name="cd_thread_thinking_progress">Claude is thinking, about %1$d tokens into its current reasoning step</string>
+    <!-- #1114: each Claude-naming live status description has a Codex twin, chosen by the conversation's agent. -->
+    <string name="cd_thread_thinking_progress_codex">Codex is thinking, about %1$d tokens into its current reasoning step</string>
     <!-- #897: the open tool call in the thinking arm's slot. %1$s is the daemon's tool name, %2$s claude's elapsed reading. -->
     <string name="thread_tool_running_label">Running %1$s…</string>
     <string name="thread_tool_running_elapsed_label">Running %1$s… %2$s</string>
     <string name="cd_thread_tool_running">Claude is running %1$s</string>
     <string name="cd_thread_tool_running_elapsed">Claude is running %1$s, %2$s elapsed</string>
+    <string name="cd_thread_tool_running_codex">Codex is running %1$s</string>
+    <string name="cd_thread_tool_running_elapsed_codex">Codex is running %1$s, %2$s elapsed</string>
     <string name="thread_api_retry_label">Retrying — attempt %1$d/%2$d</string>
     <string name="thread_api_retry_label_unknown">Retrying…</string>
     <string name="cd_thread_api_retry">Claude is retrying, attempt %1$d of %2$d</string>
     <string name="cd_thread_api_retry_unknown">Claude is retrying, attempt count unknown</string>
+    <string name="cd_thread_api_retry_codex">Codex is retrying, attempt %1$d of %2$d</string>
+    <string name="cd_thread_api_retry_unknown_codex">Codex is retrying, attempt count unknown</string>
     <string name="thread_compacting_label">Compacting conversation</string>
     <string name="cd_thread_compacting">Claude is compacting the conversation</string>
+    <string name="cd_thread_compacting_codex">Codex is compacting the conversation</string>
     <!-- #872: Reset session's phase in the thread status area. Each is both the visible label and the
          row's merged content description; chosen by closed-set enum, never daemon text. -->
     <string name="thread_resetting_wrapping_up">Claude is writing a handoff note for the next session</string>
+    <string name="thread_resetting_wrapping_up_codex">Codex is writing a handoff note for the next session</string>
     <string name="thread_resetting_restarting_written">Restarting · handoff note saved</string>
     <string name="thread_resetting_restarting_skipped">Restarting without a handoff note</string>
     <string name="thread_resetting_restarting">Restarting</string>
     <!-- #804: claude's usage-limit report. Attributed reportage only: a rate_limited frame does not prove a
          turn was blocked, so none of these may say "limited", "reached" or "lifted". -->
-    <string name="thread_usage_limit_label">Claude reports usage-limit status: %1$s</string>
-    <string name="thread_usage_limit_label_no_status">Claude reported a usage-limit update</string>
+    <string name="thread_usage_limit_label">%1$s reports usage-limit status: %2$s</string>
+    <string name="thread_usage_limit_label_no_status">%1$s reported a usage-limit update</string>
     <string name="thread_usage_limit_spent">" · %1$d%% spent"</string>
     <string name="thread_usage_limit_resets">" · resets %1$s"</string>
-    <!-- #805: a turn that failed or was interrupted. Everything claude said about the stop follows
-         "Claude reports", so an account state such as billing_error never reads as the app's own finding. -->
+    <!-- #805: a turn that failed or was interrupted. Everything the agent said about the stop follows
+         "<agent> reports" (#1113), so an account state such as billing_error never reads as the app's own finding. -->
     <string name="thread_turn_outcome_interrupted">Turn interrupted</string>
     <string name="thread_turn_outcome_failed">Turn failed</string>
     <string name="thread_turn_outcome_stopped">Turn stopped early</string>
-    <string name="thread_turn_outcome_claude_reports">" · Claude reports %1$s"</string>
-    <string name="thread_turn_outcome_claude_reports_error">" · Claude reports an error"</string>
+    <string name="thread_turn_outcome_agent_reports">" · %1$s reports %2$s"</string>
+    <string name="thread_turn_outcome_agent_reports_error">" · %1$s reports an error"</string>
     <string name="thread_turn_outcome_api_error">API error %1$s</string>
     <string name="thread_history_loading_label">Loading earlier messages</string>
     <string name="cd_thread_history_loading">Loading earlier messages in this conversation</string>
@@ -193,17 +201,23 @@
     <string name="thread_unrecognized_site_assistant_block">assistant block</string>
     <string name="thread_unrecognized_site_user_block">user block</string>
     <string name="thread_unrecognized_site_undecodable">could not be decoded</string>
+    <string name="thread_unrecognized_site_codex_method">Codex notification</string>
+    <string name="thread_unrecognized_site_codex_item">Codex item</string>
     <string name="cd_thread_unrecognized_expand">Show the unrecognized payload</string>
     <string name="cd_thread_unrecognized_collapse">Hide the unrecognized payload</string>
-    <string name="thread_banner_attribution">"Claude: "</string>
+    <!-- #1113: the conversation's agent, always a client-owned name and never daemon text. Every
+         attribution and label below that names an agent takes one of these as %1$s. -->
+    <string name="agent_name_claude">Claude</string>
+    <string name="agent_name_codex">Codex</string>
+    <string name="thread_banner_attribution">"%1$s: "</string>
     <string name="thread_banner_truncated">" (truncated)"</string>
-    <string name="cd_thread_banner_warning">Warning from Claude</string>
+    <string name="cd_thread_banner_warning">Warning from %1$s</string>
     <string name="thread_refusal_refused_on">"Refused on "</string>
     <string name="thread_refusal_continued_on">", continued on "</string>
     <string name="thread_refusal_refused_by">"Refused by "</string>
     <string name="thread_refusal_unknown_model">unknown model</string>
-    <string name="cd_thread_refusal_expand">Show Claude\'s explanation</string>
-    <string name="cd_thread_refusal_collapse">Hide Claude\'s explanation</string>
+    <string name="cd_thread_refusal_expand">Show %1$s\'s explanation</string>
+    <string name="cd_thread_refusal_collapse">Hide %1$s\'s explanation</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="cd_tool_done">Tool call done</string>
@@ -254,6 +268,8 @@
     <string name="modal_always_allow_label">Don\'t ask again this session for:</string>
     <string name="modal_send_failed">Couldn\'t send your answer. Try again.</string>
     <string name="question_modal_title">Claude has questions</string>
+    <!-- #1116: the questions dialog of a Codex conversation. -->
+    <string name="question_modal_title_codex">Codex has questions</string>
     <string name="question_other">Other</string>
     <string name="question_other_placeholder">Type your answer</string>
     <string name="question_continue">Continue</string>
@@ -374,9 +390,14 @@
     <string name="markdown_task_mark_unchecked">Task not done</string>
     <!-- #685: alert copy is fixed app text; no conversation name or daemon text ever reaches the shade. -->
     <string name="notification_channel_attention">Replies and prompts</string>
-    <string name="notification_channel_attention_description">When claude finishes a reply or needs your answer</string>
+    <string name="notification_channel_attention_description">When a reply finishes or an answer is needed</string>
     <string name="notification_turn_completed">claude finished a reply</string>
     <string name="notification_prompt">claude is waiting for your answer</string>
+    <!-- #1116: the alert names its conversation's agent; neutral when the host's list lacks the conversation. -->
+    <string name="notification_turn_completed_codex">Codex finished a reply</string>
+    <string name="notification_prompt_codex">Codex is waiting for your answer</string>
+    <string name="notification_turn_completed_neutral">A reply finished</string>
+    <string name="notification_prompt_neutral">An answer is needed</string>
     <!-- #933: the composer's attachment picker and strip. -->
     <string name="cd_attach_files">Attach files</string>
     <string name="cd_remove_attachment">Remove %1$s</string>

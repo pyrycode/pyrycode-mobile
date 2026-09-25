@@ -19,6 +19,10 @@ exactly one notification whose tap opens the right thread —
 `InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`, LIVE
 only (see [docs/e2e-interactive-stream.md § Live mode](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay)).
 This package's own tests below still cover the same pipeline against fakes, for the deterministic gates.
+Both scenarios flaked once in the #1076 gate run on a fresh install with no token stored ten minutes
+after boot, then passed on the same image — diagnosed as FCM's first mint failing with no
+`PushTokenRefresher` (below, #1102) yet in place to ask again; `awaitPushRegistered`'s timeout message
+now reports an in-process token request's own outcome instead of guessing at Play services.
 
 ## Why the SDK is unconditional but push can still be off
 
@@ -71,8 +75,24 @@ may be destroyed as soon as `onNewToken` returns, so the write runs on the sink'
 (app-lifetime, not service-lifetime). A DataStore `IOException` is caught and logged content-free
 (`event=push_token_stored outcome=io_failure`); nothing downstream depends on that particular
 write succeeding — the next rotation, or the [#365](relay-repository-coordinator-seams-and-passthroughs.md#connect-time-fcm-push-token-re-registration-365)
-path on the next connect, sends whatever is currently stored. The service never reads the current
-token at startup; `onNewToken` alone covers both the first token and every later rotation.
+path on the next connect, sends whatever is currently stored.
+
+**[#1102](https://github.com/pyrycode/pyrycode-mobile/issues/1102) added a second writer: `PushTokenRefresher` asks FCM for the current token itself, rather than
+wait only for `onNewToken`.** `onNewToken` alone left a phone unreachable by push whenever FCM's first
+mint failed on a freshly booted device — the app then waited on FCM's own retry backoff with no token
+stored. `PushTokenRefresher` (`push/PushTokenRefresher.kt`) is a `DefaultLifecycleObserver` on the
+process `Lifecycle`: it asks once at `start()` (a push can start the process with no activity) and again
+on every `onStart` (each return to the foreground), but only while `AppPreferences.pushToken` is empty
+and a `FirebaseApp` exists (`PushTokenSource.isAvailable()`, checked before any
+`FirebaseMessaging.getInstance()` call, which throws without one). A successful request stores through
+`PushTokenSink.onNewToken` — the same write path the service's own callback uses — so `pushToken`
+still has exactly one writer *shape*, just two callers. A failure or a request past
+`PUSH_TOKEN_REQUEST_TIMEOUT` (60 s) is logged by exception class only and leaves nothing stored, so the
+next foreground retries; the 60 s bound exists so a hung request cannot hold the in-flight guard and
+block that retry. Once a token is stored, rotation stays `onNewToken`'s job alone — the refresher never
+requests again on that install. `FirebasePushTokenSource.currentToken()` wraps the FCM `Task` in
+`suspendCancellableCoroutine`; its completion listener runs on main with no executor, but it only resumes
+the continuation, so the refresher's own request stays on its own dispatcher.
 
 Manifest: `<service android:name=".push.PyryMessagingService" android:exported="false">` with the
 `com.google.firebase.MESSAGING_EVENT` intent filter. `exported="false"` means only the in-process
@@ -81,17 +101,34 @@ Firebase SDK can deliver to it — no external app can invoke it directly.
 ## Logging
 
 `event=push_token_stored outcome=success|io_failure` and `event=push_wake`, both through
-debug-gated `RelayLog`. The token itself, and every `RemoteMessage` field, appear in no log line.
+debug-gated `RelayLog`. `PushTokenRefresher` adds `event=push_token_requested
+outcome=success|failure|timeout`, with `error=<exception simple class name>` on failure — no line at
+all when a token is already stored or push is off. The token itself, and every `RemoteMessage` field,
+appear in no log line.
 
 ## Wiring
 
 ```kotlin
 // di/AppModule.kt
 single { PushTokenSink(get()) } onClose { it?.dispose() }
+single<PushTokenSource> { FirebasePushTokenSource(androidContext()) }
+single(createdAtStart = true) {
+    PushTokenRefresher(
+        storedToken = get<AppPreferences>().pushToken,
+        source = get(),
+        sink = get(),
+        lifecycle = ProcessLifecycleOwner.get().lifecycle,
+    ).also { it.start() }
+} onClose { it?.dispose() }
 ```
 
 `LifecycleConnectionDriver` is already a resolvable Koin singleton created at `startKoin`
 ([#302](lifecycle-connection-driver.md)); the service resolves it directly, adding no new binding.
+`PushTokenRefresher` is `createdAtStart` for the same push-can-start-the-process reason as the
+lifecycle driver and the attention notifier below — it must already be observing the process
+`Lifecycle` before a push-started process reaches `onStart`. It is a separate observer from
+`LifecycleConnectionDriver`, not a call site on it: `onStart` only launches a coroutine and never
+suspends, so the refresher cannot delay `connect()`.
 
 ## Testing
 
@@ -129,6 +166,23 @@ it drives an Android `Service` class, not a Compose screen, so it does not belon
 
 `LifecycleConnectionDriverTest` covers the wake-window behaviour the service triggers; see
 [Lifecycle driver § Testing](lifecycle-connection-driver.md#testing).
+
+`PushTokenRefresherTest` (plain JVM, `app/src/test`) covers `PushTokenRefresher` against a fake
+`PushTokenSource` and a same-scheduler `PushTokenSink`/DataStore (the #953 pattern above), with a
+`LifecycleRegistry.createUnsafe` process-lifecycle stand-in. Two lessons from getting it running:
+
+- **`LifecycleRegistry.createUnsafe(Owner())` with a throwaway owner fails partway through a test**
+  with "LifecycleOwner … already garbage collected" — the registry holds its owner only weakly. Keep
+  a strong reference to the owner for the test's whole body, not just at construction.
+- **`advanceUntilIdle()` runs virtual time past any `withTimeoutOrNull` bound inside the code under
+  test.** A test meant to catch the refresher mid-request (to prove a start and an immediate
+  foreground collapse to one call) that drives time with `advanceUntilIdle()` instead silently runs
+  the request past `PUSH_TOKEN_REQUEST_TIMEOUT` and exercises the timeout path instead of the
+  in-flight one. Use `runCurrent()` to advance only to the next scheduled point and keep the request
+  genuinely pending.
+
+`FirebasePushTokenSourceTest` (Robolectric) proves `isAvailable()` is false with no `FirebaseApp` —
+the same "Robolectric doesn't construct one" fact `PyryMessagingServiceTest` below already relies on.
 
 ## Attention alerts and the tap route (#685)
 
@@ -175,11 +229,25 @@ conversation reads as missing here and still alerts; accepted because archived c
 expected to produce turns. Because this gate sits after the ledger dedup like the others, a muted alert
 is recorded and spent — unmuting afterward never replays it.
 
-**The notification itself** is fixed `strings.xml` copy only (`notification_turn_completed` /
-`notification_prompt`, title = app name) — no conversation name, no daemon text, no push-message field
-ever reaches it. Tag = `SHA-256(serverId, conversationId)`, id `0`: one notification per conversation per
-host, so the same conversation id on two hosts posts two notifications, and a later alert for the same
-conversation replaces the earlier one instead of stacking.
+### The agent lookup (#1116)
+
+`agentOf: (serverId, conversationId) -> ConversationAgent?` is wired the same way as `isMuted` above — a
+constructor parameter reading `HostConversationSource.snapshots.value` through a top-level `internal fun
+List<HostConversationSnapshot>.agentOf(serverId, conversationId): ConversationAgent?` (`AttentionNotifier.kt`),
+checking the matching host first, then `channels + chats`. It differs from `isMuted` at the not-found case:
+a missing host or a missing row returns `null` rather than a fallback agent, because `null` selects the
+neutral copy below instead of silently mislabeling the notification as Claude's.
+
+**The notification itself** is fixed `strings.xml` copy naming the conversation's agent (#1116): a Claude
+conversation reads exactly as before (`notification_turn_completed` / `notification_prompt`), a Codex
+conversation gets `notification_turn_completed_codex` / `notification_prompt_codex`, and a conversation the
+agent lookup above returns `null` for gets the neutral `notification_turn_completed_neutral` /
+`notification_prompt_neutral` ("A reply finished" / "An answer is needed") — a lookup miss reads as unknown,
+never as an assumed Claude. Title is still the app name. No daemon-authored conversation name or
+push-message field ever reaches it; the agent name is one of these fixed, client-owned strings. Tag =
+`SHA-256(serverId, conversationId)`, id `0`: one notification per conversation per host, so the same
+conversation id on two hosts posts two notifications, and a later alert for the same conversation replaces
+the earlier one instead of stacking.
 
 **The tap** carries only a server id and a conversation id, via `NotificationTap`'s explicit-component,
 `FLAG_IMMUTABLE` `PendingIntent` naming `MainActivity` and `ACTION_OPEN_CONVERSATION`. `MainActivity` is
@@ -217,6 +285,7 @@ single(createdAtStart = true) {
         alerts = source.alerts,
         notificationsEnabled = get<AppPreferences>().notificationsEnabled,
         isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
+        agentOf = { serverId, conversationId -> source.snapshots.value.agentOf(serverId, conversationId) },
         isForeground = { ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) },
         ledgerFile = File(androidContext().noBackupFilesDir, "attention_alerts"),
     )
@@ -250,7 +319,11 @@ No id, digest or notification text appears in any of these lines.
   alert was already spent by the ledger does not replay it, and the same conversation id muted on one
   host still alerts on another. `List<HostConversationSnapshot>.isMuted`'s own table (muted in `channels`,
   muted in `chats`, unmuted row, id missing from the host's rows, host with no snapshot) is a plain unit
-  test beside it, not Robolectric.
+  test beside it, not Robolectric. (#1116) A Codex conversation's turn and prompt post the Codex copy, a
+  conversation missing from the lookup posts the neutral copy, a Claude conversation still reads exactly
+  as before, and the channel description reads neutrally.
+  `List<HostConversationSnapshot>.agentOf`'s own table (Codex in `channels`, Codex in `chats`, a Claude
+  row, id missing from the host's rows, host missing entirely) is a plain unit test beside `isMuted`'s.
 - `NotificationTapNavigationTest` (`app/src/sharedTest`) drives `PyryNavHost` on the production Koin
   graph, per the `SettingsNavigationTest` pattern: a saved host's target opens the thread above
   `CHANNEL_LIST`; an unsaved host's target stays on `CHANNEL_LIST`.
@@ -294,4 +367,7 @@ No id, digest or notification text appears in any of these lines.
   and the Edit channel checkbox (#1021) that writes it.
 - Spec: `docs/specs/architecture/361-fcm-push-wake.md` (§ Design, § Security review — verdict PASS,
   § Revisions for the two open questions above).
+- Spec: `docs/specs/architecture/1102-request-current-fcm-token.md` — `PushTokenRefresher`'s design,
+  the #1076 gate flake it fixes, and the Phase B revision resolving the `Task` listener/executor
+  question.
 - README `### Firebase` — where `app/google-services.json` and the conditional plugin are recorded.

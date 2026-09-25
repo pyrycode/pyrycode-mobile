@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
@@ -887,10 +888,11 @@ enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
 
 /**
  * Where the daemon's stream-json parser met a message it could not understand (#608). Closed at the
- * four documented wire values, which is what lets the UI's label lookup stay exhaustive: a future fifth
- * site is a compile error rather than a blank slot.
+ * six documented wire values, which is what lets the UI's label lookup stay exhaustive: a future seventh
+ * site is a compile error rather than a blank slot. [CodexMethod] and [CodexItem] (#1109) are the Codex
+ * translator's lanes for an unmapped app-server notification method and an unmapped item type.
  */
-enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable }
+enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable, CodexMethod, CodexItem }
 
 /**
  * One message waiting in a conversation's queued backlog while claude is busy (#460). The element type
@@ -1010,6 +1012,8 @@ data class HistoryEntry(
  *   session reports `0` here **and** in [windowTokens], the two read as a pair rather than separately.
  * @param windowTokens Context-window size. **`0` means the usage reader is unwired**, not an empty
  *   window — do not render a percentage from it.
+ * @param capabilities What the session accepts (#1111), or `null` when the reply carried no list — a conn
+ *   without `multi_agent`, or a reply that resolved no session. `null` narrows nothing.
  */
 data class SessionSettings(
     val sessionId: String,
@@ -1020,6 +1024,26 @@ data class SessionSettings(
     val yolo: Boolean,
     val usedTokens: Long,
     val windowTokens: Long,
+    val capabilities: SessionCapabilities? = null,
+)
+
+/**
+ * The part of a `session_settings` reply's `capabilities` object this client reads (#1111). The daemon
+ * builds it from the same checks that refuse a write, so a client offers only what it lists.
+ *
+ * The strings are daemon-authored. They are compared against published row values and the client's own
+ * permission-mode wire values, and never rendered, logged or sent.
+ *
+ * @param effortLevels The effort levels the session's current model accepts. `""` is accepted but never listed.
+ * @param permissionModes The `permission_mode` values a write accepts. Never `bypassPermissions`, which is
+ *   reachable only as `yolo`.
+ * @param slashCommands Whether the session answers slash commands at all; `true` when the daemon predates
+ *   the flag.
+ */
+data class SessionCapabilities(
+    val effortLevels: List<String>,
+    val permissionModes: List<String>,
+    val slashCommands: Boolean = true,
 )
 
 /**
@@ -1127,6 +1151,12 @@ data class ModelMenu(
  * @param truncatedFields The names of **this row's** cut fields, in producer order, or `null` when
  *   nothing was cut. Each row reports its own; there is no hoisted or flattened list, and this is never
  *   recomputed from what survived.
+ * @param agent The agent this row's model belongs to (#1110): a `multi_agent` menu merges Claude's rows
+ *   and Codex's, the same list for every conversation, and a conversation lists only its own agent's.
+ *   Claude when the daemon did not tag the row; `null` for an agent this client does not know, which no
+ *   conversation lists.
+ * @param family The row's model family as the daemon tagged it, or `null` when untagged. Daemon-authored
+ *   text under the same obligation as the strings above; nothing parses, renders or keys off it.
  */
 data class ModelMenuRow(
     val resolvedModel: String,
@@ -1135,6 +1165,8 @@ data class ModelMenuRow(
     val effortLevels: List<String>,
     val supportsAutoMode: Boolean,
     val truncatedFields: List<String>?,
+    val agent: ConversationAgent? = ConversationAgent.Claude,
+    val family: String? = null,
 )
 
 /**

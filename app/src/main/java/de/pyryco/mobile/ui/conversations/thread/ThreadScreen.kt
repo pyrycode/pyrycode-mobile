@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -353,6 +354,7 @@ fun ThreadScreen(
                         runningTool = if (isBusy) openTool else null,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
+                        agent = state.agent,
                     )
                     // #933: Figma's `Attachment area`, between the status area and the input field, only when
                     // this chat has something pending.
@@ -390,6 +392,7 @@ fun ThreadScreen(
                         onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
                         modifier = Modifier.padding(horizontal = ComposerGutter),
                         onAttach = openAttachmentPicker,
+                        agent = state.agent,
                     )
                 }
             },
@@ -571,12 +574,12 @@ fun ThreadScreen(
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
-                                                    SessionBoundaryDelimiter(boundary = item)
+                                                    SessionBoundaryDelimiter(boundary = item, agent = state.agent)
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
-                                                is ThreadItem.Banner -> BannerNoticeRow(item = item)
+                                                is ThreadItem.Banner -> BannerNoticeRow(item = item, agent = state.agent)
                                                 is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
-                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item)
+                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item, agent = state.agent)
                                             }
                                         // One render path for both kinds of queued row — the one the echo
                                         // correlated to and the one this device minted no echo for — so the
@@ -613,6 +616,7 @@ fun ThreadScreen(
                             Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
+                        agent = state.agent,
                     )
                 }
             }
@@ -718,7 +722,7 @@ fun ThreadScreen(
             // An empty session id means the daemon has no session to address, so the controls read only.
             enabled = state.runConfig.writable,
             onDismiss = { sheetVisible = false },
-            effortNote = state.runConfig.effortNote?.let { stringResource(it.textRes()) },
+            effortNote = state.runConfig.effortNote?.text(state.agent),
             running = state.runConfig.running,
             contextPercent = state.runConfig.contextPercent,
         )
@@ -819,9 +823,10 @@ private fun ThreadStatusArea(
     runningTool: ToolCall?,
     taskCount: Int,
     onTasksClick: () -> Unit,
+    agent: ConversationAgent,
 ) {
     val reading: @Composable (Modifier) -> Unit = { modifier ->
-        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
+        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, agent, modifier)
     }
     if (taskCount <= 0) {
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
@@ -859,19 +864,21 @@ private fun StatusReading(
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
+    agent: ConversationAgent,
     modifier: Modifier = Modifier,
 ) {
     when {
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
-        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
+        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
+        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
         else ->
             ThinkingIndicator(
                 isThinking = isThinking,
                 modifier = modifier,
                 progress = thinkingProgress,
                 runningTool = runningTool,
+                agent = agent,
             )
     }
 }

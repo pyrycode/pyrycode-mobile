@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
@@ -138,6 +139,37 @@ class ThreadViewModelTest {
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
             assertFalse(vm.state.value.mutationsSupported) // combine
+            collector.cancel()
+        }
+
+    // ---- #1113: the conversation's agent rides the state, for the rows that name it ----
+
+    @Test
+    fun agent_followsTheConversation() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val fake = FakeConversationRepository()
+            val repo =
+                object : ConversationRepository by fake {
+                    override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
+                        fake.observeConversations(filter).map { rows -> rows.map { it.copy(agent = ConversationAgent.Codex) } }
+                }
+            val vm = makeVm(handle, repo)
+            assertEquals(ConversationAgent.Claude, vm.state.value.agent) // initialValue: not yet known
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Codex, vm.state.value.agent)
+            collector.cancel()
+        }
+
+    @Test
+    fun agent_isClaudeForAClaudeConversation() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository())
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Claude, vm.state.value.agent)
             collector.cancel()
         }
 
@@ -3198,6 +3230,59 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun state_agent_followsTheConversation_andIsClaudeByDefault() =
+        runTest {
+            fun conversation(
+                id: String,
+                agent: ConversationAgent,
+            ) = Conversation(
+                id = id,
+                name = null,
+                cwd = DEFAULT_SCRATCH_CWD,
+                currentSessionId = "$id-s1",
+                sessionHistory = listOf("$id-s1"),
+                isPromoted = true,
+                lastUsedAt = Instant.parse("2026-09-21T00:00:00Z"),
+                agent = agent,
+            )
+            val repo =
+                fixedRepo(listOf(conversation("c-codex", ConversationAgent.Codex), conversation("c-claude", ConversationAgent.Claude)))
+            val codex = makeVm(SavedStateHandle(initialState = mapOf("conversationId" to "c-codex")), repo)
+            val claude = makeVm(SavedStateHandle(initialState = mapOf("conversationId" to "c-claude")), repo)
+            val collector =
+                launch {
+                    launch { codex.state.collect {} }
+                    launch { claude.state.collect {} }
+                }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Codex, codex.state.value.agent)
+            assertEquals(ConversationAgent.Claude, claude.state.value.agent)
+            collector.cancel()
+        }
+
+    @Test
+    fun state_agent_isTheConversationsAgent() =
+        runTest {
+            val codexChannel =
+                Conversation(
+                    id = "c-codex",
+                    name = "codex",
+                    cwd = "pyry-workspace/my-app",
+                    currentSessionId = "c-codex-s1",
+                    sessionHistory = listOf("c-codex-s1"),
+                    isPromoted = true,
+                    lastUsedAt = Instant.parse("2026-09-25T00:00:00Z"),
+                    agent = ConversationAgent.Codex,
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "c-codex"))
+            val vm = makeVm(handle, fixedRepo(listOf(codexChannel)))
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Codex, vm.state.value.agent)
+            collector.cancel()
+        }
+
+    @Test
     fun state_workspaceLabel_prefersConversationLabel_overCwdBasename() =
         runTest {
             val labelled =
@@ -3217,6 +3302,30 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             // Label-first: the operator's chosen name wins over the "my-app" basename the cwd would yield.
             assertEquals("Design system", vm.state.value.workspaceLabel)
+            collector.cancel()
+        }
+
+    // #1115: the thread names the conversation's own agent; Claude until the conversation is known.
+    @Test
+    fun state_agent_isClaudeUntilKnown_thenTheConversationsAgent() =
+        runTest {
+            val codex =
+                Conversation(
+                    id = "d-codex",
+                    name = null,
+                    cwd = "pyry-workspace/my-app",
+                    currentSessionId = "d-codex-s1",
+                    sessionHistory = listOf("d-codex-s1"),
+                    isPromoted = false,
+                    lastUsedAt = Instant.parse("2026-09-21T00:00:00Z"),
+                    agent = ConversationAgent.Codex,
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "d-codex"))
+            val vm = makeVm(handle, fixedRepo(listOf(codex)))
+            assertEquals(ConversationAgent.Claude, vm.state.value.agent)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Codex, vm.state.value.agent)
             collector.cancel()
         }
 

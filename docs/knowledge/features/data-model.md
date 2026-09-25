@@ -21,7 +21,10 @@ data class Conversation(
     val archived: Boolean = false,
     val muted: Boolean = false,
     val workspaceLabel: String? = null,
+    val agent: ConversationAgent = ConversationAgent.Claude,
 )
+
+enum class ConversationAgent { Claude, Codex }
 ```
 
 `isPromoted` is the single flag that splits the two UI tiers (see CLAUDE.md → "Conversations model"):
@@ -36,6 +39,35 @@ data class Conversation(
 `archived` is `true` once `ConversationRepository.archive(id)` has flipped the flag (#93). Authoritative bit, not derived: Phase 1 stores it on the data class; Phase 4 will parse it from the wire response. Defaulted to `false` so existing constructor sites don't change. Routes the conversation into the `ConversationFilter.Archived` slice and out of `Channels` / `Discussions`; the live tiers carry an explicit `!archived` clause so a hypothetical archived channel can't regress the channel list. The trivial inverse `unarchive(...)` is a follow-up ticket. See [`conversation-repository.md`](conversation-repository.md) for the filter matrix.
 
 `muted` (#999) is the host's per-conversation mute, mirroring `archived`'s wire and defaulting shape exactly: [`ConversationSummaryDto`](mobile-protocol-v2-wire-layer-application-payloads.md) (list rows) and [`ConversationResponseDto`](mobile-protocol-v2-wire-layer-application-payloads.md) (`conversation_created` / `conversation_updated`) both carry `@SerialName("is_muted") val isMuted: Boolean = false` and map it straight to `muted`; the `false` default reads an older daemon's rows — or any reply shape that omits the key — as unmuted, so alerts keep firing rather than going silently suppressed. `ConversationListProjection.upsertConversation` needed no change: it already replaces the whole row, so the record's `muted` wins on every fold. Two consumers now read it: the Edit channel mute checkbox writes it back through `setMuted` (#1021, see [Channel list ViewModel](channel-list-viewmodel.md)), and [`AttentionNotifier`'s muted gate](push-messaging-service.md#the-muted-gate-1022) (#1022) reads it from each alert's own host's [`HostConversationSource.snapshots`](dependency-injection-host-conversation-source.md#attention-alerts-685) row to silence that conversation's alerts. **A field added to this class must be traced through every place a `Conversation` is stored, not only its wire decoders**: #999's first pass mirrored `archived` through the DTOs but missed [the on-disk cache](conversation-cache.md#the-cache-local-record-must-mirror-every-conversation-field-999), which `HostConversationSource` publishes on cold start before the first live list arrives — a real window for a muted channel to alert. Check the cache's `CachedConversation` alongside the DTOs whenever a boolean like this one is added.
+
+`agent`/`ConversationAgent` ([#1108](https://github.com/pyrycode/pyrycode-mobile/issues/1108)) names which
+agent — `claude` or `codex` — runs a conversation, for a client that has negotiated `multi_agent`
+(mobile does not negotiate it yet, so today the daemon never sends the key and every conversation reads
+Claude). Wire mapping: [`ConversationSummaryDto`](mobile-protocol-v2-wire-layer-application-payloads.md)
+(`conversations` rows) and [`ConversationResponseDto`](mobile-protocol-v2-wire-layer-application-payloads.md)
+(`conversation_created` / `conversation_updated`) both carry a raw, nullable `agent: String?` — kept raw,
+not pre-mapped, so an absent key stays distinguishable from an explicit `"claude"` — and the one shared
+`conversationAgentOf(wire: String?)` in `data/network` maps exactly `"codex"` to `Codex` and everything else,
+including `null` and any unrecognised string, to `Claude`. Unlike `archived`/`muted`, a `conversation_updated`
+without the key does **not** fall back to the mapped default: `ConversationListProjection.upsertConversation`
+keeps the previously stored `agent` when the record's raw field is `null` and the conversation already has a
+row, since an older daemon omits the key on that reply. See
+[Remote conversation repository — `upsertConversation`](remote-conversation-repository-send-create-promote-rename.md#confirmed-insert-via-conversationlistprojectionupsertconversation-the-projections-second-writer)
+for the fold and [Conversation cache § the cache-local record must mirror every field](conversation-cache.md#the-cache-local-record-must-mirror-every-conversation-field-999)
+for a known gap: the on-disk cache does not yet carry `agent`, so a cold-started row reads Claude until the
+live list arrives. A **published `model_list` row's** own `agent` tag maps through a different, deliberately
+disagreeing function — see [Conversation repository § `ModelMenu`/`ModelMenuRow`](conversation-repository.md#shape)
+for why an unrecognised row agent must fail closed to invisible while an unrecognised conversation agent
+fails open to `Claude`. [#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114) is the first consumer: `ThreadUiState.agent`
+(set the same way as `isPromoted`, inside the main `combine`, defaulting to `Claude` when `conv` is `null` —
+**not** a sibling hoisted `StateFlow` like `isThinking`/`apiRetry`/`isCompacting`, because unlike those
+per-turn signals `agent` is a slow-changing property already present on the conversation itself) names the
+agent in the thread's live status screen-reader labels — see [Thinking indicator §
+Wiring](thinking-indicator.md#wiring-the-agent-name-1114). [#1112](https://github.com/pyrycode/pyrycode-mobile/issues/1112)
+named it in the reset line and the session-boundary explanation, [#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115)
+in the usage-limit line and both effort notes (footer + Status sheet), and [#1116](https://github.com/pyrycode/pyrycode-mobile/issues/1116)
+in the question-batch modal's title. The model picker still says "Claude" unconditionally; the model picker
+and the agent switch `agent` will eventually drive are still open, per #1108's stated motivation.
 
 `workspaceLabel` (#720) is opaque, daemon-authored display text, retained verbatim and independent of `cwd` — never a path, never derived from it. Trailing-defaulted to `null` so existing constructor sites and fixtures are unaffected. Wire mapping: [`ConversationSummaryDto`](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope) (`conversations` rows, including archived) and [`ConversationResponseDto`](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope) (`conversation_created` / `conversation_updated`) both carry `@SerialName("workspace_label")` and copy it straight through their mappers; an explicit wire `null` and an absent legacy key both map to `null`. Its first render path is the shared `de.pyryco.mobile.ui.workspace.workspaceDisplayName(cwd, label)` function, added by [`#722`](https://github.com/pyrycode/pyrycode-mobile/issues/722) — see [`workspace-chip.md`](workspace-chip.md#workspacelabel-derivation) for the label-first display rule and its render-path length clamp. #722 also deleted the private `Conversation.workspaceLabel()` extension that previously lived in `ThreadViewModel.kt` and derived a cwd-basename fallback only; the parens-only naming clash between that extension and this property is retired along with it — see [`thread-screen-how-it-works-state.md`](thread-screen-how-it-works-state.md#combineobserveconversations-observemessages-pendingworkspacepickerstatein-whilesubscribed--three-upstreams-since-137) for the history.
 

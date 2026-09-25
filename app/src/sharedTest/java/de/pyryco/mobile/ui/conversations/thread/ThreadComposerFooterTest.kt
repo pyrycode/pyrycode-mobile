@@ -35,6 +35,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -287,7 +288,7 @@ class ThreadComposerFooterTest {
         setThread(baseConfig.copy(appliedEffort = EffectiveEffort.NotReported))
 
         footerButton("Effort").assert(
-            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.thread_effort_note_not_reported)),
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Claude reports no effort parameter."),
         )
 
         state = state(runConfig = baseConfig.copy(appliedEffort = EffectiveEffort.Applied("max")))
@@ -296,6 +297,24 @@ class ThreadComposerFooterTest {
         footerButton("max").performClick()
         composeTestRule.onNode(isSelectable() and hasText("max")).assertIsSelected()
         composeTestRule.onNode(isSelectable() and hasText("high")).assertIsNotSelected()
+    }
+
+    // #1115: in a Codex conversation both effort notes name Codex, on the footer and on the Status sheet.
+    @Test
+    fun effortNotes_nameTheConversationsAgent() {
+        setThread(baseConfig.copy(appliedEffort = EffectiveEffort.NotReported))
+        state = state.copy(agent = ConversationAgent.Codex)
+        composeTestRule.waitForIdle()
+
+        footerButton("Effort").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Codex reports no effort parameter."),
+        )
+
+        state = state.copy(runConfig = baseConfig.copy(savedEffort = ""))
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
+        composeTestRule
+            .onNodeWithText("Codex's default applies. The running effort is unavailable.")
+            .assertIsDisplayed()
     }
 
     // AC#3: a pending tap is visibly distinct, and a refused write (the VM clears the pending tap) returns

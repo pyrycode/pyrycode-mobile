@@ -49,9 +49,10 @@ private fun ThreadStatusArea(
     runningTool: ToolCall?, // #897
     taskCount: Int, // #1043
     onTasksClick: () -> Unit, // #1043
+    agent: ConversationAgent, // #1114
 ) {
     val reading: @Composable (Modifier) -> Unit = { modifier ->
-        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
+        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, agent, modifier)
     }
     if (taskCount <= 0) {
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
@@ -79,17 +80,30 @@ private fun StatusReading(
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
-    modifier: Modifier,
+    agent: ConversationAgent, // #1114
+    modifier: Modifier = Modifier,
 ) {
     when {
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
-        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
+        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent) // agent: #1112
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
         turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
-        else -> ThinkingIndicator(isThinking = isThinking, modifier = modifier, progress = thinkingProgress, runningTool = runningTool)
+        else ->
+            ThinkingIndicator(
+                isThinking = isThinking,
+                modifier = modifier,
+                progress = thinkingProgress,
+                runningTool = runningTool,
+                agent = agent,
+            )
     }
 }
 ```
+
+`agent` reaches both functions from `ThreadScreen`'s own `state.agent` (see [Thinking indicator § The agent
+name](thinking-indicator.md#the-agent-name-1114)); `resetting`'s branch is the only one of the five that
+picked up `agent` after #1114 shipped, closed by #1112 — see [Resetting indicator § The agent
+name](resetting-indicator.md#the-agent-name-1112). `turnOutcome` is still unnamed.
 
 **[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count pill at the band's
 right end, and split the `when` out into `StatusReading` to make room for it.** Above zero,
@@ -238,7 +252,7 @@ SlashCommandTypeAhead(
 ### Background-tasks panel placement (post-#678)
 
 [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678) draws
-[`BackgroundTaskPanel`](thread-composer-footer.md#actions-menu-884) directly inside `ThreadScreen`, right
+[`BackgroundTaskPanel`](thread-composer-footer-actions-menu.md#actions-menu-884) directly inside `ThreadScreen`, right
 after the footer's `OptionsOverlay` `Box` closes and before the `WorkspacePicker` mount — not as an eighth
 `Scaffold` sibling and not from the `MainActivity` destination block the way
 [`QuestionBatchModal`](question-batch-modal.md) is drawn (`MobileReadOnlyModal` opens its own `Dialog`
@@ -258,7 +272,7 @@ WorkspacePicker(...)
 `backgroundTasksOpen` is a plain `remember`, not `rememberSaveable`, keyed on `state.conversationId` — the
 same idiom `openControl` uses one field up: switching conversations drops an open panel, and a process
 death never restores one a fresh screen instance never opened. The Actions menu's background-tasks row sets
-it (see [Thread composer footer § Actions menu](thread-composer-footer.md#actions-menu-884)); since
+it (see [Thread composer footer § Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884)); since
 [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) the status band's task-count pill (§
 [Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) above) sets the same
 flag through the same `{ backgroundTasksOpen = true }` lambda, so the panel now has two openers over one

@@ -71,6 +71,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.AttachmentOfferedPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskProgressPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.Envelope
@@ -100,6 +101,7 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
+import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
@@ -3835,6 +3837,101 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A running background task's progress shows on its panel card (#1076, #1044). Real claude starts a
+     * `general-purpose` subagent, a `local_agent` task the daemon reports with the background-task frames. The
+     * daemon sends a `background_task_progress` frame once the subagent's tool count advances by two (pyrycode
+     * `docs/protocol-mobile.md`). The app drops progress when the task finishes, so the card is read while the
+     * task still runs.
+     *
+     * The subagent runs in the foreground, as in the daemon's one measured `task_progress` capture, so the turn
+     * stays open while it works. A backgrounded one also costs a second turn when its finish notice arrives.
+     * The task is held open by work, not by a permission prompt: on this daemon the phone draws a prompt as a
+     * dialog over the composer, which would cover the Actions footer. [BACKGROUND_PROGRESS_PROMPT] instead gives
+     * the subagent a run of Read calls, one per message, on missing files inside the chat's working directory.
+     * They need no permission and read no host content, and each still counts as a tool call. The daemon's claude
+     * has no Glob tool: the first live runs asked for Glob, and the subagent made no call at all.
+     *
+     * The peer's recorded frames supply the timing, the task's identity and the descriptions the card may show;
+     * the card itself is read off the phone. One card must carry both an activity line, a prefix of a recorded
+     * progress description, and a meta line with a tools segment of any count. Only the progress block draws the
+     * tools segment, so the task's opening description cannot pass for it.
+     *
+     * The hold does not depend on a fixed delay, only on the subagent taking its Read calls one at a time.
+     * **One real-claude turn**: the prompt that starts the subagent.
+     */
+    @Test
+    fun interactiveTurn_backgroundAgentProgress_showsOnRunningCard() {
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val peer = runningToolPeer()
+        try {
+            // 1. Claude starts a background subagent in a fresh chat.
+            awaitChannelList()
+            awaitConnected()
+            val (chatId, name) = answerChat(serverId, BACKGROUND_PROGRESS_NAME_PREFIX)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            sendFromPhone(BACKGROUND_PROGRESS_PROMPT)
+
+            // 2. The peer records a progress frame for a task the daemon reported started. A timeout names the
+            //    started-task count, which separates "claude started no task" from "the task never reported".
+            try {
+                allowPromptsUntil(
+                    peer,
+                    chatId,
+                    BACKGROUND_PROGRESS_TIMEOUT_MS,
+                    "no background_task_progress arrived for a started task",
+                    frame = "background_task_progress",
+                ) { frame -> frame.type == "background_task_progress" && progressFrames(peer, chatId).isNotEmpty() }
+            } catch (e: AssertionError) {
+                val recorded = peer.recorded(chatId)
+                throw AssertionError(
+                    "${e.message} (background tasks started: ${recorded.count { it.type == "background_task_started" }}; " +
+                        "progress frames: ${recorded.count { it.type == "background_task_progress" }})",
+                    e,
+                )
+            }
+            awaitNoPromptDialog("a permission prompt still covers the thread")
+
+            // 3. While the task runs, its card shows an activity line from a recorded frame and a tools segment.
+            openActions()
+            openBackgroundTasks { it >= 1 }
+            val tools = toolsSegmentPatterns()
+
+            fun texts(node: SemanticsNode): List<String> =
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    .orEmpty()
+                    .map { it.text }
+            val progressCard =
+                SemanticsMatcher("a card with a recorded activity line and a tools segment") { node ->
+                    val prefixes =
+                        progressFrames(peer, chatId)
+                            .map { it.description.takeWhile { c -> !c.isISOControl() }.take(ACTIVITY_PREFIX_CHARS) }
+                            .filter { it.isNotBlank() }
+                    val shown = texts(node)
+                    shown.any { line -> prefixes.any { line.contains(it) } } &&
+                        shown.any { line -> tools.any { it.containsMatchIn(line) } }
+                } and inBackgroundPanel()
+            try {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(progressCard).fetchSemanticsNodes().isNotEmpty() }
+            } catch (e: ComposeTimeoutException) {
+                val anyTools =
+                    composeTestRule.onAllNodes(inBackgroundPanel()).fetchSemanticsNodes().any { node ->
+                        texts(node).any { line -> tools.any { it.containsMatchIn(line) } }
+                    }
+                throw AssertionError(
+                    "the panel drew no running card with a recorded activity line and a tools segment " +
+                        "(any tools segment shown: $anyTools; progress frames recorded: ${progressFrames(peer, chatId).size})",
+                    e,
+                )
+            }
+            closeBackgroundTasks()
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
      * A real push wakes the backgrounded app for a turn that ended while it was away, posts one alert, and
      * the alert's tap opens that conversation's thread (#955, #685). The turn is held on a permission
      * prompt the #950 way while the phone is in front, so the prompt's own alert is spent in the
@@ -3989,13 +4086,25 @@ class InteractiveStreamE2ETest {
         // A fresh read each pass: a collector that starts during the first write can miss it (#968).
         while (runBlocking { preferences.pushToken.first() }.isNullOrEmpty()) {
             if (SystemClock.elapsedRealtime() > deadline) {
-                throw AssertionError("no FCM token — does the device image have Play services? (#955)")
+                throw AssertionError("no FCM token stored; an in-process token request: ${fcmTokenRequestOutcome()} (#1102)")
             }
             SystemClock.sleep(POLL_MS)
         }
         cycleHostLink(serverId)
         val remaining = connectedAt + PUSH_WAKE_COALESCE_MS - SystemClock.elapsedRealtime()
         if (remaining > 0) SystemClock.sleep(remaining)
+    }
+
+    /** What asking FCM for the current token returns right now, so a repeat carries its own cause. Never the token. */
+    private fun fcmTokenRequestOutcome(): String {
+        val source = GlobalContext.get().get<PushTokenSource>()
+        if (!source.isAvailable()) return "not made, no FirebaseApp in this process"
+        val result = runBlocking { withTimeoutOrNull(PUSH_TOKEN_TIMEOUT_MS) { runCatching { source.currentToken() } } }
+        return when {
+            result == null -> "did not complete within ${PUSH_TOKEN_TIMEOUT_MS}ms"
+            result.isSuccess -> "returned a token, but none was stored"
+            else -> result.exceptionOrNull().let { "failed with ${it?.javaClass?.name}: ${it?.message}" }
+        }
     }
 
     /**
@@ -5130,6 +5239,42 @@ class InteractiveStreamE2ETest {
     private fun inBackgroundPanel(): SemanticsMatcher =
         hasAnyAncestor(hasAnyDescendant(hasText(string(R.string.background_tasks_close)) and hasClickAction()))
 
+    /**
+     * The `background_task_progress` frames [peer] recorded for [conversationId], decoded, that join on the
+     * `task_id` of a recorded `background_task_started` (#1076). A frame that fails to decode is skipped.
+     */
+    private fun progressFrames(
+        peer: SecondClientPeer,
+        conversationId: String,
+    ): List<BackgroundTaskProgressPayloadDto> {
+        val frames = peer.recorded(conversationId)
+        val started =
+            frames
+                .filter { it.type == "background_task_started" }
+                .mapNotNull {
+                    runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), it.payload) }
+                        .getOrNull()
+                        ?.taskId
+                }.toSet()
+        return frames
+            .filter { it.type == "background_task_progress" }
+            .mapNotNull {
+                runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskProgressPayloadDto.serializer(), it.payload) }.getOrNull()
+            }.filter { it.taskId in started }
+    }
+
+    /**
+     * Patterns for a progress meta line's tools segment of any count, built from the
+     * `background_tasks_progress_tools` plural's own templates rather than restating its wording (#1044).
+     */
+    private fun toolsSegmentPatterns(): List<Regex> {
+        val resources = InstrumentationRegistry.getInstrumentation().targetContext.resources
+        return listOf(1, 2).map { quantity ->
+            val template = resources.getQuantityText(R.plurals.background_tasks_progress_tools, quantity).toString()
+            Regex("(?<!\\d)" + template.split("%1\$d").joinToString("\\d+") { Regex.escape(it) })
+        }
+    }
+
     /** Close the background-task panel and wait until it is gone. */
     private fun closeBackgroundTasks() {
         composeTestRule.onNode(hasText(string(R.string.background_tasks_close)) and hasClickAction()).performClick()
@@ -5591,10 +5736,10 @@ class InteractiveStreamE2ETest {
     private fun appliedEffortFooter(applied: EffectiveEffort): Pair<String, String?> =
         when (applied) {
             EffectiveEffort.Unavailable -> throw AssertionError("the reply after a real turn omitted effective_effort")
-            EffectiveEffort.NotReported -> EFFORT_PLACEHOLDER_LABEL to string(R.string.thread_effort_note_not_reported)
+            EffectiveEffort.NotReported -> EFFORT_PLACEHOLDER_LABEL to claudeNote(R.string.thread_effort_note_not_reported)
             is EffectiveEffort.Applied ->
                 if (applied.value.isEmpty()) {
-                    EFFORT_PLACEHOLDER_LABEL to string(R.string.thread_effort_note_default_unavailable)
+                    EFFORT_PLACEHOLDER_LABEL to claudeNote(R.string.thread_effort_note_default_unavailable)
                 } else {
                     applied.value.inert() to null
                 }
@@ -5754,6 +5899,10 @@ class InteractiveStreamE2ETest {
         }
 
     private fun string(id: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
+
+    /** An effort note as a Claude conversation words it (#1115); the harness runs Claude conversations only. */
+    private fun claudeNote(id: Int): String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(id, string(R.string.agent_name_claude))
 
     /** A footer control, found by the click label its merged node announces (#808). */
     private fun footerControl(clickLabel: String): SemanticsMatcher =
@@ -6842,6 +6991,26 @@ class InteractiveStreamE2ETest {
             "Run this exact shell command with your tools in the background (run_in_background), then stop " +
                 "without commentary: python3 -c \"import time; time.sleep(40)\""
         const val BACKGROUND_FINISH_TIMEOUT_MS = 180_000L
+
+        // #1076: the progress scenario's run-unique chat prefix (no "ping", no other scenario's prefix), and a
+        // foreground subagent held open by permission-free Read calls on missing files in the chat's working
+        // directory, taken one per message (the daemon's claude has no Glob tool). Its first progress frame
+        // needs two tool calls; the rest keep the task running while the phone opens the panel. The timeout
+        // covers the subagent's start and those two calls.
+        const val BACKGROUND_PROGRESS_NAME_PREFIX = "e2e1076-progress-"
+        const val BACKGROUND_PROGRESS_PROMPT =
+            "Use your Agent tool once to start one general-purpose subagent (not in the background), wait for it, " +
+                "then reply with exactly: done. Use no other tool yourself. Give the subagent exactly these " +
+                "instructions: \"Use the Read tool twenty times, one call per message and never in parallel, waiting " +
+                "for each result before the next call. Call n reads the file e2e1076-n.txt in the current working " +
+                "directory, for n from 1 to 20. These files do not exist, so every call reports a missing file; that " +
+                "is expected, so do not stop, retry, or investigate, just make the next call. Do not use any other " +
+                "tool. When all twenty calls are done, reply with exactly: done.\""
+        const val BACKGROUND_PROGRESS_TIMEOUT_MS = 180_000L
+
+        // How much of a recorded progress description the card must show. The panel filters control characters
+        // and cuts long text, so a short prefix before any control character is what reliably survives.
+        const val ACTIVITY_PREFIX_CHARS = 16
 
         // The dedicated host's display name and its chat's run-unique name: neither contains "ping" or
         // another scenario's prefix.

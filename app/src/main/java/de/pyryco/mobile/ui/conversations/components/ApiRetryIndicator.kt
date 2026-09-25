@@ -19,6 +19,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
@@ -63,15 +64,28 @@ private const val MAX_PLAUSIBLE_ATTEMPTS = 99
 fun ApiRetryIndicator(
     status: ApiRetryStatus,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     if (status is ApiRetryStatus.NotRetrying) return
     // Null whenever the counter must not be shown: AttemptUnknown, or an Attempt the sanity gate declines.
     val counter = (status as? ApiRetryStatus.Attempt)?.takeIf { it.isRenderableCounter() }
     val description =
         if (counter != null) {
-            stringResource(R.string.cd_thread_api_retry, counter.current, counter.total)
+            stringResource(
+                when (agent) {
+                    ConversationAgent.Claude -> R.string.cd_thread_api_retry
+                    ConversationAgent.Codex -> R.string.cd_thread_api_retry_codex
+                },
+                counter.current,
+                counter.total,
+            )
         } else {
-            stringResource(R.string.cd_thread_api_retry_unknown)
+            stringResource(
+                when (agent) {
+                    ConversationAgent.Claude -> R.string.cd_thread_api_retry_unknown
+                    ConversationAgent.Codex -> R.string.cd_thread_api_retry_unknown_codex
+                },
+            )
         }
     val label =
         if (counter != null) {

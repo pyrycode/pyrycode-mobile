@@ -913,6 +913,31 @@ then drops the task from the panel before the label is ever read. The assertion 
 or "No background tasks" and still rejects "No background-task report yet" — the live run showed the
 empty-roster reading win. One real claude turn: the prompt that starts the task.
 
+The **background-task-progress** scenario (#1076 —
+`interactiveTurn_backgroundAgentProgress_showsOnRunningCard`) extends the #967 background-task proof to
+the running card's progress block (#1044): it has claude start a `general-purpose` subagent — a
+`local_agent` task the daemon reports through the same `background_task_started` /
+`background_task_progress` frames — then, while the task is still running, asserts one panel card
+carries both an activity line (a prefix of a recorded progress description) and a meta line with a tools
+segment, since only the progress block draws the tools segment and the task's opening description cannot
+pass for it. It holds the task open with work, not a permission prompt: on this daemon a prompt draws as
+a dialog over the composer that would cover the Actions footer, and a *backgrounded* subagent risks ending
+before a frame arrives and costs a second turn on its finish notice. So the subagent runs in the
+**foreground** (as in the daemon's one measured `task_progress` capture) and is given a run of `Read`
+calls, one per message, on missing files inside the chat's working directory — the daemon's claude has no
+`Glob` tool, found when the first live attempt asked for it and the subagent made no call at all. One real
+claude turn: the prompt that starts the subagent.
+
+The scenario joined the `LIVE=1` list un-ignored under #1107, once
+[pyrycode/pyrycode#2661](https://github.com/pyrycode/pyrycode/pull/2661) (merge `b733a68`) closed the
+daemon parser gap filed as [pyrycode/pyrycode#2658](https://github.com/pyrycode/pyrycode/issues/2658): a
+foreground subagent's first sidechain entry echoes the prompt claude gave it as a `user` text block, and
+`(*Parser).emitUser` no longer surfaces that echo as an `unrecognized_message` (`site=user_block`,
+`message_type=text`). The scenario's own steps had already passed live at both prior attempts — the
+progress frame arrived and the card drew both lines — only the class's `UnrecognizedRowSentinel` (#586)
+failed the run, on the same echo, twice out of two. It now belongs in the always-on gate alongside the
+background-task scenario above, #967.
+
 No rung-4 twin: the scripted `fakeclaude` backend carries no `compacting`, `slash_command_list` or
 `background_task_*` frames (#946 records the same gap for `context_usage`). Two cases in this family stay
 proven only deterministically, and are not part of this ticket's own methods: banner notices
@@ -1285,7 +1310,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the forty-four curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the forty-five curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
 peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
@@ -1298,7 +1323,7 @@ interrupted-retrieval and cross-host-attachment-recovery, #1017; second-host ren
 Log data diagnostic download, #684; two-host default workspace and Archive, #1086;
 workspace add, rename and archive, #1087; channel create, edit and archive with its prompt read back, #1088;
 a peer-set workspace label reaching every open surface, per host, #1089; an attention dot following a
-real turn, #1090)
+real turn, #1090; background-agent progress on the running card, #1076/#1107)
 ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
@@ -1333,7 +1358,7 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** forty-three real claude turns across forty-four curated methods — five pings (ping,
+**Cost:** forty-four real claude turns across forty-five curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
 ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, the
@@ -1361,7 +1386,8 @@ session spawned after the edit is up), #1088 —
 and a reset wrap-up turn each for the new-session scenario's own live child and the channel
 create-edit-archive scenario's Reset session, #1088, and the attention-dot scenario's two turns — the
 peer's ping in one chat, marking its row Unread, and the peer's allowed command in a second chat, ending
-its held permission prompt, #1090. Delete, archive-restore,
+its held permission prompt, #1090, and the background-task-progress scenario's own turn (the prompt that
+starts the subagent), #1107. Delete, archive-restore,
 change-workspace, rename, save-as-channel,
 list-archive-entry, two-host separation, the model-change scenario, the mute-channel round trip
 (#1021), the second-host rename and unpair scenario (#1085), the Log data diagnostic-download
@@ -1386,7 +1412,8 @@ and unpair method, then from 38 to 39 with #684 adding the Log data diagnostic-d
 from 39 to 40 with #1086 adding the two-host default-workspace and Archive method, then from 40 to 41
 with #1087 adding the workspace add-rename-archive method, then from 41 to 42 with #1088 adding the
 channel create-edit-archive method, then from 42 to 43 with #1089 adding the peer-set workspace label
-method, then from 43 to 44 with #1090 adding the attention-dot method.
+method, then from 43 to 44 with #1090 adding the attention-dot method, then from 44 to 45 with #1107
+re-adding the background-task-progress method once pyrycode/pyrycode#2661 closed the daemon parser gap.
 `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
@@ -1442,7 +1469,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of forty-four rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of forty-five rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1510,9 +1537,10 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_addRenameArchiveWorkspace_roundTripsThroughTheHost` (#1087), and
 `InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` (#1088), and
 `InteractiveStreamE2ETest#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost` (#1089), and
-`InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` (#1090),
+`InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` (#1090), and
+`InteractiveStreamE2ETest#interactiveTurn_backgroundAgentProgress_showsOnRunningCard` (#1076/#1107),
 so exactly
-**forty-three real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
+**forty-four real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
 ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, #891's own
 ping, #946's own ping, the inherited-effort and chosen-effort scenarios' own turns and the
@@ -1539,7 +1567,8 @@ colliding conversation id #847 seeded (#1017); the channel create-edit-archive s
 first, run with the channel's original prompt, and the second, once a session spawned after the edit is up
 — plus a reset wrap-up turn for its own Reset session (#1088); the attention-dot scenario's two turns — the
 peer's ping in one chat, marking its row Unread, and the peer's allowed command in a second chat, ending
-its held permission prompt (#1090); the delete,
+its held permission prompt (#1090); the background-task-progress scenario's own turn — the prompt that
+starts the subagent (#1076/#1107); the delete,
 archive-restore, change-workspace, rename,
 save-as-channel, list-archive-entry, two-host, model-change, mute-channel, second-host
 rename-and-unpair, Log data diagnostic-download, two-host defaults-and-Archive, workspace
@@ -1595,7 +1624,7 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **forty-three real claude turns per run across forty-four curated methods** (ping + create-workspace-folder,
+Cost: **forty-four real claude turns per run across forty-five curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
 \#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
 status-sheet-running-model scenario's own ping, #891 + the footer-context-usage scenario's own ping,
@@ -1621,7 +1650,8 @@ scenario's own turn — the phone's message on host A of the colliding conversat
 create-edit-archive scenario's two pings — the first, run with the channel's original prompt, and the
 second, once a session spawned after the edit is up — plus a reset wrap-up turn for its own Reset
 session, #1088; the attention-dot scenario's two turns — the peer's ping in one chat, marking its row
-Unread, and the peer's allowed command in a second chat, ending its held permission prompt, #1090;
+Unread, and the peer's allowed command in a second chat, ending its held permission prompt, #1090; the
+background-task-progress scenario's own turn — the prompt that starts the subagent, #1076/#1107;
 `/clear` spends
 none beyond the ping that primes the session; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,

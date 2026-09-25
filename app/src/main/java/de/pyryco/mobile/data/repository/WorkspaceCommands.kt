@@ -12,7 +12,6 @@ import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
 import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
-import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.ERROR_MALFORMED_REPLY
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_CHANGE_WORKSPACE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_CREATE_WORKSPACE_FOLDER
@@ -133,8 +132,7 @@ internal class WorkspaceCommands(
         // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = requests.sendAndAwaitReply(request)
-        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        conversationList.upsertConversation(conversation)
+        conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
         // Vestigial: change_workspace has no session transition (AC #4), so no session identity.
         return Session(
             id = "",

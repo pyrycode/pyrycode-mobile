@@ -34,6 +34,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -60,19 +61,22 @@ private val RefusalExpandedTopPadding = 8.dp
  * - **Inert** — plain [Text] only: never markdown, no link detection, no `SelectionContainer`. The one click
  *   is the expand toggle, and a row with no explanation has none.
  * - **Unforgeable copy** — the title is client-owned spans with each model identifier as its own monospace
- *   span, so an identifier cannot pass itself off as the surrounding words; the banner's "Claude: " is its
- *   own medium-weight span, as in [BannerNoticeRow]. Keep both separate spans.
+ *   span, so an identifier cannot pass itself off as the surrounding words; the banner's "<agent>: " is its
+ *   own medium-weight span, as in [BannerNoticeRow], naming the conversation's [agent] (#1113). Keep both
+ *   separate spans.
  * - **No logging, no persisting** — only the expand [Boolean] reaches saved state, and the row is never cached.
  */
 @Composable
 fun ModelRefusalRow(
     item: ThreadItem.ModelRefusal,
+    agent: ConversationAgent,
     modifier: Modifier = Modifier,
 ) {
     // Only the toggle is saved, scoped by the row's LazyColumn key.
     var expanded by rememberSaveable { mutableStateOf(false) }
     ModelRefusalRowContent(
         item = item,
+        agent = agent,
         expanded = expanded,
         onToggle = { expanded = !expanded },
         modifier = modifier,
@@ -82,17 +86,19 @@ fun ModelRefusalRow(
 @Composable
 private fun ModelRefusalRowContent(
     item: ThreadItem.ModelRefusal,
+    agent: ConversationAgent,
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val banner = bannerDisplayText(item.banner)
     val expandable = banner.isNotBlank()
+    val name = agentName(agent)
     val clickLabel =
         if (expanded) {
-            stringResource(R.string.cd_thread_refusal_collapse)
+            stringResource(R.string.cd_thread_refusal_collapse, name)
         } else {
-            stringResource(R.string.cd_thread_refusal_expand)
+            stringResource(R.string.cd_thread_refusal_expand, name)
         }
     Row(
         modifier =
@@ -130,7 +136,7 @@ private fun ModelRefusalRowContent(
                 }
                 if (expandable && expanded) {
                     Text(
-                        text = attributedBanner(banner, item.bannerTruncated),
+                        text = attributedBanner(name, banner, item.bannerTruncated),
                         modifier = Modifier.padding(top = RefusalExpandedTopPadding),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -175,10 +181,11 @@ private fun refusalTitle(item: ThreadItem.ModelRefusal): AnnotatedString {
 /** The opened explanation: the client-owned attribution span, the stripped prose, then the cut mark if cut. */
 @Composable
 private fun attributedBanner(
+    agentName: String,
     banner: String,
     truncated: Boolean,
 ): AnnotatedString {
-    val attribution = stringResource(R.string.thread_banner_attribution)
+    val attribution = stringResource(R.string.thread_banner_attribution, agentName)
     val truncatedMark = stringResource(R.string.thread_banner_truncated)
     return buildAnnotatedString {
         withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(attribution) }
@@ -231,10 +238,10 @@ private val PreviewUnknownNoBanner =
 @Composable
 private fun ModelRefusalRowPreviewMatrix() {
     Column {
-        ModelRefusalRowContent(item = PreviewFallback, expanded = false, onToggle = {})
-        ModelRefusalRowContent(item = PreviewFallback, expanded = true, onToggle = {})
-        ModelRefusalRowContent(item = PreviewTruncated, expanded = true, onToggle = {})
-        ModelRefusalRowContent(item = PreviewUnknownNoBanner, expanded = false, onToggle = {})
+        ModelRefusalRowContent(item = PreviewFallback, agent = ConversationAgent.Claude, expanded = false, onToggle = {})
+        ModelRefusalRowContent(item = PreviewFallback, agent = ConversationAgent.Claude, expanded = true, onToggle = {})
+        ModelRefusalRowContent(item = PreviewTruncated, agent = ConversationAgent.Codex, expanded = true, onToggle = {})
+        ModelRefusalRowContent(item = PreviewUnknownNoBanner, agent = ConversationAgent.Claude, expanded = false, onToggle = {})
     }
 }
 

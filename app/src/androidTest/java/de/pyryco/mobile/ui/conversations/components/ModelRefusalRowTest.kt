@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -39,7 +40,7 @@ class ModelRefusalRowTest {
     private fun setContent(item: ThreadItem.ModelRefusal) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                ModelRefusalRow(item = item)
+                ModelRefusalRow(item = item, agent = ConversationAgent.Claude)
             }
         }
     }

@@ -34,13 +34,16 @@ fun ThinkingIndicator(
     modifier: Modifier = Modifier,
     progress: ThinkingProgress? = null,
     runningTool: ToolCall? = null,
+    agent: ConversationAgent = ConversationAgent.Claude,
 )
 ```
 
 `isThinking` is the load-bearing param, without a default. `progress` (#803) is optional and lands after
 `modifier` (Compose lint's `ComposeParameterOrder`, #508) — `null` means no reading is available and the
 component renders exactly as it did before #803. `runningTool` (#897) is the trailing param for the same
-reason, and `null` means no tool is open. The composable is a **pure function of its params** — no
+reason, and `null` means no tool is open. `agent` ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114))
+is the new trailing param, defaulting to `Claude` so every pre-#1114 call site and preview keeps compiling
+and rendering unchanged. The composable is a **pure function of its params** — no
 `ViewModel` reference, no flow collection, no `remember`, no `LaunchedEffect`, no `ThreadUiState` field.
 Statelessness is an AC, not a style choice.
 
@@ -235,9 +238,16 @@ when {
             modifier = Modifier.fillMaxWidth(),
             progress = thinkingProgress,
             runningTool = runningTool, // #897
+            agent = agent, // #1114
         )
 }
 ```
+
+(`apiRetry` and `isCompacting`'s own arms also gained `agent = agent` in #1114, and `resetting`'s gained
+it in #1112 — all three omitted from the ladder above for brevity; see [API-retry
+indicator](api-retry-indicator.md#placement-in-the-thread), [Compacting
+indicator](compacting-indicator.md#placement-in-the-thread) and [Resetting indicator § The agent
+name](resetting-indicator.md#the-agent-name-1112). `turnOutcome` still has not.)
 
 **Exactly one affordance renders; the arms never stack.** api-retry keeps the top arm ("something is
 going wrong" over lower-urgency signals), then resetting, then compaction, then the turn outcome, then this
@@ -290,6 +300,21 @@ locally (`val openTool = remember(state.items) { openToolCall(state.items) }`, t
 `MainActivity` collection line for a value the screen could already compute for free. This is the ticket's
 one departure from its own size estimate, which had listed `ThreadViewModel.kt` as a production file.
 
+### The agent name (#1114)
+
+**`agent` is wired the opposite way from every sibling status signal above: through `ThreadUiState`, not a
+hoisted `StateFlow`.** `ThreadUiState` gains `agent: ConversationAgent = ConversationAgent.Claude`, set by
+`ThreadViewModel` inside the same `combine` that sets `displayName`/`isPromoted`
+(`agent = conv?.agent ?: ConversationAgent.Claude` — see [Data model § `Conversation`](data-model.md)).
+`ThreadScreen` reads `state.agent` and passes it straight into `ThreadStatusArea` → `StatusReading` →
+this component, `ApiRetryIndicator` and `CompactingIndicator`. No new `MainActivity` collection line: unlike
+`isThinking`/`thinkingProgress`/`apiRetry`/`isCompacting`/`resetting` (each a live per-turn signal with its
+own `WhileSubscribed` `StateFlow`), the agent is a slow-changing conversation property the VM's existing
+conversations `combine` already resolves, so giving it a sixth sibling flow would duplicate work the state
+already does for free. Each of the three indicators picks its description resource with an exhaustive
+`when (agent)` over the two-value `ConversationAgent` enum, so a future third agent value fails to compile
+here rather than silently defaulting to Claude's text.
+
 ## Recomposition / stability
 
 - `isThinking: Boolean` is a stable param ⇒ recomposition tracks the flag directly.
@@ -340,6 +365,14 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   `cd_thread_tool_running_elapsed` ("Claude is running %1$s, %2$s elapsed") — see § The running tool. The
   tool name is always a format argument substituted into a fixed local format string, never part of the
   format string itself.
+- **Three more ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114))**, each a whole sibling
+  string rather than the Claude string plus an agent-name argument: `cd_thread_thinking_progress_codex`,
+  `cd_thread_tool_running_codex`, `cd_thread_tool_running_elapsed_codex` — "Codex" in place of "Claude",
+  otherwise byte-identical to their Claude counterparts, which #1114 leaves unedited. Whole strings, not a
+  shared format with a name placeholder, so the Claude strings stay byte-identical (no existing test or
+  translation changes) and a translator can inflect each sentence per agent rather than around a slotted
+  name. See [Compacting indicator § Configuration](compacting-indicator.md#configuration) and [API-retry
+  indicator § Configuration](api-retry-indicator.md#configuration) for the other three.
 - **No `gradle/libs.versions.toml` edits.**
 
 ## Edge cases / limitations
@@ -392,6 +425,16 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
 - **A short tool call may never show a time (#897, expected).** claude's `tool_progress` heartbeat arrives
   roughly every 30 seconds, so `Running Bash…` alone (no elapsed suffix) is the common case for a quick
   call, not a sign anything is missing.
+- **The agent-naming rollout is now complete across the status ladder (#1114, narrowed by #1112, closed by
+  #1113).** All five status-ladder arms take `agent`: this one, `ApiRetryIndicator`, `CompactingIndicator`,
+  `ResettingIndicator`'s `WrappingUp` reading (#1112), and `TurnOutcomeIndicator` (#1113, the arm #1114's
+  verifier had flagged as the remaining gap — see [Resetting indicator § The agent
+  name](resetting-indicator.md#the-agent-name-1112) and [Turn-outcome indicator § The agent
+  name](turn-outcome-indicator.md#the-agent-name-1113)). #1113 also named the agent in the thread's two
+  other Claude-crediting rows outside this ladder, `BannerNoticeRow` and `ModelRefusalRow` — see [Banner
+  notice row § Security](banner-notice-row.md#security--why-the-attribution-is-its-own-span) — using a
+  format-string + `agentName()` idiom rather than this ladder's whole-sibling-string idiom; both are
+  correct and client-owned, and the divergence is a recorded non-blocking NIT, not a defect.
 - **A very long or multi-line tool name can cut off its own elapsed reading (#897, open, not observed).**
   `maxLines = 1` + ellipsis bounds the row, but a name long enough to fill it pushes the appended elapsed
   text past the ellipsis with it. Desktop has the identical limitation. No tool name long enough to trigger
@@ -420,11 +463,12 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
 
 - Ticket notes: [`../codebase/407.md`](../codebase/407.md) (this component) ·
   [`../codebase/406.md`](../codebase/406.md) (the data/ViewModel half it consumes) ·
-  [`../codebase/803.md`](../codebase/803.md) (the progress-reading extension). #897 postdates the
-  2026-09-05 codebase-archive freeze and has no per-ticket note.
+  [`../codebase/803.md`](../codebase/803.md) (the progress-reading extension). #897 and #1114 postdate the
+  2026-09-05 codebase-archive freeze and have no per-ticket note.
 - Specs: `docs/specs/architecture/407-thinking-indicator-thread-foot.md` ·
   `docs/specs/architecture/803-thinking-progress-status-render.md` ·
-  `docs/specs/architecture/897-running-tool-status-label.md`.
+  `docs/specs/architecture/897-running-tool-status-label.md` ·
+  `docs/specs/architecture/1114-agent-status-screen-reader-labels.md` (§ The agent name).
 - Upstream signals: [Turn-state thinking flag](turn-state-thinking-flag.md) — `ThreadViewModel.isThinking`,
   the `turn_state` → flag reduction that governs visibility — and
   [Thinking-progress state](thinking-progress-state.md) — `ThreadViewModel.thinkingProgress` /

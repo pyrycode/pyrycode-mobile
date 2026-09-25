@@ -36,7 +36,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
+import de.pyryco.mobile.ui.conversations.components.agentName
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 /**
@@ -94,6 +96,17 @@ internal enum class PermissionModeOption(
 }
 
 /**
+ * Whether the footer offers [mode] (#650, #1111). Auto approval needs the selected row's auto-mode support.
+ * With a capability list, every other mode except Bypass approvals must be named in it; Bypass is sent as
+ * `yolo` and is never listed. The permission menu and the ViewModel's write guard both ask this.
+ */
+internal fun ThreadRunConfig.offersPermission(mode: PermissionModeOption): Boolean {
+    if (mode == PermissionModeOption.Auto && selectedChoice?.supportsAutoMode != true) return false
+    val accepted = capabilities?.permissionModes ?: return true
+    return mode == PermissionModeOption.Bypass || mode.wire in accepted
+}
+
+/**
  * The permission button's label (#650), or `null` when the button is hidden: no reading, or a reading of
  * `""`, which means the current child has confirmed nothing. A known mode shows its fixed label. Any other
  * value is daemon-authored and shows only as [inert] text.
@@ -109,6 +122,13 @@ internal fun EffortNote.textRes(): Int =
         EffortNote.DefaultRunningUnavailable -> R.string.thread_effort_note_default_unavailable
         EffortNote.NotReported -> R.string.thread_effort_note_not_reported
     }
+
+/**
+ * The note's text for a conversation run by [agent] (#1115): the notes that name an agent name this one.
+ * The footer and the Status sheet both resolve it here, so the two never disagree.
+ */
+@Composable
+internal fun EffortNote.text(agent: ConversationAgent): String = stringResource(textRes(), agentName(agent))
 
 /**
  * What a footer control offers when its overlay opens. [notListed] is how many entries the list leaves
@@ -159,15 +179,14 @@ internal fun footerMenu(
                     notListed = 0,
                 )
             }
-        // #650: all six modes, Auto approval only when the selected row supports it. The selection is the
-        // confirmed reading, so an unrecognised value selects nothing and is never offered.
+        // #650: the six modes [offersPermission] allows. The selection is the confirmed reading, so an
+        // unrecognised value selects nothing and is never offered.
         FooterControl.Permission ->
             runConfig.permissionMode.takeIf { it.isNotEmpty() }?.let { confirmed ->
-                val autoSupported = runConfig.selectedChoice?.supportsAutoMode == true
                 FooterMenu(
                     options =
                         PermissionModeOption.entries
-                            .filter { it != PermissionModeOption.Auto || autoSupported }
+                            .filter { runConfig.offersPermission(it) }
                             .map { OptionsOverlayOption(value = it.wire, label = it.label) },
                     selectedValue = confirmed,
                     notListed = 0,
@@ -245,6 +264,7 @@ fun ThreadComposerFooter(
     onAnchorChanged: (FooterControl, Rect) -> Unit,
     modifier: Modifier = Modifier,
     onAttach: () -> Unit = {},
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     // #1032: the text controls share one weighted slot, measured after the paperclip and the Status opener,
     // so a footer full of long labels shrinks the labels and never squeezes out the two icons.
@@ -286,7 +306,7 @@ fun ThreadComposerFooter(
                 clickLabel = stringResource(R.string.thread_footer_change_effort),
                 enabled = footerControlEnabled(FooterControl.Effort, runConfig),
                 pending = runConfig.pendingEffort != null,
-                note = runConfig.effortNote?.let { stringResource(it.textRes()) },
+                note = runConfig.effortNote?.text(agent),
                 onClick = { onOpen(FooterControl.Effort) },
                 onBounds = { onAnchorChanged(FooterControl.Effort, it) },
             )

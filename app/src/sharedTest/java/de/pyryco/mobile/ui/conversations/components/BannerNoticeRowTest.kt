@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -40,7 +41,7 @@ class BannerNoticeRowTest {
     private fun setContent(item: ThreadItem.Banner) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                BannerNoticeRow(item = item)
+                BannerNoticeRow(item = item, agent = ConversationAgent.Claude)
             }
         }
     }

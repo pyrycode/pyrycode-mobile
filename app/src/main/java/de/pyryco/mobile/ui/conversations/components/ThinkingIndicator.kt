@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
@@ -87,6 +88,7 @@ fun ThinkingIndicator(
     modifier: Modifier = Modifier,
     progress: ThinkingProgress? = null,
     runningTool: ToolCall? = null,
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     if (!isThinking && runningTool == null) return
     // Null whenever the reading must not be shown: no frame yet, or one the sanity gate declines.
@@ -97,9 +99,30 @@ fun ThinkingIndicator(
     val description =
         when {
             toolName != null && elapsed != null ->
-                stringResource(R.string.cd_thread_tool_running_elapsed, toolName, elapsed)
-            toolName != null -> stringResource(R.string.cd_thread_tool_running, toolName)
-            tokens != null -> stringResource(R.string.cd_thread_thinking_progress, tokens)
+                stringResource(
+                    when (agent) {
+                        ConversationAgent.Claude -> R.string.cd_thread_tool_running_elapsed
+                        ConversationAgent.Codex -> R.string.cd_thread_tool_running_elapsed_codex
+                    },
+                    toolName,
+                    elapsed,
+                )
+            toolName != null ->
+                stringResource(
+                    when (agent) {
+                        ConversationAgent.Claude -> R.string.cd_thread_tool_running
+                        ConversationAgent.Codex -> R.string.cd_thread_tool_running_codex
+                    },
+                    toolName,
+                )
+            tokens != null ->
+                stringResource(
+                    when (agent) {
+                        ConversationAgent.Claude -> R.string.cd_thread_thinking_progress
+                        ConversationAgent.Codex -> R.string.cd_thread_thinking_progress_codex
+                    },
+                    tokens,
+                )
             else -> stringResource(R.string.cd_thread_thinking)
         }
     val label =

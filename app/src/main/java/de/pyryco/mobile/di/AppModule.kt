@@ -39,8 +39,12 @@ import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.notifications.AttentionNotifier
+import de.pyryco.mobile.notifications.agentOf
 import de.pyryco.mobile.notifications.isMuted
+import de.pyryco.mobile.push.FirebasePushTokenSource
+import de.pyryco.mobile.push.PushTokenRefresher
 import de.pyryco.mobile.push.PushTokenSink
+import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
@@ -152,6 +156,7 @@ val appModule =
                 alerts = source.alerts,
                 notificationsEnabled = get<AppPreferences>().notificationsEnabled,
                 isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
+                agentOf = { serverId, conversationId -> source.snapshots.value.agentOf(serverId, conversationId) },
                 isForeground = {
                     ProcessLifecycleOwner
                         .get()
@@ -163,6 +168,17 @@ val appModule =
         } onClose { it?.dispose() }
         // #361: the FCM service's token writes outlive the service instance that received them.
         single { PushTokenSink(get()) } onClose { it?.dispose() }
+        // #1102: ask FCM for the current token while none is stored, rather than wait only for onNewToken.
+        // Eager for the driver's reason: a push can start the process with no activity.
+        single<PushTokenSource> { FirebasePushTokenSource(androidContext()) }
+        single(createdAtStart = true) {
+            PushTokenRefresher(
+                storedToken = get<AppPreferences>().pushToken,
+                source = get(),
+                sink = get(),
+                lifecycle = ProcessLifecycleOwner.get().lifecycle,
+            ).also { it.start() }
+        } onClose { it?.dispose() }
         // The stable facade follows the registry's selection and that host's connection churn.
         // Registered as its own resolvable type only; conversationRepositoryModule (#350) flag-selects
         // whether this facade or the Fake wins the ConversationRepository binding.
