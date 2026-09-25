@@ -153,6 +153,7 @@
     <!-- #872: Reset session's phase in the thread status area. Each is both the visible label and the
          row's merged content description; chosen by closed-set enum, never daemon text. -->
     <string name="thread_resetting_wrapping_up">Claude is writing a handoff note for the next session</string>
+    <string name="thread_resetting_wrapping_up_codex">Codex is writing a handoff note for the next session</string>
     <string name="thread_resetting_restarting_written">Restarting · handoff note saved</string>
     <string name="thread_resetting_restarting_skipped">Restarting without a handoff note</string>
     <string name="thread_resetting_restarting">Restarting</string>

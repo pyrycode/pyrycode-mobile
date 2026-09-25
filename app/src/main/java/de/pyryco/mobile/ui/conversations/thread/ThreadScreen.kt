@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -346,6 +347,7 @@ fun ThreadScreen(
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         resetting = resetting,
+                        agent = state.agent,
                         isCompacting = isCompacting,
                         turnOutcome = turnOutcome,
                         isThinking = isThinking,
@@ -571,7 +573,7 @@ fun ThreadScreen(
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
-                                                    SessionBoundaryDelimiter(boundary = item)
+                                                    SessionBoundaryDelimiter(boundary = item, agent = state.agent)
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
                                                 is ThreadItem.Banner -> BannerNoticeRow(item = item)
@@ -812,6 +814,7 @@ fun ThreadScreen(
 private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
+    agent: ConversationAgent,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
@@ -821,7 +824,7 @@ private fun ThreadStatusArea(
     onTasksClick: () -> Unit,
 ) {
     val reading: @Composable (Modifier) -> Unit = { modifier ->
-        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
+        StatusReading(apiRetry, resetting, agent, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
     }
     if (taskCount <= 0) {
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
@@ -854,6 +857,7 @@ private fun ThreadStatusArea(
 private fun StatusReading(
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
+    agent: ConversationAgent,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
@@ -863,7 +867,7 @@ private fun StatusReading(
 ) {
     when {
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
-        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
+        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
         turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
         else ->
