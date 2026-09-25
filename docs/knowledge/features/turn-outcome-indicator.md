@@ -12,9 +12,11 @@ Package: `de.pyryco.mobile.ui.conversations.components`
 
 ## Wording is the whole risk here
 
-Every string this component renders is **claude's own account of the stop, attributed as such**, never
+Every string this component renders is **the agent's own account of the stop, attributed as such**, never
 the app's own finding: the lead reads "Turn interrupted" / "Turn failed" / "Turn stopped early", and
-everything claude said follows "Claude reports". This matters because `error_category`'s value set names
+everything the agent said follows "<agent> reports" — the conversation's own agent
+([`ConversationAgent`](data-model.md), named via `agentName()`, [#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113)),
+never a fixed "Claude". This matters because `error_category`'s value set names
 account states — `account_on_hold`, `billing_error`, `authentication_failed` — that the daemon never
 verifies; rendering one without attribution would read as the app's own diagnosis of the user's account.
 See [Live-session events § 1. DTOs](live-session-events.md#1-dtos--datanetworkinteractivepayloadskt-internal)
@@ -76,7 +78,7 @@ U+2028. Iterating code points and adding `Zl`/`Zp` to the check would close the 
 
 ```kotlin
 @Composable
-fun TurnOutcomeIndicator(report: TurnOutcomeReport?, modifier: Modifier = Modifier)
+fun TurnOutcomeIndicator(report: TurnOutcomeReport?, agent: ConversationAgent, modifier: Modifier = Modifier)
 ```
 
 Early-return on `null` — the sibling totality idiom shared with [`ApiRetryIndicator`](api-retry-indicator.md)
@@ -91,15 +93,39 @@ merged `contentDescription` is the visible label.
 Label assembly (`strings.xml`, all copy client-owned):
 
 - Lead: `thread_turn_outcome_interrupted` / `_failed` / `_stopped`.
-- Then, when `claudeReports` or `apiErrorCategory` is non-empty, `thread_turn_outcome_claude_reports`
-  (` · Claude reports %1$s`) with the argument being `claudeReports` plus `thread_turn_outcome_api_error`
-  ("API error %1$s") for the category, joined with `, `.
+- Then, when `claudeReports` or `apiErrorCategory` is non-empty, `thread_turn_outcome_agent_reports`
+  (` · %1$s reports %2$s`, `%1$s` the agent's name from `agentName()`) with `%2$s` being `claudeReports`
+  plus `thread_turn_outcome_api_error` ("API error %1$s") for the category, joined with `, `.
 - `Failed` with no detail at all (`is_error` alone, nothing else raised) falls back to
-  `thread_turn_outcome_claude_reports_error` (` · Claude reports an error`) — the verdict stays
-  attributed to claude even with nothing else to show.
+  `thread_turn_outcome_agent_reports_error` (` · %1$s reports an error`) — the verdict stays
+  attributed to the agent even with nothing else to show.
 
-Every claude-authored token lands only after "Claude reports" and only as a `%1$s` `Text` argument —
-never markup, a URL, an attribute, a filename, a cache key or a log.
+Every agent-authored token lands only after "<agent> reports" and only as a `%2$s` `Text` argument —
+never markup, a URL, an attribute, a filename, a cache key or a log. The two resources were renamed from
+`thread_turn_outcome_claude_reports(_error)` in [#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113)
+(see § The agent name below); with a Claude conversation both render byte-for-byte as the pre-#1113 copy.
+
+### The agent name (#1113)
+
+**Closes the status-ladder's agent-naming rollout.** [#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114)
+named the agent in `ApiRetryIndicator`/`CompactingIndicator`/`ThinkingIndicator` and #1112 closed
+`ResettingIndicator`'s `WrappingUp` reading (see [Thinking indicator § The agent
+name](thinking-indicator.md#the-agent-name-1114)); this component was the one arm #1114's verifier flagged
+as still saying "Claude" unconditionally. #1113 threads `agent: ConversationAgent` in the same way as its
+three siblings and `BannerNoticeRow`/`ModelRefusalRow` (below) — `ThreadScreen` reads `state.agent` and
+passes it straight through `ThreadStatusArea` → `StatusReading` into this component, no new
+`MainActivity`/`ThreadViewModel` flow.
+
+**#1113 uses a different naming idiom from #1114's.** `ApiRetryIndicator`/`CompactingIndicator`/`ThinkingIndicator`
+each carry a whole sibling string per label (`cd_thread_api_retry_codex`, etc.) chosen by
+`when (agent)`, so the Claude string stays byte-identical and a translator can inflect each sentence
+independently. This component instead takes a new `@Composable fun agentName(agent): String`
+(`components/AgentName.kt`, an exhaustive `when` over `ConversationAgent` resolving `agent_name_claude`
+/ `agent_name_codex`) and fills it into one shared format string per label (`%1$s`/`%2$s` above), reused
+by [`BannerNoticeRow`](banner-notice-row.md) and [`ModelRefusalRow`](model-refusal-row.md). Both idioms are
+correct and client-owned — the name is always a string resource picked from the closed enum, never daemon
+text — but the thread package now has two ways to name an agent. Verifier NIT on #1113 (non-blocking):
+a later change could consolidate on one of them; not done here.
 
 ## Placement in the thread
 
@@ -177,6 +203,11 @@ null` parameter — every pre-#805 call site and preview keeps compiling unchang
 - No rung-3/4 scenario — live behaviour is
   [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679) per the ticket, the same posture recorded
   in `docs/e2e-interactive-stream.md` for the sibling ladder arms.
+- **#1113**: `ScriptedTurnOutcomeTest` and `ThreadViewModelTest`'s existing cases pass `agent =
+  ConversationAgent.Claude` and keep asserting today's literal copy — the "reads exactly as today" guard.
+  The new sharedTest `ThreadAgentAttributionTest` (Robolectric, through `ThreadScreen`) covers a Codex
+  conversation's failed outcome (`"Turn failed · Codex reports prompt_too_long"`) and a `Failed` outcome
+  with no details (`"· Codex reports an error"`).
 
 ## Security
 
@@ -218,7 +249,8 @@ of them. Nothing is persisted or logged; the report lives in a VM `StateFlow` an
   icon-not-spinner precedent, the render-or-decline sanitizer idiom), [API-retry indicator](api-retry-indicator.md)
   and [Compacting indicator](compacting-indicator.md) (the row idiom, early-return totality, and the
   precedence-lives-in-the-screen posture all four arms share).
-- Spec: `docs/specs/architecture/805-turn-outcome-status-arm.md`.
+- Spec: `docs/specs/architecture/805-turn-outcome-status-arm.md`,
+  `docs/specs/architecture/1113-agent-name-in-thread-notices.md` (§ The agent name, #1113).
 - Follow-up: [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679) (live real-claude
   verification of this arm).
 - Server SSOT: `docs/protocol-mobile.md § turn_end` — cited, not restated.
