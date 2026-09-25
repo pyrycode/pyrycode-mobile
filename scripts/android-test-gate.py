@@ -42,6 +42,8 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1017 adds the interrupted-upload, interrupted-retrieval and cross-host attachment methods.
 LIVE_MINIMUM += 3
+# #1085 adds the second-host rename and unpair method.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

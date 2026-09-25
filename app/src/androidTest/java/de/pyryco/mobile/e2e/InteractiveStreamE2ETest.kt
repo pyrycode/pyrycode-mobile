@@ -8,6 +8,7 @@ import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ContentResolver
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -90,6 +91,7 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.di.RelayConnectionBundle
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
@@ -97,10 +99,12 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLI
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
+import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
@@ -137,7 +141,9 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Ignore
@@ -1674,6 +1680,102 @@ class InteractiveStreamE2ETest {
         } finally {
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
             relaunched?.close()
+        }
+    }
+
+    /**
+     * Managing a second host leaves the first alone (#1085, rung 3). Host B is paired by code as in #847,
+     * renamed from its host row's Edit host modal (#744), then unpaired from the same modal (#745): once
+     * declined, once confirmed. After each step host A keeps its name, its conversations and its very
+     * connection bundle ([assertFirstHostUntouched]).
+     *
+     * **Which of A's conversations.** The seeded collision conversation, by its id, under whatever name A
+     * holds for it now: #847 renames it, and JUnit orders methods by name hash, so the seeded name may
+     * already be gone. B's seeded conversation is never renamed, so [ARG_COLLISION_NAME_B] marks B's section.
+     *
+     * **Unpair is phone-local.** It removes the pairing and the registry closes B's bundle; the device is not
+     * revoked on the daemon, so #847 can pair the same code again in the same run. B is still removed in
+     * `finally`, so a red run cannot leave it paired or selected for a later scenario.
+     *
+     * **Zero real-claude turns**: pairing, rename and unpair are daemon round-trips or phone-local.
+     */
+    @Test
+    fun interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched() {
+        val serverIdA = twoHostArg(ARG_SERVER_ID)
+        val serverIdB = twoHostArg(ARG_SERVER_ID_B)
+        val nameB = twoHostArg(ARG_COLLISION_NAME_B)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val store = GlobalContext.get().get<PairedServerCollectionStore>()
+        try {
+            // 1. Host A's baseline: its label, its bundle, its conversations and one conversation's name.
+            awaitChannelList()
+            awaitConnected()
+            val labelA = hostLabel(serverIdA)
+            val bundleA = checkNotNull(registry.connectionFor(serverIdA)) { "host A not registered" }
+            val idsA = hostConversationIds(serverIdA)
+            val nameA =
+                checkNotNull(heldConversationName(serverIdA, twoHostArg(ARG_COLLISION_CONVERSATION_ID))) {
+                    "host A's seeded conversation has no name"
+                }
+            val firstHost = FirstHost(serverIdA, labelA, bundleA, idsA, nameA)
+
+            // 2. Pair host B by code, as #847 does.
+            instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+            pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
+            awaitChannelRow(nameB)
+            assertEquals(HOST_B_NAME, hostLabel(serverIdB))
+            assertFirstHostUntouched(firstHost)
+
+            // 3. AC-1: rename B from its host row's Edit host modal.
+            val renamedB = HOST_RENAME_PREFIX + System.currentTimeMillis()
+            openHostEditor(serverIdB)
+            composeTestRule.onNode(hasTestTag(EDIT_HOST_NAME_FIELD_TAG)).performTextReplacement(renamedB)
+            composeTestRule.onNode(hasText(EDIT_HOST_OK) and hasClickAction()).performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                editorClosed(context) &&
+                    composeTestRule.onAllNodes(hasContentDescription(hostEditDescription(renamedB))).fetchSemanticsNodes().isNotEmpty() &&
+                    composeTestRule.onAllNodes(hasContentDescription(hostEditDescription(HOST_B_NAME))).fetchSemanticsNodes().isEmpty()
+            }
+            assertEquals(renamedB, hostLabel(serverIdB))
+            awaitChannelRow(nameB)
+            assertFirstHostUntouched(firstHost)
+
+            // 4. AC-2: declining the confirmation returns to the editor and removes nothing.
+            openHostEditor(serverIdB)
+            requestUnpair(context)
+            composeTestRule.onNode(hasText(modalCancel) and hasClickAction()).performClick()
+            awaitEditorTitle(context)
+            composeTestRule.onNode(hasText(modalCancel) and hasClickAction()).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { editorClosed(context) }
+            assertNotNull("declining the unpair removed host B's pairing", runBlocking { store.loadById(serverIdB) })
+            assertNotNull("declining the unpair closed host B's connection", registry.connectionFor(serverIdB))
+            scrollListTo(hasContentDescription(hostEditDescription(renamedB)))
+            awaitChannelRow(nameB)
+            assertFirstHostUntouched(firstHost)
+
+            // 5. AC-2: confirming removes B's section, its pairing and its connection; A still opens.
+            openHostEditor(serverIdB)
+            requestUnpair(context)
+            composeTestRule.onNode(hasText(EDIT_HOST_OK) and hasClickAction()).performClick()
+            // Absent from the whole tree, not merely off screen: scrolling to either must find nothing. The
+            // modal goes first, so its own scrollable cannot answer the scroll.
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                editorClosed(context) &&
+                    composeTestRule.onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes().isNotEmpty() &&
+                    runCatching { scrollListTo(hasContentDescription(hostEditDescription(renamedB))) }.isFailure &&
+                    runCatching { scrollListTo(channelRow(nameB)) }.isFailure
+            }
+            assertNull("host B is still in the paired-server store", runBlocking { store.loadById(serverIdB) })
+            assertNull("host B still has a connection", registry.connectionFor(serverIdB))
+            awaitConnected()
+            assertFirstHostUntouched(firstHost)
+            openRow(nameA)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+        } finally {
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
         }
     }
 
@@ -4891,6 +4993,14 @@ class InteractiveStreamE2ETest {
         conversationId: String,
         name: String,
     ) {
+        assertEquals(name, heldConversationName(serverId, conversationId))
+    }
+
+    /** The name [serverId]'s own live repository holds for [conversationId] now. */
+    private fun heldConversationName(
+        serverId: String,
+        conversationId: String,
+    ): String? {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
         val held =
             runBlocking {
@@ -4902,7 +5012,73 @@ class InteractiveStreamE2ETest {
                         .first { it.id == conversationId }
                 }
             }
-        assertEquals(name, held.name)
+        return held.name
+    }
+
+    /** What #1085 holds host A to while host B is renamed and unpaired, captured before B is paired. */
+    private data class FirstHost(
+        val serverId: String,
+        val label: String,
+        val bundle: RelayConnectionBundle,
+        val conversationIds: Set<String>,
+        val conversationName: String,
+    )
+
+    /**
+     * Host A is as [first] recorded it: the same stored label on its Edit control, the **same** connection
+     * bundle with a live repository (the registry keys bundles by record, so managing B must neither close
+     * nor rebuild A's), the same conversation ids, and its conversation's row still drawn.
+     */
+    private fun assertFirstHostUntouched(first: FirstHost) {
+        assertEquals("host A's label changed", first.label, hostLabel(first.serverId))
+        val bundle = GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(first.serverId)
+        assertSame("host A's connection was replaced", first.bundle, bundle)
+        runBlocking {
+            withTimeout(CONNECT_TIMEOUT_MS) {
+                first.bundle.coordinator.currentRepository
+                    .first { it != null }
+            }
+        }
+        assertEquals("host A's conversations changed", first.conversationIds, hostConversationIds(first.serverId))
+        scrollListTo(hasContentDescription(hostEditDescription(first.label)))
+        awaitChannelRow(first.conversationName)
+    }
+
+    /** The host row's Edit control's content description for a host labelled [label]. */
+    private fun hostEditDescription(label: String): String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_tree_host_edit, label)
+
+    /** Tap [serverId]'s Edit control on its host row and wait for the Edit host modal. */
+    private fun openHostEditor(serverId: String) {
+        val tag = treeHostEditTestTag(serverId)
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            runCatching { scrollListTo(hasTestTag(tag)) }.isSuccess
+        }
+        composeTestRule.onAllNodes(hasTestTag(tag)).onFirst().performClick()
+        awaitEditorTitle(InstrumentationRegistry.getInstrumentation().targetContext)
+    }
+
+    /** Wait until the Edit host modal shows its editor (not its unpair confirmation). */
+    private fun awaitEditorTitle(context: Context) {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(context.getString(R.string.edit_host_title)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** The Edit host modal is gone: neither its editor title nor its unpair confirmation title is drawn. */
+    private fun editorClosed(context: Context): Boolean =
+        composeTestRule.onAllNodesWithText(context.getString(R.string.edit_host_title)).fetchSemanticsNodes().isEmpty() &&
+            composeTestRule.onAllNodesWithText(context.getString(R.string.edit_host_unpair_confirm_title)).fetchSemanticsNodes().isEmpty()
+
+    /** Tap the open editor's Unpair host and wait for the in-place confirmation. */
+    private fun requestUnpair(context: Context) {
+        composeTestRule.onNode(hasText(context.getString(R.string.edit_host_unpair)) and hasClickAction()).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule
+                .onAllNodesWithText(context.getString(R.string.edit_host_unpair_confirm_title))
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
     }
 
     /** The host row's label as the tree draws it: the saved display name, else "Unnamed host". */
@@ -5356,6 +5532,11 @@ class InteractiveStreamE2ETest {
 
         // Runtime-unique rename target for host A's seeded conversation, distinct from #537's prefix.
         const val RENAMED_NAME_PREFIX = "e2e847-renamed-"
+
+        // #1085 host management. The run-unique name host B is renamed to, sharing no substring with
+        // HOST_B_NAME or another scenario's names, and the Edit host shell's hardcoded submit label.
+        const val HOST_RENAME_PREFIX = "e2e1085-host-"
+        const val EDIT_HOST_OK = "OK"
 
         // #545 settings scenarios. Run-unique names for the chats and channel each method prepares on the host,
         // none containing "ping" or another scenario's prefix.
