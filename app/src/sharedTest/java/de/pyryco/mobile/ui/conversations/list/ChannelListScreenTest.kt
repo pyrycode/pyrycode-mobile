@@ -4,6 +4,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
@@ -11,6 +14,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertWidthIsAtLeast
@@ -923,7 +928,53 @@ class ChannelListScreenTest {
         saving: Boolean = false,
         failed: Boolean = false,
         archiveFailed: Boolean = false,
-    ) = ChannelEditorState("pyrybox", "c1", "alpha channel", prompt, saving, failed, archiveFailed)
+        muted: Boolean = false,
+    ) = ChannelEditorState("pyrybox", "c1", "alpha channel", prompt, saving, failed, archiveFailed, muted)
+
+    @Test
+    fun editChannelModal_muteRowOpensAtTheHostsFlag_andOkReportsTheToggledValue() {
+        val read = ChannelPromptReading.Read("Be brief.", SessionPromptStatus.Matches)
+        val state = mutableStateOf(HostChannelListState(listOf(channelHost()), channelEditor = openChannel(read, muted = true)))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+        val mute = hasText(string(R.string.edit_channel_mute))
+
+        // The whole row is one checkbox at the touch floor, opening at the host's flag.
+        composeTestRule
+            .onNode(mute)
+            .performScrollTo()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
+            .assertHeightIsAtLeast(48.dp)
+            .assertIsOn()
+        composeTestRule.onNode(hasText("OK")).performClick()
+        composeTestRule.onNode(mute).performClick().assertIsOff()
+        // A failure keeps the operator's value where they put it.
+        state.value = state.value.copy(channelEditor = openChannel(read, failed = true, muted = true))
+        composeTestRule.onNode(mute).assertIsOff()
+        composeTestRule.onNode(hasText("OK")).performClick()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.ChannelEditSubmitted("alpha channel", "Be brief.", muted = true),
+                ChannelListEvent.ChannelEditSubmitted("alpha channel", "Be brief.", muted = false),
+                ChannelListEvent.ChannelEditDismissed,
+            ),
+            events,
+        )
+        assertFalse(events.first().toString().contains("Be brief."))
+    }
+
+    @Test
+    fun editChannelModal_muteRowOpensUncheckedForAnUnmutedChannel() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ChannelListScreen(hostState = HostChannelListState(listOf(channelHost()), channelEditor = openChannel()), onEvent = {})
+            }
+        }
+        composeTestRule.onNode(hasText(string(R.string.edit_channel_mute))).performScrollTo().assertIsOff()
+    }
 
     @Test
     fun editChannelModal_readsThenShowsThePromptVerbatim_andReportsTheTrimmedNameAndPrompt() {
@@ -953,8 +1004,8 @@ class ChannelListScreenTest {
 
         assertEquals(
             listOf(
-                ChannelListEvent.ChannelEditSubmitted("Ops", "  Be brief.\n"),
-                ChannelListEvent.ChannelEditSubmitted("Ops", "Shorter."),
+                ChannelListEvent.ChannelEditSubmitted("Ops", "  Be brief.\n", muted = false),
+                ChannelListEvent.ChannelEditSubmitted("Ops", "Shorter.", muted = false),
                 ChannelListEvent.ChannelEditDismissed,
             ),
             events,
@@ -980,7 +1031,7 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasText(string(R.string.edit_channel_archive))).performScrollTo().performClick()
 
         assertEquals(
-            listOf(ChannelListEvent.ChannelEditSubmitted("alpha channel", null), ChannelListEvent.ChannelArchiveRequested),
+            listOf(ChannelListEvent.ChannelEditSubmitted("alpha channel", null, muted = false), ChannelListEvent.ChannelArchiveRequested),
             events,
         )
     }

@@ -430,9 +430,14 @@ machine and why a second host sharing the same `cwd` is never addressed.
 
 [`EditChannelModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditChannelModal.kt)
 (`ui/components/EditChannelModal.kt`, #667) is the shell's eighth direct caller — like `EditChatModal`, it
-draws `MobileModal` itself around `ChannelFormFields` plus a private outlined `Archive channel` action
+draws `MobileModal` itself around `ChannelFormFields`, a private `MuteNotificationsRow` (#1021, between
+the prompt field and Archive) and a private outlined `Archive channel` action
 copied from `EditChatModal`'s `ArchiveAction` (a verifier SHOULD FIX left for a follow-up: a shared
-`internal` action taking a `@StringRes` label would keep the two from drifting apart). It edits an
+`internal` action taking a `@StringRes` label would keep the two from drifting apart). `MuteNotificationsRow`
+is the app's second whole-row checkbox after `ThreadPermissionModal`'s `AlwaysAllowOffer` — a `toggleable`
+`Row` with `Role.Checkbox`, an M3 `Checkbox(onCheckedChange = null)` in `colorScheme.tertiary` and a
+label-medium SemiBold label, at the shell's 48dp touch floor — and a `muted` buffer, `remember(conversationId)
+{ mutableStateOf(initialMuted) }`, the same per-conversation keying the name and prompt buffers use. It edits an
 **existing** channel's own name and already-stored system prompt in place, unlike `CreateChannelModal`
 and `SaveAsChannelDialog`, which only ever write a system prompt into a conversation with no stored one.
 The name buffer is `remember(conversationId)`, prefilled from the caller's `initialName` — the row's own
@@ -450,7 +455,9 @@ same parity `EditChatModal`'s Archive established. [ChannelListScreen](channel-l
 only caller: the Channels row's own permanent pen — the same pen shape #827 gave Chats rows, now
 generalised behind `TreeConversationRow`'s `editDescription: @StringRes Int` parameter — opens it on
 that row's own host and conversation, reads the stored prompt once the row's host has a live
-repository, and OK writes only what changed (a rename, then the prompt, each independently) through the
+repository, opens the checkbox at that host's own stored `Conversation.muted` (#1021), and OK writes
+only what changed — a rename, then a mute write, then the prompt, each independently, in that order —
+through the
 repository resolved **at the press** — see [ChannelListScreen § Channels row edit control
 (#667)](channel-list-screen-tree-and-controls.md#channels-row-edit-control-667) and
 [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for the two target-tagged state flows

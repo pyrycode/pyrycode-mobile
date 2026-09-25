@@ -225,6 +225,8 @@ sealed interface ChannelPromptReading {
  * target's own reading. [saving] covers any write in flight; [failed] is a rename or prompt write's
  * failure and [archiveFailed] the archive's, both flags so the string resolves on screen and no daemon
  * message reaches the shell's live region. The typed name and prompt are the modal's own buffers.
+ * [savedMuted] follows [savedName]'s pattern for the host's mute flag (#1021): the snapshot's value at open
+ * time, then the value the daemon confirmed, so a retry never repeats a confirmed mute write.
  */
 data class ChannelEditorState(
     val serverId: String,
@@ -234,6 +236,7 @@ data class ChannelEditorState(
     val saving: Boolean = false,
     val failed: Boolean = false,
     val archiveFailed: Boolean = false,
+    val savedMuted: Boolean = false,
 )
 
 /** The tree's two tiers. The same host draws a row in each, and the two fold independently. */
@@ -925,6 +928,7 @@ class ChannelListViewModel(
                 serverId = target.serverId,
                 conversationId = target.conversationId,
                 savedName = boundedName(channel.name?.takeIf { it.isNotBlank() }.orEmpty()),
+                savedMuted = channel.muted,
             )
         RelayLog.d { "event=channel_editor_opened" }
         channelPromptRead =
@@ -940,12 +944,14 @@ class ChannelListViewModel(
 
     /**
      * OK: renames the open editor's channel when the trimmed [name] differs from its saved name, then writes
-     * [systemPrompt] verbatim when it differs from the stored prompt that was read, then closes (#667).
+     * [muted] when it differs from the saved flag (#1021), then writes [systemPrompt] verbatim when it differs
+     * from the stored prompt that was read, then closes (#667). [muted] `null` writes no mute.
      *
      * [systemPrompt] is `null` when the modal never showed a stored prompt, and it is ignored unless this
      * editor's reading arrived: a prompt the operator never saw can never be overwritten. An absent stored
      * prompt reads as an empty box, as `SystemPromptEditorState.Loaded.changed` does. A confirmed rename is
-     * recorded as the saved name, so a retry after a failed prompt write sends only the prompt.
+     * recorded as the saved name and a confirmed mute as the saved flag; the prompt, whose confirmation is not
+     * recorded, goes last. So a retry sends only the writes the host has not confirmed.
      *
      * The repository is resolved from the editor's `serverId` at the press — a reconnect replaces it — and
      * every terminal transition is a `compareAndSet`, as [submitChatName]. The chain is not cancelled by a
@@ -954,6 +960,7 @@ class ChannelListViewModel(
     fun submitChannelEdit(
         name: String,
         systemPrompt: String?,
+        muted: Boolean? = null,
     ) {
         val state = channelEditor.value ?: return
         if (state.saving) return
@@ -971,6 +978,7 @@ class ChannelListViewModel(
             return
         }
         val renameTo = trimmed.takeIf { it != state.savedName.trim() }
+        val muteTo = muted?.takeIf { it != state.savedMuted }
         val promptToWrite = draft?.takeIf { it != read?.prompt.orEmpty() }
         val pending = state.copy(saving = true, failed = false, archiveFailed = false)
         channelEditor.value = pending
@@ -989,6 +997,19 @@ class ChannelListViewModel(
                 current = pending.copy(savedName = renameTo)
                 channelEditor.compareAndSet(pending, current)
             }
+            if (muteTo != null) {
+                val before = current
+                try {
+                    live.setMuted(state.conversationId, muteTo)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    RelayLog.d { "event=channel_mute_write_failed" }
+                    channelEditor.compareAndSet(before, before.copy(saving = false, failed = true))
+                    return@launch
+                }
+                current = before.copy(savedMuted = muteTo)
+                channelEditor.compareAndSet(before, current)
+            }
             if (promptToWrite != null) {
                 try {
                     live.setSystemPrompt(state.conversationId, promptToWrite)
@@ -999,9 +1020,11 @@ class ChannelListViewModel(
                     return@launch
                 }
             }
-            // The row picks the new name up from the host's own conversation stream; nothing is patched here.
+            // The row picks the new name and flag up from the host's own conversation stream; nothing is patched here.
             channelEditor.compareAndSet(current, null)
-            RelayLog.d { "event=channel_edited renamed=${renameTo != null} prompt=${promptToWrite != null}" }
+            RelayLog.d {
+                "event=channel_edited renamed=${renameTo != null} muted=${muteTo != null} prompt=${promptToWrite != null}"
+            }
         }
     }
 

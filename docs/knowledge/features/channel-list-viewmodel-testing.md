@@ -168,6 +168,20 @@ editor, a blank or over-limit draft, a disconnected host, a second submit while 
 a read or a write landing after `dismissChannelEditor()` neither reopening the modal nor overwriting a
 fresher one.
 
+**Mute notifications checkbox coverage (#1021, same colliding-id fixture).** `Repo` gains `setMuted`,
+recording every write, applying it to that repo's own rows the way the daemon's echo would, and failing a
+scripted count of times. `channelEditorOpensAtItsOwnHostsMuteFlagAndWritesItOnlyWhenChanged` covers opening
+`("Host","same")` and `("host","same")` each reading `savedMuted` from that host's own row though the ids
+collide, submitting at the opening value sending no `setMuted`, Cancel/Close/Back sending nothing, and a
+flipped value sending exactly one `setMuted` to the editor's own host before the modal closes — with the
+other host's same-id channel asserted untouched throughout. `aFailedMuteWriteStaysOpenAndARetrySendsOnlyTheUnconfirmedWrites`
+covers the full **rename → mute → prompt** order: a rename that lands then a mute write that fails leaves
+`failed = true` with the confirmed rename already recorded and nothing else sent; a retry whose mute lands
+but whose prompt write fails records `savedMuted` and leaves the editor open; a further retry sends only the
+prompt, and the totals show exactly one rename, one mute and one prompt reaching the editor's own host, none
+reaching the colliding id's other host. Both tests assert no captured log line carries the name, the prompt,
+either id or an exception message; the failure log is the static `channel_mute_write_failed` event.
+
 Unavailable-target coverage denies lookup even with cached rows and connected
 indicators. Failure tests inspect the action job's cancellation state as well as
 missing navigation: absence of navigation alone cannot prove cancellation was
