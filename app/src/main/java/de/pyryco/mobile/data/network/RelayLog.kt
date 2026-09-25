@@ -22,9 +22,11 @@ private const val REDACT_BYTES = 4
  * 2. **Cannot assemble a sensitive value in release.** The message is supplied by a `() -> String`
  *    lambda invoked only inside the `if (enabled)` branch, so in release the string is never built.
  *
- * This ticket delivers the facility only; it does **not** instrument [RelayConnectionSupervisor] /
- * [NoiseSessionPump] / `RelayRepositoryCoordinator` / [OkHttpRelayTransport], which keep their
- * "Emits no logs" contract. A future diagnosis session (or follow-up ticket) adopts it where needed.
+ * Adopters in the connection path (#1039): [OkHttpRelayTransport] writes one `event=transport_end`
+ * line per connection end and [NoiseSessionPump] one `event=pump_teardown` line per teardown, each with
+ * a fixed label, a code and a class name only. [RelayConnectionSupervisor] and
+ * `RelayRepositoryCoordinator` stay silent: the transport line already carries the `Down` code the
+ * supervisor sees.
  *
  * ### MUST NOT be passed into a message lambda
  *
