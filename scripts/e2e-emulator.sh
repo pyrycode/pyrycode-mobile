@@ -1151,8 +1151,11 @@ elif [ -n "${LIVE}" ]; then
   # #1085: the second host's rename and unpair from its Edit host modal joins at no turn cost (pairing,
   # rename and a phone-local unpair), so the list holds 38 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched"
+  # #684: Log data saves the owning host's diagnostic archive with a second host paired, across a selection
+  # change and a cancelled picker. It joins at no turn cost (pairing, a mute and two archive transfers).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_logData_savesTheOwningHostsArchive"
   # #1086: each host's default workspace and Archive stay its own with both hosts paired. It joins at no turn
-  # cost (folder creation, chat creation, rename, archive and restore), so the list holds 39 methods and 39 turns.
+  # cost (folder creation, chat creation, rename, archive and restore), so the list holds 40 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
