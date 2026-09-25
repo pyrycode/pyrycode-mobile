@@ -26,8 +26,10 @@ Package: `de.pyryco.mobile.ui.conversations.components`
 
 A `rate_limited` frame is **not proof that a turn was blocked** — the one measured non-benign status
 (`allowed_warning`) rode an account whose turns all ran normally. Every string this file emits is
-therefore **attributed reportage**, never a verdict: the lead reads "Claude reports usage-limit status:
-…", and nothing anywhere in the copy says "limited", "blocked", "reached" or "lifted". `status` renders as
+therefore **attributed reportage**, never a verdict: the lead reads "<agent> reports usage-limit status:
+…", naming the conversation's own agent ([#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115),
+via [`agentName`](thread-top-overlay.md#the-usage-pill) — client-owned text picked from `ConversationAgent`,
+never daemon text), and nothing anywhere in the copy says "limited", "blocked", "reached" or "lifted". `status` renders as
 an opaque label credited to claude; no branch anywhere on the render path compares it against a value —
 [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002)'s `usageLimitIsWarning` is the sole
 exception, and it only ever picks a pill variant, never wording (see below). `limitType` is not rendered at
@@ -38,11 +40,16 @@ string.
 
 ```kotlin
 @Composable
-internal fun usageLimitLabel(reading: UsageLimitReading): String
+internal fun usageLimitLabel(reading: UsageLimitReading, agent: ConversationAgent): String
 
 internal fun usageLimitIsWarning(reading: UsageLimitReading): Boolean =
     reading.status == "allowed_warning"
 ```
+
+`agent` ([#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115)) is `ThreadUiState.agent` — see
+[Data model § the agent name](data-model.md) — passed down from `ThreadTopOverlay`'s own `agent` parameter.
+It only selects which client-owned name opens the lead string; it is never compared against `status` or any
+other daemon-authored field.
 
 `usageLimitLabel` is the composable [`NoticePill`](notice-pill.md)'s `text` is built from — no early
 return, since [`ThreadTopOverlay`](thread-top-overlay.md) already gates the call on a non-`null`, non-

@@ -34,8 +34,13 @@ internal fun ThreadTopOverlay(
     showRePair: Boolean,
     onRePair: () -> Unit,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 )
 ```
+
+`agent` ([#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115)) is `ThreadScreen`'s own
+`state.agent`, forwarded unchanged to `usageLimitLabel` below. Defaulting to `Claude` — `Conversation.agent`'s
+own default — keeps every prior call site and preview compiling unchanged.
 
 Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, and
 `!showRePair`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
@@ -44,10 +49,11 @@ End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill ga
 
 ### The usage pill
 
-When `usageLimit != null && !usageLimitDismissed`: `NoticePill(text = usageLimitLabel(usage), isError =
+When `usageLimit != null && !usageLimitDismissed`: `NoticePill(text = usageLimitLabel(usage, agent), isError =
 !usageLimitIsWarning(usage), onDismiss = if (warning) onDismissUsageLimit else null)`. See [Usage-limit
 indicator](usage-limit-indicator.md) for `usageLimitLabel` / `usageLimitIsWarning` and the wording
-guarantees behind them.
+guarantees behind them, including how `agent` ([#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115))
+names the conversation's own agent in the lead string instead of a fixed "Claude".
 
 ### The pairing pill
 
