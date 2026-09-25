@@ -35,3 +35,7 @@ Other strings that still say "Claude" (thinking, tool running, retry, compacting
 ## Documentation handoff
 
 None named by the ticket. Pending for the documentation stage only if it chooses to note, in the thread-screen overview, that these four strings name `Conversation.agent`.
+
+## Revisions
+
+- **Merge of `main` (#1113 landed first).** #1113 added the same `agent_name_claude` / `agent_name_codex` strings and a `@Composable agentName(agent)` in `AgentName.kt`. Two definitions of the same strings would fail the resource merge, so this ticket drops its own copies and its `ConversationAgent.nameRes()`. `usageLimitLabel` and `EffortNote.text(agent)` now resolve the name through `main`'s `agentName`. The strings and behaviour are unchanged.
