@@ -318,7 +318,8 @@ distinction from the tree's own blank at all — see the next section.
   `docs/specs/architecture/745-unpair-host-from-edit-modal.md`,
   `docs/specs/architecture/827-rename-chat-from-tree-row.md`,
   `docs/specs/architecture/904-add-workspace-modal.md`,
-  `docs/specs/architecture/905-edit-and-archive-workspace.md`
+  `docs/specs/architecture/905-edit-and-archive-workspace.md`,
+  `docs/specs/architecture/878-tree-conversation-attention-dot.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
   `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, since #904 `openAddWorkspace`,
   `selectAddWorkspaceFolder`, `createAddWorkspaceFolder`, `submitAddWorkspace`, `dismissAddWorkspace`
@@ -351,10 +352,13 @@ distinction from the tree's own blank at all — see the next section.
   from #664 — every workspace row's own pencil, opening [`EditWorkspaceModal`](mobile-modal.md#callers) on
   that row's own host and exact `cwd` to call the `renameWorkspace` / `archiveWorkspace` repository methods
   #663 added; #664's other half, adding a workspace, already landed as #904's host-row long-press, above),
+  #878 (done, split from #668 — draws each row's `ConversationAttention` (#877) as the leading dot's fill
+  and content description, this section's own [Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878)),
   #676 (the live
-  emulator scenario for #744's rename flow, #745's removal, #715's two-host archive/restore case and
-  #905's rename/archive flow, blocked by all four and still open), #668
-  (indicator-pair live accuracy, conversation-row unread/activity state), #665 (conversation-row edit
+  emulator scenario for #744's rename flow, #745's removal, #715's two-host archive/restore case,
+  #905's rename/archive flow and #878's attention states, blocked by all five and still open), #668
+  (indicator-pair live accuracy, conversation-row unread/activity state — #878 split off drawing the
+  state; #668 remains open for the rest), #665 (conversation-row edit
   pencil), #675 (disconnected-host
   repair control), #154 / Phase 3 Settings / Phase 4 items predating #731 remain as recorded in
   [`../codebase/`](../codebase/) history.

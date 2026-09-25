@@ -1,8 +1,10 @@
 # Success color slot
 
 A green `success` ("up") semantic color slot exposed on `MaterialTheme.colorScheme` for positive
-connection/health states (today: the green dot on the [connection-status
-line](connection-status-line.md)'s "up" legs). Like [`warning`](warning-color.md), `success` is not
+connection/health and attention states: the green dot on the [connection-status
+line](connection-status-line.md)'s "up" legs, the background task panel's Completed tag, and,
+since #878, a conversation tree row's `Unread` [attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878) fill.
+Like [`warning`](warning-color.md), `success` is not
 one of Material 3's fixed `ColorScheme` slots, so it is grafted on via the idiomatic Compose
 extension pattern rather than by extending the `final` `ColorScheme`.
 
@@ -78,13 +80,16 @@ The first consumer was the [connection-status line](connection-status-line.md)'s
 task panel](mobile-modal.md#callers)'s `TaskStatusTag` ([#1041](https://github.com/pyrycode/pyrycode-mobile/issues/1041))
 is the second: its Completed style reads `colorScheme.success` as the dot/label colour on a 16% tint of
 itself as the pill fill — no new field, since a flat `success` colour is enough to derive both.
+Since #878, `ConversationStatusDot`'s `Unread` fill reads it too (see
+[Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878)).
 
 ## Related
 
 - Precedent (mirrored one-for-one): [Warning color](warning-color.md) ([#119](../codebase/119.md)) —
   the first custom color slot and the pattern for all future ones.
-- Consumers: [Connection status line](connection-status-line.md) ([#397](../codebase/397.md)) and the
-  [background task panel](mobile-modal.md#callers)'s `TaskStatusTag` ([#1041](https://github.com/pyrycode/pyrycode-mobile/issues/1041)).
+- Consumers: [Connection status line](connection-status-line.md) ([#397](../codebase/397.md)), the
+  [background task panel](mobile-modal.md#callers)'s `TaskStatusTag` ([#1041](https://github.com/pyrycode/pyrycode-mobile/issues/1041))
+  and the tree row's [Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878) (#878).
 - Implementation notes: [`codebase/397.md`](../codebase/397.md).
 - Theme primitive: `app/src/main/java/de/pyryco/mobile/ui/theme/Theme.kt` — `PyrycodeMobileTheme`,
   the two `SuccessColors` instances. Palette: `…/ui/theme/Color.kt` — `successLight` / `successDark`.

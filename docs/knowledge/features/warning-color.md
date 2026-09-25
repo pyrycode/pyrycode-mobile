@@ -38,7 +38,10 @@ fun TokenBudgetChip(percent: Int) {
 }
 ```
 
-No call sites in production today — this slice is foundational. Downstream consumer tickets (#145 Status Sheet, #146 Conversation Thread token-budget chip per the ticket body) own the migration of the existing raw `#D8B85A` literals.
+Consumers: [connection-status line](connection-status-line.md)'s `ConnectionLegCategory.color()`
+resolver ([#397](../codebase/397.md)) — `InProgress → warning`; [banner notice row](banner-notice-row.md)'s
+warning tint; and, since #878, `ConversationStatusDot`'s `WaitingForAnswer` fill (see [Attention
+dot](channel-list-screen-tree-and-controls.md#attention-dot-878)).
 
 ## Limits and how to extend
 
