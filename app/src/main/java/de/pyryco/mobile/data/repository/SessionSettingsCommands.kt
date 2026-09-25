@@ -10,7 +10,6 @@ import de.pyryco.mobile.data.network.RequestSystemPromptPayloadDto
 import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.setSystemPromptPayload
-import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toSessionSettings
 import de.pyryco.mobile.data.network.toSystemPromptReading
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.SYSTEM_PROMPT_READ_NOT_INTERACTIVE
@@ -270,6 +269,6 @@ internal class SessionSettingsCommands(
                 payload = setSystemPromptPayload(conversationId, systemPrompt),
             )
         val reply = requests.sendAndAwaitReply(request)
-        conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
+        conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
     }
 }

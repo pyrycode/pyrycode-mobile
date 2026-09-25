@@ -224,9 +224,10 @@ private suspend fun create(payload: CreateConversationPayloadDto): Conversation 
         payload = MobileJson.encodeToJsonElement(payload),
     )
     val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
-    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    conversationList.upsertConversation(conversation)   // confirmed-insert — ONLY after a successful decode (AC #2)
-    return conversation
+    // Confirmed-insert — ONLY after a successful decode (AC #2). Since #1108 upsertConversation takes the
+    // decoded record (not a mapped Conversation) and returns the row as stored, so create/promote/rename
+    // return exactly what the projection now holds.
+    return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
 }
 ```
 
@@ -287,33 +288,49 @@ with `createDiscussion` — the same de-duplication `create(payload)` does on th
 ### Confirmed-insert via `ConversationListProjection.upsertConversation` (the projection's second writer)
 
 Since #913 this fold lives on `ConversationListProjection` (`data/repository/ConversationListProjection.kt`),
-not on the repository:
+not on the repository. Since [#1108](../codebase/1108.md) it takes the **decoded `ConversationResponseDto`**,
+not a mapped `Conversation` — so it can tell a record that carries no `agent` key apart from one that
+maps to Claude on purpose — and it **returns the row as stored**, not `Unit`:
 
 ```kotlin
 // ConversationListProjection
-fun upsertConversation(conversation: Conversation) {
+fun upsertConversation(record: ConversationResponseDto): Conversation {
+    val incoming = record.toConversation()
+    var stored = incoming
     projection.update { current ->                       // atomic CAS — retry-merges with a concurrent snapshot
         val existing = current.orEmpty()                 // null projection → single-element list
-        val index = existing.indexOfFirst { it.id == conversation.id }
-        if (index >= 0) existing.toMutableList().apply { this[index] = conversation }  // upsert by id
-        else existing + conversation
+        val index = existing.indexOfFirst { it.id == incoming.id }
+        if (index >= 0) {
+            // A record without `agent` keeps the stored row's agent instead of resetting it to Claude —
+            // an older daemon omits the key on `conversation_updated` (AC #2).
+            stored = if (record.agent == null) incoming.copy(agent = existing[index].agent) else incoming
+            existing.toMutableList().apply { this[index] = stored }  // upsert by id
+        } else {
+            stored = incoming
+            existing + incoming
+        }
     }
+    return stored
 }
 ```
 
-`createDiscussion` folds the returned `Conversation` into `projection` **after** the reply, so
+`createDiscussion` folds the decoded record into `projection` **after** the reply, so
 `observeConversations` re-emits to include it without waiting on a server-pushed `conversations` snapshot
 (AC #2 — deterministic and self-contained). It is an **upsert by `id`** (not blind append), so it's
 idempotent against a re-delivered create and retry-merges with a concurrent authoritative snapshot. The
 `conversations`-snapshot collector arm keeps its blind full-replace unchanged: because #316 and #318 fill
-the **identical** four list-tier placeholders (`currentSessionId=""`, `sessionHistory=emptyList()`,
+the **identical** list-tier placeholders (`currentSessionId=""`, `sessionHistory=emptyList()`,
 `isSleeping=false`, `archived=false`), the folded `Conversation` is field-equal to the same conversation
-mapped later from a snapshot, so `StateFlow` conflation suppresses a redundant re-emit.
+mapped later from a snapshot, so `StateFlow` conflation suppresses a redundant re-emit — **except `agent`**,
+which #1108 deliberately does not clobber to a placeholder (see the contrast with `currentSessionId` below).
 [#348](../codebase/348.md) (`promote`) **reuses this fold verbatim** — its second call site, where an
 upsert replaces the existing *unpromoted* discussion entry in place with the promoted one. The second
 consumer confirms the helper is right-shaped: no abstraction was extracted (the #347 open question is
 resolved, not deferred). Since #914 both `createDiscussion` and `promote` reach it as `conversationList`,
-the `ConversationListProjection` instance `ConversationCommands` is constructed with.
+the `ConversationListProjection` instance `ConversationCommands` is constructed with. The kept-agent branch
+is read from `current` **inside** the CAS lambda and `stored` is reassigned on every branch, so a retried
+lambda (a concurrent `conversations` snapshot landing mid-update) cannot leak a value from an earlier
+attempt — the same discipline `applyWorkspaceLabel` follows.
 
 > **Confirmed-insert is the trust property (mirrors #346).** A conversation is folded into the read
 > projection **only** on a server `conversation_created` success reply, never speculatively and never on
@@ -352,9 +369,8 @@ suspend fun promote(conversationId: String, name: String, workspace: String?): C
         ),
     )
     val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
-    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    conversationList.upsertConversation(conversation)   // confirmed-upsert — ONLY after a successful decode (AC #2/#3)
-    return conversation
+    // Confirmed-upsert — ONLY after a successful decode (AC #2/#3) — returns the row as stored (#1108).
+    return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
 }
 ```
 
@@ -415,9 +431,8 @@ suspend fun rename(conversationId: String, name: String): Conversation {
         ),
     )
     val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
-    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    conversationList.upsertConversation(conversation)   // confirmed-upsert — ONLY after a successful decode
-    return conversation
+    // Confirmed-upsert — ONLY after a successful decode — returns the row as stored (#1108).
+    return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
 }
 ```
 

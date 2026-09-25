@@ -16,7 +16,6 @@ import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
 import de.pyryco.mobile.data.network.SetConversationMutedPayloadDto
-import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.PLATFORM_FCM
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ARCHIVE_CONVERSATION
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_CREATE_CONVERSATION
@@ -101,9 +100,7 @@ internal class ConversationCommands(
         // Throws on a server `error` / not-Open session; the decode + confirmed insert below are
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = requests.sendAndAwaitReply(request)
-        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        conversationList.upsertConversation(conversation)
-        return conversation
+        return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
     }
 
     /**
@@ -148,9 +145,7 @@ internal class ConversationCommands(
         // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = requests.sendAndAwaitReply(request)
-        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        conversationList.upsertConversation(conversation)
-        return conversation
+        return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
     }
 
     /**
@@ -338,8 +333,7 @@ internal class ConversationCommands(
         // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = requests.sendAndAwaitReply(request)
-        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        conversationList.upsertConversation(conversation)
+        conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
     }
 
     /**
@@ -365,8 +359,7 @@ internal class ConversationCommands(
                     ),
             )
         val reply = requests.sendAndAwaitReply(request)
-        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        conversationList.upsertConversation(conversation)
+        conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
     }
 
     /**
@@ -478,9 +471,7 @@ internal class ConversationCommands(
         // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = requests.sendAndAwaitReply(request)
-        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        conversationList.upsertConversation(conversation)
-        return conversation
+        return conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
     }
 
     /**
