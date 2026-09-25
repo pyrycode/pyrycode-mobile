@@ -59,6 +59,8 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1090 adds the attention-dot method.
 LIVE_MINIMUM += 1
+# #1107 re-adds #1076's background-task progress method.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 
