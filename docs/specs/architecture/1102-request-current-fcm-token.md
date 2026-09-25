@@ -128,3 +128,10 @@ The e2e message change is compiled by `compileDebugAndroidTestKotlin`; the two l
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-25
+
+## Revisions
+
+**2026-09-25, Phase B.**
+
+- Open question resolved: `FirebasePushTokenSource.currentToken` adds its listener with no executor, so it runs on main. It only resumes the continuation, and the refresher's job continues on its own dispatcher, so no executor is needed.
+- One test added beyond the list above: `requestThatNeverCompletes_timesOut_andTheNextForegroundRetries` proves the `requestTimeout` bound frees the in-flight guard. The pending-request test uses `runCurrent()`, because `advanceUntilIdle()` moves virtual time past that timeout.
