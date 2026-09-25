@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,6 +40,7 @@ class FooterMenuTest {
         pendingPermission: String? = null,
         sessionId: String = "s1",
         appliedEffort: EffectiveEffort = EffectiveEffort.Unavailable,
+        capabilities: SessionCapabilities? = null,
     ) = ThreadRunConfig(
         choices = choices,
         menuAvailable = menuAvailable,
@@ -53,6 +55,7 @@ class FooterMenuTest {
         permissionMode = permissionMode,
         pendingPermission = pendingPermission,
         appliedEffort = appliedEffort,
+        capabilities = capabilities,
     )
 
     @Test
@@ -198,6 +201,61 @@ class FooterMenuTest {
         )
         assertEquals("Auto approval", with?.options?.get(2)?.label)
     }
+
+    // ---- #1111: the session's capability list ---------------------------------------------------
+
+    @Test
+    fun effort_withACapabilityList_offersOnlyLevelsBothTheRowAndTheListName() {
+        val runConfig = config(capabilities = caps(effortLevels = listOf("low", "max")))
+
+        assertEquals(listOf(OptionsOverlayOption("max", "max")), footerMenu(FooterControl.Effort, runConfig)?.options)
+        assertEquals(listOf("max"), runConfig.effortChoices.map { it.value })
+    }
+
+    @Test
+    fun effort_withACapabilityListNamingNoneOfTheRowsLevels_offersNothing() {
+        assertNull(footerMenu(FooterControl.Effort, config(capabilities = caps(effortLevels = emptyList()))))
+    }
+
+    @Test
+    fun permission_withACapabilityList_offersListedModesPlusBypass() {
+        val menu =
+            footerMenu(
+                FooterControl.Permission,
+                config(permissionMode = "default", capabilities = caps(permissionModes = listOf("default", "plan"))),
+            )
+
+        assertEquals(listOf("default", "plan", "bypassPermissions"), menu?.options?.map { it.value })
+    }
+
+    @Test
+    fun permission_withACapabilityList_autoStillNeedsTheRowsSupport() {
+        val listed = caps(permissionModes = listOf("default", "auto"))
+        val autoOpus = opus.copy(supportsAutoMode = true)
+
+        assertEquals(
+            listOf("default", "bypassPermissions"),
+            footerMenu(FooterControl.Permission, config(permissionMode = "default", capabilities = listed))?.options?.map { it.value },
+        )
+        assertEquals(
+            listOf("default", "auto", "bypassPermissions"),
+            footerMenu(FooterControl.Permission, config(choices = listOf(autoOpus), permissionMode = "default", capabilities = listed))
+                ?.options
+                ?.map { it.value },
+        )
+        // A row that supports auto does not bring it back when the list leaves it out.
+        assertEquals(
+            listOf("default", "bypassPermissions"),
+            footerMenu(FooterControl.Permission, config(choices = listOf(autoOpus), permissionMode = "default", capabilities = caps()))
+                ?.options
+                ?.map { it.value },
+        )
+    }
+
+    private fun caps(
+        effortLevels: List<String> = listOf("high", "max"),
+        permissionModes: List<String> = listOf("default"),
+    ) = SessionCapabilities(effortLevels = effortLevels, permissionModes = permissionModes)
 
     @Test
     fun permission_anUnrecognisedModeIsInertText_selectsNothing_andIsNeverAChoice() {

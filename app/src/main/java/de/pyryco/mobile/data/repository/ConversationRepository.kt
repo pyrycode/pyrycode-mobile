@@ -1012,6 +1012,8 @@ data class HistoryEntry(
  *   session reports `0` here **and** in [windowTokens], the two read as a pair rather than separately.
  * @param windowTokens Context-window size. **`0` means the usage reader is unwired**, not an empty
  *   window — do not render a percentage from it.
+ * @param capabilities What the session accepts (#1111), or `null` when the reply carried no list — a conn
+ *   without `multi_agent`, or a reply that resolved no session. `null` narrows nothing.
  */
 data class SessionSettings(
     val sessionId: String,
@@ -1022,6 +1024,26 @@ data class SessionSettings(
     val yolo: Boolean,
     val usedTokens: Long,
     val windowTokens: Long,
+    val capabilities: SessionCapabilities? = null,
+)
+
+/**
+ * The part of a `session_settings` reply's `capabilities` object this client reads (#1111). The daemon
+ * builds it from the same checks that refuse a write, so a client offers only what it lists.
+ *
+ * The strings are daemon-authored. They are compared against published row values and the client's own
+ * permission-mode wire values, and never rendered, logged or sent.
+ *
+ * @param effortLevels The effort levels the session's current model accepts. `""` is accepted but never listed.
+ * @param permissionModes The `permission_mode` values a write accepts. Never `bypassPermissions`, which is
+ *   reachable only as `yolo`.
+ * @param slashCommands Whether the session answers slash commands at all; `true` when the daemon predates
+ *   the flag.
+ */
+data class SessionCapabilities(
+    val effortLevels: List<String>,
+    val permissionModes: List<String>,
+    val slashCommands: Boolean = true,
 )
 
 /**

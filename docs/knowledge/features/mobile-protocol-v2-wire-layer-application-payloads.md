@@ -118,12 +118,22 @@ reply, `conversationId`, and decoded `text` are never logged), not this zero-log
 `../pyrycode/docs/protocol-mobile.md` § `request_session_settings` / § `session_settings`. Consumed by
 [`RemoteConversationRepository.observeSessionSettings`](remote-conversation-repository-conversation-writes.md#observesessionsettingsconversationid--refreshsessionsettingsconversationid--the-settings-read-counterpart-to-setsessionsettings-590).
 
-- **`SessionSettingsPayloadDto` models seven fields, deliberately not eight — the eighth (`effective_effort`)
-  never reaches this DTO.** Every modeled field (`session_id`, `model`, `effort`, `yolo`, `permission_mode`,
-  `used_tokens`, `window_tokens`) is **required, with no default** — the wire emits all seven
-  unconditionally, so a missing key is a malformed reply rather than a silently-defaulted one, and each
-  zero (`permission_mode: ""` especially) is a *read* answer, not a manufactured one. `used_tokens`/
-  `window_tokens` decode as `Long` (the pyrycode#720 64-bit-Go-`int` width trap, same posture as `HistoryEntry.id`).
+- **`SessionSettingsPayloadDto` models seven original fields, deliberately not eight — the eighth
+  (`effective_effort`) never reaches this DTO.** Every modeled original field (`session_id`, `model`,
+  `effort`, `yolo`, `permission_mode`, `used_tokens`, `window_tokens`) is **required, with no default** —
+  the wire emits all seven unconditionally, so a missing key is a malformed reply rather than a
+  silently-defaulted one, and each zero (`permission_mode: ""` especially) is a *read* answer, not a
+  manufactured one. `used_tokens`/`window_tokens` decode as `Long` (the pyrycode#720 64-bit-Go-`int` width
+  trap, same posture as `HistoryEntry.id`). [#1111](https://github.com/pyrycode/pyrycode-mobile/issues/1111)
+  added a ninth key, `capabilities`, as `val capabilities: SessionCapabilitiesDto? = null` directly on the
+  same DTO — unlike `effective_effort`, it needs no manual presence read, because the wire omits the whole
+  object rather than punning an omission into a defaulted scalar. `SessionCapabilitiesDto` in turn requires
+  its own `effort_levels` and `permission_modes` arrays (the daemon always sends both when it sends the
+  object at all) and defaults `slash_commands` to `true`, so an object from a daemon that predates that flag
+  (pyrycode#2670) still decodes. A present object missing either array fails the frame at the same
+  structural step as the seven originals. See [Conversation repository](conversation-repository.md) for the
+  domain `SessionCapabilities` type and [Thread composer footer § Sourcing — Permission mode](thread-composer-footer.md#permission-mode-650)
+  for what reads it.
 - **The reply is decoded in two steps, and the order is load-bearing — the reason it is not one DTO.**
   `MobileJson`'s `explicitNulls = false` means a `String?`-with-`null`-default field cannot tell an omitted
   key from an explicit `null` apart; both decode to the same Kotlin `null`. That is exactly the collapse
