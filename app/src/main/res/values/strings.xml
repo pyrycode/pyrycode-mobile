@@ -372,4 +372,10 @@
     <string name="thread_attachment_open_failed">Couldn\'t open file</string>
     <string name="thread_attachment_saved">File saved</string>
     <string name="thread_attachment_save_failed">Couldn\'t save file</string>
+    <!-- #1067: the markdown reader's overflow menu, and the clip label its copies carry (never the note's name). -->
+    <string name="markdown_reader_copy_markdown">Copy as markdown</string>
+    <string name="markdown_reader_copy_plain_text">Copy as plain text</string>
+    <string name="markdown_reader_copy_html">Copy as HTML</string>
+    <string name="markdown_reader_refresh">Refresh</string>
+    <string name="markdown_reader_clip_label">Note</string>
 </resources>

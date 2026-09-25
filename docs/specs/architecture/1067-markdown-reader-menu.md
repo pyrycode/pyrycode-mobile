@@ -132,3 +132,14 @@ Pending for the documentation stage: `docs/knowledge/features/markdown-reader-sc
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-25
+
+## Revisions
+
+**2026-09-25, during implementation.**
+
+- `LinkedMarkdownReaderDestination(note, reread: suspend (path: String) -> MarkdownDocument?, onBack, modifier)` takes a read function instead of `repository` + `conversationId`. `MainActivity` passes `readLinkedMarkdown(destinations.repository(serverId), conversationId, path)`, so the request is unchanged. This keeps the repository out of the composable and makes the destination testable without a fake repository.
+- The code-fence provider is **always** replaced (`<pre><code>` with escaped code, no `class`), rather than only if the library turned out not to escape the info string. This removes any dependence on how the library handles it; the hostile-info-string test pins the result.
+- A link destination arrives from the library already entity-encoded, so the href is escaped for `"`, `'`, `<` and `>` but its `&` is left as written. Escaping it again turned `&amp;` into `&amp;amp;`. A `&` cannot end the attribute. The autolink provider reads raw source, so it escapes `&` as well.
+- The plain-text copy also drops a quote's continuation `>` and the space after it, which sit inside the paragraph. Without that, a two-line quote copies as `words  and more` with a double space.
+- The copy log line carries `chars=<source length>` in place of `truncated`: a length is content-free and needs no second conversion pass to compute.
+- The bar's end padding is now `BarGutter - BarTouchSlack`, as in `ThreadTopAppBar`, because the row now ends in a 48dp touch target instead of text.
