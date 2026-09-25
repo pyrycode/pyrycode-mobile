@@ -247,6 +247,37 @@ class AttachmentRetrievalTransferTest {
             assertEquals(AttachmentRetrievalResult.Unavailable, transfer.await())
         }
 
+    // #1049: a `read_workspace_file` answer carries an id the daemon minted, so the first chunk to arrive pins it.
+    @Test
+    fun unpinnedTransfer_pinsTheFirstArrivingChunksId_andCompletes() =
+        runTest {
+            val bytes = bytes(ATTACHMENT_CHUNK_BYTES + 1)
+            val transfer = AttachmentRetrievalTransfer(REQUEST_ID, null)
+            transfer.accept(chunk(bytes, 1, attachmentId = OTHER_ID))
+            assertEquals(OTHER_ID, transfer.attachmentId)
+            transfer.accept(chunk(bytes, 0, attachmentId = OTHER_ID))
+            assertFetched(bytes, transfer.await())
+        }
+
+    @Test
+    fun unpinnedTransfer_firstChunkWithAMalformedId_fails() =
+        runTest {
+            val transfer = AttachmentRetrievalTransfer(REQUEST_ID, null)
+            assertTrue(transfer.accept(chunk(bytes(3), 0, attachmentId = "../notes.md")))
+            assertEquals(AttachmentRetrievalResult.Invalid, transfer.await())
+            assertTrue(logs.none { it.contains("notes.md") })
+        }
+
+    @Test
+    fun unpinnedTransfer_idChangedMidStream_fails() =
+        runTest {
+            val bytes = bytes(ATTACHMENT_CHUNK_BYTES + 1)
+            val transfer = AttachmentRetrievalTransfer(REQUEST_ID, null)
+            transfer.accept(chunk(bytes, 0))
+            transfer.accept(chunk(bytes, 1, attachmentId = OTHER_ID))
+            assertEquals(AttachmentRetrievalResult.Invalid, transfer.await())
+        }
+
     @Test
     fun toStringNamesNoContent() {
         val content = AttachmentContent(listOf(bytes(3)))

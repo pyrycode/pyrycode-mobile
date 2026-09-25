@@ -1124,6 +1124,12 @@ class RemoteConversationRepository(
         attachmentId: String,
     ): AttachmentFetchResult = attachmentRetrievals.fetch(conversationId, attachmentId)
 
+    /** Read one workspace file live over `read_workspace_file` (#1049); see [AttachmentRetrievals.readWorkspaceFile]. */
+    override suspend fun readWorkspaceFile(
+        conversationId: String,
+        path: String,
+    ): AttachmentFetchResult = attachmentRetrievals.readWorkspaceFile(conversationId, path)
+
     /** Request the rendered claude screen (#375); see [MessageCommands.requestScreenSnapshot]. */
     override suspend fun requestScreenSnapshot(conversationId: String): String = messageCommands.requestScreenSnapshot(conversationId)
 

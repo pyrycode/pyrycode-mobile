@@ -58,6 +58,9 @@ sealed interface ThreadNavigation {
     data class OpenMarkdown(
         val attachmentId: String,
     ) : ThreadNavigation
+
+    /** Open the reader on the workspace note a link named (#1050). It carries nothing: the ViewModel holds the note. */
+    data object OpenLinkedMarkdown : ThreadNavigation
 }
 
 data class ThreadUiState(

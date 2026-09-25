@@ -15,6 +15,7 @@ Parses an input string with `org.jetbrains:markdown`'s `MarkdownParser(GFMFlavou
 fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
+    onOpenMarkdownPath: ((String) -> Unit)? = null,
 )
 ```
 
@@ -22,7 +23,7 @@ fun MarkdownText(
 
 **No `color` parameter** — text inherits the ambient `LocalContentColor.current`. The consumer (`AssistantMessage` in [`MessageBubble`](./message-bubble.md)) wraps the call in `CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { MarkdownText(...) }`. Keeps the renderer reusable from any future surface (system messages, tool cards) without changing the signature.
 
-**No `onLinkClick` parameter** — links open via the ambient `LocalUriHandler.current.openUri(url)`. External callers cannot intercept link taps; if a future surface needs to (e.g. an in-app deep-link router), introduce a parameter at that point, not pre-emptively.
+**`onOpenMarkdownPath`, opt-in, since #1050.** Every link keeps opening via the ambient `LocalUriHandler.current.openUri(url)` when this is `null` — the default, and what the reader's own `MarkdownText` call and every other caller still get unchanged. A caller that passes a callback opts a workspace-path link (`markdownLinkPath`, below) in to routing through it instead of doing nothing; every other target (`http`, `https`, `mailto`) still opens through the platform handler regardless of the callback. Only [`MessageBubble`](message-bubble.md)'s assistant paths pass one, so the callback exists to let a link in an assistant reply — not a link anywhere else — open the in-app reader. See [Markdown-path links](#markdown-path-links-since-1050).
 
 ## How it works
 
@@ -207,6 +208,16 @@ The link's `LinkInteractionListener` consults this predicate before calling `uri
 - Long-content DoS — Phase 0 messages are bounded; Phase 4 inherits Claude API response-size limits. #681 adds its own bound for tables specifically — see [Tables](#tables)'s `MAX_TABLE_COLUMNS` / `MAX_TABLE_ROWS`.
 - **New in #681 — `GFM_AUTOLINK` and `INLINE_MATH` add no new link-like surface.** `GFM_AUTOLINK` is a childless leaf with no dispatcher arm, so a daemon cannot manufacture a tappable link out of prose that never contained link markup. `INLINE_MATH` has children but no arm either; its leaves re-append their own source text. Table cells and task-list items route through the same `appendInline` / `appendInlineChildren` as every other inline site, so they inherit this gate rather than opening a second one.
 
+### Markdown-path links (since #1050)
+
+`onOpenMarkdownPath` lets a workspace-note link in an assistant reply open [the in-app reader](markdown-reader-screen.md) instead of doing nothing, without touching `isSafeLinkScheme` or any block-walker signature — every private block function still takes a plain `UriHandler`.
+
+- `internal fun markdownLinkPath(target: String): String?` — the path to send, or `null` when [target] is not a markdown path. Strips a trailing `#fragment` (from the *last* `#` — `a.md#x#y` keeps `#x` as part of the path and so is not a markdown path; harmless, since the link then just stays inert rather than misrouting), then a trailing `:line` or `:line:column` (digits only, `LinkLineSuffix`), then requires no URL scheme (`LinkScheme`, RFC 3986's `^[A-Za-z][A-Za-z0-9+.-]*:`) and a `.md` / `.markdown` suffix, any case. Stripping the `:line` suffix *before* the scheme check is what keeps `Plan.md:12` from reading as scheme `plan.md`. The stripped path is returned exactly as written — the phone never decodes, resolves or confines it; the daemon's `read_workspace_file` does.
+- `internal fun routeMarkdownLink(target, onOpenMarkdownPath, openUri)` — a markdown path with a non-null callback goes to the callback and never to `openUri`; anything else falls through to the existing `isSafeLinkScheme` allowlist.
+- `MarkdownText` wraps `LocalUriHandler.current` in a `remember`ed private `UriHandler` whose `openUri` calls `routeMarkdownLink` (the callback read through `rememberUpdatedState`, so a recomposition with a new lambda doesn't need a new handler instance); the `INLINE_LINK` arm's `LinkInteractionListener` now calls this wrapping handler for every link target unconditionally, rather than checking `isSafeLinkScheme` itself first.
+
+Consumer wiring: [`MessageBubble`](message-bubble.md)'s `onOpenMarkdownLink` parameter reaches both assistant render paths (finished `MarkdownText` and the streaming `StreamingAssistantBody` / `StreamingAssistantBodyView` chain) but not `UserMessageBubble`, which never receives it. [Thread screen](thread-screen.md) and [Markdown reader screen](markdown-reader-screen.md#linked-note-live-since-1050) cover the ViewModel-side single-read guard and the route the callback ultimately drives.
+
 ### File-private spacing constants
 
 ```kotlin
@@ -281,3 +292,4 @@ Plus two file-private `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 
   - #184 — streaming caret + animation (landed). Operates at the `MessageBubble` layer; passes the revealed-prefix-plus-caret string through this renderer unchanged each tick. Partial code fences flow through `CodeBlock` unchanged; the `remember(content, syntaxLanguage)` re-tokenises per reveal tick (sub-millisecond on typical sizes). Tables and task lists flow through the same unchanged-signature path; `singleTildeRuns` re-runs per reveal tick behind its `children.none { TILDE }` early-out rather than being memoised, since `appendInlineChildren` builds outside composition where `remember` is unavailable
   - #657 — code block header/body chrome and per-block copy control (landed). See [Code blocks](#code-blocks); an unterminated (streaming) fence's partial content still extracts correctly, so #184's per-tick re-render carries no new edge case
   - #680 — live desktop/mobile comparison of the same replies, covering the three constructs this ticket added
+  - #1050 — `onOpenMarkdownPath` routes an assistant-reply markdown-path link to [the live linked-note reader](markdown-reader-screen.md#linked-note-live-since-1050) instead of leaving it inert; see [Markdown-path links](#markdown-path-links-since-1050)
