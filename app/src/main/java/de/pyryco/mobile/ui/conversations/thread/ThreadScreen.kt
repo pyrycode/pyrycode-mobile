@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -24,6 +26,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -46,7 +49,9 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
@@ -69,6 +74,7 @@ import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.ModelRefusalRow
+import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
 import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
@@ -345,6 +351,8 @@ fun ThreadScreen(
                         isThinking = isThinking,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
+                        taskCount = state.backgroundTaskCount,
+                        onTasksClick = { backgroundTasksOpen = true },
                     )
                     // #933: Figma's `Attachment area`, between the status area and the input field, only when
                     // this chat has something pending.
@@ -795,6 +803,10 @@ fun ThreadScreen(
  * the `responding` phase is exactly the signal the band otherwise lacks. The screen passes it only while
  * the turn is busy, so every arm above still pre-empts it and a closed call drops the band back to what
  * it would otherwise show.
+ *
+ * [taskCount] (#1043) is not an arm either: above zero, a pill reading it sits at the band's right end
+ * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel. At zero
+ * the band is exactly the reading, so with nothing live it still contributes no node.
  */
 @Composable
 private fun ThreadStatusArea(
@@ -805,17 +817,59 @@ private fun ThreadStatusArea(
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
+    taskCount: Int,
+    onTasksClick: () -> Unit,
 ) {
-    val slot = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter)
+    val reading: @Composable (Modifier) -> Unit = { modifier ->
+        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
+    }
+    if (taskCount <= 0) {
+        reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
+        return
+    }
+    // The reading's own 16dp padding lands its content on the 20dp gutter; the pill ends on it. A reading
+    // that emits nothing takes its weight with it, and Arrangement.End keeps the pill at the right end.
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        reading(Modifier.weight(1f))
+        // Figma's band is 24dp, the pill's own height. The clickable Surface would otherwise lay out at the
+        // 48dp minimum touch target; the hit test still widens its touch bounds to that minimum without it.
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+            NoticePill(
+                text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount),
+                isError = false,
+                onClick = onTasksClick,
+                // Figma 568:3162 sits in the band, not over the messages, so it has no overlay shadow.
+                shadowElevation = 0.dp,
+            )
+        }
+    }
+}
+
+/** The band's one live reading, top wins; see [ThreadStatusArea]. Emits nothing when no signal is live. */
+@Composable
+private fun StatusReading(
+    apiRetry: ApiRetryStatus,
+    resetting: ResetStatus?,
+    isCompacting: Boolean,
+    turnOutcome: TurnOutcomeReport?,
+    isThinking: Boolean,
+    thinkingProgress: ThinkingProgress?,
+    runningTool: ToolCall?,
+    modifier: Modifier = Modifier,
+) {
     when {
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
-        resetting != null -> ResettingIndicator(status = resetting, modifier = slot)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
+        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
+        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
         else ->
             ThinkingIndicator(
                 isThinking = isThinking,
-                modifier = slot,
+                modifier = modifier,
                 progress = thinkingProgress,
                 runningTool = runningTool,
             )
