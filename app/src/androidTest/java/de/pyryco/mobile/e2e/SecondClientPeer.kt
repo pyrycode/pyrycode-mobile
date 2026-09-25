@@ -24,6 +24,7 @@ import de.pyryco.mobile.data.network.QuestionAnswerPayloadDto
 import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.QueueStatePayloadDto
 import de.pyryco.mobile.data.network.QueuedMessageDto
+import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.RequestAttachmentPayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
@@ -197,6 +198,27 @@ class SecondClientPeer(
             cursor = page.cursor
         } while (!page.atStart && page.entries.isNotEmpty())
         return entries
+    }
+
+    /**
+     * Set [path]'s workspace label to [label], or clear it with `null`, as this device (#1089), and wait for
+     * the daemon's correlated `workspace_updated`. The daemon pushes the same record to every other client,
+     * the phone included. A label is stored, not appended, so a link that ends first gets the request again.
+     * Both the path and the label stay out of every failure message.
+     */
+    internal suspend fun renameWorkspace(
+        path: String,
+        label: String?,
+        timeoutMs: Long,
+    ) {
+        val reply =
+            exchange(
+                "rename_workspace",
+                MobileJson.encodeToJsonElement(RenameWorkspacePayloadDto(path = path, label = label)),
+                timeoutMs,
+                resend = true,
+            )
+        check(reply.type == "workspace_updated") { "peer rename_workspace refused: ${reply.payloadField("code") ?: reply.type}" }
     }
 
     /**

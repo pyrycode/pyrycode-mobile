@@ -1164,6 +1164,10 @@ elif [ -n "${LIVE}" ]; then
   # back before and after a new session, archived and restored. Two pings (Reset session also runs the
   # daemon's wrap-up turn), so the list holds 42 methods and 41 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_createEditArchiveChannel_readsPromptBack"
+  # #1089: a workspace label set and cleared from the second client reaches host A's chip, tree row and
+  # Settings row live, and never host B's workspace at the same folder. It joins at no turn cost, so the
+  # list holds 43 methods and 41 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

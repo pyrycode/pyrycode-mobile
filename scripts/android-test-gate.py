@@ -55,6 +55,8 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1088 adds the channel create, edit and archive method.
 LIVE_MINIMUM += 1
+# #1089 adds the peer-set workspace label method.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 
