@@ -3357,59 +3357,73 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A retrieval whose link drops fails visibly, and Retry recovers it (#1017, rung 3). With the phone in
-     * chat X, claude writes a short file and hands it over with `send_file`, as in #1016. When the phone's
-     * row for it starts loading, the link is cut at the retrieval's request ([cutLinkOn]), before the request
-     * is sent.
-     *  * **Failed with Retry.** The row shows the failed state and its Retry control.
-     *  * **Retry recovers.** With the link restored, Retry brings the row to ready, and opening it (and saving
-     *    it) yields the content's digest.
-     * The file is claude's, not another client's: until #1020 no other client's file reaches the phone, live
-     * or by history. The retrieval is the same `request_attachment` whoever sent the file.
+     * A retrieval whose link drops fails visibly, and Retry recovers it (#1017, rung 3). The [SecondClientPeer]
+     * uploads a ~100 KB document into chat X, which the phone does not open, and names it on a message, as
+     * the desktop does. The phone restarts with X's thread cache cleared, so X's row can only come from
+     * history replay (#1020), which keeps the id but no name. When the phone opens X, the link is cut at the
+     * retrieval's request for that id ([cutLinkOn]), before the request is sent.
+     *  * **Failed with Retry.** The row, unnamed since only retrieval supplies the name, shows the failed state
+     *    and its Retry control.
+     *  * **Retry recovers.** With the link restored, Retry brings the row to ready under the uploaded name, and
+     *    opening it (and saving it) yields the fixture's digest.
      *
-     * **One real-claude turn**: the phone's message.
+     * **One real-claude turn**: the peer's message.
      */
     @Test
-    fun interactiveTurn_interruptedRetrieval_retryLoadsTheOfferedFile() {
+    fun interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile() {
         val serverId = twoHostArg(ARG_SERVER_ID)
         val peer = runningToolPeer()
         val stub = ActivityIntentStub()
         val inserted = mutableListOf<Uri>()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.addMonitor(stub)
+        var relaunched: ActivityScenario<MainActivity>? = null
         var cut: LinkCut? = null
         try {
             val stamp = System.currentTimeMillis()
-            val content = OFFER_CONTENT_PREFIX + stamp
-            val fileName = INTERRUPT_FILE_PREFIX + "offer-$stamp.txt"
+            val document = documentFixture("retrieval-$stamp")
+            val documentName = INTERRUPT_FILE_PREFIX + "retrieval-$stamp.txt"
 
-            // 1. The phone is attached to X when claude calls the tool, and its first retrieval cuts the link.
+            // 1. X is a fresh named chat the phone does not open; the peer uploads into it and names the file.
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             awaitChannelList()
             awaitConnected()
             val (chatX, nameX) = answerChat(serverId, INTERRUPT_CHAT_NAME_PREFIX)
-            assertPeerAnswers(peer, chatX)
-            openChatRow(nameX)
-            cut = cutLinkOn(serverId) { it.startsWith(RETRIEVAL_REQUEST_EVENT) }
-            sendFromPhone(offerPrompt(content, fileName))
-            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the send_file turn in X did not end") { it.type == "turn_end" }
-            val offered =
-                peer.recorded(chatX).any {
-                    it.type == "attachment_offered" &&
-                        MobileJson.decodeFromJsonElement(AttachmentOfferedPayloadDto.serializer(), it.payload).filename == fileName
+            val id =
+                runBlocking {
+                    val id = peer.uploadAttachment(chatX, documentName, TEXT_MIME, document, REPLY_TIMEOUT_MS)
+                    peer.sendMessage(chatX, PING_PROMPT, THREAD_TIMEOUT_MS, attachmentIds = listOf(id))
+                    id
                 }
-            assertTrue("claude's turn in X offered no file with the fixture's name", offered)
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the peer's attachment turn in X did not end") { it.type == "turn_end" }
+
+            // 2. Restart with X's thread cache cleared, then open X with the cut armed for that id's request.
+            relaunched =
+                restartApp {
+                    val cache = GlobalContext.get().get<ConversationCache>()
+                    runBlocking {
+                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
+                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                    }
+                }
+            awaitChannelList()
+            awaitConnected()
+            cut = cutLinkOn(serverId) { it.startsWith(RETRIEVAL_REQUEST_EVENT + "id=$id") }
+            openChatRow(nameX)
             // The row loads once it is drawn, so keep it on screen until the cut.
-            cut.await("the phone never requested the offered file") { runCatching { scrollListTo(hasText(fileName)) } }
+            cut.await("the phone never requested the peer's file") {
+                runCatching { scrollListTo(hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)) }
+            }
             cut.close()
 
-            // 2. AC-2: the row shows the failed state with its Retry.
-            val retry = attachmentRetry(fileName)
+            // 3. AC-2: the row, still unnamed, shows the failed state with its Retry.
+            val unnamed = string(R.string.thread_attachment_unnamed)
+            val retry = attachmentRetry(unnamed)
             try {
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                     composeTestRule.onAllNodes(retry, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() &&
                         composeTestRule
-                            .onAllNodes(inAttachmentRow(fileName, hasText(attachmentFailedText)), useUnmergedTree = true)
+                            .onAllNodes(inAttachmentRow(unnamed, hasText(attachmentFailedText)), useUnmergedTree = true)
                             .fetchSemanticsNodes()
                             .isNotEmpty()
                 }
@@ -3417,19 +3431,20 @@ class InteractiveStreamE2ETest {
                 throw AssertionError("the interrupted row showed no failed state with Retry", e)
             }
 
-            // 3. AC-2: with the link back, Retry brings the row to ready, and it opens with the content's bytes.
+            // 4. AC-2: with the link back, Retry brings the row to ready, and it opens with the fixture's bytes.
             setHostLink(serverId, up = true)
             awaitConnected()
             composeTestRule.onAllNodes(retry, useUnmergedTree = true).onFirst().performClick()
-            awaitReadyAttachmentRow(fileName, REPLY_TIMEOUT_MS)
-            composeTestRule.onAllNodes(readyAttachmentRow(fileName)).assertCountEquals(1)
-            assertOpensAndSaves(stub, fileName, sha256(content.toByteArray()), inserted)
+            awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
+            assertOpensAndSaves(stub, documentName, sha256(document), inserted)
         } finally {
             cut?.close()
             runCatching { setHostLink(serverId, up = true) }
             instrumentation.removeMonitor(stub)
             deleteFixtures(inserted)
             peer.close()
+            relaunched?.close()
         }
     }
 

@@ -1146,7 +1146,7 @@ elif [ -n "${LIVE}" ]; then
   # #1017: the interrupted upload, the interrupted retrieval and the cross-host file join, one turn each, so the
   # list holds 37 methods and 39 turns. Each cut is fired by the app's own RelayLog line, not by timing.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes"
-  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedRetrieval_retryLoadsTheOfferedFile"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
