@@ -1940,7 +1940,81 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live baseline — 2026-09-20, 16:12:58–16:13:58 UTC (#528).**
+**Current live baseline — 2026-09-25 (#680).** The dispatcher's real-claude gate ran
+`python3 scripts/android-test-gate.py live` against `feature/680` at `b4da42eb70` merged with
+`origin/main` at `87b6ca3241` (6 commits behind before the merge) in a detached worktree — 45
+executed, 45 passed, no failures or skips, exit 0, wall clock 463.9s. `LIVE_MINIMUM` is 45 and this
+run executed every curated method. This is the live gate for the mobile parity release candidate,
+the final check of the 2026-09-19 parity batch; its full record, including the layout and feature
+checks that do not run through this gate, is
+[`docs/specs/architecture/680-parity-release-candidate.md`](specs/architecture/680-parity-release-candidate.md).
+The candidate commit is `bf3749d8` (product tree identical to main `0abb4a0f`); the merge onto
+`87b6ca3241` that the gate actually executed against added only test tooling ahead of it —
+`FocusRecordListener` and its `testInstrumentationRunnerArguments` wiring (#1131) and the
+failure-path `report_relay_link_drops` diagnostic (#1132) — with no `app/` product or UI change, so
+this result still describes the candidate. All 45 methods passed, including both #955 push methods
+(`interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` and
+`interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`), so
+background-notification parity holds for this candidate: Firebase setup (#579), token registration
+(#361) and alerts (#685) have all shipped. Two non-blocking gaps remain open: #1135 (Edit channel's
+focused field is hidden by the keyboard in landscape, and rotation resets its unsaved name edit by
+design) and #1136 (four visual deviations from the supplied Figma frames — scanner top-bar offset,
+channel-list row density, assistant bubble colour and modal sheet tone).
+
+| Method | Outcome |
+| --- | --- |
+| `interactiveTurn_pingPrompt_streamsPingReplyIntoThread` | PASS |
+| `interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` | PASS |
+| `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` | PASS |
+| `interactiveTurn_deleteConversation_removesFromListAndClosesThread` | PASS |
+| `interactiveTurn_archiveRestore_roundTripsListMembership` | PASS |
+| `interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace` | PASS |
+| `interactiveTurn_renameConversation_relabelsTopBarAndListRow` | PASS |
+| `interactiveTurn_saveAsChannel_promotesToChannelTier` | PASS |
+| `interactiveTurn_listArchiveEntry_opensArchived` | PASS |
+| `interactiveTurn_twoHostsCollidingConversationId_stayPerHost` | PASS |
+| `interactiveTurn_peerStartedTurn_continuesOnPhone` | PASS |
+| `interactiveTurn_peerQueue_staysConsistentAcrossClients` | PASS |
+| `interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` | PASS |
+| `interactiveTurn_pingPrompt_statusSheetShowsRunningModel` | PASS |
+| `interactiveTurn_pingPrompt_footerShowsContextUsage` | PASS |
+| `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` | PASS |
+| `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` | PASS |
+| `interactiveTurn_chosenEffort_appliesFromTheFirstTurn` | PASS |
+| `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` | PASS |
+| `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` | PASS |
+| `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` | PASS |
+| `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild` | PASS |
+| `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` | PASS |
+| `interactiveTurn_questionAnswer_reachesTheAskingConversation` | PASS |
+| `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` | PASS |
+| `interactiveTurn_reconnect_slashCommandsAndCompactStillWork` | PASS |
+| `interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` | PASS |
+| `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` | PASS |
+| `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` | PASS |
+| `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` | PASS |
+| `interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` | PASS |
+| `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` | PASS |
+| `interactiveTurn_markdownLink_opensLiveNoteInReader` | PASS |
+| `interactiveTurn_muteChannel_roundTripsThroughTheHost` | PASS |
+| `interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes` | PASS |
+| `interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile` | PASS |
+| `interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost` | PASS |
+| `interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched` | PASS |
+| `interactiveTurn_logData_savesTheOwningHostsArchive` | PASS |
+| `interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost` | PASS |
+| `interactiveTurn_addRenameArchiveWorkspace_roundTripsThroughTheHost` | PASS |
+| `interactiveTurn_createEditArchiveChannel_readsPromptBack` | PASS |
+| `interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost` | PASS |
+| `interactiveTurn_attentionDot_followsARealTurn` | PASS |
+| `interactiveTurn_backgroundAgentProgress_showsOnRunningCard` | PASS |
+
+See the verification record for the suite/ticket grouping — Continuity #847–#850, Interaction
+#965–#967, Management #676's children (#1085–#1090, plus the related #1021 mute round trip),
+Attachment #674's children (#1016, #1017, #1020) and Diagnostic download #684 — and for which cases
+each suite proves only deterministically.
+
+**Previous baseline capture — 2026-09-20, 16:12:58–16:13:58 UTC (#528).**
 The [committed sanitized XML](../scripts/fixtures/live-mobile-baseline/528-api33.xml)
 and [runtime/revision context](../scripts/fixtures/live-mobile-baseline/528-api33-context.json)
 record `python3 scripts/android-test-gate.py live` (default `DEVICE=pixel2Api33Atd`):
