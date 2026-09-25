@@ -71,6 +71,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.AttachmentOfferedPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskProgressPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.Envelope
@@ -3148,6 +3149,90 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A running background task's progress shows on its panel card (#1076, #1044). Real claude starts a
+     * `general-purpose` subagent in the background; the daemon sends a `background_task_progress` frame once the
+     * subagent's tool count advances by two (pyrycode `docs/protocol-mobile.md`), and the app drops progress
+     * when the task finishes, so the card is read while the task still runs.
+     *
+     * The task is held open by work, not by a permission prompt: on this daemon the phone draws a prompt as a
+     * dialog over the composer, which would cover the Actions footer, and a background subagent may deny a tool
+     * it was not approved for at launch. [BACKGROUND_PROGRESS_PROMPT] instead gives the subagent a run of Glob
+     * calls, one per message, which need no permission and keep it running for about a minute after its first
+     * progress frame.
+     *
+     * The peer's recorded frames supply the timing, the task's identity and the descriptions the card may show;
+     * the card itself is read off the phone. One card must carry both an activity line, a prefix of a recorded
+     * progress description, and a meta line with a tools segment of any count. Only the progress block draws the
+     * tools segment, so the task's opening description cannot pass for it.
+     *
+     * **Always-on**: the hold does not depend on a fixed delay, only on the subagent taking its Glob calls one at a
+     * time. If a live run shows the task finishing before the panel reads it, `@Ignore` this with the reason, as
+     * #481 / #482 do, and take it out of the `LIVE=1` list. **One real-claude turn**: the prompt that starts the
+     * subagent.
+     */
+    @Test
+    fun interactiveTurn_backgroundAgentProgress_showsOnRunningCard() {
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val peer = runningToolPeer()
+        try {
+            // 1. Claude starts a background subagent in a fresh chat.
+            awaitChannelList()
+            awaitConnected()
+            val (chatId, name) = answerChat(serverId, BACKGROUND_PROGRESS_NAME_PREFIX)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            sendFromPhone(BACKGROUND_PROGRESS_PROMPT)
+
+            // 2. The peer records a progress frame for a task the daemon reported started.
+            allowPromptsUntil(
+                peer,
+                chatId,
+                BACKGROUND_PROGRESS_TIMEOUT_MS,
+                "no background_task_progress arrived for a started task",
+                frame = "background_task_progress",
+            ) { frame -> frame.type == "background_task_progress" && progressFrames(peer, chatId).isNotEmpty() }
+            awaitNoPromptDialog("a permission prompt still covers the thread")
+
+            // 3. While the task runs, its card shows an activity line from a recorded frame and a tools segment.
+            openActions()
+            openBackgroundTasks { it >= 1 }
+            val tools = toolsSegmentPatterns()
+
+            fun texts(node: SemanticsNode): List<String> =
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    .orEmpty()
+                    .map { it.text }
+            val progressCard =
+                SemanticsMatcher("a card with a recorded activity line and a tools segment") { node ->
+                    val prefixes =
+                        progressFrames(peer, chatId)
+                            .map { it.description.takeWhile { c -> !c.isISOControl() }.take(ACTIVITY_PREFIX_CHARS) }
+                            .filter { it.isNotBlank() }
+                    val shown = texts(node)
+                    shown.any { line -> prefixes.any { line.contains(it) } } &&
+                        shown.any { line -> tools.any { it.containsMatchIn(line) } }
+                } and inBackgroundPanel()
+            try {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(progressCard).fetchSemanticsNodes().isNotEmpty() }
+            } catch (e: ComposeTimeoutException) {
+                val anyTools =
+                    composeTestRule.onAllNodes(inBackgroundPanel()).fetchSemanticsNodes().any { node ->
+                        texts(node).any { line -> tools.any { it.containsMatchIn(line) } }
+                    }
+                throw AssertionError(
+                    "the panel drew no running card with a recorded activity line and a tools segment " +
+                        "(any tools segment shown: $anyTools; progress frames recorded: ${progressFrames(peer, chatId).size})",
+                    e,
+                )
+            }
+            closeBackgroundTasks()
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
      * A real push wakes the backgrounded app for a turn that ended while it was away, posts one alert, and
      * the alert's tap opens that conversation's thread (#955, #685). The turn is held on a permission
      * prompt the #950 way while the phone is in front, so the prompt's own alert is spent in the
@@ -4442,6 +4527,42 @@ class InteractiveStreamE2ETest {
     /** A node inside the open background-task panel, the window holding its Close. */
     private fun inBackgroundPanel(): SemanticsMatcher =
         hasAnyAncestor(hasAnyDescendant(hasText(string(R.string.background_tasks_close)) and hasClickAction()))
+
+    /**
+     * The `background_task_progress` frames [peer] recorded for [conversationId], decoded, that join on the
+     * `task_id` of a recorded `background_task_started` (#1076). A frame that fails to decode is skipped.
+     */
+    private fun progressFrames(
+        peer: SecondClientPeer,
+        conversationId: String,
+    ): List<BackgroundTaskProgressPayloadDto> {
+        val frames = peer.recorded(conversationId)
+        val started =
+            frames
+                .filter { it.type == "background_task_started" }
+                .mapNotNull {
+                    runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), it.payload) }
+                        .getOrNull()
+                        ?.taskId
+                }.toSet()
+        return frames
+            .filter { it.type == "background_task_progress" }
+            .mapNotNull {
+                runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskProgressPayloadDto.serializer(), it.payload) }.getOrNull()
+            }.filter { it.taskId in started }
+    }
+
+    /**
+     * Patterns for a progress meta line's tools segment of any count, built from the
+     * `background_tasks_progress_tools` plural's own templates rather than restating its wording (#1044).
+     */
+    private fun toolsSegmentPatterns(): List<Regex> {
+        val resources = InstrumentationRegistry.getInstrumentation().targetContext.resources
+        return listOf(1, 2).map { quantity ->
+            val template = resources.getQuantityText(R.plurals.background_tasks_progress_tools, quantity).toString()
+            Regex("(?<!\\d)" + template.split("%1\$d").joinToString("\\d+") { Regex.escape(it) })
+        }
+    }
 
     /** Close the background-task panel and wait until it is gone. */
     private fun closeBackgroundTasks() {
@@ -5980,6 +6101,23 @@ class InteractiveStreamE2ETest {
             "Run this exact shell command with your tools in the background (run_in_background), then stop " +
                 "without commentary: python3 -c \"import time; time.sleep(40)\""
         const val BACKGROUND_FINISH_TIMEOUT_MS = 180_000L
+
+        // #1076: the progress scenario's run-unique chat prefix (no "ping", no other scenario's prefix), and a
+        // background subagent held open by permission-free Glob calls taken one per message. Its first progress
+        // frame needs two tool calls; the rest keep the task running while the phone opens the panel. The
+        // timeout covers the subagent's start and those two calls.
+        const val BACKGROUND_PROGRESS_NAME_PREFIX = "e2e1076-progress-"
+        const val BACKGROUND_PROGRESS_PROMPT =
+            "Use your Agent tool to start one general-purpose subagent in the background (run_in_background: true), " +
+                "then stop without commentary and do nothing else. Give the subagent exactly these instructions: " +
+                "\"Call the Glob tool twenty times, one call per message and never in parallel, waiting for each " +
+                "result before the next call. Use the pattern *.txt for odd calls and *.md for even calls. Do not " +
+                "use any other tool. When all twenty calls are done, reply with exactly: done.\""
+        const val BACKGROUND_PROGRESS_TIMEOUT_MS = 180_000L
+
+        // How much of a recorded progress description the card must show. The panel filters control characters
+        // and cuts long text, so a short prefix before any control character is what reliably survives.
+        const val ACTIVITY_PREFIX_CHARS = 16
 
         // The dedicated host's display name and its chat's run-unique name: neither contains "ping" or
         // another scenario's prefix.

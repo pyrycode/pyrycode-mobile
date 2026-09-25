@@ -46,6 +46,8 @@ LIVE_MINIMUM += 3
 LIVE_MINIMUM += 1
 # #684 adds the Log data diagnostic-download method.
 LIVE_MINIMUM += 1
+# #1076 adds the background-task progress method.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 
