@@ -188,9 +188,12 @@ missing navigation: absence of navigation alone cannot prove cancellation was
 re-thrown. Demo coverage uses the production repository selector and a paired host
 owning a migrated legacy default, then checks scratch and an explicit `demo`
 default on the existing fake singleton. These are deterministic contract tests.
-The [live regression gate](../../e2e-interactive-stream.md#pre-ship-gate) does not
-prove different defaults on two live hosts; that daemon-confirmed workspace
-scenario remains [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676).
+The [live regression gate](../../e2e-interactive-stream.md#pre-ship-gate) proves
+different defaults on two live hosts with
+`interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost` (#1086): each host's default
+is set from that host's own Settings, and a chat created from that host's row lands
+in it, compared against the daemon's own reported `cwd` rather than the string the
+phone sent.
 
 `rowTapsAndCreationTargetTheirNamedHostRegardlessOfTheSelectedAdapter` (#738,
 reshaped from the pre-existing `rowTargetsAndLegacySelectedProjectionAndActionsUseSeparateNavigationStreams`)
