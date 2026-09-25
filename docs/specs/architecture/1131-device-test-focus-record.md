@@ -68,3 +68,7 @@ Pending for the documentation stage: in `docs/knowledge/features/development-ver
 
 - Whether `mCurrentFocus` / `mFocusedApp` appear once or per display in the API 33 dump — handled by collecting distinct values; confirm on the real record.
 - Whether a Gradle `-P…testInstrumentationRunnerArguments.class=` run keeps the DSL `listener` argument — confirmed by the real record run, which passes `class=`.
+
+## Revisions
+
+- 2026-09-25, open questions resolved on the real record run (throwaway failing test, not committed, run with `class=` through `run_on_device` under the device hold). The DSL `listener` argument survives a Gradle `class=` run: the record was logged. The API 33 dump gave one `mCurrentFocus` and one `mFocusedApp` value, so the distinct-values join stays as a guard only. The record showed focus held by `Application Error: com.android.bluetooth`, a crash dialog, with `anr=none`: a crash dialog is named by `focus`, not `anr`. The `anr` field stays as specified; widening it is left to the fix ticket that acts on this evidence. No design change.
