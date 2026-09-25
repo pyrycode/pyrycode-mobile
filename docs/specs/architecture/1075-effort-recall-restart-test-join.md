@@ -26,3 +26,7 @@ The test itself is the proof. `./gradlew :app:testDebugUnitTest --tests 'de.pyry
 ## Open questions
 
 - Does the join also account for the full-check timeout? If a full `./gradlew check` still times out, find the cause rather than assume it.
+
+## Revisions
+
+- **2026-09-25, Open question resolved as far as the evidence goes.** With the join, the class passed 10 of 10 isolated `--rerun` runs (18 tests, 0 skipped, 0 failures each), and one full `./gradlew check` passed with 2921 tests and 0 failures, this class included. The `TimeoutCancellationException` did not reproduce, so its cause is not established. It is probably not this race: the timeout guards the wait for `"max"` on the *first* store, before the restart, while the race only fails the *second* store's read, and it fails that read with an `IllegalStateException`, not a hang. If the timeout comes back, look at what else in the same test JVM can starve `Dispatchers.Default` / `Dispatchers.IO` during the 5s real-time wait.
