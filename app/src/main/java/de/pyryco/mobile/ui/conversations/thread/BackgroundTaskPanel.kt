@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.BackgroundTask
+import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.ui.components.MobileReadOnlyModal
@@ -49,6 +51,9 @@ private const val CUT_DESCRIPTION = "description"
 private const val CUT_TASK_TYPE = "task_type"
 private const val CUT_PATCH = "patch"
 private const val CUT_SUMMARY = "summary"
+
+// A progress frame's own list (#1044) names `description` (the current activity) and `last_tool_name`.
+private const val CUT_LAST_TOOL_NAME = "last_tool_name"
 
 // The terminal statuses the wire names (protocol-mobile.md § `background_task_updated`). An open set:
 // any other word is shown as itself in the Stopped style.
@@ -68,6 +73,9 @@ private const val FINISHED_CARD_ALPHA = 0.22f
 private val TaskListGap = 10.dp
 private val TaskRowGap = 8.dp
 private val TagMaxWidth = 160.dp
+private val ProgressGap = 2.dp
+
+private const val META_SEPARATOR = " · "
 
 /**
  * The read-only background-task list (#678), redrawn to its Figma frames (#1041), in the shared mobile
@@ -174,8 +182,8 @@ private fun GroupLabel(text: String) {
 }
 
 /**
- * One task card: its type and status tag, then its description, the terminal summary and the latest
- * mid-life update when present. Each cut marker is its own element directly after the field it describes,
+ * One task card: its type and status tag, then its description, a running task's progress, the terminal
+ * summary and the latest mid-life update when present. Each cut marker is its own element directly after the field it describes,
  * never text joined onto the field, so daemon text ending in the marker's words cannot pass for the app's
  * claim. Not clickable; merged so a screen reader reads the task as one node.
  */
@@ -214,6 +222,7 @@ private fun TaskRow(task: BackgroundTask) {
             style = if (task.taskType == TYPE_LOCAL_BASH) typography.bodyMedium.monospace() else typography.bodyMedium,
             color = if (task.isFinished) colors.onSurfaceVariant else colors.onSurface,
         )
+        task.progress?.takeUnless { task.isFinished }?.let { TaskProgress(it) }
         task.finish?.takeIf { it.summary.isNotEmpty() }?.let { finish ->
             TaskField(
                 raw = finish.summary,
@@ -223,6 +232,34 @@ private fun TaskRow(task: BackgroundTask) {
             )
         }
         task.latestUpdate?.let { LatestUpdate(it) }
+    }
+}
+
+/**
+ * A running task's progress (#1044): its current activity, then a meta line of the last tool and the
+ * client-formatted counters. `subagentType` is not shown. The activity and the tool name are daemon text,
+ * so each is printable, bounded and cut-marked from the progress frame's own list like every other field.
+ */
+@Composable
+private fun TaskProgress(progress: BackgroundTaskProgress) {
+    val colors = MaterialTheme.colorScheme
+    val resources = LocalContext.current.resources
+    val tool = boundedText(progress.lastToolName)
+    // An empty tool name drops its segment rather than leaving an empty one between separators.
+    val meta =
+        (
+            listOfNotNull(tool.text.takeUnless { it.isBlank() }) +
+                progressCounters(resources, progress.toolUses, progress.totalTokens, progress.durationMs)
+        ).joinToString(META_SEPARATOR)
+    Column(verticalArrangement = Arrangement.spacedBy(ProgressGap)) {
+        TaskField(
+            raw = progress.description,
+            cutByDaemon = wasCut(progress.truncatedFields, CUT_DESCRIPTION),
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.onSurfaceVariant,
+        )
+        Text(text = meta, style = MaterialTheme.typography.bodySmall, color = colors.outline)
+        if (wasCut(progress.truncatedFields, CUT_LAST_TOOL_NAME) || tool.cutForDisplay) CutMarker()
     }
 }
 
@@ -415,6 +452,7 @@ private val previewRoster =
                     latestUpdate = BackgroundTaskUpdate("""{"output_tail":"--- PASS: TestReconnect (0.84s)"}""", "", "", null),
                     finish = null,
                     isFinished = false,
+                    progress = BackgroundTaskProgress("Running go test with the race detector", "", "Bash", 18_000, 4, 161_000, null),
                 ),
                 BackgroundTask(
                     taskId = "t2",
@@ -425,6 +463,7 @@ private val previewRoster =
                     latestUpdate = BackgroundTaskUpdate("", "", "", listOf("patch")),
                     finish = null,
                     isFinished = false,
+                    progress = BackgroundTaskProgress("Reading internal/relay/conn.go", "general-purpose", "Read", 42_000, 7, 65_000, null),
                 ),
                 BackgroundTask(
                     taskId = "t3",
