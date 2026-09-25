@@ -306,18 +306,23 @@ two_host_name_ok() {
   [[ "$1" =~ ^e2e-[A-Za-z0-9_.-]+$ ]]
 }
 
-# seed_collision_conversation <instance-dir> <conversation-id> <name> <cwd> (#847)
-#   Merges ONE promoted, unbound conversation into <instance-dir>/conversations.json before the daemon
-#   loads it (the daemon reads the registry once at startup). Merge, never overwrite: e2e-live and
-#   e2e-emulator are reused across manual runs, so their other rows and top-level keys survive. A row
-#   with the same id is replaced. No current_session_id — upstream's `omitempty` unbound state, which a
-#   rename and a thread open both serve without spawning claude. Written 0600 via a temp file and
-#   os.replace in a 0700 directory. An unreadable registry aborts WITHOUT echoing its content.
+# seed_collision_conversation <instance-dir> <conversation-id> <name> <cwd> [<session-id>] (#847, #1017)
+#   Merges ONE promoted conversation into <instance-dir>/conversations.json before the daemon loads it
+#   (the daemon reads the registry once at startup). Merge, never overwrite: e2e-live and e2e-emulator
+#   are reused across manual runs, so their other rows and top-level keys survive. A row with the same
+#   id is replaced. With no <session-id> the row has no current_session_id — upstream's `omitempty`
+#   unbound state, which a rename and a thread open both serve without spawning claude, but which
+#   refuses send_message (`no_bound_session`). A <session-id> binds the row to a session the daemon
+#   does not hold yet: the first send revives it (the daemon-restart path, pyrycode #1487) and, with no
+#   transcript under that id, spawns claude with --session-id. Rename and thread open still spawn
+#   nothing. Written 0600 via a temp file and os.replace in a 0700 directory. An unreadable registry
+#   aborts WITHOUT echoing its content.
 seed_collision_conversation() {
   python3 - "$@" <<'PY'
 import datetime, json, os, sys, tempfile
 
 instance, conv_id, name, cwd = sys.argv[1:5]
+session_id = sys.argv[5] if len(sys.argv) > 5 else ""
 os.makedirs(instance, mode=0o700, exist_ok=True)
 path = os.path.join(instance, "conversations.json")
 try:
@@ -333,7 +338,10 @@ if not isinstance(rows, list):
 rows = [row for row in rows if not (isinstance(row, dict) and row.get("id") == conv_id)]
 # Now, so the seeded row sorts among the most recent in its workspace group and is drawn on screen.
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-rows.append({"id": conv_id, "name": name, "cwd": cwd, "is_promoted": True, "last_used_at": now})
+row = {"id": conv_id, "name": name, "cwd": cwd, "is_promoted": True, "last_used_at": now}
+if session_id:
+    row["current_session_id"] = session_id
+rows.append(row)
 doc["conversations"] = rows
 fd, tmp = tempfile.mkstemp(dir=instance, prefix=".conversations.", suffix=".tmp")  # created 0600
 try:
@@ -701,14 +709,18 @@ fi
 # Daemon-minted ids never collide by chance, so the collision is seeded: ONE run-unique id, a different
 # name on each host. Per-INSTANCE path (<HOME>/.pyry/<name>/conversations.json), the same one the
 # DETERMINISTIC seed above uses — never the per-user config.json one level up. Must precede both daemons.
+# Host A's copy is bound to a run-unique session id so the phone can send in it (#1017); host B's stays
+# unbound, since nothing is sent there.
 if [ -z "${DETERMINISTIC}" ]; then
   COLLISION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+  COLLISION_SESSION_A="$(python3 -c 'import uuid; print(uuid.uuid4())')"
   COLLISION_STAMP="$(date +%s)"
   COLLISION_NAME_A="e2e847-a-${COLLISION_STAMP}"
   COLLISION_NAME_B="e2e847-b-${COLLISION_STAMP}"
-  for seed in "${PYRY_NAME}:${COLLISION_NAME_A}" "${PYRY_NAME_B}:${COLLISION_NAME_B}"; do
-    seed_collision_conversation "${HOME}/.pyry/${seed%%:*}" "${COLLISION_ID}" "${seed#*:}" "${HOME}" \
-      || die "failed to seed ${HOME}/.pyry/${seed%%:*}/conversations.json"
+  for seed in "${PYRY_NAME}:${COLLISION_NAME_A}:${COLLISION_SESSION_A}" "${PYRY_NAME_B}:${COLLISION_NAME_B}:"; do
+    IFS=: read -r seed_instance seed_name seed_session <<<"${seed}"
+    seed_collision_conversation "${HOME}/.pyry/${seed_instance}" "${COLLISION_ID}" "${seed_name}" "${HOME}" "${seed_session}" \
+      || die "failed to seed ${HOME}/.pyry/${seed_instance}/conversations.json"
   done
   log "seeded conversation ${COLLISION_ID} as '${COLLISION_NAME_A}' on ${PYRY_NAME} and '${COLLISION_NAME_B}' on ${PYRY_NAME_B}"
 fi
@@ -1131,6 +1143,11 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownLink_opensLiveNoteInReader"
   # #1021: the Edit channel mute round trip joins at no turn cost, so the list holds 34 methods and 36 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_muteChannel_roundTripsThroughTheHost"
+  # #1017: the interrupted upload, the interrupted retrieval and the cross-host file join, one turn each, so the
+  # list holds 37 methods and 39 turns. Each cut is fired by the app's own RelayLog line, not by timing.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
