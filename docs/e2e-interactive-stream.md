@@ -1056,7 +1056,13 @@ class's methods by name hash, not by the list's own sequence, so a method's plac
 came from that lesson: an earlier live run had two unrelated peers (this scenario's and #848's) go dead —
 handshake accepted, then no frames — and the fix was not a code change but a rename, moving both methods to
 a part of the hash order where every peer opened nearby had stayed alive across runs (see
-[Verification status](#verification-status) for the run-by-run evidence). Both methods also now open by
+[Verification status](#verification-status) for the run-by-run evidence).
+[#1053](https://github.com/pyrycode/pyrycode-mobile/issues/1053) later named the cause: the daemon's
+connect-time reconcile burst overflowed the relay's per-phone outbox once the daemon held 15–23 sessions,
+closing every fresh connection 35–65 ms after its handshake — the same shape #1029 and #1036 traced for the
+reconnect and peer-started/stop-running scenarios, fixed in pyrycode/pyrycode-relay#154. The method's own
+KDoc now names that cause instead of calling it unexplained; the name, and so its place in the hash order,
+did not change. Both methods also now open by
 requiring one `request_history` round trip from their peer (`assertPeerAnswers`) before any attachment
 step, so a dead peer fails fast, named as a relay or daemon fault, instead of timing out 240 s into a
 `send_file` wait. Daemon revision: the live daemon needs pyrycode #2166 (`attachment_offered`'s producer)
