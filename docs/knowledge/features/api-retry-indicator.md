@@ -22,11 +22,14 @@ Package: `de.pyryco.mobile.ui.conversations.components`
 fun ApiRetryIndicator(
     status: ApiRetryStatus,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 )
 ```
 
-`status` carries no default — the caller (`ThreadScreen`) always passes a real value. Pure function of
-`status`: no `ViewModel` reference, no flow collection, no `remember`, no `LaunchedEffect`, no
+`status` carries no default — the caller (`ThreadScreen`) always passes a real value. `agent`
+([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114)) is a trailing default of `Claude`, so
+every pre-#1114 call site and preview keeps compiling and rendering unchanged. Pure function of
+`status`/`agent`: no `ViewModel` reference, no flow collection, no `remember`, no `LaunchedEffect`, no
 `ThreadUiState` field.
 
 **Passing the repository-package `ApiRetryStatus` straight into a `components/` composable is
@@ -40,11 +43,12 @@ List<QueuedMessage>)` — no UI-layer mirror type was introduced.
   Placement) normally keeps it from being called at all in that state; the early return keeps the
   composable total anyway — defence in depth, same posture as its sibling.
 - Two rendered cases, chosen by whether the counter passes the display sanity gate:
-  - **counter shown** (`Attempt` that passes the gate) — `thread_api_retry_label` /
-    `cd_thread_api_retry`, both positionally formatted with `current` and `total`
-    ("Retrying — attempt 3/10").
-  - **counter-less** (`AttemptUnknown`, **or** an `Attempt` that fails the gate) —
-    `thread_api_retry_label_unknown` / `cd_thread_api_retry_unknown` ("Retrying…").
+  - **counter shown** (`Attempt` that passes the gate) — `thread_api_retry_label` (visible, agent-neutral)
+    and, for the content description, `cd_thread_api_retry` or, when `agent == Codex`
+    ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114)), `cd_thread_api_retry_codex`, both
+    positionally formatted with `current` and `total` ("Retrying — attempt 3/10").
+  - **counter-less** (`AttemptUnknown`, **or** an `Attempt` that fails the gate) — `thread_api_retry_label_unknown`
+    (visible) and `cd_thread_api_retry_unknown` or its `_codex` twin ("Retrying…").
 - Renders a `Row` (`fillMaxWidth`, 16dp horizontal / 8dp vertical padding, `CenterVertically`,
   `Arrangement.spacedBy(8.dp)`) containing a small indeterminate `CircularProgressIndicator`
   (`size(16.dp)`, `strokeWidth = 2.dp`) and an adjacent `Text` (`bodySmall` /
@@ -106,17 +110,20 @@ for the gutter arithmetic):
 ```kotlin
 when {
     apiRetry != ApiRetryStatus.NotRetrying ->
-        ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
+        ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth(), agent = agent) // agent: #1114
     resetting != null ->
         ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth())
     isCompacting ->
-        CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
+        CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth(), agent = agent) // #1114
     turnOutcome != null ->
         TurnOutcomeIndicator(report = turnOutcome, modifier = Modifier.fillMaxWidth())
     else ->
-        ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
+        ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth(), agent = agent) // #1114
 }
 ```
+
+`resetting` and `turnOutcome` did not gain `agent` in #1114 — see [Thinking indicator § Edge
+cases](thinking-indicator.md#edge-cases--limitations) for the partial-rollout note.
 
 (Shown here at its current, post-[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) shape —
 `resetting` landed between api-retry and compaction in #872; the ladder also carried a `usageLimit` arm
@@ -169,6 +176,13 @@ Threaded exactly like `isStalled` — a **defaulted hoisted value**, sibling to 
 - **`MainActivity`** collects it in the `CONVERSATION_THREAD` destination exactly parallel to
   `isStalled` and passes it in — two lines, mirroring the `isStalled` wiring.
 
+`agent` ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114)) is wired differently from
+`status`: it comes from `state.agent` on `ThreadUiState` (set inside `ThreadViewModel`'s existing
+conversations `combine`, alongside `displayName`/`isPromoted`), not a new sibling `StateFlow`/`MainActivity`
+collection line — the agent is a slow-changing conversation property already resolved there, unlike the
+per-turn `api_retry` signal. See [Thinking indicator § The agent name](thinking-indicator.md#the-agent-name-1114)
+for the shared rationale, which all three agent-aware indicators follow identically.
+
 See [API-retry status](api-retry-status.md) for the upstream data path (#593's `api_retry` decode →
 `observeApiRetry` projection) that produces this value.
 
@@ -202,6 +216,15 @@ both rendered branches are covered.
   | `cd_thread_api_retry` | `Claude is retrying, attempt %1$d of %2$d` |
   | `cd_thread_api_retry_unknown` | `Claude is retrying, attempt count unknown` |
 
+  **Two more ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114))**, whole Codex-naming
+  siblings rather than a shared format with an agent-name argument, so the two rows above stay
+  byte-identical and existing tests keep passing unmodified:
+
+  | Name | Value |
+  |---|---|
+  | `cd_thread_api_retry_codex` | `Codex is retrying, attempt %1$d of %2$d` |
+  | `cd_thread_api_retry_unknown_codex` | `Codex is retrying, attempt count unknown` |
+
 ## Edge cases / limitations
 
 - **Visual is design-owed.** No retry treatment is drawn in
@@ -226,8 +249,10 @@ both rendered branches are covered.
 ## Related
 
 - Ticket notes: [`../codebase/594.md`](../codebase/594.md) (this component) ·
-  [`../codebase/593.md`](../codebase/593.md) (the data/repository half it consumes).
-- Spec: `docs/specs/architecture/594-api-retry-status-render.md`.
+  [`../codebase/593.md`](../codebase/593.md) (the data/repository half it consumes). #1114 postdates the
+  2026-09-05 codebase-archive freeze and has no per-ticket note.
+- Specs: `docs/specs/architecture/594-api-retry-status-render.md` ·
+  `docs/specs/architecture/1114-agent-status-screen-reader-labels.md` (the `agent` param).
 - Upstream signal: [API-retry status](api-retry-status.md) — `ThreadViewModel.apiRetry` /
   `observeApiRetry`, the `api_retry` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `apiRetry` as another flat sibling parameter and

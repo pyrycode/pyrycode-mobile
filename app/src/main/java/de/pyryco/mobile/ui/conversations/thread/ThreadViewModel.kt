@@ -447,6 +447,7 @@ class ThreadViewModel(
                 displayName = conv?.displayName() ?: conversationId,
                 conversationName = conv?.name,
                 isPromoted = conv?.isPromoted ?: false,
+                agent = conv?.agent ?: ConversationAgent.Claude,
                 hasMessages = content.items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = workspaceDisplayName(cwd = conv?.cwd ?: "", label = conv?.workspaceLabel),
                 workspacePickerVisible = pickerVisible,
