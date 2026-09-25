@@ -19,6 +19,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 private val IndicatorHorizontalPadding = 16.dp
@@ -56,9 +57,16 @@ private val SpinnerLabelGap = 8.dp
 fun CompactingIndicator(
     isCompacting: Boolean,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     if (!isCompacting) return
-    val description = stringResource(R.string.cd_thread_compacting)
+    val description =
+        stringResource(
+            when (agent) {
+                ConversationAgent.Claude -> R.string.cd_thread_compacting
+                ConversationAgent.Codex -> R.string.cd_thread_compacting_codex
+            },
+        )
     Row(
         modifier =
             modifier
