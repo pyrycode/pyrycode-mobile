@@ -190,6 +190,23 @@ internal fun copyAttachment(
         false
     }
 
+/**
+ * Writes a note's [text] as UTF-8 into a picked document (#1069) through [copyAttachment], so a failed write
+ * [discard]s the document. `null` [text], lost with the process while the picker was open, discards the
+ * document without opening it: nothing else is ever written in its place. Blocking: call it on an IO dispatcher.
+ */
+internal fun saveNoteText(
+    text: String?,
+    openOutput: () -> OutputStream,
+    discard: () -> Unit,
+): Boolean {
+    if (text == null) {
+        runCatching(discard)
+        return false
+    }
+    return copyAttachment({ text.toByteArray(Charsets.UTF_8).inputStream() }, openOutput, discard)
+}
+
 /** What a message attachment's tap and long-press do in the thread (#985). */
 class AttachmentActions(
     val open: (AttachmentTarget) -> Unit,
@@ -306,6 +323,65 @@ internal fun rememberAttachmentActions(
                 }
             },
         )
+    }
+}
+
+/** The reader's note text waiting for the picker (#1069). Memory only, so it never enters the saved-state bundle. */
+private class PendingNote {
+    var text: String? = null
+}
+
+/**
+ * Save to device for the markdown reader (#1069), bound to this composition: the returned function opens the
+ * system's create-document picker for a `text/markdown` document named after the note's last path component,
+ * then writes the note's text, as it was when the picker opened, into the picked document with [saveNoteText].
+ * [onNotice] hears [AttachmentNotice.SAVED] or [AttachmentNotice.SAVE_FAILED]; a cancelled picker writes nothing
+ * and says nothing. The text lives in memory only: when the activity was recreated while the picker was open,
+ * the picked document is deleted and the save reported as failed.
+ */
+@Composable
+internal fun rememberNoteSaver(onNotice: (AttachmentNotice) -> Unit): (MarkdownDocument) -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val currentOnNotice by rememberUpdatedState(onNotice)
+    val pending = remember { PendingNote() }
+    val launcher =
+        rememberLauncherForActivityResult(CreateAttachmentDocument()) { destination ->
+            val text = pending.text
+            pending.text = null
+            if (destination == null) {
+                RelayLog.d { "event=markdown_reader_save outcome=cancelled" }
+                return@rememberLauncherForActivityResult
+            }
+            scope.launch {
+                val saved =
+                    withContext(Dispatchers.IO) {
+                        val resolver = context.contentResolver
+                        saveNoteText(
+                            text = text,
+                            openOutput = { checkNotNull(resolver.openOutputStream(destination, "wt")) },
+                            discard = {
+                                DocumentsContract.deleteDocument(resolver, destination)
+                                Unit
+                            },
+                        )
+                    }
+                RelayLog.d {
+                    "event=markdown_reader_save outcome=${if (saved) "saved" else "failed"} chars=${text?.length ?: -1}"
+                }
+                currentOnNotice(if (saved) AttachmentNotice.SAVED else AttachmentNotice.SAVE_FAILED)
+            }
+        }
+    return remember(pending, launcher) {
+        { document ->
+            pending.text = document.text
+            launcher.launch(
+                CreateAttachmentDocument.Request(
+                    suggestedName = sharedNoteFileName(document.name),
+                    mimeType = MARKDOWN_MIME_TYPE,
+                ),
+            )
+        }
     }
 }
 
