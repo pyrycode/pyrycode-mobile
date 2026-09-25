@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
@@ -113,16 +114,19 @@ private fun inertOutcomeToken(raw: String): String? {
  * [de.pyryco.mobile.ui.conversations.thread.ThreadViewModel.turnOutcome], so the turn no longer ends
  * looking like a clean answer.
  *
- * The lead is client-owned; everything claude said about the stop follows "Claude reports", so an account
- * state such as `billing_error` never reads as the app's own finding. Stateless and total: it emits
+ * The lead is client-owned; everything the agent said about the stop follows "<agent> reports", naming the
+ * conversation's [agent] (#1113), so an account state such as `billing_error` never reads as the app's own
+ * finding. Stateless and total: it emits
  * nothing for `null`, the sibling early-return idiom. The merged content description is the visible label.
  */
 @Composable
 fun TurnOutcomeIndicator(
     report: TurnOutcomeReport?,
+    agent: ConversationAgent,
     modifier: Modifier = Modifier,
 ) {
     if (report == null) return
+    val name = agentName(agent)
     val details =
         buildList {
             addAll(report.claudeReports)
@@ -141,9 +145,9 @@ fun TurnOutcomeIndicator(
             )
             when {
                 details.isNotEmpty() ->
-                    append(stringResource(R.string.thread_turn_outcome_claude_reports, details.joinToString(", ")))
+                    append(stringResource(R.string.thread_turn_outcome_agent_reports, name, details.joinToString(", ")))
                 report.kind == TurnOutcomeReport.Kind.Failed ->
-                    append(stringResource(R.string.thread_turn_outcome_claude_reports_error))
+                    append(stringResource(R.string.thread_turn_outcome_agent_reports_error, name))
             }
         }
     Row(
@@ -185,6 +189,7 @@ private fun TurnOutcomeIndicatorLightPreview() {
         Surface {
             TurnOutcomeIndicator(
                 report = TurnOutcomeReport(TurnOutcomeReport.Kind.Failed, listOf("prompt_too_long"), "invalid_request"),
+                agent = ConversationAgent.Claude,
             )
         }
     }
@@ -200,7 +205,10 @@ private fun TurnOutcomeIndicatorLightPreview() {
 private fun TurnOutcomeIndicatorDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         Surface {
-            TurnOutcomeIndicator(report = TurnOutcomeReport(TurnOutcomeReport.Kind.Interrupted, emptyList(), null))
+            TurnOutcomeIndicator(
+                report = TurnOutcomeReport(TurnOutcomeReport.Kind.Interrupted, emptyList(), null),
+                agent = ConversationAgent.Codex,
+            )
         }
     }
 }

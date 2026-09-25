@@ -425,13 +425,16 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
 - **A short tool call may never show a time (#897, expected).** claude's `tool_progress` heartbeat arrives
   roughly every 30 seconds, so `Running Bash…` alone (no elapsed suffix) is the common case for a quick
   call, not a sign anything is missing.
-- **The agent-naming rollout is partial by design (#1114, narrowed by #1112).** Of the five status-ladder
-  arms, this one, `ApiRetryIndicator`, `CompactingIndicator` and (since #1112) `ResettingIndicator`'s
-  `WrappingUp` reading take `agent` — only `TurnOutcomeIndicator`'s labels still say "Claude"
-  unconditionally. #1114's verifier flagged the gap as a non-blocking NIT for whichever sibling ticket
-  covered the rest of the ladder; #1112 closed `ResettingIndicator`'s share of it (see [Resetting indicator
-  § The agent name](resetting-indicator.md#the-agent-name-1112)). `TurnOutcomeIndicator` remaining
-  Claude-only is not a defect in this ticket's own six strings.
+- **The agent-naming rollout is now complete across the status ladder (#1114, narrowed by #1112, closed by
+  #1113).** All five status-ladder arms take `agent`: this one, `ApiRetryIndicator`, `CompactingIndicator`,
+  `ResettingIndicator`'s `WrappingUp` reading (#1112), and `TurnOutcomeIndicator` (#1113, the arm #1114's
+  verifier had flagged as the remaining gap — see [Resetting indicator § The agent
+  name](resetting-indicator.md#the-agent-name-1112) and [Turn-outcome indicator § The agent
+  name](turn-outcome-indicator.md#the-agent-name-1113)). #1113 also named the agent in the thread's two
+  other Claude-crediting rows outside this ladder, `BannerNoticeRow` and `ModelRefusalRow` — see [Banner
+  notice row § Security](banner-notice-row.md#security--why-the-attribution-is-its-own-span) — using a
+  format-string + `agentName()` idiom rather than this ladder's whole-sibling-string idiom; both are
+  correct and client-owned, and the divergence is a recorded non-blocking NIT, not a defect.
 - **A very long or multi-line tool name can cut off its own elapsed reading (#897, open, not observed).**
   `maxLines = 1` + ellipsis bounds the row, but a name long enough to fill it pushes the appended elapsed
   text past the ellipsis with it. Desktop has the identical limitation. No tool name long enough to trigger
