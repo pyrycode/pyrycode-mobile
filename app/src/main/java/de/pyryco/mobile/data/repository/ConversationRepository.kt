@@ -887,10 +887,11 @@ enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
 
 /**
  * Where the daemon's stream-json parser met a message it could not understand (#608). Closed at the
- * four documented wire values, which is what lets the UI's label lookup stay exhaustive: a future fifth
- * site is a compile error rather than a blank slot.
+ * six documented wire values, which is what lets the UI's label lookup stay exhaustive: a future seventh
+ * site is a compile error rather than a blank slot. [CodexMethod] and [CodexItem] (#1109) are the Codex
+ * translator's lanes for an unmapped app-server notification method and an unmapped item type.
  */
-enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable }
+enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable, CodexMethod, CodexItem }
 
 /**
  * One message waiting in a conversation's queued backlog while claude is busy (#460). The element type

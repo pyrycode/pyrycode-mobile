@@ -139,7 +139,7 @@ internal object UnrecognizedRowRecorder {
  *  * **No conversation id** — structurally impossible, since [ThreadItem.UnrecognizedMessage] carries
  *    none and this function takes nothing else.
  *
- * [ThreadItem.UnrecognizedMessage.site] is client-owned (the closed four-value [UnrecognizedSite] a
+ * [ThreadItem.UnrecognizedMessage.site] is client-owned (the closed six-value [UnrecognizedSite] a
  * hostile daemon cannot widen) and printed verbatim **as its wire token** — `assistant_block`, not
  * `AssistantBlock` — because that is the string an operator greps the daemon's `internal/streamsup/`
  * for. [ThreadItem.UnrecognizedMessage.messageType] is daemon-supplied and untrusted, so it is
@@ -198,6 +198,8 @@ private fun UnrecognizedSite.wireToken(): String =
         UnrecognizedSite.AssistantBlock -> "assistant_block"
         UnrecognizedSite.UserBlock -> "user_block"
         UnrecognizedSite.Undecodable -> "undecodable"
+        UnrecognizedSite.CodexMethod -> "codex_method"
+        UnrecognizedSite.CodexItem -> "codex_item"
     }
 
 /**
