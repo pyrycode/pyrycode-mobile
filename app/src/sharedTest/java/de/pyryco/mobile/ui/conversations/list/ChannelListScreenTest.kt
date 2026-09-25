@@ -53,6 +53,7 @@ import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostReconnectTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostUpdateTestTag
 import de.pyryco.mobile.ui.host.HostEditorState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -541,6 +542,49 @@ class ChannelListScreenTest {
 
         assertEquals(
             listOf(ChannelListEvent.TreeHostRePairTapped("pyrybox"), ChannelListEvent.TreeHostReconnectTapped("macbook")),
+            events,
+        )
+    }
+
+    @Test
+    fun hostRowUpdateControl_opensTheStore_whileTheOtherHostsKeepTheirPlug() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                relay = RelayLinkStatus.UpdateRequired("1.4.0"),
+            ),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                relay = RelayLinkStatus.PairingRejected,
+            ),
+            entry(
+                serverId = "laptop",
+                displayName = "Laptop",
+                relay = RelayLinkStatus.Offline,
+            ),
+        )
+
+        listOf(
+            treeHostUpdateTestTag("pyrybox"),
+            treeHostReconnectTestTag("macbook"),
+            treeHostReconnectTestTag("laptop"),
+        ).forEach { tag ->
+            composeTestRule
+                .onAllNodes(hasTestTag(tag))
+                .onFirst()
+                .performClick()
+        }
+
+        composeTestRule.onNode(hasText("alpha channel")).assertExists()
+        assertEquals(
+            listOf(
+                ChannelListEvent.TreeHostUpdateTapped,
+                ChannelListEvent.TreeHostRePairTapped("macbook"),
+                ChannelListEvent.TreeHostReconnectTapped("laptop"),
+            ),
             events,
         )
     }

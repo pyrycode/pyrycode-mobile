@@ -317,7 +317,118 @@ class ConversationTreeRowsTest {
             composeTestRule
                 .onAllNodes(hasTestTag(treeHostReconnectTestTag("pyrybox")), useUnmergedTree = true)
                 .assertCountEquals(0)
+            composeTestRule
+                .onAllNodes(hasTestTag(treeHostUpdateTestTag("pyrybox")), useUnmergedTree = true)
+                .assertCountEquals(0)
         }
+    }
+
+    private fun setUpdateRequiredRow(
+        minClientVersion: String?,
+        expanded: Boolean = true,
+        onToggleExpanded: () -> Unit = {},
+        onReconnectTapped: () -> Unit = {},
+    ) {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                TreeHostRow(
+                    serverId = "pyrybox",
+                    hostName = "Pyrybox",
+                    connectionStatus =
+                        ConnectionStatus(RelayLinkStatus.UpdateRequired(minClientVersion), PyrycodeLinkStatus.Down),
+                    expanded = expanded,
+                    onToggleExpanded = onToggleExpanded,
+                    onEditTapped = {},
+                    onAddTapped = {},
+                    onAddLongPressed = {},
+                    onReconnectTapped = onReconnectTapped,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun hostRow_updateRequired_drawsAnUpdateControlInsteadOfThePlug_andATapReachesOnlyIt() {
+        var taps = 0
+        var toggles = 0
+        setUpdateRequiredRow("1.4.0", onToggleExpanded = { toggles++ }, onReconnectTapped = { taps++ })
+
+        composeTestRule
+            .onAllNodes(hasTestTag(treeHostReconnectTestTag("pyrybox")), useUnmergedTree = true)
+            .assertCountEquals(0)
+        val control = composeTestRule.onNodeWithTag(treeHostUpdateTestTag("pyrybox"))
+        control.assert(hasContentDescription(string(R.string.cd_tree_host_update, "Pyrybox")))
+
+        control.performClick()
+
+        assertEquals(1, taps)
+        assertEquals(0, toggles)
+    }
+
+    @Test
+    fun hostRow_updateRequired_captionNamesTheMinimum_andNoDescriptionCarriesIt() {
+        setUpdateRequiredRow("1.4.0")
+
+        composeTestRule
+            .onNodeWithText(string(R.string.tree_host_update_required_version, "1.4.0"))
+            .assertIsDisplayed()
+        composeTestRule
+            .onAllNodes(hasContentDescription("1.4.0", substring = true), useUnmergedTree = true)
+            .assertCountEquals(0)
+    }
+
+    @Test
+    fun hostRow_updateRequired_withoutAMinimum_captionAsksForAnUpdate() {
+        setUpdateRequiredRow(null)
+
+        composeTestRule.onNodeWithText(string(R.string.tree_host_update_required)).assertIsDisplayed()
+    }
+
+    @Test
+    fun hostRow_updateRequired_keepsItsCaptionWhenFolded() {
+        setUpdateRequiredRow("1.4.0", expanded = false)
+
+        composeTestRule
+            .onNodeWithText(string(R.string.tree_host_update_required_version, "1.4.0"))
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun hostRow_updateRequired_drawsTheHostDotIdle_whileAnOfflineHostKeepsItsPyrycodeLeg() {
+        val status = mutableStateOf(ConnectionStatus(RelayLinkStatus.UpdateRequired("1.4.0"), PyrycodeLinkStatus.Down))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                TreeHostRow(
+                    serverId = "pyrybox",
+                    hostName = "Pyrybox",
+                    connectionStatus = status.value,
+                    expanded = true,
+                    onToggleExpanded = {},
+                    onEditTapped = {},
+                    onAddTapped = {},
+                    onAddLongPressed = {},
+                )
+            }
+        }
+        val idle = hasContentDescription(string(R.string.cd_tree_host_leg_idle))
+        val down = hasContentDescription(PyrycodeLinkStatus.Down.toLegVisual().contentDescription)
+
+        composeTestRule.onAllNodes(idle, useUnmergedTree = true).assertCountEquals(1)
+        composeTestRule.onAllNodes(down, useUnmergedTree = true).assertCountEquals(0)
+        composeTestRule
+            .onAllNodes(
+                hasContentDescription(RelayLinkStatus.UpdateRequired(null).toLegVisual().contentDescription),
+                useUnmergedTree = true,
+            ).assertCountEquals(1)
+
+        status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onAllNodes(idle, useUnmergedTree = true).assertCountEquals(0)
+        composeTestRule.onAllNodes(down, useUnmergedTree = true).assertCountEquals(1)
+        composeTestRule
+            .onAllNodes(hasText(string(R.string.tree_host_update_required)), useUnmergedTree = true)
+            .assertCountEquals(0)
     }
 
     @Test
