@@ -9,9 +9,11 @@ instead of handing the file to another app; every other attachment type still go
 Since #1050, the same screen also opens on a **tapped workspace-note link in an assistant reply**, fetched live
 rather than from a stored attachment — see [Linked note, live (since #1050)](#linked-note-live-since-1050).
 Since #1067, the top bar also carries a three-dot menu — copy the note in three formats, and refresh it in
-place — see [Copy and refresh menu (since #1067)](#copy-and-refresh-menu-since-1067). Since #1068 the same menu's
-last item hands the note on to another app, as `text/markdown` — see
-[Open in another app (since #1068)](#open-in-another-app-since-1068), inside that same section.
+place — see [Copy and refresh menu (since #1067)](#copy-and-refresh-menu-since-1067). Since #1068 the menu's
+fifth item hands the note on to another app, as `text/markdown` — see
+[Open in another app (since #1068)](#open-in-another-app-since-1068), inside that same section. Since #1069 the
+menu's last item writes the note's text into a document the operator picks — see
+[Save to device (since #1069)](#save-to-device-since-1069), also inside that section.
 
 ## What it does
 
@@ -201,9 +203,10 @@ shows.
 The top bar's overflow button (`Icons.Filled.MoreVert`, `cd_more_actions`, the same 48dp touch target and bar
 metrics as `ThreadTopAppBar`'s own) opens a plain M3 `DropdownMenu` built the way `ThreadOverflowMenu` builds
 the thread's menu — the operator decided (2026-09-24) it reuses that dropdown rather than a second style.
-Figma: `Options overlay` (`533:1958`). Five items, each dismissing the menu before it acts: **Copy as
+Figma: `Options overlay` (`533:1958`). Six items, each dismissing the menu before it acts: **Copy as
 markdown**, **Copy as plain text**, **Copy as HTML**, **Refresh**, **Open in another app** (since #1068,
-[below](#open-in-another-app-since-1068)). The menu shows only once the reader has content — the bar draws
+[below](#open-in-another-app-since-1068)), **Save to device** (since #1069,
+[below](#save-to-device-since-1069)). The menu shows only once the reader has content — the bar draws
 nothing until the first read finishes, and a failed first read never opens the reader at all (see [What it
 does](#what-it-does)).
 
@@ -349,12 +352,60 @@ path) }` (see [Linked note, live](#linked-note-live-since-1050)) — so a linked
 `read_workspace_file`, proven live by the extended `interactiveTurn_markdownLink_opensLiveNoteInReader`
 scenario (see [Testing](#testing) and [Interactive stream e2e](../../e2e-interactive-stream.md)).
 
+### Save to device (since #1069)
+
+The menu's last item writes `document.text`, as it stood when the picker opened, into a document the operator
+picks through the same system create-document picker the thread's own attachment save uses, then reports the
+outcome with the existing `AttachmentNotice.SAVED` / `SAVE_FAILED` snackbar strings.
+
+- **`saveNoteText(text, openOutput, discard)`** (`AttachmentActions.kt`): `null` `text` — the pending text was
+  lost, see below — discards the document without ever calling `openOutput` and returns `false`; otherwise it
+  runs `copyAttachment` with `text.toByteArray(Charsets.UTF_8).inputStream()` as the source, so a failed write
+  discards the document exactly as an attachment save does. Blocking; the caller runs it on `Dispatchers.IO`.
+  This is the one new pure function — everything else reuses `CreateAttachmentDocument` and `copyAttachment`
+  unchanged.
+- **`rememberNoteSaver(onNotice): (MarkdownDocument) -> Unit`** (`AttachmentActions.kt`) is the reader's save,
+  bound to its composition: one `rememberLauncherForActivityResult(CreateAttachmentDocument())`, and a private
+  `PendingNote` holder — a plain `var` in a `remember`, never `rememberSaveable` — that carries the note's text
+  across the picker. The returned function stores `document.text` in the holder and launches
+  `Request(suggestedName = sharedNoteFileName(document.name), mimeType = "text/markdown")`, reusing
+  [`sharedNoteFileName`](#open-in-another-app-since-1068) for the same last-path-component-and-sanitise
+  treatment Open in another app already gives the note's name. The result callback takes the holder's text and
+  clears it immediately, before deciding anything else, so a later result can never see stale text from an
+  earlier save (the same discipline `RefreshableMarkdownReader` uses for its own in-flight guard). A `null`
+  destination (cancelled) writes nothing and notifies nothing. A picked destination writes via `saveNoteText` on
+  `Dispatchers.IO` inside `rememberCoroutineScope()`, then notifies `SAVED` or `SAVE_FAILED`.
+- **Text lost across process death.** The pending text lives only in the `remember`ed holder — never in saved
+  state — because the ticket's technical note ruled out writing stale or wrong text after a restart. If the
+  activity or process is recreated while the picker is open, `ActivityResultRegistry` still redelivers the
+  picked URI to the re-registered launcher, but the holder is now empty: `saveNoteText(null, …)` deletes the
+  created document and the reader shows `SAVE_FAILED` rather than writing anything else in its place.
+- **`MarkdownReaderScreen`** wires `onSaveToDevice = { saveNote(document) }`, so like the copies and Open in
+  another app it acts on the `document` currently drawn — the refreshed one after a Refresh — not on whatever
+  was on screen when the menu opened.
+- Logs (see [Logging](#logging) below) never carry the text, the name or the picked URI, matching every other
+  action in this menu.
+
+**Lesson from implementation (screen-test provider access).** `MarkdownReaderScreenTest` lives in
+`app/src/sharedTest`, which compiles into both the JVM (Robolectric) and device test sets (see
+[Development verification § Where a screen test goes](development-verification.md#where-a-screen-test-goes)),
+so it cannot call a Robolectric-only API such as `Robolectric.setupContentProvider` to stand in for the
+document the picker returns — that would fail to compile for the device target. The test instead answers the
+picker with a `file://` URI inside the app's cache directory: Robolectric 4.17's
+`ContentResolver.openOutputStream(uri, "wt")` passes an unregistered URI straight to the real resolver, which
+resolves a `file://` URI the same way a device does, so a missing parent directory makes the write fail exactly
+as it would on a device. `DocumentsContract.deleteDocument` cannot reach a `file://` URI at all and throws,
+which `saveNoteText`'s own `runCatching` swallows — so the discard call is proven only in the `saveNoteText`
+unit tests (`AttachmentActionsTest`), and the failed-write screen test instead asserts the "Couldn't save file"
+notice and that no file exists at the destination.
+
 ### Logging
 
 `RelayLog.d` only, static fields, never the text, name, path or clip contents:
 `event=markdown_reader_copy format=markdown|plain|html chars=<source length>`,
-`event=markdown_reader_refresh outcome=loaded|failed`, and (since #1068)
-`event=markdown_reader_open_in_app outcome=opened|no_app|failed chars=<text length>`.
+`event=markdown_reader_refresh outcome=loaded|failed`,
+`event=markdown_reader_open_in_app outcome=opened|no_app|failed chars=<text length>` (since #1068), and (since
+\#1069) `event=markdown_reader_save outcome=saved|failed|cancelled chars=<length, or -1 when lost>`.
 
 ## Testing
 
@@ -436,6 +487,18 @@ while the rendered content stays displayed underneath. No rung-3 scenario — th
 chooser, which the harness cannot drive, and the daemon is not involved; the read that produces the text is
 already proven live by the scenarios above.
 
+\#1069's [Save to device](#save-to-device-since-1069) adds: `AttachmentActionsTest` gained 3 pure-JVM tests for
+`saveNoteText` — the exact UTF-8 bytes of a string with multi-byte characters, with nothing discarded; a failing
+output stream returns `false` and discards; `null` text returns `false`, discards and never opens the output.
+`MarkdownReaderScreenTest` grew by 4 tests: the overflow's six items in order (was five); choosing Save to
+device launches `ACTION_CREATE_DOCUMENT` of type `text/markdown` with `EXTRA_TITLE` set to the note's last path
+component; a picked `file://` destination receives exactly the text on screen and the reader shows "File saved";
+a destination whose parent directory does not exist shows "Couldn't save file" and leaves no file behind; a
+cancelled picker shows neither notice. The lost-pending-text-after-recreation path is proven only by the
+`saveNoteText(null, …)` unit test — recreating the process mid-picker is not driven in either test tier. No
+rung-3 scenario: the save ends in the system's document picker, which the harness cannot drive, and the daemon
+is not involved, the same call #1068 made.
+
 ## Related
 
 - [MessageBubble — attachment slot § Open and save](message-bubble-attachment-slot.md#open-and-save-since-985) —
@@ -482,3 +545,8 @@ already proven live by the scenarios above.
   gap, the `shared-note` directory's non-collision with `AttachmentStore`'s host directories), and the
   Revisions entry (the `FileProvider.sCache` reset `MarkdownReaderScreenTest` needed once `AttachmentActionsTest`
   ran first in the same JVM, and resolving notice strings with `stringResource` ahead of the coroutine).
+- Ticket: `docs/specs/architecture/1069-markdown-reader-save-to-device.md` — design for
+  [Save to device](#save-to-device-since-1069), the security review (no findings; the app never builds a path
+  and gets no persistable or tree grant, and lost pending text after recreation is addressed by design), and the
+  Revisions entry (the screen test's `file://`-URI provider workaround once `sharedTest` compilation into the
+  device set ruled out a Robolectric-only fake content provider).
