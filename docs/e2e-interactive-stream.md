@@ -892,9 +892,10 @@ completion match `slashCommandTypeAheadRows` / `slashCommandOptions` / `complete
 reconnected menu — not restated here. Actions → Compact session then shows the `cd_thread_compacting`
 indicator, then the session-boundary divider for a manual compaction ("Conversation compacted … by you"),
 and the indicator clears. Two real claude turns: the ping and the compaction. On the live relay the
-reconnect's fresh connection can itself drop and be redialled within about a second (#1039, open); before
-#1029 the scenario held the pre-redial connection's repository and the slash-command read timed out after
-30 s. It now reads through `firstOnLive` (`LiveConnectionReads.kt`, `app/src/sharedTest`), which follows
+reconnect's fresh connection can itself drop and be redialled within about a second — \#1051 traced this to
+the relay's per-phone outbox overflowing on the daemon's connect-time reconcile burst, fixed in
+pyrycode/pyrycode-relay\#154; before #1029 the scenario held the pre-redial connection's repository and the
+slash-command read timed out after 30 s. It now reads through `firstOnLive` (`LiveConnectionReads.kt`, `app/src/sharedTest`), which follows
 the host's current connection, and the assertion still requires the rows to come from a connection that is
 live when they arrive. See [Relay repository coordinator § Edge cases /
 limitations](knowledge/features/relay-repository-coordinator.md#edge-cases--limitations) for the underlying
@@ -2345,8 +2346,10 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 - **Coverage — hardened:** [#1029](https://github.com/pyrycode/pyrycode-mobile/issues/1029) fixed a flake in
   `interactiveTurn_reconnect_slashCommandsAndCompactStillWork` (#967). On the live relay the connection the
-  reconnect step opens can drop and be redialled by `RelayConnectionSupervisor` within about a second — why it
-  drops is unconfirmed and filed as [#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039), open —
+  reconnect step opens can drop and be redialled by `RelayConnectionSupervisor` within about a second —
+  [#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039) tracked why before the cause was found;
+  [#1051](https://github.com/pyrycode/pyrycode-mobile/issues/1051) traced it to the relay's per-phone outbox
+  overflowing on the daemon's connect-time reconcile burst, fixed in pyrycode/pyrycode-relay#154 —
   and the scenario held a one-time snapshot of the pre-redial connection's repository through
   `hostRepository`, so its slash-command read timed out on a connection already torn down. Two generic
   helpers, `firstOnLive` and `callOnLive` in
@@ -2415,8 +2418,11 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` (#965). The kept `daemon.log` from
   #1029's own 2026-09-24T21:17Z gate run showed the `SecondClientPeer`'s relay connection closing 39–48 ms
   after its handshake, with no `send_message` reaching the daemon; a #1021 gate run's kept log showed the
-  same silent-peer shape independently. This is the same drop
-  [#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039) tracks on the phone's own connections —
+  same silent-peer shape independently. This matches the 35–45 ms handshake-to-close window
+  [#1051](https://github.com/pyrycode/pyrycode-mobile/issues/1051) traced to the relay's per-phone outbox
+  overflowing on the daemon's connect-time reconcile burst (fixed in pyrycode/pyrycode-relay#154); it is the
+  same drop [#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039) tracked on the phone's own
+  connections before the cause was found —
   and the peer, unlike the app, never redialled: `SecondClientPeer.open` dialled
   once, so a peer whose first link died stayed dead for the rest of the scenario. `SecondClientPeer` now
   dials through a new `RedialingLink` (`app/src/sharedTest/.../e2e/RedialingLink.kt`, JVM-tested): a link

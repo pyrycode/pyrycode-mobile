@@ -294,8 +294,10 @@ contract, its 32 MiB accumulation bound and its terminal-state guarantees.
   e2e `InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork`
   took `coordinator.currentRepository.first { it != null }` once after a reconnect and read
   from that repository for 30 s. On the live relay the reconnect's fresh connection routinely
-  drops and is redialled by `RelayConnectionSupervisor` within about a second (#1039, open —
-  why it drops is unconfirmed); the snapshotted repository was already torn down, and the
+  drops and is redialled by `RelayConnectionSupervisor` within about a second — #1039 tracked
+  why before the cause was found; #1051 traced it to the relay's per-phone outbox overflowing
+  on the daemon's connect-time reconcile burst, fixed in pyrycode/pyrycode-relay#154; the
+  snapshotted repository was already torn down, and the
   slash-command read never completed. Every production screen instead follows the
   `StateFlow` itself through `StableConversationRepository`, so the same drop shows there only
   as a one-second reconnect. Fixed by #1029 with `firstOnLive` / `callOnLive`
