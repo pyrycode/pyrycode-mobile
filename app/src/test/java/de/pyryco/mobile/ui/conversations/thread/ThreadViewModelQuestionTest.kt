@@ -1,21 +1,28 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
+import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.QuestionOption
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -52,10 +59,10 @@ class ThreadViewModelQuestionTest {
         RelayLog.enabled = oldEnabled
     }
 
-    private fun vm(): ThreadViewModel =
+    private fun vm(repository: ConversationRepository = FakeConversationRepository()): ThreadViewModel =
         ThreadViewModel(
             SavedStateHandle(mapOf("conversationId" to CONV)),
-            FakeConversationRepository(),
+            repository,
             FakeConnectionStateSource(),
             ComposerDraftStore(),
             answerModal = { _, option, _ -> modalAnswers += option },
@@ -235,7 +242,43 @@ class ThreadViewModelQuestionTest {
             assertTrue(refusals.isEmpty())
         }
 
+    @Test
+    fun a_codex_conversations_batch_names_codex_and_keeps_its_picks_when_the_list_arrives_late() =
+        runTest {
+            // Like the live projection, the list says nothing until its first response arrives.
+            val rows = MutableStateFlow<List<Conversation>?>(null)
+            val vm = vm(ListedRepository(rows.filterNotNull()))
+            batches.value = batch()
+            assertEquals("a cold list reads as today's Claude title", ConversationAgent.Claude, vm.state().agent)
+            vm.answerBoth()
+            rows.value = listOf(conversation(CONV, ConversationAgent.Codex), conversation("other", ConversationAgent.Claude))
+            assertEquals(ConversationAgent.Codex, vm.state().agent)
+            assertTrue(vm.state().canContinue)
+        }
+
+    @Test
+    fun a_claude_or_unlisted_conversations_batch_names_claude() =
+        runTest {
+            val rows = MutableStateFlow(listOf(conversation("other", ConversationAgent.Codex)))
+            val vm = vm(ListedRepository(rows))
+            batches.value = batch()
+            assertEquals(ConversationAgent.Claude, vm.state().agent)
+            rows.value = listOf(conversation(CONV, ConversationAgent.Claude))
+            assertEquals(ConversationAgent.Claude, vm.state().agent)
+        }
+
+    private class ListedRepository(
+        private val rows: Flow<List<Conversation>>,
+    ) : ConversationRepository by FakeConversationRepository() {
+        override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = rows
+    }
+
     private companion object {
         const val CONV = "conv-1"
+
+        fun conversation(
+            id: String,
+            agent: ConversationAgent,
+        ) = Conversation(id, null, "~", "s", emptyList(), isPromoted = true, lastUsedAt = Instant.fromEpochSeconds(0), agent = agent)
     }
 }

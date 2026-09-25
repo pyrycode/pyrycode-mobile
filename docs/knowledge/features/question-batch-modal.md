@@ -36,7 +36,9 @@ single-choice question clears any Other tick, and ticking Other clears any optio
 independent on a multiple-choice question. Typing into the Other field ticks it (with the same
 single-choice clear), so a typed answer cannot sit un-ticked and silently excluded.
 
-`QuestionModalState(batch, selections, phase: QuestionSendPhase)` is one send's worth of state:
+`QuestionModalState(batch, selections, phase: QuestionSendPhase, agent: ConversationAgent =
+ConversationAgent.Claude)` is one send's worth of state, plus the conversation's agent for the title
+(#1116, § Title below):
 `locked` is true while `phase` is `Sending` or `Sent` — **`Sent`, not just `Sending`**, because the daemon
 sends no reply to `question_answer` / `question_refused` and the batch is only truly resolved by the later
 `question_dismissed`. A modal that unlocked itself after `Sent` would let a second Continue race the first
@@ -78,6 +80,30 @@ assuming parity.
 VM owns. `ThreadViewModelQuestionTest` asserts this directly — a passing answer/refuse flow that also
 records a call to the permission-modal's `answerModal` would be a real cross-wiring bug, not just an
 untested path.
+
+## Title names the conversation's agent (#1116)
+
+`QuestionBatchModal`'s title picks `question_modal_title` ("Claude has questions") or
+`question_modal_title_codex` ("Codex has questions") from `state.agent`. `QuestionBatch` itself carries no
+agent field, so `ThreadViewModel` derives it separately: while a batch for this conversation is held, a
+`flatMapLatest` subscribes to the conversation list and maps this conversation's row to its `agent` (Claude
+when the row is absent), seeded with Claude through `onStart` so a cold list never holds the modal back, and
+`distinctUntilChanged` so an unrelated list update doesn't re-emit the same agent. The batch-held fold keeps
+this agent alongside the batch's own reconcile rule (§ Batch ownership above): the same batch keeps its
+picks and gets `copy(agent = …)`; any other batch starts fresh. No held batch means no list subscription —
+a thread with no questions issues no extra `list_conversations`.
+
+**Left as a known duplicate subscription, non-blocking.** This collector calls
+`repository.observeConversations(ConversationFilter.All)` directly rather than reusing the shared lookup.
+\#1110 (merged after this ticket's plan was written) added a private `conversationAgent: Flow<ConversationAgent>`
+to `ThreadViewModel` for exactly this conversation-agent lookup, built over a `conversations` flow shared
+with `state`'s own combine so every subscriber rides one upstream `list_conversations` request — see
+[Thread screen § The model-menu agent filter (#1110)](thread-screen-how-it-works-state.md#the-model-menu-agent-filter-1110).
+Because this ticket's plan predates that merge, the shipped collector opens a second, independent
+subscription instead. `RemoteConversationRepository.observeConversations`'s `StateFlow` conflation absorbs
+the duplicate, so the verifier passed it as a non-blocking SHOULD FIX rather than a blocker. A future change
+touching this collector should fold it onto `conversationAgent.onStart { emit(ConversationAgent.Claude)
+}.distinctUntilChanged()` instead of subscribing to `observeConversations` a second time.
 
 ## Placement: `MainActivity`, not `ThreadScreen`
 
