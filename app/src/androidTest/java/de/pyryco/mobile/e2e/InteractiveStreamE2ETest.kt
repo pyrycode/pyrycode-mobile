@@ -101,6 +101,7 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
+import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
@@ -4092,13 +4093,25 @@ class InteractiveStreamE2ETest {
         // A fresh read each pass: a collector that starts during the first write can miss it (#968).
         while (runBlocking { preferences.pushToken.first() }.isNullOrEmpty()) {
             if (SystemClock.elapsedRealtime() > deadline) {
-                throw AssertionError("no FCM token — does the device image have Play services? (#955)")
+                throw AssertionError("no FCM token stored; an in-process token request: ${fcmTokenRequestOutcome()} (#1102)")
             }
             SystemClock.sleep(POLL_MS)
         }
         cycleHostLink(serverId)
         val remaining = connectedAt + PUSH_WAKE_COALESCE_MS - SystemClock.elapsedRealtime()
         if (remaining > 0) SystemClock.sleep(remaining)
+    }
+
+    /** What asking FCM for the current token returns right now, so a repeat carries its own cause. Never the token. */
+    private fun fcmTokenRequestOutcome(): String {
+        val source = GlobalContext.get().get<PushTokenSource>()
+        if (!source.isAvailable()) return "not made, no FirebaseApp in this process"
+        val result = runBlocking { withTimeoutOrNull(PUSH_TOKEN_TIMEOUT_MS) { runCatching { source.currentToken() } } }
+        return when {
+            result == null -> "did not complete within ${PUSH_TOKEN_TIMEOUT_MS}ms"
+            result.isSuccess -> "returned a token, but none was stored"
+            else -> result.exceptionOrNull().let { "failed with ${it?.javaClass?.name}: ${it?.message}" }
+        }
     }
 
     /**
