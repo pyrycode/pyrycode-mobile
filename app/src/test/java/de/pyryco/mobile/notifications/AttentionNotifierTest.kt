@@ -11,6 +11,7 @@ import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.AttentionAlert
@@ -51,6 +52,7 @@ class AttentionNotifierTest {
     private val enabled = MutableStateFlow(true)
     private var foreground = false
     private val muted = mutableSetOf<Pair<String, String>>()
+    private val agents = mutableMapOf(("host-a" to "conv") to ConversationAgent.Claude, ("host-b" to "conv") to ConversationAgent.Claude)
     private lateinit var ledger: File
 
     @Before
@@ -151,6 +153,63 @@ class AttentionNotifierTest {
     }
 
     @Test
+    fun aCodexConversationsAlertsNameCodex() =
+        withNotifier {
+            agents["host-a" to "conv"] = ConversationAgent.Codex
+            alerts.emit(TURN)
+            assertEquals(
+                app.getString(R.string.notification_turn_completed_codex),
+                posted().single().extras.getString(Notification.EXTRA_TEXT),
+            )
+            alerts.emit(AttentionAlert("host-a", "conv", AttentionAlert.Kind.Prompt, "batch:q"))
+            assertEquals(app.getString(R.string.notification_prompt_codex), posted().single().extras.getString(Notification.EXTRA_TEXT))
+            assertEquals("Codex finished a reply", app.getString(R.string.notification_turn_completed_codex))
+            assertEquals("Codex is waiting for your answer", app.getString(R.string.notification_prompt_codex))
+        }
+
+    @Test
+    fun anAlertForAConversationMissingFromTheHostsListReadsNeutrally() =
+        withNotifier {
+            agents.clear()
+            alerts.emit(TURN)
+            assertEquals("A reply finished", posted().single().extras.getString(Notification.EXTRA_TEXT))
+            alerts.emit(AttentionAlert("host-a", "conv", AttentionAlert.Kind.Prompt, "batch:q"))
+            assertEquals("An answer is needed", posted().single().extras.getString(Notification.EXTRA_TEXT))
+        }
+
+    @Test
+    fun aClaudeConversationReadsAsBeforeAndTheChannelDescriptionIsNeutral() =
+        withNotifier {
+            alerts.emit(TURN)
+            assertEquals("claude finished a reply", posted().single().extras.getString(Notification.EXTRA_TEXT))
+            assertEquals("claude is waiting for your answer", app.getString(R.string.notification_prompt))
+            assertEquals(
+                "When a reply finishes or an answer is needed",
+                manager.getNotificationChannel(ATTENTION_CHANNEL_ID).description,
+            )
+        }
+
+    @Test
+    fun theAgentLookupReadsOnlyTheAlertsOwnHostAndIsNullWhenMissing() {
+        val hosts =
+            listOf(
+                host(
+                    "host-a",
+                    channels = listOf(row("chan", agent = ConversationAgent.Codex)),
+                    chats = listOf(row("chat", agent = ConversationAgent.Codex), row("claude")),
+                ),
+                host("host-b", chats = listOf(row("conv"))),
+            )
+
+        assertEquals(ConversationAgent.Codex, hosts.agentOf("host-a", "chan"))
+        assertEquals(ConversationAgent.Codex, hosts.agentOf("host-a", "chat"))
+        assertEquals(ConversationAgent.Claude, hosts.agentOf("host-a", "claude"))
+        assertNull(hosts.agentOf("host-a", "missing"))
+        assertNull(hosts.agentOf("host-b", "chan"))
+        assertNull(hosts.agentOf("host-c", "chan"))
+    }
+
+    @Test
     fun anAlertSuppressedByAGateIsSpentAndNeverPostsLater() =
         withNotifier {
             foreground = true
@@ -236,6 +295,7 @@ class AttentionNotifierTest {
                     alerts,
                     enabled,
                     { server, conversation -> (server to conversation) in muted },
+                    { server, conversation -> agents[server to conversation] },
                     { foreground },
                     ledger,
                     UnconfinedTestDispatcher(testScheduler),
@@ -253,7 +313,18 @@ class AttentionNotifierTest {
         fun row(
             id: String,
             muted: Boolean = false,
-        ) = Conversation(id, null, "~", "s", emptyList(), isPromoted = false, lastUsedAt = Instant.fromEpochSeconds(0), muted = muted)
+            agent: ConversationAgent = ConversationAgent.Claude,
+        ) = Conversation(
+            id,
+            null,
+            "~",
+            "s",
+            emptyList(),
+            isPromoted = false,
+            lastUsedAt = Instant.fromEpochSeconds(0),
+            muted = muted,
+            agent = agent,
+        )
 
         fun host(
             serverId: String,
