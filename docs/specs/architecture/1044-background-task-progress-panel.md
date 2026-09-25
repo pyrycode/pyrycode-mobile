@@ -71,6 +71,7 @@ Pending for the documentation stage: fold the progress block (layout, formatting
 ## Revisions
 
 - **2026-09-25 — security review added (verifier finding on PR #1073).** The ticket carries `security-sensitive`, and the committed plan had no `## Security review` section. The § A6 pass below was run against this plan and the implementation already on the branch. Verdict PASS. No design or code change follows from it. The contract stays as written under **Design**.
+- **2026-09-25 — rung-3 scenario moved to a follow-up (verifier finding on PR #1073).** This supersedes the **Testing strategy** line that skipped rung 3 because the change only displays a frame. A reply rendering only displays too, and § B1 still counts it as operator-facing: the operator watches the progress block update live while claude runs a background task. Only real claude plus the daemon can show `background_task_progress` arriving and rendering. The existing `InteractiveStreamE2ETest#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` asserts the count and task type, never progress. The scenario is filed as #1076 in the #481 / #482 shape: one `@Test` on `InteractiveStreamE2ETest`, size S, `@Ignore`-gated if the transient progress signal cannot be observed reliably before the task finishes. This ticket's own tests are unchanged, and so is the production code.
 
 ## Security review
 
