@@ -1130,13 +1130,21 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect"
   # #1016: the attachment exchange joins, one turn per method: phone to peer, and claude's offered file after a
   # restart. The list holds 31 methods and 33 turns. The peer's file after a history reload,
-  # interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload, stays out and @Ignore'd until #1020.
+  # interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload, joins below with #1020.
   # This list filters; it does not order. JUnit runs methods by name hash, and the two names place the
   # phone-to-peer method last and the offered-file method before the background-task one (see their KDoc).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart"
+  # #1020: history replay now names a user message's files, so the peer's file after a history reload joins,
+  # one turn (the peer's message). The list holds 32 methods and 34 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload"
+  # #1050: a markdown link in claude's reply opens the note live in the in-app reader (two turns: the note and
+  # its rewrite). The list holds 33 methods and 36 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownLink_opensLiveNoteInReader"
+  # #1021: the Edit channel mute round trip joins at no turn cost, so the list holds 34 methods and 36 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_muteChannel_roundTripsThroughTheHost"
   # #1017: the interrupted upload, the interrupted retrieval and the cross-host file join, one turn each, so the
-  # list holds 32 methods and 34 turns. Each cut is fired by the app's own RelayLog line, not by timing.
+  # list holds 37 methods and 39 turns. Each cut is fired by the app's own RelayLog line, not by timing.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedRetrieval_retryLoadsTheOfferedFile"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost"

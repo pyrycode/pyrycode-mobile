@@ -229,6 +229,7 @@ class RelayConnectionFactoryTest {
                 b.close()
                 runCurrent()
             }
+            // The real pump logs its teardowns too (#1039); this test pins only the bundle lifecycle.
             assertEquals(
                 listOf(
                     "event=relay_bundle_created",
@@ -236,7 +237,7 @@ class RelayConnectionFactoryTest {
                     "event=relay_bundle_disposed",
                     "event=relay_bundle_disposed",
                 ),
-                logs,
+                logs.filter { it.startsWith("event=relay_bundle_") },
             )
         }
 

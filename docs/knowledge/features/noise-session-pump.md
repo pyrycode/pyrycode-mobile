@@ -281,6 +281,35 @@ named: it re-loads `s` fresh per re-key (mirroring `create()`'s load + zero disc
 caching it on the multi-hour pump — preserving #298/#303's bounded device-key RAM window across every
 hourly rotation.
 
+## Logging (#1039)
+
+`teardown(trigger, cause)` — the single idempotent path every ending funnels into (below) — writes
+exactly one [`RelayLog`](relay-log.md) line before it sets `Closed`:
+
+`event=pump_teardown trigger=<label>[ cause=<SimpleClassName>]`
+
+| `trigger` | Funnel |
+|---|---|
+| `session_create_failed` | `sessionFactory.create()` threw |
+| `handshake_deadline` | no frame arrived before the `noise_resp` deadline |
+| `handshake_transport_down` | the transport went `Down` before any frame arrived |
+| `handshake_wrong_first_frame` | the first inbound frame was not `noise_resp` |
+| `handshake_resp_rejected` | `readResp` / base64 threw |
+| `open_decrypt_failed` | a `noise_msg`'s base64 decode or AEAD decrypt threw |
+| `open_parse_failed` | the decrypted plaintext failed to parse as an `Envelope` |
+| `open_unexpected_frame_type` | an open-state frame was neither `noise_msg` nor `noise_resp` |
+| `open_unexpected_noise_resp` | a `noise_resp` arrived with no re-key in flight |
+| `rekey_resp_rejected` | the re-key `readRekeyResp` threw |
+| `open_frame_failed` | any other exception out of the open-frame collector |
+| `rekey_deadline` | the bounded re-key response watchdog (§ Re-key triggers) fired |
+| `transport_down` | `transport.inbound` completed cleanly |
+| `close` | the app's own `close()` |
+
+`cause` is the exception's class name, never its message (a message can carry frame content). Level is
+`i` when `cause == null`, `w` otherwise. The pump's own `transport.close()` inside `teardown` then shows
+up in [the transport's line](relay-ws-transport.md#logging-1039) as a local `1000` close; this line is
+what explains that local close.
+
 ## State & concurrency model
 
 - **One connection-scoped scope** (`CoroutineScope(SupervisorJob() + dispatcher)`, `Dispatchers.Default`
@@ -356,9 +385,11 @@ review against the diff:
 - **Ordering discipline** — the `outboundLock` spans the full encrypt→enqueue pair (a reorder is an
   availability bug → session death → reconnect, not a confidentiality break); the re-key `noise_init` is
   **outside** the lock (it carries no transport-AEAD payload, so it is outside the nonce-order invariant).
-- **No logs, category-only causes** — every failure surfaces only via `Closed(cause)`, whose message is
-  category-only (no `frame.data` / plaintext / token interpolated). A downstream caller that logs `cause`
-  inherits the guarantee.
+- **Category-only causes, one teardown line** — every failure surfaces via `Closed(cause)`, whose message
+  is category-only (no `frame.data` / plaintext / token interpolated). [#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039)
+  added exactly one `event=pump_teardown` line per teardown (§ Logging below), carrying a fixed trigger
+  label and the cause's class name only — never `cause`'s message. A downstream caller that logs `cause`
+  directly still inherits the category-only guarantee.
 - **The 10 s `noise_resp` deadline closes a silent-hang hole** — #306's `readTimeout` is deliberately 0
   (a long-lived WS footgun guard), so a relay that accepts the WS but never answers `noise_init` would
   otherwise hang the session in `Handshaking` forever with no `Down`. `handshakeTimeoutMs` bounds it.

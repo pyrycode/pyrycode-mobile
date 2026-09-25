@@ -58,7 +58,7 @@ private const val META_CONTENT_ALPHA = 0.80f
  * real message and well under the ceiling. The bound lives here rather than at the call sites so every
  * caller inherits it — the `text` parameter carries no trust signal in its type.
  */
-private const val MAX_CLIPBOARD_CHARS = 100_000
+internal const val MAX_CLIPBOARD_CHARS = 100_000
 
 /**
  * The design's date-then-time timestamp (Figma `Meta row`, node `132:4446` — sample `13.01.2026 - 13:55`).

@@ -9,6 +9,14 @@
     <!-- Camera is not required: the "paste the pairing code instead" fallback completes onboarding
          without it, so the app stays installable on camera-less devices. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <!-- #1068: the markdown reader's Open in another app asks which apps view a content URI as
+         text/markdown before it shows the chooser, so it can say when none can. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:mimeType="text/markdown" />
+        </intent>
+    </queries>
 
     <application
         android:name=".PyryApp"

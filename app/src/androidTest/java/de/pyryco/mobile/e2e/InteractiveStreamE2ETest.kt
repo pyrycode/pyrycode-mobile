@@ -37,7 +37,9 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.isOff
 import androidx.compose.ui.test.isOn
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
@@ -45,6 +47,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
@@ -127,6 +130,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -1498,6 +1502,87 @@ class InteractiveStreamE2ETest {
         composeTestRule
             .onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(uniqueName, substring = true))
             .assertCountEquals(0)
+    }
+
+    /**
+     * Mute notifications in Edit channel round-trips through the host (#1021, rung 3). The checkbox writes
+     * `set_conversation_muted` and nothing is patched locally, so the only way the modal can reopen checked is
+     * the daemon storing the flag and echoing it back in `conversation_updated`. The unit and screen tests
+     * prove the write against a fake that patches its own rows; this proves the real daemon keeps it.
+     *
+     * The channel is set up on the host directly (a discussion promoted in its own cwd, so no folder is
+     * created) and deleted in `finally`, which also leaves no muted channel behind. The drive is the list's own:
+     * the row's pen opens Edit channel, OK closes it only once every write is confirmed, and the reopened
+     * modal reads the flag from the host's row. It is checked on the host's own record too, and unchecking
+     * proves the clear goes the same way.
+     *
+     * **Zero real-claude turns**: create, promote, mute and delete are daemon round-trips.
+     */
+    @Test
+    fun interactiveTurn_muteChannel_roundTripsThroughTheHost() {
+        awaitChannelList()
+        awaitConnected()
+        val repository = hostRepository()
+        val name = MUTE_NAME_PREFIX + System.currentTimeMillis()
+        val channel =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) { repository.promote(repository.createDiscussion().id, name) }
+            }
+        try {
+            // Opens unchecked: a new channel is not muted. Check it and save.
+            setMuteInEditChannel(name, from = false, to = true)
+            assertHostMuted(repository, channel.id, true)
+
+            // Reopens checked, read from the host's echoed row. Uncheck it and save: the clear round-trips too.
+            setMuteInEditChannel(name, from = true, to = false)
+            assertHostMuted(repository, channel.id, false)
+        } finally {
+            runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.delete(channel.id) } } }
+                .onFailure { Log.w("E2E", "mute channel cleanup failed: ${it::class.simpleName}") }
+        }
+    }
+
+    /**
+     * Open Edit channel from [name]'s pen, check the Mute notifications row opens at [from], set it to [to]
+     * and press OK, then wait for the modal to close — it closes only once the host confirmed the write.
+     */
+    private fun setMuteInEditChannel(
+        name: String,
+        from: Boolean,
+        to: Boolean,
+    ) {
+        val pen = hasContentDescription(string(R.string.cd_tree_channel_edit).format(name))
+        val title = string(R.string.edit_channel_title)
+        val mute = hasText(string(R.string.edit_channel_mute)) and isToggleable()
+        awaitChannelRow(name)
+        composeTestRule.onNode(pen).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(mute and if (from) isOn() else isOff()).fetchSemanticsNodes().isNotEmpty()
+        }
+        if (from != to) composeTestRule.onNode(mute).performScrollTo().performClick()
+        composeTestRule.onNode(mute and if (to) isOn() else isOff()).assertExists()
+        composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(title).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** [conversationId]'s own row on the host reports [muted]. */
+    private fun assertHostMuted(
+        repository: ConversationRepository,
+        conversationId: String,
+        muted: Boolean,
+    ) {
+        runBlocking {
+            withTimeout(LIST_TIMEOUT_MS) {
+                repository
+                    .observeConversations(ConversationFilter.All)
+                    .first { rows -> rows.any { it.id == conversationId && it.muted == muted } }
+            }
+        }
     }
 
     /**
@@ -2991,10 +3076,9 @@ class InteractiveStreamE2ETest {
      * system picker answered by an [ActivityIntentStub] with `MediaStore` URIs, since the app refuses any
      * authority of its own, the test APK's included — and sends one message. Then the [SecondClientPeer], the
      * desktop stand-in, sees exactly what the desktop would:
-     *  * X's history holds exactly one user message;
-     *  * `request_attachment` for each of the two ids the phone named returns bytes whose SHA-256 digests are
-     *    the two fixtures' digests. The host's history drops the ids (#1020), so they are read from the
-     *    phone's own sent row;
+     *  * X's history holds exactly one user message, naming two attachment ids;
+     *  * `request_attachment` for each of those ids returns bytes whose SHA-256 digests are the two fixtures'
+     *    digests;
      *  * chat Y on the same host gains no message.
      * The document spans three 45000-byte chunks, so the phone's chunking and the daemon's reassembly both run.
      * The turn may Read the named files; the peer allows each prompt until the turn ends.
@@ -3047,12 +3131,12 @@ class InteractiveStreamE2ETest {
             // 3. The message reaches claude, and its turn ends: the host logs the user turn on delivery.
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the attachment turn in X did not end") { it.type == "turn_end" }
 
-            // 4. AC-1: one user message in X, its two ids each fetching its fixture's exact bytes; Y gained
-            // nothing. The host's history keeps the text but not the ids (#1020), so the ids are the ones the
-            // phone minted and named, read from its own sent row.
-            assertEquals("user messages in the peer's view of X", 1, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
-            val ids = awaitCachedSentAttachmentIds(serverId, chatX)
-            assertEquals("attachment ids named by the phone's message", 2, ids.distinct().size)
+            // 4. AC-1: the peer's view of X holds one user message naming two ids, each fetching its fixture's
+            // exact bytes; Y gained nothing.
+            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
+            assertEquals("user messages in the peer's view of X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids named by X's user message", 2, ids.distinct().size)
             val digests = ids.map { id -> sha256(runBlocking { peer.retrieveAttachment(chatX, id, REPLY_TIMEOUT_MS) }.bytes) }
             assertEquals("digests of the files the peer fetched", setOf(sha256(png), sha256(document)), digests.toSet())
             assertEquals("user messages in the other conversation", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
@@ -3068,18 +3152,14 @@ class InteractiveStreamE2ETest {
      * [SecondClientPeer] uploads a ~100 KB document into chat X — three chunks, so the phone's reassembly
      * runs — and names it on a message, as the desktop does. The phone never opens X before a restart
      * ([E2eTestApplication.rebuildGraph]) with X's thread cache cleared, so X's rows can only come from
-     * history replay, whose `send_message` entry keeps the id but no name. Then:
+     * history replay, whose user `message` entry keeps the id but no name (#1020). Then:
      *  * the row shows the uploaded filename, which only retrieval supplies, exactly once;
      *  * a tap hands `ACTION_VIEW` a content URI whose bytes have the fixture's digest;
      *  * a long-press writes the same bytes to the `ACTION_CREATE_DOCUMENT` target.
      * Both system activities are answered by an [ActivityIntentStub]; the save target is a `MediaStore` entry.
      *
      * **One real-claude turn**: the peer's message.
-     *
-     * Ignored and out of the LIVE list until #1020: the host logs the peer's message as a `message` entry
-     * with no `attachment_ids`, so history replay never names the file and no row can appear.
      */
-    @Ignore("blocked on #1020 — history replay drops a user message's attachment ids")
     @Test
     fun interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload() {
         val serverId = twoHostArg(ARG_SERVER_ID)
@@ -3207,7 +3287,7 @@ class InteractiveStreamE2ETest {
      *    peer's view of X holds no user message.
      *  * **The retry sends once.** With the link restored and Send tapped again, the peer's view of X holds
      *    exactly one user message, and `request_attachment` for the one id the phone named returns the
-     *    fixture's bytes. The host's history drops the ids (#1020), so the id is read from the phone's sent row.
+     *    fixture's bytes. The id is the one the peer's history names on that message (#1020).
      *
      * **One real-claude turn**: the retried message.
      */
@@ -3260,10 +3340,11 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(send).onFirst().performClick()
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the retried attachment turn in X did not end") { it.type == "turn_end" }
 
-            // 4. AC-1: one user message in X, and its one id fetches the fixture's exact bytes.
-            assertEquals("user messages in the peer's view of X", 1, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
-            val ids = awaitCachedSentAttachmentIds(serverId, chatX)
-            assertEquals("attachment ids named by the phone's message", 1, ids.size)
+            // 4. AC-1: the peer's view of X holds one user message naming one id, which fetches the fixture's bytes.
+            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
+            assertEquals("user messages in the peer's view of X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids named by X's user message", 1, ids.size)
             val fetched = runBlocking { peer.retrieveAttachment(chatX, ids.single(), REPLY_TIMEOUT_MS) }
             assertEquals("digest of the file the peer fetched", sha256(document), sha256(fetched.bytes))
         } finally {
@@ -3410,13 +3491,10 @@ class InteractiveStreamE2ETest {
                 it.type ==
                     "turn_end"
             }
-            assertEquals(
-                "user messages in the peer's view of A's copy",
-                1,
-                userMessages(runBlocking { peer.history(collisionId, THREAD_TIMEOUT_MS) }),
-            )
-            val ids = awaitCachedSentAttachmentIds(serverIdA, collisionId)
-            assertEquals("attachment ids named by the phone's message", 1, ids.size)
+            val named = userMessageAttachmentIds(runBlocking { peer.history(collisionId, THREAD_TIMEOUT_MS) })
+            assertEquals("user messages in the peer's view of A's copy", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids named by A's user message", 1, ids.size)
             val id = ids.single()
             val fetched = runBlocking { peer.retrieveAttachment(collisionId, id, REPLY_TIMEOUT_MS) }
             assertEquals("digest of the file the peer fetched from host A", sha256(document), sha256(fetched.bytes))
@@ -3439,6 +3517,136 @@ class InteractiveStreamE2ETest {
             instrumentation.removeMonitor(stub)
             deleteFixtures(inserted)
             peer.close()
+        }
+    }
+
+    /**
+     * A markdown link in claude's reply opens the note in the in-app reader, read live (#1050, rung 3). Claude
+     * writes a markdown note in its workspace with one `printf` and replies with a link to it. A tap on the
+     * link shows the note's heading and its file name in the reader, with the thread's composer gone. While the
+     * reader stays open, the peer has claude rewrite the note, and the reader's Refresh (#1067) shows the new
+     * heading and not the old one. Back returns to the thread, and the same link shows the new heading too:
+     * the reader reads the host's file on every open and keeps nothing between opens.
+     *
+     * **Two real-claude turns**: the note and the rewrite.
+     */
+    @Test
+    fun interactiveTurn_markdownLink_opensLiveNoteInReader() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        try {
+            val stamp = System.currentTimeMillis()
+            val fileName = NOTE_FILE_PREFIX + "$stamp.md"
+            val linkText = NOTE_LINK_PREFIX + stamp
+            val first = NOTE_MARKER_PREFIX + "$stamp-first"
+            val second = NOTE_MARKER_PREFIX + "$stamp-second"
+            val allowed = mutableSetOf<String>()
+
+            // 1. A fresh chat X; claude writes the note and replies with a link to it.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, NOTE_CHAT_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+            sendFromPhone(notePrompt(first, fileName, "reply with exactly this markdown link and nothing else: [$linkText]($fileName)"))
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the note turn in X did not end", allowed) { it.type == "turn_end" }
+
+            // 2. AC-1, AC-3: the tap opens the reader on the note as it is now, named by its file.
+            assertLinkOpensNote(linkText, fileName, first, stale = null)
+
+            // 3. #1067: with the reader still open, the peer has claude rewrite the note; Refresh shows it.
+            runBlocking { peer.sendMessage(chatX, notePrompt(second, fileName, "reply with a single short word"), THREAD_TIMEOUT_MS) }
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the rewrite turn in X did not end", allowed) {
+                it.type == "turn_end" && peer.recorded(chatX).count { frame -> frame.type == "turn_end" } >= 2
+            }
+            assertRefreshShowsNote(second, stale = first)
+
+            // 4. AC-3: back returns to the same thread.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitThreadComposer()
+
+            // 5. AC-2, AC-5: the same link now shows the new content only.
+            assertLinkOpensNote(linkText, fileName, second, stale = first)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitThreadComposer()
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * The #1050 note prompt: write a one-heading markdown note [marker] to [fileName] in the workspace with one
+     * shell command, then [reply]. `printf` with a quoted literal keeps the bytes exactly as written.
+     */
+    private fun notePrompt(
+        marker: String,
+        fileName: String,
+        reply: String,
+    ): String =
+        "Run this exact shell command with your tools: `printf '# $marker\\n' > $fileName`. " +
+            "Do not use Write or Edit, and do not create any other file. After the command returns, $reply."
+
+    /**
+     * Tap the first [linkText] link in claude's reply and wait for the reader: the note's [marker] heading
+     * under a bar named [fileName], the composer gone, and never the [stale] heading.
+     */
+    private fun assertLinkOpensNote(
+        linkText: String,
+        fileName: String,
+        marker: String,
+        stale: String?,
+    ) {
+        val link = hasText(linkText, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                runCatching {
+                    scrollListTo(link)
+                    composeTestRule.onAllNodes(link, useUnmergedTree = true).onFirst().performFirstLinkClick()
+                }.isSuccess
+            }
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(marker)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("tapping the link to $fileName did not show the note $marker in the reader", e)
+        }
+        // Past the navigation transition, so the thread beneath (whose prompts name both markers) is gone.
+        composeTestRule.waitForIdle()
+        composeTestRule.onNode(hasText(marker)).assertIsDisplayed()
+        composeTestRule.onNode(hasText(fileName)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).assertCountEquals(0)
+        stale?.let { composeTestRule.onAllNodes(hasText(it)).assertCountEquals(0) }
+    }
+
+    /**
+     * Choose Refresh from the open reader's overflow (#1067) and wait for the note's [marker] heading, read
+     * again from the host: never the [stale] heading, and no could-not-open notice.
+     */
+    private fun assertRefreshShowsNote(
+        marker: String,
+        stale: String,
+    ) {
+        val openFailed = string(R.string.thread_attachment_open_failed)
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.onNode(hasText(string(R.string.markdown_reader_refresh))).performClick()
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(openFailed)).fetchSemanticsNodes().isNotEmpty() ||
+                    composeTestRule.onAllNodes(hasText(marker)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("Refresh in the reader did not show the rewritten note $marker", e)
+        }
+        composeTestRule.onAllNodes(hasText(openFailed)).assertCountEquals(0)
+        composeTestRule.onNode(hasText(marker)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(stale)).assertCountEquals(0)
+    }
+
+    /** Wait until the open thread's composer is back. */
+    private fun awaitThreadComposer() {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
@@ -3525,11 +3733,16 @@ class InteractiveStreamE2ETest {
      * The user messages in a history. The host logs the operator's turn as a `message` entry with role `user`
      * when it is delivered; a stored `send_message` counts too, the shape the phone's reducer also reads.
      */
-    private fun userMessages(history: List<HistoryEntryDto>): Int =
-        history.count { entry ->
-            entry.type == "send_message" ||
-                (entry.type == "message" && (entry.payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
+    private fun userMessages(history: List<HistoryEntryDto>): Int = history.count { it.isUserMessage() }
+
+    /** The `attachment_ids` of each user message in a history, in log order; empty for a message naming none. */
+    private fun userMessageAttachmentIds(history: List<HistoryEntryDto>): List<List<String>> =
+        history.filter { it.isUserMessage() }.map { entry ->
+            ((entry.payload as? JsonObject)?.get("attachment_ids") as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
         }
+
+    private fun HistoryEntryDto.isUserMessage(): Boolean =
+        type == "send_message" || (type == "message" && (payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
 
     /**
      * Fail fast, and say so, when [peer]'s open session carries no frames: one `request_history` for
@@ -3544,35 +3757,6 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.history(conversationId, THREAD_TIMEOUT_MS) }
         } catch (e: TimeoutCancellationException) {
             throw AssertionError("the peer's open session answered no request within $THREAD_TIMEOUT_MS ms: a relay or daemon fault", e)
-        }
-    }
-
-    /** The attachment ids on the phone's own sent message in [conversationId], read from its thread cache. */
-    private fun awaitCachedSentAttachmentIds(
-        serverId: String,
-        conversationId: String,
-    ): List<String> {
-        val cache = GlobalContext.get().get<ConversationCache>()
-        return try {
-            runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    var ids: List<String>? = null
-                    while (ids == null) {
-                        ids =
-                            cache
-                                .readThread(serverId, conversationId)
-                                .filterIsInstance<ThreadItem.MessageItem>()
-                                .firstOrNull { it.message.role == Role.User && it.message.attachments.isNotEmpty() }
-                                ?.message
-                                ?.attachments
-                                ?.map { it.attachmentId }
-                        if (ids == null) delay(CACHE_POLL_MS)
-                    }
-                    checkNotNull(ids)
-                }
-            }
-        } catch (e: TimeoutCancellationException) {
-            throw AssertionError("the phone's thread cache holds no sent row with attachments", e)
         }
     }
 
@@ -5058,6 +5242,10 @@ class InteractiveStreamE2ETest {
         // with top-bar / list chrome the assertions also match.
         const val PROMOTE_NAME_PREFIX = "e2e581-"
 
+        // #1021 mute scenario: a run-unique channel name, and Edit channel's OK button.
+        const val MUTE_NAME_PREFIX = "e2e1021-"
+        const val EDIT_CHANNEL_OK = "OK"
+
         // #847 two-host scenario. The five arguments scripts/e2e-emulator.sh passes on rung 3 and LIVE
         // (host A's own four stay E2eTestApplication's). PAIR_CODE_B carries a pairing token: never log it.
         const val ARG_SERVER_ID_B = "serverIdB"
@@ -5212,6 +5400,12 @@ class InteractiveStreamE2ETest {
         const val TEXT_MIME = "text/plain"
         const val DOCUMENT_BYTES = 100_000
         const val FIXTURE_COLOR = 0xFF2A6FDB.toInt()
+
+        // #1050: the live-note link. Run-unique names; the markers are what the note's heading renders as.
+        const val NOTE_CHAT_NAME_PREFIX = "e2e1050-"
+        const val NOTE_FILE_PREFIX = "e2e1050-note-"
+        const val NOTE_LINK_PREFIX = "e2e1050-open-"
+        const val NOTE_MARKER_PREFIX = "pyrycode-mobile-note-"
 
         // #1017: the interrupted transfers. The cut follows chunk 1 of the three-chunk document, so one chunk is
         // never sent. The two log prefixes are RelayLog's own event names, which carry ids and counts only.

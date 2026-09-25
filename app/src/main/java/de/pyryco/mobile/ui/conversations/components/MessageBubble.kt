@@ -66,6 +66,9 @@ private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
  * roles, for the message's attachments: each attachment's state by id, the report that one is on screen,
  * and its retry control. [onOpenAttachment] and [onSaveAttachment] (#985) are a ready attachment's tap and
  * long-press.
+ *
+ * [onOpenMarkdownLink] (#1050) is read only by an assistant reply, streaming or finished: a tapped link to a
+ * workspace markdown note hands over its path. `null` leaves such a link inert, as it was before.
  */
 @Composable
 fun MessageBubble(
@@ -77,6 +80,7 @@ fun MessageBubble(
     onRetryAttachment: (String) -> Unit = {},
     onOpenAttachment: (AttachmentTarget) -> Unit = {},
     onSaveAttachment: (AttachmentTarget) -> Unit = {},
+    onOpenMarkdownLink: ((String) -> Unit)? = null,
 ) {
     val attachments: @Composable () -> Unit = {
         MessageAttachments(
@@ -90,7 +94,7 @@ fun MessageBubble(
     }
     when (message.role) {
         Role.User -> UserMessageBubble(message, attachments, modifier)
-        Role.Assistant -> AssistantMessage(message, attachments, modifier)
+        Role.Assistant -> AssistantMessage(message, attachments, onOpenMarkdownLink, modifier)
         // The gutter is applied here rather than inside ToolCallRow: moving it into the components left
         // the tool row as the one list kind still bleeding to the screen edge, which reads as a ragged
         // left edge next to the bubbles. The row's own layout belongs to #658, and this arm reaches it
@@ -155,6 +159,7 @@ private fun UserMessageBubble(
 private fun AssistantMessage(
     message: Message,
     attachments: @Composable () -> Unit,
+    onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -173,6 +178,7 @@ private fun AssistantMessage(
             // at `turn_end`: one snap rather than continuous jitter.
             StreamingAssistantBody(
                 content = message.content,
+                onOpenMarkdownLink = onOpenMarkdownLink,
                 modifier = Modifier.fillMaxWidth(),
             )
         } else if (!message.hasNoBody()) {
@@ -181,7 +187,7 @@ private fun AssistantMessage(
             // specifies — the frame's short assistant instance (`I533:1956;132:4539`) is 205dp. Without
             // it `MarkdownText`'s `Column` wraps its widest child, while `CodeBlock` carries its own
             // `fillMaxWidth()`, so a fenced block still spans the bubble and only prose hugs.
-            MarkdownText(markdown = message.content)
+            MarkdownText(markdown = message.content, onOpenMarkdownPath = onOpenMarkdownLink)
         }
     }
 }
@@ -262,6 +268,7 @@ private fun Message.hasNoBody(): Boolean = attachments.isNotEmpty() && content.i
 @Composable
 private fun StreamingAssistantBody(
     content: String,
+    onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val revealedLength by produceState(initialValue = 0, key1 = content) {
@@ -279,6 +286,7 @@ private fun StreamingAssistantBody(
     StreamingAssistantBodyView(
         revealedText = content.take(revealedLength),
         caretVisible = caretVisible,
+        onOpenMarkdownLink = onOpenMarkdownLink,
         modifier = modifier,
     )
 }
@@ -287,10 +295,11 @@ private fun StreamingAssistantBody(
 private fun StreamingAssistantBodyView(
     revealedText: String,
     caretVisible: Boolean,
+    onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val displayText = if (caretVisible) revealedText + STREAMING_CARET_GLYPH else revealedText
-    MarkdownText(markdown = displayText, modifier = modifier)
+    MarkdownText(markdown = displayText, modifier = modifier, onOpenMarkdownPath = onOpenMarkdownLink)
 }
 
 // Pinned rather than Clock.System.now() so the meta row renders a stable, reviewable timestamp — the
@@ -480,6 +489,7 @@ private fun MessageBubbleMarkdownPreviewBody() {
             StreamingAssistantBodyView(
                 revealedText = MARKDOWN_PREVIEW_FIXTURE.take(MARKDOWN_PREVIEW_FIXTURE.length / 2),
                 caretVisible = true,
+                onOpenMarkdownLink = null,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

@@ -430,9 +430,14 @@ machine and why a second host sharing the same `cwd` is never addressed.
 
 [`EditChannelModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditChannelModal.kt)
 (`ui/components/EditChannelModal.kt`, #667) is the shell's eighth direct caller — like `EditChatModal`, it
-draws `MobileModal` itself around `ChannelFormFields` plus a private outlined `Archive channel` action
+draws `MobileModal` itself around `ChannelFormFields`, a private `MuteNotificationsRow` (#1021, between
+the prompt field and Archive) and a private outlined `Archive channel` action
 copied from `EditChatModal`'s `ArchiveAction` (a verifier SHOULD FIX left for a follow-up: a shared
-`internal` action taking a `@StringRes` label would keep the two from drifting apart). It edits an
+`internal` action taking a `@StringRes` label would keep the two from drifting apart). `MuteNotificationsRow`
+is the app's second whole-row checkbox after `ThreadPermissionModal`'s `AlwaysAllowOffer` — a `toggleable`
+`Row` with `Role.Checkbox`, an M3 `Checkbox(onCheckedChange = null)` in `colorScheme.tertiary` and a
+label-medium SemiBold label, at the shell's 48dp touch floor — and a `muted` buffer, `remember(conversationId)
+{ mutableStateOf(initialMuted) }`, the same per-conversation keying the name and prompt buffers use. It edits an
 **existing** channel's own name and already-stored system prompt in place, unlike `CreateChannelModal`
 and `SaveAsChannelDialog`, which only ever write a system prompt into a conversation with no stored one.
 The name buffer is `remember(conversationId)`, prefilled from the caller's `initialName` — the row's own
@@ -450,7 +455,9 @@ same parity `EditChatModal`'s Archive established. [ChannelListScreen](channel-l
 only caller: the Channels row's own permanent pen — the same pen shape #827 gave Chats rows, now
 generalised behind `TreeConversationRow`'s `editDescription: @StringRes Int` parameter — opens it on
 that row's own host and conversation, reads the stored prompt once the row's host has a live
-repository, and OK writes only what changed (a rename, then the prompt, each independently) through the
+repository, opens the checkbox at that host's own stored `Conversation.muted` (#1021), and OK writes
+only what changed — a rename, then a mute write, then the prompt, each independently, in that order —
+through the
 repository resolved **at the press** — see [ChannelListScreen § Channels row edit control
 (#667)](channel-list-screen-tree-and-controls.md#channels-row-edit-control-667) and
 [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for the two target-tagged state flows
@@ -478,19 +485,69 @@ in the composition tree does not affect what it draws over. See
 [Question batch modal](question-batch-modal.md) for the full caller contract.
 
 [`BackgroundTaskPanel`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/BackgroundTaskPanel.kt)
-(#678) is [`MobileReadOnlyModal`](#the-read-only-panel-mobilereadonlymodal)'s first and so far only caller.
-Unlike `PermissionModalOverlay` and `QuestionBatchModal`, which use `MobileGateModal`, it draws inside
+(#678, redrawn to its Figma frames by #1041) is
+[`MobileReadOnlyModal`](#the-read-only-panel-mobilereadonlymodal)'s first and so far only caller. Unlike
+`PermissionModalOverlay` and `QuestionBatchModal`, which use `MobileGateModal`, it draws inside
 `ThreadScreen` itself, behind screen-local `remember(state.conversationId)` visibility the Actions menu's
 background-tasks row flips — see [Thread composer footer § Actions
 menu](thread-composer-footer.md#actions-menu-884) for the row and its live-count label, and [Thread screen —
 overlays § Background-tasks panel placement](thread-screen-how-it-works-overlays-and-app-bar.md#background-tasks-panel-placement-post-678)
-for where it mounts. It lists the open conversation's `BackgroundTaskRoster?` (#677) read-only: a different
-sentence for no report yet (`null`) and an empty roster, one row per task, a partial-list notice when
-`droppedTasks > 0`, and a "Truncated by the daemon" marker after each field the daemon's own
-`truncatedFields` names — the task's own list (`description`/`task_type`) and an update's own list
-(`patch`/`summary`) are read independently and never crossed. Every field is claude-authored and reaches
-only a plain `Text`: control characters are dropped and length is bounded at render
-(`MAX_PANEL_TEXT_CHARS = 4096`, above the daemon's own byte caps) before either list draws, and a field this
-client cuts for display is marked exactly like one the daemon cut — the marker means "this text was cut,"
-not "the daemon cut it." Closing the panel — any of the three routes above — sends nothing and changes no
-task or conversation state.
+for where it mounts. It lists the open conversation's `BackgroundTaskRoster?` (#677) read-only, with three
+readings: `null` draws a dashed ring, "No background-task report yet" and "The daemon has not reported on
+this conversation since the app connected."; an empty roster draws a solid ring, "No background tasks" and
+"Claude has nothing running in the background for this conversation."; a listed roster splits `tasks` into a
+"Running · n" group (`filterNot { it.isFinished }`) and a "Finished · n" group (`filter { it.isFinished }`),
+each in claude's order and each undrawn when empty — `droppedTasks > 0` both raises a filled
+`secondaryContainer` partial-list notice above the groups and switches both counts to "n shown".
+
+Each task is a card: the raw `taskType` in monospace beside a
+[`TaskStatusTag`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/TaskStatusTag.kt) pill
+(the Figma "Task status tag" component; Running `primaryContainer`/`onPrimaryContainer`, Completed
+`colorScheme.success` on a 16% tint of itself — the [success slot](success-color.md#usage)'s second consumer
+— Failed `errorContainer`/`onErrorContainer`, Stopped `secondaryContainer`/`onSecondaryContainer`, capped to
+160 dp and one line so a long word cannot widen the row), then the description (monospace when `taskType ==
+"local_bash"`, a shell command line), the finish summary, and, only when the task was updated mid-life, a
+"Latest update" label over a `surface` code block holding the latest patch — italic "No change reported"
+when the patch is empty, no label or block at all when `latestUpdate` is `null`. The tag resolves from
+`finish`: unfinished reads Running; `finish == null` (the reconnect case — a task marked finished with no
+terminal frame ever arriving) reads Finished in the Stopped style; the wire's three known terminal words
+(`completed`/`failed`/`stopped`, exact match) read Completed/Failed/Stopped; any other word is shown as
+itself in the Stopped style — except a blank word, or one that spells "running" in any case once trimmed,
+which falls back to Finished instead. That fallback is a security-review fix, not a style choice: an early
+draft showed an unknown terminal status raw, so a daemon-sent status of `"running"` on a *finished* task
+would have painted a Running tag — a claude-authored word passing for the app's own claim, and the one real
+trust-boundary risk this redraw introduced. No terminal status can read Running now.
+
+A partial-list notice, a "Truncated by the daemon" marker on a field the daemon's own `truncatedFields`
+names, and one this client cuts for display at the same `MAX_PANEL_TEXT_CHARS = 4096` bound, are unchanged
+in meaning from #678 — the task's own list (`description`/`task_type`) and an update's own list
+(`patch`/`summary`) still read independently and never cross — only their look changed: the cut marker is
+now a dashed `tertiary` chip and the partial notice a filled row, both still their own element straight
+after the field they describe, never text joined onto it. Every field, the tag's word included, still
+reaches only a plain `Text` through `printableText` + the 4096-char bound: no link, click, clipboard, parse,
+`key()`, test tag or log. `printableText` drops ISO control characters but keeps Unicode bidi format
+characters (e.g. U+202E), so a field can still be visually reordered to spell another word — an accepted,
+pre-existing limit since #678 and not widened by this redraw, since a tag's style is chosen by exact match
+on the raw word rather than on what renders. Closing the panel — any of the three routes above — sends
+nothing and changes no task or conversation state.
+
+A running card's progress (#1044, the Figma Populated frame) draws directly under the description and
+above the finish summary / "Latest update", gated on `!task.isFinished && task.progress != null` — the
+panel gates on `isFinished` itself rather than trusting that the #1042 projection already nulls `progress`
+on finish. The block is the activity line (the held frame's `description`, `bodyMedium`/`onSurfaceVariant`,
+through the same `TaskField` + cut-marker treatment as every other field) then a meta line
+(`bodySmall`/`outline`) joining the last tool name and three client-formatted counters with " · ", e.g.
+"Bash · 4 tools · 18k tokens · 2m 41s". `subagentType` is decoded onto the held frame but never rendered.
+
+The progress frame carries its own `truncatedFields` — a *third* independent list alongside the task's own
+and an update's own, never crossing either: the task's own list naming `description` does not mark the
+activity line, only the progress frame's own list naming `description` does, and naming `last_tool_name`
+marks the meta line instead. An empty last-tool-name drops its segment rather than leaving a stray leading
+separator. The three counters (`BackgroundTaskProgressFormat.progressCounters`) format purely from the
+frame's three `Long` readings, never a daemon string: singular exactly at 1, tokens whole under 1000 then
+half-up-rounded thousands with a "k" suffix (division/remainder, not `+500`, so it cannot overflow), elapsed
+as `Ns` under a minute, `Nm SSs` under an hour, `Nh MMm` (seconds dropped) beyond, and any negative reading
+clamps to zero since the wire's counters are not guaranteed monotonic. Sharing one `Text` for the tool name
+and the counters is an accepted limit, not an oversight: a hostile tool name could imitate a counter segment
+or bidi-reorder the line, but the same author supplies the integers being formatted, so this grants no new
+capability — the same accepted-limit shape as the tag's raw-word display above.

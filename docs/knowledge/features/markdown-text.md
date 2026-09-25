@@ -15,6 +15,7 @@ Parses an input string with `org.jetbrains:markdown`'s `MarkdownParser(GFMFlavou
 fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
+    onOpenMarkdownPath: ((String) -> Unit)? = null,
 )
 ```
 
@@ -22,7 +23,7 @@ fun MarkdownText(
 
 **No `color` parameter** — text inherits the ambient `LocalContentColor.current`. The consumer (`AssistantMessage` in [`MessageBubble`](./message-bubble.md)) wraps the call in `CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { MarkdownText(...) }`. Keeps the renderer reusable from any future surface (system messages, tool cards) without changing the signature.
 
-**No `onLinkClick` parameter** — links open via the ambient `LocalUriHandler.current.openUri(url)`. External callers cannot intercept link taps; if a future surface needs to (e.g. an in-app deep-link router), introduce a parameter at that point, not pre-emptively.
+**`onOpenMarkdownPath`, opt-in, since #1050.** Every link keeps opening via the ambient `LocalUriHandler.current.openUri(url)` when this is `null` — the default, and what the reader's own `MarkdownText` call and every other caller still get unchanged. A caller that passes a callback opts a workspace-path link (`markdownLinkPath`, below) in to routing through it instead of doing nothing; every other target (`http`, `https`, `mailto`) still opens through the platform handler regardless of the callback. Only [`MessageBubble`](message-bubble.md)'s assistant paths pass one, so the callback exists to let a link in an assistant reply — not a link anywhere else — open the in-app reader. See [Markdown-path links](#markdown-path-links-since-1050).
 
 ## How it works
 
@@ -79,6 +80,8 @@ Link text is built from the `LINK_TEXT` child's children, filtering `LBRACKET` /
 
 **Every sibling-list walk goes through `appendInlineChildren(children, source, uriHandler, colors)`, not a per-child loop.** `appendInline`'s own `else` arm, its `EMPH` / `STRONG` / `STRIKETHROUGH` arms, and `HeadingBlock` all pass their (already-filtered) child list through it. The seam exists for one reason: pairing bare `~single~` tildes needs to see siblings together, which a node walked one at a time cannot do — see [Strikethrough](#strikethrough).
 
+**`internal fun inlineText(nodes, source): String`, since #1067,** runs this same `appendInlineChildren` walk into a throwaway `AnnotatedString` with an inert `UriHandler` and unspecified `InlineColors`, then returns `.text`. It lives here rather than in `MarkdownConversions.kt` because it has to be *this* walk, not a second hand-written one — [the reader's plain-text copy](markdown-reader-screen.md#copy-and-refresh-menu-since-1067) drops exactly the delimiters and link targets this renderer hides by construction, and a parser or dispatch change here can't silently desync the two.
+
 ### Tables
 
 `GFMElementTypes.TABLE` dispatches to `TableBlock`. The `HEADER`'s `CELL` children are row 0, each `ROW`'s `CELL` children a further row; column count is row 0's size. A cell's own children are ordinary inline nodes, walked by the same `appendInlineChildren` as everywhere else.
@@ -87,9 +90,9 @@ Link text is built from the `LINK_TEXT` child's children, filtering `LBRACKET` /
 
 **Alignment** comes from `parseTableAlignments(delimiterRow)` (`internal`, pure, unit-tested): splits the delimiter row on `|`, drops a blank leading/trailing segment (GFM permits the row with or without outer pipes), and reads each spec — leading-and-trailing `:` → `Center`, trailing `:` only → `End`, anything else → `Start`. A column the delimiter row doesn't describe defaults to `Start`.
 
-**Cell content is trimmed at the token level, not the built string.** `| Name |` lexes a cell's children as `WHITE_SPACE, TEXT("Name"), WHITE_SPACE` — walking them as they arrive renders `" Name "`, and the padding is visible rather than cosmetic: it's what `textAlign` centres or end-aligns, so a right-aligned column would sit a space short of its own edge. `ASTNode.trimmedContent()` drops leading/trailing `WHITE_SPACE` children before the walk; trimming an already-built `AnnotatedString` instead would leave its span offsets pointing past the trimmed text. Found by the first device run of `MarkdownTextTest`, not by preview inspection — an exact-text assertion catches it where a `substring` one would not.
+**Cell content is trimmed at the token level, not the built string.** `| Name |` lexes a cell's children as `WHITE_SPACE, TEXT("Name"), WHITE_SPACE` — walking them as they arrive renders `" Name "`, and the padding is visible rather than cosmetic: it's what `textAlign` centres or end-aligns, so a right-aligned column would sit a space short of its own edge. `ASTNode.trimmedContent()` (`internal` since #1067, shared with the reader's plain-text heading and table-cell copy) drops leading/trailing `WHITE_SPACE` children before the walk; trimming an already-built `AnnotatedString` instead would leave its span offsets pointing past the trimmed text. Found by the first device run of `MarkdownTextTest`, not by preview inspection — an exact-text assertion catches it where a `substring` one would not.
 
-**Ragged input degrades, it doesn't error.** A short row reads as empty cells (`cells.getOrNull(column)`); a long row's overflow is dropped, and there is nothing addressable to recover — the lexer has already fused that overflow into the trailing separator token. `columnCount` and `MAX_TABLE_ROWS` are also where two fan-out caps apply: `MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256` (both file-private constants). The table is one composable `Text` per cell with no lazy layout, so a hostile or merely malformed reply amplifies a few kilobytes of pipes into tens of thousands of measured composables, re-paid on every streaming reveal tick (#184 re-parses ~50×/sec). Both bounds sit far above any real reply — flagged in the #681 security review as a SHOULD FIX, applied with two `take()` calls rather than a heuristic. A table hitting either cap silently drops the excess rows/columns; nothing surfaces that a cap was hit.
+**Ragged input degrades, it doesn't error.** A short row reads as empty cells (`cells.getOrNull(column)`); a long row's overflow is dropped, and there is nothing addressable to recover — the lexer has already fused that overflow into the trailing separator token. `columnCount` and `MAX_TABLE_ROWS` are also where two fan-out caps apply: `MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256` (both `internal` since #1067, shared with the reader's plain-text table copy). The table is one composable `Text` per cell with no lazy layout, so a hostile or merely malformed reply amplifies a few kilobytes of pipes into tens of thousands of measured composables, re-paid on every streaming reveal tick (#184 re-parses ~50×/sec). Both bounds sit far above any real reply — flagged in the #681 security review as a SHOULD FIX, applied with two `take()` calls rather than a heuristic. A table hitting either cap silently drops the excess rows/columns; nothing surfaces that a cap was hit.
 
 **Collapsed borders in `onSurfaceVariant`, not `primaryContainer`.** Each cell draws its own top and start edges (`tableCellEdges`); the table's content `Row` draws the closing end and bottom edges (`tableOuterEdges`) — every internal grid line is drawn exactly once, where a four-sided `Modifier.border` per cell would double the seam between neighbours. The colour was shipped as `MaterialTheme.colorScheme.primaryContainer` (transcribed from desktop's `--color-primary-container`) and was invisible — **1.01:1** contrast against the bubble, in both themes. That isn't a near-miss on this one palette: M3 assigns `primaryContainer` and `secondaryContainer` the same tone by construction (90 light / 30 dark), and `MessageBubble` — this renderer's only caller — always grounds it on `secondaryContainer`, so the pairing is luminance-identical in *any* M3 palette, generated or dynamic. `onSurfaceVariant` measures 7.27:1 light / 5.51:1 dark against that bubble and is the only measured candidate clearing WCAG 1.4.11's 3:1 in both themes; it's now the shared token for the table grid, the task-mark border, struck text, and — since #770 — the blockquote bar: four de-emphasised structural elements, one contrast-checked token. `outlineVariant` is explicitly not a substitute (1.00:1 dark on the same ground); [`BlockQuoteBlock`](#block-dispatch)'s bar carried that same defect, pre-existing since #129, until #770 moved it to `onSurfaceVariant`. **The lesson generalises: porting a desktop CSS custom property onto the M3 slot of the same name carries no contrast guarantee**, because the two design systems ground their message content on different container colours. Both bindings carry a comment recording the contrast bar any future replacement has to clear, since a pixel test would cost more than it proves.
 
@@ -184,10 +187,10 @@ This closed two visible defects at once, both following from "the copied text mu
 
 ### Link safety — scheme allowlist
 
-`#129` carries the `security-sensitive` label. The mitigation is a file-private predicate at the bottom of `MarkdownText.kt`:
+`#129` carries the `security-sensitive` label. The mitigation is a predicate at the bottom of `MarkdownText.kt`, `internal` since #1067 so [the reader's Copy as HTML](markdown-reader-screen.md#copy-and-refresh-menu-since-1067) shares this one allowlist rather than keeping a second copy:
 
 ```kotlin
-private fun isSafeLinkScheme(url: String): Boolean {
+internal fun isSafeLinkScheme(url: String): Boolean {
     val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
     return scheme == "http" || scheme == "https" || scheme == "mailto"
 }
@@ -206,6 +209,16 @@ The link's `LinkInteractionListener` consults this predicate before calling `uri
 - Code-block content — plain monospace `Text`; strings are not executed or interpreted.
 - Long-content DoS — Phase 0 messages are bounded; Phase 4 inherits Claude API response-size limits. #681 adds its own bound for tables specifically — see [Tables](#tables)'s `MAX_TABLE_COLUMNS` / `MAX_TABLE_ROWS`.
 - **New in #681 — `GFM_AUTOLINK` and `INLINE_MATH` add no new link-like surface.** `GFM_AUTOLINK` is a childless leaf with no dispatcher arm, so a daemon cannot manufacture a tappable link out of prose that never contained link markup. `INLINE_MATH` has children but no arm either; its leaves re-append their own source text. Table cells and task-list items route through the same `appendInline` / `appendInlineChildren` as every other inline site, so they inherit this gate rather than opening a second one.
+
+### Markdown-path links (since #1050)
+
+`onOpenMarkdownPath` lets a workspace-note link in an assistant reply open [the in-app reader](markdown-reader-screen.md) instead of doing nothing, without touching `isSafeLinkScheme` or any block-walker signature — every private block function still takes a plain `UriHandler`.
+
+- `internal fun markdownLinkPath(target: String): String?` — the path to send, or `null` when [target] is not a markdown path. Strips a trailing `#fragment` (from the *last* `#` — `a.md#x#y` keeps `#x` as part of the path and so is not a markdown path; harmless, since the link then just stays inert rather than misrouting), then a trailing `:line` or `:line:column` (digits only, `LinkLineSuffix`), then requires no URL scheme (`LinkScheme`, RFC 3986's `^[A-Za-z][A-Za-z0-9+.-]*:`) and a `.md` / `.markdown` suffix, any case. Stripping the `:line` suffix *before* the scheme check is what keeps `Plan.md:12` from reading as scheme `plan.md`. The stripped path is returned exactly as written — the phone never decodes, resolves or confines it; the daemon's `read_workspace_file` does.
+- `internal fun routeMarkdownLink(target, onOpenMarkdownPath, openUri)` — a markdown path with a non-null callback goes to the callback and never to `openUri`; anything else falls through to the existing `isSafeLinkScheme` allowlist.
+- `MarkdownText` wraps `LocalUriHandler.current` in a `remember`ed private `UriHandler` whose `openUri` calls `routeMarkdownLink` (the callback read through `rememberUpdatedState`, so a recomposition with a new lambda doesn't need a new handler instance); the `INLINE_LINK` arm's `LinkInteractionListener` now calls this wrapping handler for every link target unconditionally, rather than checking `isSafeLinkScheme` itself first.
+
+Consumer wiring: [`MessageBubble`](message-bubble.md)'s `onOpenMarkdownLink` parameter reaches both assistant render paths (finished `MarkdownText` and the streaming `StreamingAssistantBody` / `StreamingAssistantBodyView` chain) but not `UserMessageBubble`, which never receives it. [Thread screen](thread-screen.md) and [Markdown reader screen](markdown-reader-screen.md#linked-note-live-since-1050) cover the ViewModel-side single-read guard and the route the callback ultimately drives.
 
 ### File-private spacing constants
 
@@ -237,7 +250,7 @@ private val TaskMarkCornerRadius = 3.dp
 private val TaskMarkTopInset = 4.dp   // sits the mark on the first text line, not the item's top edge
 ```
 
-Plus two file-private `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)). Same shape as [`MessageBubble`](./message-bubble.md)'s file-private constants — named for design intent, kept local until a second site in the same package needs the same value. **No `.sp` literal anywhere in this file**; every text size is reached through `MaterialTheme.typography.<slot>`.
+Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Same shape as [`MessageBubble`](./message-bubble.md)'s file-private constants — named for design intent, kept local until a second site in the same package needs the same value. **No `.sp` literal anywhere in this file**; every text size is reached through `MaterialTheme.typography.<slot>`.
 
 ## Configuration
 
@@ -281,3 +294,5 @@ Plus two file-private `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 
   - #184 — streaming caret + animation (landed). Operates at the `MessageBubble` layer; passes the revealed-prefix-plus-caret string through this renderer unchanged each tick. Partial code fences flow through `CodeBlock` unchanged; the `remember(content, syntaxLanguage)` re-tokenises per reveal tick (sub-millisecond on typical sizes). Tables and task lists flow through the same unchanged-signature path; `singleTildeRuns` re-runs per reveal tick behind its `children.none { TILDE }` early-out rather than being memoised, since `appendInlineChildren` builds outside composition where `remember` is unavailable
   - #657 — code block header/body chrome and per-block copy control (landed). See [Code blocks](#code-blocks); an unterminated (streaming) fence's partial content still extracts correctly, so #184's per-tick re-render carries no new edge case
   - #680 — live desktop/mobile comparison of the same replies, covering the three constructs this ticket added
+  - #1050 — `onOpenMarkdownPath` routes an assistant-reply markdown-path link to [the live linked-note reader](markdown-reader-screen.md#linked-note-live-since-1050) instead of leaving it inert; see [Markdown-path links](#markdown-path-links-since-1050)
+  - #1067 — the reader's [copy and refresh menu](markdown-reader-screen.md#copy-and-refresh-menu-since-1067) reuses this file's own parse: `inlineText`, `MarkdownFlavour`, `isSafeLinkScheme`, `trimmedContent`, `MAX_TABLE_COLUMNS` and `MAX_TABLE_ROWS` all went from `private`/file-private to `internal` for it, visibility-only

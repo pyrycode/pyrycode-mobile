@@ -32,8 +32,14 @@ LIVE_MINIMUM += 2
 LIVE_MINIMUM += 3
 # #955 adds the two push methods.
 LIVE_MINIMUM += 2
-# #1016 adds two attachment-exchange methods; its third joins once #1020 lets history replay name a file.
+# #1016 adds two attachment-exchange methods.
 LIVE_MINIMUM += 2
+# #1020 adds the third, the peer's file after a history reload, now that history replay names it.
+LIVE_MINIMUM += 1
+# #1050 adds the live markdown-note link method.
+LIVE_MINIMUM += 1
+# #1021 adds the Edit channel mute round trip.
+LIVE_MINIMUM += 1
 # #1017 adds the interrupted-upload, interrupted-retrieval and cross-host attachment methods.
 LIVE_MINIMUM += 3
 
@@ -61,6 +67,14 @@ def claude_authenticated(env):
 
 def fresh_reports(directory, started_ns):
     return sorted(p for p in directory.rglob("TEST-*.xml") if p.stat().st_mtime_ns >= started_ns)
+
+
+def fresh_logcats(directory, started_ns):
+    """The per-test logcat files this run wrote. The next run overwrites them, so the gate keeps copies (#1039).
+
+    They are artifacts only: nothing from them reaches the dispatcher report or stdout.
+    """
+    return sorted(p for p in directory.rglob("logcat-*.txt") if p.stat().st_mtime_ns >= started_ns)
 
 
 def combine_reports(paths, minimum, expected_class=None):
@@ -263,6 +277,8 @@ def run_scripted_all(env, run_dir, device):
             outcome = subprocess.run(["bash", str(ROOT / "scripts" / "e2e-emulator.sh")], cwd=ROOT,
                                      env=scenario_env, stdout=sys.stderr, stderr=sys.stderr)
             paths = fresh_reports(directory, started)
+            for index, path in enumerate(fresh_logcats(directory, started)):
+                shutil.copy2(path, run_dir / f"{scenario}-{index}-{path.name}")
             try:
                 _, passed, executed = combine_reports(paths, 1, expected_class)
             except ValueError as error:
@@ -394,6 +410,9 @@ def main():
         directory = results / "connected/debug" if device == "connected" else results / "managedDevice/debug" / device
         paths = fresh_reports(directory, started)
         for index, path in enumerate(paths):
+            shutil.copy2(path, run_dir / f"{index}-{path.name}")
+        # Kept before the report is judged: a failing run is the one whose logcat someone needs to read.
+        for index, path in enumerate(fresh_logcats(directory, started)):
             shutil.copy2(path, run_dir / f"{index}-{path.name}")
         xml, passed, executed = combine_reports(paths, minimum, expected_class)
         (run_dir / "dispatcher.xml").write_text(xml + "\n")

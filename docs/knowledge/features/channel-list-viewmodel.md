@@ -244,11 +244,13 @@ both rely on the host's own conversation stream re-emitting, the same discipline
 uses.
 
 **A Channels row's own pencil, host-resolved an eighth time (#667).** `TreeChannelEditTapped(target) ->
-vm.openChannelEditor(target)`, `ChannelEditSubmitted(name, systemPrompt) -> vm.submitChannelEdit(name,
-systemPrompt)`, `ChannelArchiveRequested -> vm.archiveChannel()` and `ChannelEditDismissed ->
+vm.openChannelEditor(target)`, `ChannelEditSubmitted(name, systemPrompt, muted) -> vm.submitChannelEdit(name,
+systemPrompt, muted)`, `ChannelArchiveRequested -> vm.archiveChannel()` and `ChannelEditDismissed ->
 vm.dismissChannelEditor()`. Unlike every editor above, this one's published state is not one
 `MutableStateFlow` but two, combined internally before either reaches `hostState`: a private
-`channelEditor: MutableStateFlow<ChannelEditorState?>` holding the target, the saved name and the
+`channelEditor: MutableStateFlow<ChannelEditorState?>` holding the target, the saved name, the saved mute
+flag (`savedMuted`, #1021 — the host's stored `Conversation.muted` at open time, then the value the
+daemon confirmed, the same pattern as `savedName`) and the
 `saving`/`failed`/`archiveFailed` flags (its own `prompt` field stays at its `Reading` default and is
 never read), and a private `channelPrompt: MutableStateFlow<Pair<HostConversationTarget,
 ChannelPromptReading>?>` holding the latest stored-prompt reading tagged with the channel it belongs to.
@@ -267,17 +269,23 @@ a chat qualifies for `openChatEditor`'s own lookup, a channel only for this one'
 previous read job (a `Job?` field,
 `channelPromptRead`), resets `channelPrompt` to `target to Reading`, publishes the new `ChannelEditorState`
 with `savedName` clamped through the same `boundedName` helper `EditChatModal`'s seed uses (surrogate-safe
-`take(MAX_WORKSPACE_LABEL_CHARS)`), and launches the read job: it waits for `hostSource.repositoryFor
+`take(MAX_WORKSPACE_LABEL_CHARS)`) and `savedMuted` read straight from that same host-snapshot lookup's
+`channel.muted` (#1021), and launches the read job: it waits for `hostSource.repositoryFor
 (target.serverId)` to become non-null on the snapshots flow, calls `requestSystemPrompt` once, and
 publishes the tagged result — `Unavailable` for a thrown read or a reply over `SystemPromptLimit.MAX_BYTES`
-(never rendered or written back), `Read(prompt, status)` otherwise. `submitChannelEdit` resolves
+(never rendered or written back), `Read(prompt, status)` otherwise. `submitChannelEdit(name, systemPrompt,
+muted: Boolean? = null)` resolves
 `hostSource.repositoryFor(state.serverId)` **at the press**, the same discipline `submitChatName` and
-`submitWorkspaceName` use, and sends only what changed: a rename iff the trimmed name differs from
-`savedName`, then the prompt verbatim iff it differs from the reading's own `prompt.orEmpty()` **and** the
+`submitWorkspaceName` use, and sends only what changed, in the order **rename → mute → prompt** (#1021): a
+rename iff the trimmed name differs from `savedName`, then a `setMuted` write iff `muted` is non-null and
+differs from `savedMuted` (`muted == null` means the caller reported no value and writes nothing — the
+default keeps every existing call site compiling), then the prompt verbatim iff it differs from the
+reading's own `prompt.orEmpty()` **and** the
 caller ever showed the field (`systemPrompt != null`) — an unread or failed prompt can therefore never be
 overwritten, even when the operator typed a name change and pressed OK. A confirmed rename updates
-`savedName` before the prompt leg runs, so a prompt-write failure's retry sends only the prompt, never a
-second rename. `archiveChannel` mirrors `archiveChat`'s shape exactly — no field condition, no
+`savedName`, and a confirmed mute write updates `savedMuted`, before the prompt leg runs — the prompt is
+the only write whose confirmation is never recorded, so it stays last and a retry after any failure sends
+only the writes the host has not yet confirmed. `archiveChannel` mirrors `archiveChat`'s shape exactly — no field condition, no
 confirmation, `archive(conversationId)` on the press-resolved repository — and `dismissChannelEditor`
 nulls `channelEditor` and cancels `channelPromptRead` unguarded. See
 [System prompt editor](system-prompt-editor.md) for why this reads and writes the prompt itself rather

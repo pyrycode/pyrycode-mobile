@@ -310,26 +310,43 @@ never placed in an exception message.
 
 A **held `StateFlow<Map<String, BackgroundTaskRoster>>`** (`backgroundTaskProjection.rosters` /
 `backgroundTasks`), the [`questionBatches`](#questionbatches--the-v2-clarification-batch-decodefold-seam-822)
-shape rather than an event stream. Decodes the three `interactive`-gated **binary → phone** frames about
-work claude left running past its turn — `background_task_started`, `background_task_updated` and
-`background_task_roster` — into `BackgroundTask` (`data/model/BackgroundTask.kt`) via the DTOs in the new
-`data/network/BackgroundTaskPayloads.kt` and the fold in the new `data/repository/BackgroundTaskProjection.kt`.
-Daemon state, not turn content: no thread row is folded and no stall is cleared.
+shape rather than an event stream. Decodes the four `interactive`-gated **binary → phone** frames about
+work claude left running past its turn — `background_task_started`, `background_task_updated`,
+`background_task_roster` and `background_task_progress` (#1042) — into `BackgroundTask`
+(`data/model/BackgroundTask.kt`) via the DTOs in `data/network/BackgroundTaskPayloads.kt` and the fold in
+`data/repository/BackgroundTaskProjection.kt`. Daemon state, not turn content: no thread row is folded and
+no stall is cleared.
 
-- **Rides the same single existing `pump.inbound` collector.** A new grouped
-  `TYPE_BACKGROUND_TASK_STARTED, TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER` arm joins the
+- **Rides the same single existing `pump.inbound` collector.** A grouped `TYPE_BACKGROUND_TASK_STARTED,
+  TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER, TYPE_BACKGROUND_TASK_PROGRESS` arm joins the
   `onInbound` `when (envelope.type)` demux, gated on the same `CAPABILITY_INTERACTIVE in
   negotiatedCapabilities()` check as the question arm. It calls `backgroundTaskProjection.apply(envelope)`,
   which decodes inside one `try { … } catch (IllegalArgumentException) { }` per frame and folds into held
   state through `mutableRosters.update {}` — a malformed frame is dropped, the single collector keeps
   running, and nothing is logged (the exception can quote the JSON input).
-- **One task set per conversation, joined on `task_id` in whatever order the three frames arrive.** A
-  `started` or a `roster` row upserts a task directly. An `updated` frame for a task the conversation does
-  not hold yet — a terminal update racing ahead of its `started` frame, or a roster split across frames —
-  waits in a private `pending: conversationId -> taskId -> Slots` map, collector-confined like
-  `mutableRosters`; a roster for that conversation clears its entry, keeping it bounded. An `updated` frame
-  alone never creates a conversation's entry — that would read as an explicit empty roster, a fact the
-  daemon never stated for that conversation.
+- **One task set per conversation, joined on `task_id` in whatever order the four frames arrive.** A
+  `started` or a `roster` row upserts a task directly. An `updated` or `progress` frame for a task the
+  conversation does not hold yet — a terminal update racing ahead of its `started` frame, a roster split
+  across frames, or progress arriving before either — waits in a private
+  `pending: conversationId -> taskId -> Slots` map, collector-confined like `mutableRosters`; a roster for
+  that conversation clears its entry, keeping it bounded. Neither an `updated` nor a `progress` frame alone
+  ever creates a conversation's entry — that would read as an explicit empty roster, a fact the daemon
+  never stated for that conversation.
+- **`background_task_progress` holds the task's current activity, replaced whole on each frame.**
+  `BackgroundTask.progress: BackgroundTaskProgress?` carries its own `description` (never the task's
+  opening one), `subagentType`, `lastToolName`, and the three cumulative counters `totalTokens`, `toolUses`
+  and `durationMs` as `Long` — decoded that wide because the daemon's `int` is Go's 64-bit int, and because
+  a legitimate long-running task can post a large `duration_ms`. A later frame replaces the earlier one
+  whole; nothing is summed, and a lower counter than the last reading is accepted as sent, since claude can
+  restart its own counters mid-task. `progress` keeps its own `truncatedFields`, separate from the task's
+  opening `truncatedFields` — the two frames report different truncation, not the same list.
+- **A finished task carries no progress, enforced where `BackgroundTask` is built, not where progress is
+  applied.** `task()` and `withSlots()` both compute `isFinished` first and then set
+  `progress = if (isFinished) null else slots.progress`; `Slots.with(update, terminal = true)` also clears
+  `progress` on the slot itself. Applying this only inside the progress handler would miss the case where a
+  terminal update and progress both arrive before the task's `started` frame and sit in the same pending
+  `Slots` — the eventual start must still show a finished task with no progress, which is why the clearing
+  lives at the two build sites instead.
 - **A roster replaces the conversation's set wholesale**, including `dropped_tasks`; a task it omits is
   dropped, not marked finished. A row repeating a `task_id` is deduplicated to its first occurrence so
   every consumer can key a list by `taskId` — a daemon or relay bug that repeated a row would otherwise
@@ -357,9 +374,12 @@ Daemon state, not turn content: no thread row is folded and no stall is cleared.
   guards against.
 
 `security-sensitive`, but plain orchestration: decode runs behind the authenticated Noise channel, and
-`description`, `patch`, `status` and `summary` are claude-authored and unsanitised — held as inert fields,
-never parsed (`patch` included), never evaluated or executed, never used as a key besides `taskId`/
-`conversationId`, and never logged.
+`description`, `patch`, `status`, `summary` and progress's own `description`/`subagentType`/`lastToolName`
+are claude-authored and unsanitised — held as inert fields, never parsed (`patch` included), never
+evaluated or executed, never used as a key besides `taskId`/`conversationId`, and never logged. Rendering
+these three progress strings is deferred to the panel follow-up ticket, which must treat them as
+plain, length-bounded text — never markup, a link or an action — and must tolerate a negative or
+decreasing counter.
 
 ## The model-list and slash-command-list menu retentions (#791, #792, #882)
 
