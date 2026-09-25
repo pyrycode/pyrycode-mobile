@@ -1035,6 +1035,20 @@ and #2169 (`pyry_files` registered on the interactive spawn). No rung-4 twin: th
 backend can neither call `send_file` nor serve `attachment_chunk` / `request_attachment`, and nothing here
 is a transient signal that would need one.
 
+`interactiveTurn_markdownLink_opensLiveNoteInReader` (#1050) is likewise **always-on**: that a markdown-path
+link in an assistant reply opens [the live linked-note reader](knowledge/features/markdown-reader-screen.md#linked-note-live-since-1050)
+with the host's current content is a durable post-condition, unrelated to the attachment scenarios above —
+the note is never a stored attachment, so it does not ride `SecondClientPeer` or `ActivityIntentStub`. Two
+real claude turns in a fresh chat: claude runs one `printf` to write a heading-only note and replies with a
+link to it (`allowPromptsUntil` gates the shell permission); the test taps the link (via
+`performFirstLinkClick`, retried — a streaming reply reveals the link's source a character at a time, so an
+early tap can land before the link exists) and asserts the note's heading and file name in the reader with
+the composer gone; back returns to the thread; claude then rewrites the note with a second `printf`, and the
+same tapped link shows the new heading and never the first one, proving the reader re-fetches on every open
+rather than caching. No rung-4 twin: the scripted `fakeclaude` backend has no workspace-file read path to
+hold open, and the phone-side behaviour (classification, the one-read guard, the failure notice) is covered
+by unit and Robolectric tests instead — see [MarkdownText § Markdown-path links](knowledge/features/markdown-text.md#markdown-path-links-since-1050).
+
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
 token, `turn_state` flips to `responding`, `isThinking` goes false, and `ThinkingIndicator` early-returns,
@@ -1328,9 +1342,10 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` (#955),
 `InteractiveStreamE2ETest#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` (#1016), and
 `InteractiveStreamE2ETest#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` (#1016),
-`InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` (#1020),
+`InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` (#1020), and
+`InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader` (#1050),
 so exactly
-**thirty-four real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
+**thirty-six real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
 ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, #891's own
 ping, #946's own ping, the inherited-effort and chosen-effort scenarios' own turns and the
@@ -1347,7 +1362,9 @@ turn — the command the peer allows once the phone is absent, and the backgroun
 turn — the peer's held command (#955); the attachments-from-phone scenario's own
 turn — the phone's attached message, and the claude-offered-file scenario's own turn — the phone's message
 that runs `printf` and calls `send_file` (#1016); the peer-attachment scenario's own turn — the peer's
-message naming the file, read back after a history reload (#1020); the delete,
+message naming the file, read back after a history reload (#1020); the markdown-link scenario's two
+turns — claude writes a markdown note and replies with a link to it, then rewrites the note, so the same
+tapped link shows the new content and not the old (#1050); the delete,
 archive-restore, change-workspace, rename,
 save-as-channel, list-archive-entry, two-host and model-change scenarios each add a method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
@@ -2193,6 +2210,17 @@ The remaining checks here are specific to a real relay or real Claude execution:
   deleting `awaitCachedSentAttachmentIds`. The dispatcher's post-verifier live run passed at 32 executed,
   24 passed outright and 8 (including this ticket's own two methods) failing once and passing on a same-tree
   re-run — a known suite-wide flake class, not attributed to this branch.
+
+- **Coverage — shipped:** [#1050](https://github.com/pyrycode/pyrycode-mobile/issues/1050) added
+  `interactiveTurn_markdownLink_opensLiveNoteInReader`, wiring a markdown-path link in an assistant reply to
+  [the live linked-note reader](knowledge/features/markdown-reader-screen.md#linked-note-live-since-1050)
+  rather than leaving the tap inert. Riding a fresh chat, not `SecondClientPeer` — the note comes from the
+  conversation's own workspace, not another client. `scripts/e2e-emulator.sh`'s `LIVE` list comment reads "33
+  methods and 36 turns," counting from `main`'s 32/34 at merge time; that comment was already one off from
+  the list's actual method count before this ticket (a pre-existing drift, not introduced here) and
+  `LIVE_MINIMUM` (a floor, not an exact count) still holds. The dispatcher's post-verifier live run executed
+  33, passed 25, failed 8 — all eight failures passed on a same-tree re-run (a known suite-wide flake class);
+  this ticket's own method was not among them and passed outright.
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns

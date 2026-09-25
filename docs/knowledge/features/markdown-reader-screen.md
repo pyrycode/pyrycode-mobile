@@ -6,6 +6,9 @@ instead of handing the file to another app; every other attachment type still go
 [`openAttachment`](message-bubble-attachment-slot.md#open-and-save-since-985). Figma: `Markdown Reader Screen`
 (`553:2574`). Package: `de.pyryco.mobile.ui.conversations.thread`, new file `MarkdownReaderScreen.kt`.
 
+Since #1050, the same screen also opens on a **tapped workspace-note link in an assistant reply**, fetched live
+rather than from a stored attachment — see [Linked note, live (since #1050)](#linked-note-live-since-1050).
+
 ## What it does
 
 The reader draws the thread's own top bar — 24dp back arrow, the file name in `titleLarge` /
@@ -114,6 +117,60 @@ exactly like [`ThreadDestinationFactory.repository`](attachment-retrieval.md#les
 `AttachmentStore`, so this second wrapper reaches the same kept file the thread already read. The
 `navigate(...)` call carries no `launchSingleTop`.
 
+## Linked note, live (since #1050)
+
+A markdown-path link in an assistant reply — [`markdownLinkPath`](markdown-text.md#markdown-path-links-since-1050),
+e.g. `[Plan](notes/Plan.md)` — opens this same reader, but the note is **never a stored attachment**: it is
+read live from the conversation's workspace on every tap, and nothing is kept between opens. The operator
+decided (2026-09-24) that the reader always shows the file as it is on the host right now, so unlike the
+attachment path above there is no local second read to reuse — the thread's one read *is* what the reader
+shows.
+
+- `internal suspend fun readLinkedMarkdown(repository, conversationId, path): MarkdownDocument?` — one
+  `repository.readWorkspaceFile(conversationId, path)` (#1049). A `Fetched` result whose `content.size` is at
+  most `MAX_MARKDOWN_READER_BYTES` is copied to a `ByteArray` and decoded with the same `decodeUtf8Strictly`
+  the attachment path uses; anything else (`NotFound`, `Unavailable` — covering a refusal, an aborted or
+  stalled stream, a dropped connection — `Invalid`, over the bound, bad UTF-8, a non-cancellation exception)
+  is `null`. `path` reaches the repository exactly as the link wrote it — the phone never decodes, resolves or
+  confines it; the daemon does.
+- `internal fun linkedMarkdownName(path: String): String` — the top-bar name, since the assistant authored the
+  link: the text after the last `/`, through `attachmentDisplayName`, the same sanitiser a retrieved
+  attachment's name goes through. The bar shows the path actually read, never the link's own display text, so
+  `[Plan](secrets.md)` cannot make the operator think a different file opened.
+- `ThreadViewModel.onOpenMarkdownLink(path)` shares the attachment path's `markdownOpenJob` guard — one open
+  in flight blocks a second tap, whether it is another link or the attachment flow, and either one clears
+  before a new job starts. Success stores the document as `linkedMarkdownDocument` (a plain `var`, not a
+  `StateFlow`) and sends `ThreadNavigation.OpenLinkedMarkdown` (a `data object`; the note itself never travels
+  in the event); failure sends on the shared `markdownOpenFailures`, so a failed link tap shows the same
+  "Couldn't open file" snackbar the attachment path uses. `linkedMarkdown()` reads the held document once;
+  `releaseLinkedMarkdown()` drops it. Logs `event=thread_markdown_link_open outcome=reader|failed` only — no
+  path, name or text, ever.
+- `@Composable fun LinkedMarkdownReaderDestination(document, onBack, modifier)` draws `MarkdownReaderScreen`
+  for a non-null document; `null` — the process was restored with this destination on top, or it was reached
+  with nothing held — draws a bare `Surface` and calls `onBack()` once, the same shape
+  `MarkdownReaderDestination`'s `Failed` case uses.
+- Route: `Routes.MARKDOWN_LINK = "markdown_link/{serverId}/{conversationId}"`, ids only — no path, no
+  attachment id. The path never needs to travel: the document already lives in the thread's `ThreadViewModel`.
+  `MainActivity`'s `HostDestination` block for this route calls
+  `navController.getBackStackEntry(Routes.CONVERSATION_THREAD)` to find the thread beneath (`null` if it is
+  gone), resolves that same `ThreadViewModel` with `koinViewModel(viewModelStoreOwner = threadEntry)`, and
+  `remember(backStackEntry) { threadVm?.linkedMarkdown() }`s the document **once** rather than collecting it
+  live.
+
+  **Why `remember` once, not a live read.** The thread destination clears its copy
+  (`vm.releaseLinkedMarkdown()`) from a `LaunchedEffect(vm)` that fires whenever it recomposes — including
+  during the pop transition back from this reader, while the reader is still on screen. A live read of
+  `linkedMarkdown()` at that moment would see `null` and pop a second time, which would close the thread
+  underneath it too. Reading it once when the destination first composes avoids that.
+- Root cause of the SHOULD FIX the #1050 verifier left open (PR #1062, non-blocking): the release runs on
+  thread *re-entry*, not on the reader's own exit. If a link's read finishes while the operator is on a screen
+  pushed above the thread (Settings, say) and the operator returns before opening the reader, the effect can
+  clear `linkedMarkdownDocument` before the buffered `OpenLinkedMarkdown` navigation is acted on, and the
+  reader mounts with `null` — a blank-surface flash and an immediate pop, with no "Couldn't open file" notice.
+  Narrow (needs a completed background read plus a return to the thread before the navigation fires) and not
+  fixed as of #1050; a `DisposableEffect` releasing on the *reader's* exit, or folding the document into the
+  `OpenLinkedMarkdown` event itself, would close it.
+
 ## Testing
 
 - `MarkdownReaderLoadTest` (`app/src/test/…/thread/`, 8 tests): `isMarkdownAttachmentName` across case and
@@ -139,6 +196,19 @@ exactly like [`ThreadDestinationFactory.repository`](attachment-retrieval.md#les
   local, covered by the Robolectric tests above. The existing live fixtures all use `.txt` names, so the new
   markdown branch does not reroute them.
 
+\#1050's linked-note path adds its own tests, on the same shapes: `MarkdownReaderLoadTest` gained
+`readLinkedMarkdown` cases (name from the last path component, text unchanged, every failure kind collapsing
+to `null`, exactly-at-bound succeeding); `MarkdownLinkRoutingTest` (`app/src/test/…/components/`) covers
+`markdownLinkPath` and `routeMarkdownLink` classification (see
+[MarkdownText § Markdown-path links](markdown-text.md#markdown-path-links-since-1050)); `ThreadViewModelMarkdownLinkTest`
+covers one read per open, the shared in-flight guard, a reopen after release re-fetching and showing new
+content, one failure signal with nothing held, and that logs carry neither path nor text;
+`MarkdownLinkTapTest` (`app/src/sharedTest/…/components/`, Robolectric) covers a tap in both a finished and a
+streaming assistant `MessageBubble`, an `https` link still reaching the platform handler, a `MarkdownText`
+with no callback leaving a markdown-path tap inert, and `LinkedMarkdownReaderDestination` with a document and
+with `null`. Rung 3: `InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader` — see
+[Interactive stream e2e](../../e2e-interactive-stream.md).
+
 ## Related
 
 - [MessageBubble — attachment slot § Open and save](message-bubble-attachment-slot.md#open-and-save-since-985) —
@@ -152,9 +222,15 @@ exactly like [`ThreadDestinationFactory.repository`](attachment-retrieval.md#les
 - [Thread screen](thread-screen.md) — `ThreadNavigation`, the one-shot `navigationChannel` this ticket's
   `OpenMarkdown` case rides, and where `onOpenMarkdownAttachment` / `markdownOpenFailures` are wired into
   `ThreadScreen`.
-- [MarkdownText](markdown-text.md) — the renderer this screen reuses unchanged; following links inside a
-  rendered note is a later ticket.
+- [MarkdownText § Markdown-path links](markdown-text.md#markdown-path-links-since-1050) — `markdownLinkPath`,
+  `routeMarkdownLink`, and the `onOpenMarkdownPath` opt-in this screen's linked-note path is reached through;
+  following a link inside an *open* note (attachment or linked) is still a later ticket, unaffected by #1050.
 - Ticket: `docs/specs/architecture/1027-markdown-reader.md` — design, the security review (the 256 KiB bound
   closes a composition-cost DoS the retrieval bound alone would not), and the implementation revisions (the
   `Surface`-over-`Column` choice, the `modifier` parameter, where `isMarkdownAttachmentName` ended up, and the
   tap-routing screen test).
+- Ticket: `docs/specs/architecture/1050-markdown-link-live-reader.md` — design for the linked-note path (why
+  the route carries ids only rather than the path), the security review, and the Revisions entry resolving
+  `performFirstLinkClick`'s availability at BOM `2026.02.01`.
+- Ticket: `docs/specs/architecture/1049-read-workspace-file.md` — `ConversationRepository.readWorkspaceFile`,
+  the live read `readLinkedMarkdown` calls.
