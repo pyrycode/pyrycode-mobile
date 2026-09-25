@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -92,6 +93,9 @@ private val TreeNameGap = 6.dp
 private val TreeLegDotGap = 6.dp
 private val TreeDotSize = 8.dp
 private val TreeDotRingWidth = 1.dp
+
+// The update-required caption's gap below its host row (#1009), the frame's own bottom padding.
+private val TreeCaptionBottomPadding = 6.dp
 
 // Desktop's working-dot blink (#878): opacity 1 -> 0.3 -> 1 over 2s, eased both ways.
 private const val RUNNING_BLINK_MIN_ALPHA = 0.3f
@@ -187,6 +191,11 @@ fun TreeSectionHeader(
  * name in the error colour, and a plug control inboard of the dots that reports through
  * [onReconnectTapped]. The frame binds the name to `errorContainer`, which is near-white on the light
  * surface, so both take `error` instead — error-toned and legible in either scheme.
+ *
+ * A host that refused this app build as too old (#1009) keeps that treatment but swaps the plug for an
+ * update control, still reporting through [onReconnectTapped] so the caller decides what it opens; draws
+ * its host dot as the idle ring; and adds a caption under the row asking for an update. The caption is
+ * the only place the host's daemon-authored minimum version appears — plain text, never a description.
  */
 @Composable
 fun TreeHostRow(
@@ -205,43 +214,69 @@ fun TreeHostRow(
     // format an unbounded daemon-authored name into a content description.
     val bounded = boundedRowText(hostName)
     val disconnected = connectionStatus.relay.isDisconnected()
-    FoldableTreeRow(
-        glyph = Icons.Filled.Dns,
-        name = bounded,
-        nameStyle = MaterialTheme.typography.titleSmall,
-        startIndent = HostRowIndent,
-        expanded = expanded,
-        onToggleExpanded = onToggleExpanded,
-        modifier = modifier,
-        accent = if (disconnected) MaterialTheme.colorScheme.error else null,
-    ) {
-        Spacer(modifier = Modifier.width(TreeGlyphGap))
-        if (disconnected) {
+    val update = connectionStatus.relay as? RelayLinkStatus.UpdateRequired
+    Column(modifier = modifier) {
+        FoldableTreeRow(
+            glyph = Icons.Filled.Dns,
+            name = bounded,
+            nameStyle = MaterialTheme.typography.titleSmall,
+            startIndent = HostRowIndent,
+            expanded = expanded,
+            onToggleExpanded = onToggleExpanded,
+            accent = if (disconnected) MaterialTheme.colorScheme.error else null,
+        ) {
+            Spacer(modifier = Modifier.width(TreeGlyphGap))
+            if (update != null) {
+                TreeRowControl(
+                    // Material's download, matched to the frame's `download-solid` arrow into a tray.
+                    icon = Icons.Filled.Download,
+                    contentDescription = stringResource(R.string.cd_tree_host_update, bounded),
+                    onClick = onReconnectTapped,
+                    modifier = Modifier.testTag(treeHostUpdateTestTag(serverId)),
+                )
+            } else if (disconnected) {
+                TreeRowControl(
+                    // Material's plug, matched to the frame's `plug-solid-full` as `Dns` was to its server.
+                    icon = Icons.Filled.Power,
+                    contentDescription = stringResource(R.string.cd_tree_host_reconnect, bounded),
+                    onClick = onReconnectTapped,
+                    modifier = Modifier.testTag(treeHostReconnectTestTag(serverId)),
+                )
+            }
+            ConnectionLegPair(status = connectionStatus, hostIdle = update != null)
             TreeRowControl(
-                // Material's plug, matched to the frame's `plug-solid-full` as `Dns` was to its server.
-                icon = Icons.Filled.Power,
-                contentDescription = stringResource(R.string.cd_tree_host_reconnect, bounded),
-                onClick = onReconnectTapped,
-                modifier = Modifier.testTag(treeHostReconnectTestTag(serverId)),
+                // Matched to the Material set the same way this file matched `Dns` and `FolderOpen` to the
+                // design's own glyphs, rather than vendoring the frame's drawable.
+                icon = Icons.Filled.Edit,
+                contentDescription = stringResource(R.string.cd_tree_host_edit, bounded),
+                onClick = onEditTapped,
+                modifier = Modifier.testTag(treeHostEditTestTag(serverId)),
+            )
+            TreeRowControl(
+                icon = Icons.Filled.Add,
+                contentDescription = stringResource(R.string.cd_tree_host_new_chat, bounded),
+                onClick = onAddTapped,
+                onLongClickLabel = stringResource(R.string.cd_tree_host_pick_workspace, bounded),
+                onLongClick = onAddLongPressed,
+                modifier = Modifier.testTag(treeHostAddTestTag(serverId)),
             )
         }
-        ConnectionLegPair(status = connectionStatus)
-        TreeRowControl(
-            // Matched to the Material set the same way this file matched `Dns` and `FolderOpen` to the
-            // design's own glyphs, rather than vendoring the frame's drawable.
-            icon = Icons.Filled.Edit,
-            contentDescription = stringResource(R.string.cd_tree_host_edit, bounded),
-            onClick = onEditTapped,
-            modifier = Modifier.testTag(treeHostEditTestTag(serverId)),
-        )
-        TreeRowControl(
-            icon = Icons.Filled.Add,
-            contentDescription = stringResource(R.string.cd_tree_host_new_chat, bounded),
-            onClick = onAddTapped,
-            onLongClickLabel = stringResource(R.string.cd_tree_host_pick_workspace, bounded),
-            onLongClick = onAddLongPressed,
-            modifier = Modifier.testTag(treeHostAddTestTag(serverId)),
-        )
+        if (update != null) {
+            // Inside the host's own item, so folding the host, which drops only the rows below it, keeps it.
+            Text(
+                text =
+                    update.minClientVersion?.let { stringResource(R.string.tree_host_update_required_version, it) }
+                        ?: stringResource(R.string.tree_host_update_required),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier =
+                    Modifier.padding(
+                        start = HostRowIndent + TreeGlyphSize + TreeGlyphGap,
+                        end = TreeRowEndPadding,
+                        bottom = TreeCaptionBottomPadding,
+                    ),
+            )
+        }
     }
 }
 
@@ -261,6 +296,8 @@ fun treeHostAddTestTag(serverId: String): String = "tree-host-add:${boundedTagId
 fun treeHostEditTestTag(serverId: String): String = "tree-host-edit:${boundedTagId(serverId)}"
 
 fun treeHostReconnectTestTag(serverId: String): String = "tree-host-reconnect:${boundedTagId(serverId)}"
+
+fun treeHostUpdateTestTag(serverId: String): String = "tree-host-update:${boundedTagId(serverId)}"
 
 /**
  * Whether a host row draws the disconnected treatment and its reconnect control (#840).
@@ -473,7 +510,7 @@ private fun FoldableTreeRow(
 
 /**
  * The trailing row control: the section header's and the host row's plus (#738), the host row's
- * pencil (#744), a disconnected host's plug (#840), a chat row's pencil (#827) and a workspace row's pencil
+ * pencil (#744), a disconnected host's plug (#840), an update-required host's update control (#1009), a chat row's pencil (#827) and a workspace row's pencil
  * (#905) and plus (#958). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
  * differs between them.
  *
@@ -533,16 +570,35 @@ private fun TreeRowControl(
  * Both legs resolve through the package's existing [ConnectionLegVisual] mapping — no second
  * mapping. Each dot carries that mapping's own description, naming the leg and its state, so the
  * pair is identifiable beyond colour alone.
+ *
+ * [hostIdle] draws the inboard dot as the idle ring instead (#1009): the design's update-required host
+ * shows its host as idle. The outboard relay dot keeps the mapping it shares with the Settings status line.
  */
 @Composable
-private fun ConnectionLegPair(status: ConnectionStatus) {
+private fun ConnectionLegPair(
+    status: ConnectionStatus,
+    hostIdle: Boolean = false,
+) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(TreeLegDotGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LegDot(visual = status.pyrycode.toLegVisual())
+        if (hostIdle) IdleLegDot() else LegDot(visual = status.pyrycode.toLegVisual())
         LegDot(visual = status.relay.toLegVisual())
     }
+}
+
+/** The host leg's idle ring: [ConversationStatusDot]'s idle drawing, named for the leg it stands in. */
+@Composable
+private fun IdleLegDot() {
+    val description = stringResource(R.string.cd_tree_host_leg_idle)
+    Box(
+        modifier =
+            Modifier
+                .size(TreeDotSize)
+                .border(TreeDotRingWidth, MaterialTheme.colorScheme.primary, CircleShape)
+                .clearAndSetSemantics { contentDescription = description },
+    )
 }
 
 @Composable
@@ -657,6 +713,19 @@ private fun TreeRowsPreviewMatrix() {
                 onAddTapped = {},
                 onAddLongPressed = {},
             )
+            listOf("1.4.0", null).forEach { minimum ->
+                TreeHostRow(
+                    serverId = "old-$minimum",
+                    hostName = "Pyrybox",
+                    connectionStatus =
+                        ConnectionStatus(RelayLinkStatus.UpdateRequired(minimum), PyrycodeLinkStatus.Down),
+                    expanded = false,
+                    onToggleExpanded = {},
+                    onEditTapped = {},
+                    onAddTapped = {},
+                    onAddLongPressed = {},
+                )
+            }
         }
     }
 }

@@ -23,6 +23,10 @@
     <string name="cd_tree_host_new_chat">New chat on %1$s</string>
     <string name="cd_tree_host_pick_workspace">Pick a workspace for the new chat on %1$s</string>
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
+    <string name="cd_tree_host_update">Update Pyrycode to use %1$s</string>
+    <string name="cd_tree_host_leg_idle">Pyrycode: idle</string>
+    <string name="tree_host_update_required">Update Pyrycode to use this host.</string>
+    <string name="tree_host_update_required_version">Update Pyrycode to version %1$s or newer to use this host.</string>
     <!-- A Chats row's pencil (#827); %1$s is the chat's (clamped) name or the untitled fallback. -->
     <string name="cd_tree_chat_edit">Edit chat %1$s</string>
     <!-- A Channels row's pencil (#667); %1$s is the channel's (clamped) name or the untitled fallback. -->

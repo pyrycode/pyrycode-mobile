@@ -31,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -61,6 +62,7 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
 import de.pyryco.mobile.ui.conversations.list.DiscussionListUiState
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
+import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
@@ -319,6 +321,7 @@ internal fun PyryNavHost(
             val vm = koinViewModel<ChannelListViewModel>()
             val hostState by vm.hostState.collectAsStateWithLifecycle()
             val context = LocalContext.current
+            val uriHandler = LocalUriHandler.current
             val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
             // #685: asked at most once from here, and only while the Settings switch is on.
             LaunchedEffect(Unit) {
@@ -380,6 +383,9 @@ internal fun PyryNavHost(
                         // Unless its pairing was rejected (#842): then the control re-pairs that host alone.
                         is ChannelListEvent.TreeHostRePairTapped ->
                             navController.navigate(Routes.pairCode(event.serverId))
+                        // Or if it refused this app build as too old (#1009): only an update recovers, so
+                        // the control opens the store listing and never redials.
+                        ChannelListEvent.TreeHostUpdateTapped -> uriHandler.openUri(PLAY_STORE_URL)
                         is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
                         ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
                         ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()

@@ -193,12 +193,37 @@ branches on `host.connectionStatus.relay == RelayLinkStatus.PairingRejected` and
 than retrying. The row's visual treatment and classification are unchanged — only the tap target differs.
 See [pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-842).
 
-**`UpdateRequired` keeps the original retry target, deliberately, for now (#1008).** Unlike
-`PairingRejected`, an `UpdateRequired` row's plug control still dispatches `TreeHostReconnectTapped` →
-`retryHost` → `retry()` — a retry that cannot succeed until the app is updated, same as before this
-ticket. The ticket's own technical notes call this out as intentional: the row-level minimum + a Play
-Store action is a separate follow-up (split from #1004) that needs its own Figma frame, and that ticket
-is what changes this control's target the way #842 changed it for `PairingRejected`.
+**`UpdateRequired` gets its own control, dot and caption (#1009).** The row-level Play Store action
+\#1008 deferred has landed, the way #842 changed the target for `PairingRejected`. `TreeHostRow` computes
+`val update = connectionStatus.relay as? RelayLinkStatus.UpdateRequired` and, when non-null, swaps the
+plug for `TreeRowControl(icon = Icons.Filled.Download, …)` tagged `treeHostUpdateTestTag(serverId)`
+(shares `boundedTagId`'s clamp with the other row tags) — the update control never carries the reconnect
+tag, so a test can assert "no plug" directly. Tap still reports through the row's one `onReconnectTapped`
+callback, so the row itself stays agnostic; `treeSection`'s `onReconnectTapped` switch (`ChannelListScreen.kt`)
+is what branches three ways now: `PairingRejected` → `TreeHostRePairTapped`, `is UpdateRequired` →
+`ChannelListEvent.TreeHostUpdateTapped` (a `data object`, carrying nothing — the store listing needs no
+host, and the daemon-authored minimum version must never reach an event, a link, a content description or
+a log line), else `TreeHostReconnectTapped`. `PyryNavHost` maps the new event to
+`LocalUriHandler.current.openUri(PLAY_STORE_URL)` — `internal const val PLAY_STORE_URL` in
+`ChannelListScreen.kt`, an app-authored literal pinned to the published listing rather than derived from
+`BuildConfig.APPLICATION_ID` (a debug suffix there would name a listing that does not exist; the current
+debug build sets no such suffix, but the constant stays a literal on principle, not because of that build
+detail). It never calls `reconnectHost`/`retry()`.
+
+`ConnectionLegPair` gained `hostIdle: Boolean = false`, true only for `UpdateRequired`: the inboard
+(host) dot then draws as a private `IdleLegDot` — `ConversationStatusDot`'s idle drawing (transparent
+fill, 1dp `primary` ring), described "Pyrycode: idle" (`cd_tree_host_leg_idle`) — instead of the shared
+`LegDot`/`toLegVisual` mapping. The outboard relay dot is untouched and keeps the mapping it shares with
+the Settings status line.
+
+A caption `Text` (`bodySmall`/`onSurfaceVariant`, start-aligned with the host name) sits below the row,
+inside the host's own lazy item — folding the host only drops the rows below it, so the caption stays
+visible while folded. It reads `tree_host_update_required_version` when `update.minClientVersion` is
+non-null, else `tree_host_update_required`; this caption is the only place the version renders, already
+bounded by #1008's `validMinClientVersion` shape (three 1–6-digit parts, ≤ 20 characters). The fold
+chevron, and the pencil and plus controls, are unchanged — a too-old host can still be edited or
+unpaired — even though the Figma frame omits the chevron; the row remains the fold control for every
+disconnected state, and dropping that affordance for one state was left out of scope.
 
 `TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps

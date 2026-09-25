@@ -84,6 +84,12 @@ internal const val TREE_CHAT_ROW_TEST_TAG: String = "tree-chat-row"
  */
 internal const val CHANNEL_LIST_TEST_TAG: String = "channel-list"
 
+/**
+ * Where an update-required host's control sends the operator (#1009): the release listing, as an
+ * app-authored literal pinned to the published listing, independent of the build's configuration.
+ */
+internal const val PLAY_STORE_URL: String = "https://play.google.com/store/apps/details?id=de.pyryco.mobile"
+
 // The list's own horizontal gutter — the tree rows carry only their own indent (#730). Vertical rhythm
 // follows the supplied design: 12dp from a section header to its first host, 16dp between host
 // containers, and 28dp of air on each side of the rule between the two sections.
@@ -174,6 +180,13 @@ sealed interface ChannelListEvent {
     data class TreeHostRePairTapped(
         val serverId: String,
     ) : ChannelListEvent
+
+    /**
+     * The same control on a host that refused this app build as too old (#1009): only an update recovers,
+     * so it opens [PLAY_STORE_URL] and never redials. Carries nothing — the store listing needs no host, and
+     * the host's daemon-authored minimum version must not reach a link.
+     */
+    data object TreeHostUpdateTapped : ChannelListEvent
 
     /**
      * The open modal's OK, carrying the entered name already trimmed by the component.
@@ -672,10 +685,10 @@ private fun LazyListScope.treeSection(
                 modifier = Modifier.padding(top = if (index == 0) TreeFirstHostGap else TreeHostGap),
                 onReconnectTapped = {
                     onEvent(
-                        if (host.connectionStatus.relay == RelayLinkStatus.PairingRejected) {
-                            ChannelListEvent.TreeHostRePairTapped(host.serverId)
-                        } else {
-                            ChannelListEvent.TreeHostReconnectTapped(host.serverId)
+                        when (host.connectionStatus.relay) {
+                            RelayLinkStatus.PairingRejected -> ChannelListEvent.TreeHostRePairTapped(host.serverId)
+                            is RelayLinkStatus.UpdateRequired -> ChannelListEvent.TreeHostUpdateTapped
+                            else -> ChannelListEvent.TreeHostReconnectTapped(host.serverId)
                         },
                     )
                 },
