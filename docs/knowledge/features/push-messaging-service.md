@@ -229,11 +229,25 @@ conversation reads as missing here and still alerts; accepted because archived c
 expected to produce turns. Because this gate sits after the ledger dedup like the others, a muted alert
 is recorded and spent — unmuting afterward never replays it.
 
-**The notification itself** is fixed `strings.xml` copy only (`notification_turn_completed` /
-`notification_prompt`, title = app name) — no conversation name, no daemon text, no push-message field
-ever reaches it. Tag = `SHA-256(serverId, conversationId)`, id `0`: one notification per conversation per
-host, so the same conversation id on two hosts posts two notifications, and a later alert for the same
-conversation replaces the earlier one instead of stacking.
+### The agent lookup (#1116)
+
+`agentOf: (serverId, conversationId) -> ConversationAgent?` is wired the same way as `isMuted` above — a
+constructor parameter reading `HostConversationSource.snapshots.value` through a top-level `internal fun
+List<HostConversationSnapshot>.agentOf(serverId, conversationId): ConversationAgent?` (`AttentionNotifier.kt`),
+checking the matching host first, then `channels + chats`. It differs from `isMuted` at the not-found case:
+a missing host or a missing row returns `null` rather than a fallback agent, because `null` selects the
+neutral copy below instead of silently mislabeling the notification as Claude's.
+
+**The notification itself** is fixed `strings.xml` copy naming the conversation's agent (#1116): a Claude
+conversation reads exactly as before (`notification_turn_completed` / `notification_prompt`), a Codex
+conversation gets `notification_turn_completed_codex` / `notification_prompt_codex`, and a conversation the
+agent lookup above returns `null` for gets the neutral `notification_turn_completed_neutral` /
+`notification_prompt_neutral` ("A reply finished" / "An answer is needed") — a lookup miss reads as unknown,
+never as an assumed Claude. Title is still the app name. No daemon-authored conversation name or
+push-message field ever reaches it; the agent name is one of these fixed, client-owned strings. Tag =
+`SHA-256(serverId, conversationId)`, id `0`: one notification per conversation per host, so the same
+conversation id on two hosts posts two notifications, and a later alert for the same conversation replaces
+the earlier one instead of stacking.
 
 **The tap** carries only a server id and a conversation id, via `NotificationTap`'s explicit-component,
 `FLAG_IMMUTABLE` `PendingIntent` naming `MainActivity` and `ACTION_OPEN_CONVERSATION`. `MainActivity` is
@@ -271,6 +285,7 @@ single(createdAtStart = true) {
         alerts = source.alerts,
         notificationsEnabled = get<AppPreferences>().notificationsEnabled,
         isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
+        agentOf = { serverId, conversationId -> source.snapshots.value.agentOf(serverId, conversationId) },
         isForeground = { ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) },
         ledgerFile = File(androidContext().noBackupFilesDir, "attention_alerts"),
     )
@@ -304,7 +319,11 @@ No id, digest or notification text appears in any of these lines.
   alert was already spent by the ledger does not replay it, and the same conversation id muted on one
   host still alerts on another. `List<HostConversationSnapshot>.isMuted`'s own table (muted in `channels`,
   muted in `chats`, unmuted row, id missing from the host's rows, host with no snapshot) is a plain unit
-  test beside it, not Robolectric.
+  test beside it, not Robolectric. (#1116) A Codex conversation's turn and prompt post the Codex copy, a
+  conversation missing from the lookup posts the neutral copy, a Claude conversation still reads exactly
+  as before, and the channel description reads neutrally.
+  `List<HostConversationSnapshot>.agentOf`'s own table (Codex in `channels`, Codex in `chats`, a Claude
+  row, id missing from the host's rows, host missing entirely) is a plain unit test beside `isMuted`'s.
 - `NotificationTapNavigationTest` (`app/src/sharedTest`) drives `PyryNavHost` on the production Koin
   graph, per the `SettingsNavigationTest` pattern: a saved host's target opens the thread above
   `CHANNEL_LIST`; an unsaved host's target stays on `CHANNEL_LIST`.

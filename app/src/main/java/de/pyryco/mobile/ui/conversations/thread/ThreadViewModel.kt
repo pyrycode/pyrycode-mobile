@@ -465,7 +465,8 @@ class ThreadViewModel(
                 historyTail = content.historyTail,
             )
         }.combine(slashCommandMenu) { uiState, menu ->
-            uiState.copy(absentActions = absentComposerActions(menu), slashCommands = menu?.rows)
+            val slashCommandsAccepted = uiState.runConfig.capabilities?.slashCommands ?: true
+            uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
         }.combine(backgroundTaskReading) { uiState, (roster, count) ->
             uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
         }.stateIn(
@@ -749,23 +750,35 @@ class ThreadViewModel(
      * The clarification batch held for this conversation with the operator's picks (#661), or null. The
      * picks belong to one batch: a dismissal (null) discards them, and any batch other than the one held
      * — a replacement, or the same id re-sent after a reconnect's empty reconcile — starts fresh.
+     * It names the conversation's agent (#1116), read from the list only while a batch is held.
      */
     val questionModal: StateFlow<QuestionModalState?> = mutableQuestionModal
 
     init {
         viewModelScope.launch {
-            questionBatch(conversationId).collect { batch ->
-                val own = batch?.takeIf { it.conversationId == conversationId }
-                mutableQuestionModal.update { held ->
-                    when {
-                        own == null -> null
-                        held?.batch == own -> held
-                        else -> QuestionModalState(own)
-                    }
+            heldQuestionBatch(questionBatch(conversationId)).collect { held ->
+                mutableQuestionModal.update { current ->
+                    val (own, agent) = held ?: return@update null
+                    if (current?.batch == own) current.copy(agent = agent) else QuestionModalState(own, agent = agent)
                 }
             }
         }
     }
+
+    /** This conversation's held batch with its agent; the list is subscribed only while a batch is held. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun heldQuestionBatch(batches: Flow<QuestionBatch?>): Flow<Pair<QuestionBatch, ConversationAgent>?> =
+        batches
+            .map { batch -> batch?.takeIf { it.conversationId == conversationId } }
+            .flatMapLatest { own -> if (own == null) flowOf(null) else conversationAgent().map { own to it } }
+
+    /** This conversation's agent, Claude until the list names it: a cold list must not hold the modal back. */
+    private fun conversationAgent(): Flow<ConversationAgent> =
+        repository
+            .observeConversations(ConversationFilter.All)
+            .map { rows -> rows.firstOrNull { it.id == conversationId }?.agent ?: ConversationAgent.Claude }
+            .onStart { emit(ConversationAgent.Claude) }
+            .distinctUntilChanged()
 
     fun onQuestionEvent(event: QuestionModalEvent) {
         val held = mutableQuestionModal.value ?: return
@@ -1769,7 +1782,7 @@ class ThreadViewModel(
      * values; anything else is dropped, so no daemon- or screen-supplied string becomes a posture write.
      *
      * Nothing is sent for the confirmed mode, without a confirmed mode (the button is hidden then), while
-     * a permission write is outstanding, for Auto approval when the selected row does not support it, or
+     * a permission write is outstanding, for a mode the footer does not offer ([offersPermission]), or
      * without a session to address. Unlike model and effort there is no optimistic value: the label stays
      * on the confirmed reading and [ThreadRunConfig.pendingPermission] only marks it pending.
      */
@@ -1778,7 +1791,7 @@ class ThreadViewModel(
         val config = state.value.runConfig
         if (config.permissionMode.isEmpty() || value == config.permissionMode) return
         if (permissionWrite != null) return
-        if (mode == PermissionModeOption.Auto && config.selectedChoice?.supportsAutoMode != true) return
+        if (!config.offersPermission(mode)) return
         if (!skipUnlessWritable(config)) return
         sendPermissionMode(config.sessionId, mode)
     }
@@ -2118,10 +2131,17 @@ private const val DEFAULT_CHANNEL_NAME = "New channel"
  * `name` or `aliases`, and no row whose name or alias equals the command without its slash. Anything less
  * proves nothing, and every row stays enabled. [ComposerAction.ResetSession] is never absent.
  *
+ * A session whose capability list reports [slashCommands] `false` (#1111) makes every command absent,
+ * whatever the menu says. `true` never re-enables a command the menu proves absent.
+ *
  * The published strings are workspace-authored. They are only compared here, never returned, rendered,
  * logged or sent.
  */
-internal fun absentComposerActions(menu: SlashCommandMenu?): Set<ComposerAction> {
+internal fun absentComposerActions(
+    menu: SlashCommandMenu?,
+    slashCommands: Boolean = true,
+): Set<ComposerAction> {
+    if (!slashCommands) return ComposerAction.entries.filter { it.command != null }.toSet()
     if (menu == null || menu.droppedCommands != 0) return emptySet()
     val rows = menu.rows
     if (rows.any { row -> row.truncatedFields.orEmpty().any { it == "name" || it == "aliases" } }) return emptySet()
@@ -2207,6 +2227,7 @@ private fun runConfig(
         permissionMode = settings?.permissionMode.orEmpty(),
         pendingPermission = pendingPermission,
         appliedEffort = settings?.effectiveEffort ?: EffectiveEffort.Unavailable,
+        capabilities = settings?.capabilities,
     )
 }
 

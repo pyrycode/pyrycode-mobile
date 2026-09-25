@@ -96,6 +96,17 @@ internal enum class PermissionModeOption(
 }
 
 /**
+ * Whether the footer offers [mode] (#650, #1111). Auto approval needs the selected row's auto-mode support.
+ * With a capability list, every other mode except Bypass approvals must be named in it; Bypass is sent as
+ * `yolo` and is never listed. The permission menu and the ViewModel's write guard both ask this.
+ */
+internal fun ThreadRunConfig.offersPermission(mode: PermissionModeOption): Boolean {
+    if (mode == PermissionModeOption.Auto && selectedChoice?.supportsAutoMode != true) return false
+    val accepted = capabilities?.permissionModes ?: return true
+    return mode == PermissionModeOption.Bypass || mode.wire in accepted
+}
+
+/**
  * The permission button's label (#650), or `null` when the button is hidden: no reading, or a reading of
  * `""`, which means the current child has confirmed nothing. A known mode shows its fixed label. Any other
  * value is daemon-authored and shows only as [inert] text.
@@ -168,15 +179,14 @@ internal fun footerMenu(
                     notListed = 0,
                 )
             }
-        // #650: all six modes, Auto approval only when the selected row supports it. The selection is the
-        // confirmed reading, so an unrecognised value selects nothing and is never offered.
+        // #650: the six modes [offersPermission] allows. The selection is the confirmed reading, so an
+        // unrecognised value selects nothing and is never offered.
         FooterControl.Permission ->
             runConfig.permissionMode.takeIf { it.isNotEmpty() }?.let { confirmed ->
-                val autoSupported = runConfig.selectedChoice?.supportsAutoMode == true
                 FooterMenu(
                     options =
                         PermissionModeOption.entries
-                            .filter { it != PermissionModeOption.Auto || autoSupported }
+                            .filter { runConfig.offersPermission(it) }
                             .map { OptionsOverlayOption(value = it.wire, label = it.label) },
                     selectedValue = confirmed,
                     notListed = 0,

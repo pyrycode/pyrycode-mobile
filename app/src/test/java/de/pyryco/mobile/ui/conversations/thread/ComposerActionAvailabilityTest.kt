@@ -111,4 +111,21 @@ class ComposerActionAvailabilityTest {
 
         assertTrue(compact in absent)
     }
+
+    // ---- #1111: a session that reports `slash_commands` false ------------------------------------
+
+    @Test
+    fun slashCommandsRefused_marksEveryCommandAbsent_withOrWithoutAMenu() {
+        val commands = setOf(ComposerAction.CompactSession, ComposerAction.KnowledgeCapture)
+
+        assertEquals(commands, absentComposerActions(null, slashCommands = false))
+        assertEquals(commands, absentComposerActions(menu(row("compact"), row("knowledge-capture")), slashCommands = false))
+        assertEquals(commands, absentComposerActions(menu(row("clear"), dropped = 2), slashCommands = false))
+    }
+
+    @Test
+    fun slashCommandsAllowed_leavesTheMenusProofAlone() {
+        assertEquals(emptySet<ComposerAction>(), absentComposerActions(null, slashCommands = true))
+        assertEquals(setOf(ComposerAction.KnowledgeCapture), absentComposerActions(menu(row("compact")), slashCommands = true))
+    }
 }

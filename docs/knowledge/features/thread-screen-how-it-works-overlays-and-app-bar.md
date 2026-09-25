@@ -252,7 +252,7 @@ SlashCommandTypeAhead(
 ### Background-tasks panel placement (post-#678)
 
 [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678) draws
-[`BackgroundTaskPanel`](thread-composer-footer.md#actions-menu-884) directly inside `ThreadScreen`, right
+[`BackgroundTaskPanel`](thread-composer-footer-actions-menu.md#actions-menu-884) directly inside `ThreadScreen`, right
 after the footer's `OptionsOverlay` `Box` closes and before the `WorkspacePicker` mount — not as an eighth
 `Scaffold` sibling and not from the `MainActivity` destination block the way
 [`QuestionBatchModal`](question-batch-modal.md) is drawn (`MobileReadOnlyModal` opens its own `Dialog`
@@ -272,7 +272,7 @@ WorkspacePicker(...)
 `backgroundTasksOpen` is a plain `remember`, not `rememberSaveable`, keyed on `state.conversationId` — the
 same idiom `openControl` uses one field up: switching conversations drops an open panel, and a process
 death never restores one a fresh screen instance never opened. The Actions menu's background-tasks row sets
-it (see [Thread composer footer § Actions menu](thread-composer-footer.md#actions-menu-884)); since
+it (see [Thread composer footer § Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884)); since
 [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) the status band's task-count pill (§
 [Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) above) sets the same
 flag through the same `{ backgroundTasksOpen = true }` lambda, so the panel now has two openers over one
