@@ -55,7 +55,10 @@ row, since an older daemon omits the key on that reply. See
 [Remote conversation repository — `upsertConversation`](remote-conversation-repository-send-create-promote-rename.md#confirmed-insert-via-conversationlistprojectionupsertconversation-the-projections-second-writer)
 for the fold and [Conversation cache § the cache-local record must mirror every field](conversation-cache.md#the-cache-local-record-must-mirror-every-conversation-field-999)
 for a known gap: the on-disk cache does not yet carry `agent`, so a cold-started row reads Claude until the
-live list arrives. [#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114) is the first consumer: `ThreadUiState.agent`
+live list arrives. A **published `model_list` row's** own `agent` tag maps through a different, deliberately
+disagreeing function — see [Conversation repository § `ModelMenu`/`ModelMenuRow`](conversation-repository.md#shape)
+for why an unrecognised row agent must fail closed to invisible while an unrecognised conversation agent
+fails open to `Claude`. [#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114) is the first consumer: `ThreadUiState.agent`
 (set the same way as `isPromoted`, inside the main `combine`, defaulting to `Claude` when `conv` is `null` —
 **not** a sibling hoisted `StateFlow` like `isThinking`/`apiRetry`/`isCompacting`, because unlike those
 per-turn signals `agent` is a slow-changing property already present on the conversation itself) names the

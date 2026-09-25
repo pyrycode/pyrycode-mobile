@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -117,6 +118,41 @@ class ThreadViewModelEffortRecallTest {
             collect(vm, repo, reading(effort = "", model = ""))
 
             assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, effort = "xhigh")), repo.calls)
+        }
+
+    // #1110: in a Codex conversation the recall checks the selected Codex row, not any Claude row.
+    @Test
+    fun codexConversation_recallsALevelTheSelectedCodexRowPublishes() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.agent.value = ConversationAgent.Codex
+            val vm = newVm(repo, MemoryStore("ultra"), menu = mergedMenu)
+            collect(vm, repo, reading(effort = "", model = "gpt-6-luna"))
+
+            assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, effort = "ultra")), repo.calls)
+        }
+
+    @Test
+    fun codexConversation_doesNotRecallALevelOnlyAClaudeRowPublishes() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.agent.value = ConversationAgent.Codex
+            val vm = newVm(repo, MemoryStore("max"), menu = mergedMenu)
+            collect(vm, repo, reading(effort = "", model = "gpt-6-luna"))
+
+            assertTrue(repo.calls.isEmpty())
+        }
+
+    @Test
+    fun codexConversation_withNoSavedModel_neverBorrowsClaudesDefaultRow() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.agent.value = ConversationAgent.Codex
+            val menu = ModelMenu(rows = mergedMenu.rows + row("default", listOf("medium", "xhigh")), droppedModels = 0)
+            val vm = newVm(repo, MemoryStore("xhigh"), menu = menu)
+            collect(vm, repo, reading(effort = "", model = ""))
+
+            assertTrue(repo.calls.isEmpty())
         }
 
     @Test
@@ -480,6 +516,7 @@ class ThreadViewModelEffortRecallTest {
     private fun row(
         value: String,
         levels: List<String>,
+        agent: ConversationAgent = ConversationAgent.Claude,
     ) = ModelMenuRow(
         resolvedModel = "",
         value = value,
@@ -487,7 +524,15 @@ class ThreadViewModelEffortRecallTest {
         effortLevels = levels,
         supportsAutoMode = false,
         truncatedFields = null,
+        agent = agent,
     )
+
+    /** #1110: one merged menu — Claude's rows, then a Codex row publishing `ultra` but not `max`. */
+    private val mergedMenu =
+        ModelMenu(
+            rows = menu.rows + row("gpt-6-luna", listOf("low", "ultra"), ConversationAgent.Codex),
+            droppedModels = 3,
+        )
 
     private class MemoryStore(
         var level: String?,
@@ -510,6 +555,7 @@ class ThreadViewModelEffortRecallTest {
     ) : ConversationRepository by backing {
         val readings = MutableSharedFlow<SessionSettings?>(replay = 1, extraBufferCapacity = 64)
         val liveSession = MutableStateFlow(session)
+        val agent = MutableStateFlow(ConversationAgent.Claude)
         val calls = mutableListOf<SetSessionSettingsPayloadDto>()
         var refreshes = 0
         var sentMessages = 0
@@ -520,8 +566,8 @@ class ThreadViewModelEffortRecallTest {
         override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> = readings
 
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
-            combine(backing.observeConversations(filter), liveSession) { list, session ->
-                list.map { if (it.id == conversationId) it.copy(currentSessionId = session) else it }
+            combine(backing.observeConversations(filter), liveSession, agent) { list, session, agent ->
+                list.map { if (it.id == conversationId) it.copy(currentSessionId = session, agent = agent) else it }
             }
 
         override fun refreshSessionSettings(conversationId: String) {
