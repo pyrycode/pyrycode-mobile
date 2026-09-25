@@ -73,6 +73,7 @@ data class ThreadUiState(
     val isPromoted: Boolean = false,
     // #1114: the agent that runs this conversation; the live status labels name it.
     // #1112: so do the reset line and the boundary explanation.
+    // #1115: the usage-limit line and the effort notes name it too; Claude until the conversation is known.
     val agent: ConversationAgent = ConversationAgent.Claude,
     val hasMessages: Boolean = false,
     val workspaceLabel: String = "scratch",

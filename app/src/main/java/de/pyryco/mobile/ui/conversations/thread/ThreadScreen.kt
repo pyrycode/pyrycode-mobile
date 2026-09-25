@@ -392,6 +392,7 @@ fun ThreadScreen(
                         onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
                         modifier = Modifier.padding(horizontal = ComposerGutter),
                         onAttach = openAttachmentPicker,
+                        agent = state.agent,
                     )
                 }
             },
@@ -615,6 +616,7 @@ fun ThreadScreen(
                             Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
+                        agent = state.agent,
                     )
                 }
             }
@@ -720,7 +722,7 @@ fun ThreadScreen(
             // An empty session id means the daemon has no session to address, so the controls read only.
             enabled = state.runConfig.writable,
             onDismiss = { sheetVisible = false },
-            effortNote = state.runConfig.effortNote?.let { stringResource(it.textRes()) },
+            effortNote = state.runConfig.effortNote?.text(state.agent),
             running = state.runConfig.running,
             contextPercent = state.runConfig.contextPercent,
         )

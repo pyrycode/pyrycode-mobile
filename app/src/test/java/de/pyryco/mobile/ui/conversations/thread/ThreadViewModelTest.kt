@@ -3305,6 +3305,30 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    // #1115: the thread names the conversation's own agent; Claude until the conversation is known.
+    @Test
+    fun state_agent_isClaudeUntilKnown_thenTheConversationsAgent() =
+        runTest {
+            val codex =
+                Conversation(
+                    id = "d-codex",
+                    name = null,
+                    cwd = "pyry-workspace/my-app",
+                    currentSessionId = "d-codex-s1",
+                    sessionHistory = listOf("d-codex-s1"),
+                    isPromoted = false,
+                    lastUsedAt = Instant.parse("2026-09-21T00:00:00Z"),
+                    agent = ConversationAgent.Codex,
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "d-codex"))
+            val vm = makeVm(handle, fixedRepo(listOf(codex)))
+            assertEquals(ConversationAgent.Claude, vm.state.value.agent)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Codex, vm.state.value.agent)
+            collector.cancel()
+        }
+
     @Test
     fun state_workspaceLabel_followsLiveRenameAndClear_onOneSubscription() =
         runTest {
