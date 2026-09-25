@@ -3075,8 +3075,9 @@ class InteractiveStreamE2ETest {
      * The turn may Read the named files; the peer allows each prompt until the turn ends.
      *
      * The name places it last in JUnit's default order, which sorts by name hash. Peers opened on the first
-     * daemon after it stopped carrying frames in two live runs, so it runs after every other scenario on that
-     * daemon until that is explained.
+     * daemon after it stopped carrying frames in two live runs: by then the daemon held 15–23 sessions, and its
+     * connect-time reconcile burst overflowed the relay's per-phone outbox, which closed every new connection
+     * within a second of its handshake (pyrycode/pyrycode-relay#154).
      *
      * **One real-claude turn**: the phone's message.
      */
