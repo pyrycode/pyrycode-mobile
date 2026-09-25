@@ -1866,6 +1866,15 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #1059 (2026-09-25):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/1059` at `356c50f571` merged with
+  `origin/main` at `2c213c1168` (5 commits behind before the merge) — 37 executed, 37 passed, no failures
+  or skips, exit 0, wall clock 419.3s. `LIVE_MINIMUM` stayed at 37; this ticket added no new curated
+  method. This is the first clean run of `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread`
+  (#955) — no nondeterministic same-tree re-run needed — since #1039 first tracked its flake, consistent
+  with pyrycode/pyrycode-relay#154 being live on the production relay. See [Coverage —
+  hardened](#follow-ups-to-ticket) for the in-repo diagnostic fix.
+
 - **LIVE verified for #1017 (2026-09-25):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/1017` at `3d6620490c` merged with
   `origin/main` at `25f6de5c9f` (0 commits behind before the merge) — mobile revision
@@ -2463,6 +2472,29 @@ The remaining checks here are specific to a real relay or real Claude execution:
   so it can't race the daemon's reply. One real-claude turn each. See the dedicated paragraph under
   [What rung 3 is made of](#what-rung-3-is-made-of) and [Verification status](#verification-status) for
   the mobile/daemon revisions and the first live run's result.
+
+- **Coverage — hardened:** [#1059](https://github.com/pyrycode/pyrycode-mobile/issues/1059) made a
+  `SecondClientPeer` wait on `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` (#955)
+  name why it ended instead of running out an anonymous 90 s timeout. The ticket was filed against a
+  pre-#1036 tree, where the peer never redialed a dropped link; by the time it was implemented, #1036 had
+  landed, so "the peer's session closes" could no longer mean "one link drops" — that is exactly the event
+  #1036 now survives via `RedialingLink`, and failing a wait on it would reintroduce the flake. `closed` (in
+  `SecondClientPeer`) became a `MutableStateFlow<Boolean>` that `close()` flips before tearing down; a new
+  `awaitPeer` helper (`app/src/sharedTest/.../e2e/PeerWait.kt`, JVM-tested in `PeerWaitTest`) wraps each of
+  the class's seven `withTimeout` waits so one still pending when the peer closes for good fails at once
+  with `AssertionError("peer session closed while awaiting $what")`, naming the frame or request it
+  awaited. A wait that runs out its timeout on a peer that stays open is unchanged — still a bare
+  `TimeoutCancellationException` — because five scenario sites (`peerStep`, `awaitTurnEnd`,
+  `assertPeerAnswers`, and two inline catches) catch that type to add their own context; the plan's first
+  design would have converted the timeout into a named `AssertionError` too, and was reworked away once
+  those catch sites turned up (see the plan's own Revisions entry). The flaky test itself now runs its four
+  bare peer calls (`open`, `awaitPermissionModal`, `allowOnce`, `awaitFrame` for `turn_end`) through the
+  existing `peerStep`, so a future timeout there names the step and `SecondClientPeer.linkState()` instead
+  of a bare `Timed out waiting for 90000 ms`. No timeout constant changed. **Known limit (verifier NIT):**
+  every peer wait today runs in `runBlocking` on the test thread and `close()` runs later on that same
+  thread in `finally`, so the fail-fast path cannot fire in any current scenario — it is proven only by
+  `PeerWaitTest`'s virtual-time cases, and will matter once a scenario closes the peer from another
+  coroutine while a wait is pending.
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns
