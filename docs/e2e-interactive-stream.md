@@ -2549,6 +2549,28 @@ The remaining checks here are specific to a real relay or real Claude execution:
   limit above still applies to this path (same `runBlocking`-on-test-thread shape), so it remains proven
   only by `PeerWaitTest`, not a live scenario, pending pyrycode/pyrycode-relay#154 on the production relay.
 
+- **Coverage — hardened:** [#1064](https://github.com/pyrycode/pyrycode-mobile/issues/1064) made
+  `allowPromptsUntil` (the ten-site helper in `InteractiveStreamE2ETest` that polls a peer's recorded
+  frames while allowing permission prompts on the way) fail at once when the peer closes, instead of
+  running out its 30 s/90 s timeout. It reuses #1059's `SecondClientPeer.awaiting` (now `internal`, was
+  `private`) rather than adding a second closed-session signal: the poll loop now runs inside
+  `peer.awaiting(frame, timeoutMs) { ... }`, and a new `frame` parameter, defaulting to `turn_end`, names
+  what each caller is waiting for, so the fail-fast can name the frame instead of a bare
+  `AssertionError`. Eight callers keep the default; the two background-task calls in
+  `interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` pass `background_task_started` and
+  `background_task_updated`. A peer that stays open is unchanged — the same
+  `TimeoutCancellationException` is still caught and rethrown with the step's `failure` text — now also
+  carrying `peer.linkState()`. No timeout constant changed. The ticket was filed against
+  `interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`'s two recorded flakes (the #1017 and
+  #1020 gate at `b21e25a8c4`, and the #1067 gate at `5ff587db7f`), both on pre-#1036 trees where the peer
+  never redialed a dropped link. The original cause on file, "the peer never redials," no longer holds on
+  main now that #1036 landed a redialing `SecondClientPeer` — a lesson for future flake diagnosis: check
+  which harness commits the flaking tree actually contained (`git merge-base --is-ancestor`) before
+  trusting a stated cause for a fix. `PeerWaitTest` covers the fail-fast in JVM virtual time and
+  `compileDebugAndroidTestKotlin` checks the wiring; AC 3, the live pass with
+  pyrycode/pyrycode-relay#154 deployed to the production relay, is the dispatcher's post-verifier
+  real-claude gate.
+
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns
   in A and B and another device most recently using A, Stop while the phone views B
