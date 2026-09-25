@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -71,9 +73,15 @@ internal fun PairCodeScreen(
         val colors = MaterialTheme.colorScheme
         val uriHandler = LocalUriHandler.current
         val codeError = state.error?.takeIf { it == INVALID_CODE_ERROR || it == WRONG_HOST_ERROR }
-        Column(Modifier.fillMaxSize().background(colors.surface).imePadding()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(colors.surface)
+                .systemBarsPadding()
+                .imePadding(),
+        ) {
             Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp, top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { onEvent(PairCodeEvent.Back) }, enabled = !saving) {
+                IconButton(onClick = { onEvent(PairCodeEvent.Back) }, enabled = !saving, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
                 Text("Pairing", style = MaterialTheme.typography.titleLarge, color = colors.onPrimaryContainer)
