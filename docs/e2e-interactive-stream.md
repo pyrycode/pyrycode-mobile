@@ -1866,6 +1866,15 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #1065 (2026-09-25):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/1065` at `07d78c898e` merged with
+  `origin/main` at `57fcceb677` (0 commits behind before the merge) — 37 executed, 37 passed, no
+  failures or skips, exit 0, wall clock 404.5s. `LIVE_MINIMUM` stayed at 37; this ticket added no
+  new curated method. This is the first clean run of
+  `interactiveTurn_renameConversation_relabelsTopBarAndListRow` (#537) — no nondeterministic
+  same-tree re-run needed — since #1020 first tracked its flake, consistent with
+  pyrycode/pyrycode-relay#154 being live on the production relay.
+
 - **LIVE verified for #1059 (2026-09-25):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/1059` at `356c50f571` merged with
   `origin/main` at `2c213c1168` (5 commits behind before the merge) — 37 executed, 37 passed, no failures
