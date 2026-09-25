@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.res.stringResource
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -44,9 +45,15 @@ private const val ELLIPSIS = "…"
  * `status` is rendered as an opaque label inside that lead and no branch of the label reads its value;
  * `limitType` is not rendered at all. Every untrusted field goes through a render-or-decline helper below,
  * so the worst a hostile reading costs is one pill of inert text with no date and no percent.
+ *
+ * The lead names [agent], the conversation's own agent (#1115), by its client-owned name.
  */
 @Composable
-internal fun usageLimitLabel(reading: UsageLimitReading): String {
+internal fun usageLimitLabel(
+    reading: UsageLimitReading,
+    agent: ConversationAgent,
+): String {
+    val name = agentName(agent)
     val now = remember(reading) { Clock.System.now() }
     val status = usageLimitStatusLabel(reading.status, reading.truncatedFields)
     val spent = usageLimitSpentPercent(reading.utilization)
@@ -54,9 +61,9 @@ internal fun usageLimitLabel(reading: UsageLimitReading): String {
     return buildString {
         append(
             if (status != null) {
-                stringResource(R.string.thread_usage_limit_label, status)
+                stringResource(R.string.thread_usage_limit_label, name, status)
             } else {
-                stringResource(R.string.thread_usage_limit_label_no_status)
+                stringResource(R.string.thread_usage_limit_label_no_status, name)
             },
         )
         if (spent != null) append(stringResource(R.string.thread_usage_limit_spent, spent))

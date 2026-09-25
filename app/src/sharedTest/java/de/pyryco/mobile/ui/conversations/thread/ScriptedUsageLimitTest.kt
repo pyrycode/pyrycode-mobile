@@ -159,7 +159,7 @@ class ScriptedUsageLimitTest {
         resets: String? = null,
     ): String =
         buildString {
-            append(string(R.string.thread_usage_limit_label, status))
+            append(string(R.string.thread_usage_limit_label, string(R.string.agent_name_claude), status))
             if (spent != null) append(string(R.string.thread_usage_limit_spent, spent))
             if (resets != null) append(string(R.string.thread_usage_limit_resets, resets))
         }

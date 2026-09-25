@@ -13,6 +13,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
@@ -81,8 +82,11 @@ class ThreadTopOverlayTest {
         }
     }
 
-    private fun label(status: String): String =
-        context.getString(R.string.thread_usage_limit_label, status) + context.getString(R.string.thread_usage_limit_spent, 80)
+    private fun label(
+        status: String,
+        agent: String = "Claude",
+    ): String =
+        context.getString(R.string.thread_usage_limit_label, agent, status) + context.getString(R.string.thread_usage_limit_spent, 80)
 
     @Test
     fun noNotices_drawNoPill() {
@@ -106,6 +110,20 @@ class ThreadTopOverlayTest {
         usageLimit = warning.copy(resetsAt = 1L)
         composeRule.onNodeWithContentDescription(label("allowed_warning")).assertIsDisplayed()
         composeRule.onNodeWithContentDescription(dismissDescription).assertIsDisplayed()
+    }
+
+    // #1115: a Claude conversation reads exactly as before; a Codex one names Codex.
+    @Test
+    fun theUsagePill_namesTheConversationsAgent() {
+        usageLimit = warning.copy(status = "rejected")
+        setScreen()
+        composeRule.onNodeWithContentDescription("Claude reports usage-limit status: rejected · 80% spent").assertIsDisplayed()
+
+        state = state.copy(agent = ConversationAgent.Codex)
+        composeRule.onNodeWithContentDescription("Codex reports usage-limit status: rejected · 80% spent").assertIsDisplayed()
+
+        usageLimit = warning.copy(status = "")
+        composeRule.onNodeWithContentDescription("Codex reported a usage-limit update · 80% spent").assertIsDisplayed()
     }
 
     @Test

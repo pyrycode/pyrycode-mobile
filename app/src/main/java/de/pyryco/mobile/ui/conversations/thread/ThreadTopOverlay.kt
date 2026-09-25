@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.conversations.components.usageLimitIsWarning
@@ -25,7 +26,7 @@ private val OverlayPillGap = 12.dp
  * Top to bottom: claude's usage-limit report, then the pairing error. The report is a Default pill with an
  * X only when [usageLimitIsWarning] says so, and it is left out once [usageLimitDismissed]; any other
  * reading is an Error pill that cannot be hidden. The pairing pill shows while [showRePair] does and
- * starts the re-pair flow on tap. With neither, nothing is emitted.
+ * starts the re-pair flow on tap. With neither, nothing is emitted. The report names [agent] (#1115).
  */
 @Composable
 internal fun ThreadTopOverlay(
@@ -35,6 +36,7 @@ internal fun ThreadTopOverlay(
     showRePair: Boolean,
     onRePair: () -> Unit,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     if (usage == null && !showRePair) return
@@ -46,7 +48,7 @@ internal fun ThreadTopOverlay(
         if (usage != null) {
             val warning = usageLimitIsWarning(usage)
             NoticePill(
-                text = usageLimitLabel(usage),
+                text = usageLimitLabel(usage, agent),
                 isError = !warning,
                 onDismiss = if (warning) onDismissUsageLimit else null,
             )
