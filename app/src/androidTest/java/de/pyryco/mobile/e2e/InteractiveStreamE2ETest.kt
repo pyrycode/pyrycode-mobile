@@ -3531,6 +3531,71 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A conversation's attention dot follows a real turn (#1090, rung 3), on the #966 answer daemon and its peer.
+     * The peer starts every turn, so the phone stays on the list and never views the conversation it marks.
+     *  * **A completed turn marks only its row.** The peer's ping in A ends; A's row reads Unread, and every
+     *    other composed row, B among them, reads what it read before.
+     *  * **Opening reads it.** Opening A and returning to the list shows A Idle.
+     *  * **A held prompt marks its row until answered.** The peer's command in B raises a permission prompt;
+     *    B reads Waiting for your answer, still after a settle with nothing answered, while A stays Idle. The
+     *    peer allows it, B's turn ends, and B reads Unread.
+     *
+     * Each state is read from the dot's content description, never its colour. Running is never asserted: on a
+     * ping it is transient, like the thinking spinner.
+     *
+     * **Two real-claude turns**: A's ping and B's allowed command.
+     */
+    @Test
+    fun interactiveTurn_attentionDot_followsARealTurn() {
+        val (serverId, peer) = answerHostPeer()
+        val idle = string(R.string.cd_conversation_attention_idle)
+        val unread = string(R.string.cd_conversation_attention_unread)
+        val waiting = string(R.string.cd_conversation_attention_waiting)
+        try {
+            pairAnswerHost()
+            val (chatA, nameA) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "a-")
+            val (chatB, nameB) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "b-")
+            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 1. Both new chats start Idle; every composed row's state is recorded.
+            awaitRowAttention(nameA, idle, "A before any turn")
+            awaitRowAttention(nameB, idle, "B before any turn")
+            val before = treeRowAttention()
+
+            // 2. AC-1: the peer's ping in A completes while the phone shows the list. Only A's row changes.
+            peerStep(peer, "send the ping to A") { peer.sendMessage(chatA, PING_PROMPT, THREAD_TIMEOUT_MS) }
+            awaitTurnEnd(peer, chatA, 1, "A's ping")
+            awaitRowAttention(nameA, unread, "A after its turn completed on the list")
+            val after = treeRowAttention()
+            assertEquals("B after A's turn", listOf(idle), after[nameB])
+            val changed = (before.keys intersect after.keys).filter { it != nameA && before[it] != after[it] }
+            assertTrue("rows other than A changed state after A's turn: ${changed.size}", changed.isEmpty())
+
+            // 3. AC-1: opening A and returning to the list reads it.
+            openChatRow(nameA)
+            leaveThread()
+            awaitRowAttention(nameA, idle, "A after it was opened")
+
+            // 4. AC-2: the peer's command in B holds its turn on a permission prompt. B waits, and keeps waiting.
+            peerStep(peer, "send the command to B") { peer.sendMessage(chatB, ANSWER_PERMISSION_PROMPT, THREAD_TIMEOUT_MS) }
+            val modalId = peerStep(peer, "await B's permission prompt") { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) }
+            awaitRowAttention(nameB, waiting, "B while its prompt is outstanding")
+            SystemClock.sleep(SCOPE_SETTLE_MS)
+            awaitRowAttention(nameB, waiting, "B after a settle with its prompt unanswered")
+            awaitRowAttention(nameA, idle, "A while B's prompt is outstanding")
+
+            // 5. AC-2: the peer answers; B's turn ends and its row stops waiting.
+            peerStep(peer, "allow B's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            peerStep(peer, "await B's prompt dismissal") { peer.awaitModalDismissed(modalId, THREAD_TIMEOUT_MS) }
+            awaitTurnEnd(peer, chatB, 1, "B's allowed turn")
+            awaitRowAttention(nameB, unread, "B after its prompt was answered and its turn ended")
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
      * The composer footer's readings and a model change survive a cut-and-restore of the phone's link (#967).
      * The chat is prepared as #545's are: nothing remembered and no saved model.
      *  * **The context reading goes with the link.** After a real turn the footer shows `Cxt: N%`. The reading
@@ -5181,6 +5246,64 @@ class InteractiveStreamE2ETest {
         return chat.id to name
     }
 
+    /** The Chats row whose name contains [name], with its dot reading [state] (#1090). */
+    private fun attentionRow(
+        name: String,
+        state: String,
+    ): SemanticsMatcher = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true) and hasContentDescription(state)
+
+    /** Scroll to the Chats row named [name] and wait until its dot reads [state], naming [what] and the state it reads. */
+    private fun awaitRowAttention(
+        name: String,
+        state: String,
+        what: String,
+    ) {
+        val row = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
+        try {
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(row) }.isSuccess &&
+                    composeTestRule.onAllNodes(attentionRow(name, state)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            val shown = composeTestRule.onAllNodes(row).fetchSemanticsNodes().map { attentionOf(it) }
+            throw AssertionError("$what: the row's dot never read '$state' within $LIST_TIMEOUT_MS ms (it reads $shown)", e)
+        }
+    }
+
+    /**
+     * Every composed Channels and Chats tree row's dot state, grouped by the row's name and sorted, so two rows
+     * sharing a name on different hosts compare as a set of states.
+     */
+    private fun treeRowAttention(): Map<String, List<String>> =
+        composeTestRule
+            .onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG) or hasTestTag(TREE_CHANNEL_ROW_TEST_TAG))
+            .fetchSemanticsNodes()
+            .groupBy(
+                { node ->
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .joinToString(" ") { it.text }
+                },
+                { node -> attentionOf(node) },
+            ).mapValues { (_, states) -> states.sorted() }
+
+    /** The attention state a tree row's merged node carries: whichever of the dot's five descriptions it holds. */
+    private fun attentionOf(node: SemanticsNode): String {
+        val states =
+            listOf(
+                R.string.cd_conversation_attention_waiting,
+                R.string.cd_conversation_attention_running,
+                R.string.cd_conversation_attention_failed,
+                R.string.cd_conversation_attention_unread,
+                R.string.cd_conversation_attention_idle,
+            ).map(::string)
+        return node.config
+            .getOrNull(SemanticsProperties.ContentDescription)
+            .orEmpty()
+            .firstOrNull { it in states } ?: "none"
+    }
+
     /** An answer-daemon argument (#966), failing with the script that passes it. */
     private fun answerArg(key: String): String =
         requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
@@ -6595,6 +6718,9 @@ class InteractiveStreamE2ETest {
         // The answer host's display name and its chats' run-unique prefix: neither contains "ping".
         const val ANSWER_HOST_NAME = "Answer e2e host"
         const val ANSWER_CHAT_NAME_PREFIX = "e2e966-"
+
+        // #1090: the attention-dot scenario's run-unique chat prefix on the answer host; it does not contain "ping".
+        const val ATTENTION_CHAT_NAME_PREFIX = "e2e1090-"
 
         // #1016: the attachment exchange. Fixture names are plain ASCII, which the daemon stores unchanged, and
         // run-unique, so MediaStore never renames one. The document is about 100 KB: three 45000-byte chunks.
