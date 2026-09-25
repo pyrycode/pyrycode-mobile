@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -26,8 +27,30 @@ internal suspend fun <T> awaitPeer(
             val watcher =
                 launch {
                     closed.first { it }
-                    throw AssertionError("peer session closed while awaiting $what")
+                    throw PeerSessionClosedError(what)
                 }
             block().also { watcher.cancel() }
         }
+    }
+
+/** [awaitPeer]'s failure when the peer closes under a wait, typed so [requirePeerAnswer] can tell it apart. */
+internal class PeerSessionClosedError(
+    what: String,
+) : AssertionError("peer session closed while awaiting $what")
+
+/**
+ * Run [request] on a peer whose open session must answer (#1063), and fail as a relay or daemon fault when it
+ * does not: the peer's session closed under the request, or [timeoutMs] ran out. Any other failure, such as a
+ * refusal naming its code, passes through unchanged.
+ */
+internal suspend fun <T> requirePeerAnswer(
+    timeoutMs: Long,
+    request: suspend () -> T,
+): T =
+    try {
+        request()
+    } catch (e: PeerSessionClosedError) {
+        throw AssertionError("the peer's session closed before it answered a request: a relay or daemon fault", e)
+    } catch (e: TimeoutCancellationException) {
+        throw AssertionError("the peer's open session answered no request within $timeoutMs ms: a relay or daemon fault", e)
     }

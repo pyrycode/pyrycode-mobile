@@ -5,6 +5,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -83,6 +84,65 @@ class PeerWaitTest {
                 assertEquals(refusal.message, e.message)
             }
         }
+
+    // #1063: assertPeerAnswers labels both ways a peer's request goes unanswered as a relay or daemon fault.
+    private suspend fun <T> answered(block: suspend () -> T): T = requirePeerAnswer(TIMEOUT_MS) { await(block) }
+
+    @Test
+    fun `a peer that answers returns its answer`() =
+        runTest {
+            assertEquals("page", answered { "page" })
+            assertEquals(0L, currentTime)
+        }
+
+    @Test
+    fun `a peer closed during its request fails at once as a relay or daemon fault`() =
+        runTest {
+            val wait = async { runCatching { answered { awaitCancellation() } } }
+            runCurrent()
+
+            closed.value = true
+            runCurrent()
+
+            assertTrue(wait.isCompleted)
+            assertClosedFault(wait.await().exceptionOrNull())
+        }
+
+    @Test
+    fun `a peer already closed fails at once as a relay or daemon fault`() =
+        runTest {
+            closed.value = true
+
+            assertClosedFault(runCatching { answered { awaitCancellation() } }.exceptionOrNull())
+        }
+
+    @Test
+    fun `a peer that never answers keeps its timeout label`() =
+        runTest {
+            val error = runCatching { answered { awaitCancellation() } }.exceptionOrNull()
+
+            assertTrue("$error", error is AssertionError)
+            assertEquals(
+                "the peer's open session answered no request within $TIMEOUT_MS ms: a relay or daemon fault",
+                error?.message,
+            )
+            assertEquals(TIMEOUT_MS, currentTime)
+        }
+
+    @Test
+    fun `a peer's refusal is not relabelled`() =
+        runTest {
+            val error = runCatching { answered<Unit> { error("peer request_history refused: unknown_conversation") } }.exceptionOrNull()
+
+            assertTrue("$error", error is IllegalStateException)
+            assertEquals("peer request_history refused: unknown_conversation", error?.message)
+        }
+
+    private fun TestScope.assertClosedFault(error: Throwable?) {
+        assertTrue("$error", error is AssertionError)
+        assertEquals("the peer's session closed before it answered a request: a relay or daemon fault", error?.message)
+        assertEquals(0L, currentTime)
+    }
 
     private companion object {
         const val TIMEOUT_MS = 90_000L
