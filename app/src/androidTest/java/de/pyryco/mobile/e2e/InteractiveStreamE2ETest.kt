@@ -3610,22 +3610,25 @@ class InteractiveStreamE2ETest {
 
     /**
      * A running background task's progress shows on its panel card (#1076, #1044). Real claude starts a
-     * `general-purpose` subagent in the background; the daemon sends a `background_task_progress` frame once the
-     * subagent's tool count advances by two (pyrycode `docs/protocol-mobile.md`), and the app drops progress
-     * when the task finishes, so the card is read while the task still runs.
+     * `general-purpose` subagent, a `local_agent` task the daemon reports with the background-task frames. The
+     * daemon sends a `background_task_progress` frame once the subagent's tool count advances by two (pyrycode
+     * `docs/protocol-mobile.md`). The app drops progress when the task finishes, so the card is read while the
+     * task still runs.
      *
+     * The subagent runs in the foreground, as in the daemon's one measured `task_progress` capture, so the turn
+     * stays open while it works. A backgrounded one also costs a second turn when its finish notice arrives.
      * The task is held open by work, not by a permission prompt: on this daemon the phone draws a prompt as a
-     * dialog over the composer, which would cover the Actions footer, and a background subagent may deny a tool
-     * it was not approved for at launch. [BACKGROUND_PROGRESS_PROMPT] instead gives the subagent a run of Glob
-     * calls, one per message, which need no permission and keep it running for about a minute after its first
-     * progress frame.
+     * dialog over the composer, which would cover the Actions footer. [BACKGROUND_PROGRESS_PROMPT] instead gives
+     * the subagent a run of Read calls, one per message, on missing files inside the chat's working directory.
+     * They need no permission and read no host content, and each still counts as a tool call. The daemon's claude
+     * has no Glob tool: the first live runs asked for Glob, and the subagent made no call at all.
      *
      * The peer's recorded frames supply the timing, the task's identity and the descriptions the card may show;
      * the card itself is read off the phone. One card must carry both an activity line, a prefix of a recorded
      * progress description, and a meta line with a tools segment of any count. Only the progress block draws the
      * tools segment, so the task's opening description cannot pass for it.
      *
-     * **Always-on**: the hold does not depend on a fixed delay, only on the subagent taking its Glob calls one at a
+     * **Always-on**: the hold does not depend on a fixed delay, only on the subagent taking its Read calls one at a
      * time. If a live run shows the task finishing before the panel reads it, `@Ignore` this with the reason, as
      * #481 / #482 do, and take it out of the `LIVE=1` list. **One real-claude turn**: the prompt that starts the
      * subagent.
@@ -3643,14 +3646,24 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             sendFromPhone(BACKGROUND_PROGRESS_PROMPT)
 
-            // 2. The peer records a progress frame for a task the daemon reported started.
-            allowPromptsUntil(
-                peer,
-                chatId,
-                BACKGROUND_PROGRESS_TIMEOUT_MS,
-                "no background_task_progress arrived for a started task",
-                frame = "background_task_progress",
-            ) { frame -> frame.type == "background_task_progress" && progressFrames(peer, chatId).isNotEmpty() }
+            // 2. The peer records a progress frame for a task the daemon reported started. A timeout names the
+            //    started-task count, which separates "claude started no task" from "the task never reported".
+            try {
+                allowPromptsUntil(
+                    peer,
+                    chatId,
+                    BACKGROUND_PROGRESS_TIMEOUT_MS,
+                    "no background_task_progress arrived for a started task",
+                    frame = "background_task_progress",
+                ) { frame -> frame.type == "background_task_progress" && progressFrames(peer, chatId).isNotEmpty() }
+            } catch (e: AssertionError) {
+                val recorded = peer.recorded(chatId)
+                throw AssertionError(
+                    "${e.message} (background tasks started: ${recorded.count { it.type == "background_task_started" }}; " +
+                        "progress frames: ${recorded.count { it.type == "background_task_progress" }})",
+                    e,
+                )
+            }
             awaitNoPromptDialog("a permission prompt still covers the thread")
 
             // 3. While the task runs, its card shows an activity line from a recorded frame and a tools segment.
@@ -6673,16 +6686,19 @@ class InteractiveStreamE2ETest {
         const val BACKGROUND_FINISH_TIMEOUT_MS = 180_000L
 
         // #1076: the progress scenario's run-unique chat prefix (no "ping", no other scenario's prefix), and a
-        // background subagent held open by permission-free Glob calls taken one per message. Its first progress
-        // frame needs two tool calls; the rest keep the task running while the phone opens the panel. The
-        // timeout covers the subagent's start and those two calls.
+        // foreground subagent held open by permission-free Read calls on missing files in the chat's working
+        // directory, taken one per message (the daemon's claude has no Glob tool). Its first progress frame
+        // needs two tool calls; the rest keep the task running while the phone opens the panel. The timeout
+        // covers the subagent's start and those two calls.
         const val BACKGROUND_PROGRESS_NAME_PREFIX = "e2e1076-progress-"
         const val BACKGROUND_PROGRESS_PROMPT =
-            "Use your Agent tool to start one general-purpose subagent in the background (run_in_background: true), " +
-                "then stop without commentary and do nothing else. Give the subagent exactly these instructions: " +
-                "\"Call the Glob tool twenty times, one call per message and never in parallel, waiting for each " +
-                "result before the next call. Use the pattern *.txt for odd calls and *.md for even calls. Do not " +
-                "use any other tool. When all twenty calls are done, reply with exactly: done.\""
+            "Use your Agent tool once to start one general-purpose subagent (not in the background), wait for it, " +
+                "then reply with exactly: done. Use no other tool yourself. Give the subagent exactly these " +
+                "instructions: \"Use the Read tool twenty times, one call per message and never in parallel, waiting " +
+                "for each result before the next call. Call n reads the file e2e1076-n.txt in the current working " +
+                "directory, for n from 1 to 20. These files do not exist, so every call reports a missing file; that " +
+                "is expected, so do not stop, retry, or investigate, just make the next call. Do not use any other " +
+                "tool. When all twenty calls are done, reply with exactly: done.\""
         const val BACKGROUND_PROGRESS_TIMEOUT_MS = 180_000L
 
         // How much of a recorded progress description the card must show. The panel filters control characters

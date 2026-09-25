@@ -60,8 +60,23 @@ Overlaps: none — no in-flight feature branch touches these three files.
 
 ## Documentation handoff (pending — documentation stage)
 
-`docs/e2e-interactive-stream.md`, beside the #967 background-task scenario: record `interactiveTurn_backgroundAgentProgress_showsOnRunningCard`, what it proves, its one-turn cost, that it runs always-on, and why it holds on a run of Glob calls rather than a permission prompt. Add #1076 to the `LIVE=1` variant's ticket list and bump its method/turn counts.
+`docs/e2e-interactive-stream.md`, beside the #967 background-task scenario: record `interactiveTurn_backgroundAgentProgress_showsOnRunningCard`, what it proves, its one-turn cost, that it runs always-on, and why it holds on a foreground subagent's run of Read calls on missing files rather than a permission prompt (the daemon's claude has no Glob tool; see Revisions). Add #1076 to the `LIVE=1` variant's ticket list and bump its method/turn counts.
 
 ## Open questions
 
 - Whether real claude honours "one Glob per message" inside a background subagent. If it batches, the task may finish before the panel reads; the live run decides, with `@Ignore` as the documented fallback.
+
+## Revisions
+
+### 2026-09-25 — live gate: the subagent had no Glob tool (rework after the real-claude gate)
+
+**Finding.** The real-claude gate failed the scenario twice, once in the first run and once in the re-run. Both runs failed at step 2: `no background_task_progress arrived for a started task within 180000 ms`. The daemon's claude transcripts for both runs show why. The main agent did start the background `general-purpose` subagent. The subagent then replied that **the session has no Glob tool** and, since the prompt ruled out every other tool, made no tool calls at all. It finished about five seconds after launch, so the daemon's rate bound (two `tool_uses`) never let a frame through. It was not a timing flake. The finish also queued claude's task notification, which ran a **second** main-agent turn and broke AC-3's one-turn limit.
+
+**New contract.**
+- **Read, not Glob.** Read is in the daemon's base tool set. Inside the chat's working directory it needs no permission prompt. The subagent reads run-unique relative paths (`e2e1076-<n>.txt`) that do not exist, one per message. It is told that each missing file is expected and to keep going. A failed Read is still a tool call, and no host file content is read. The activity line then names a file the test chose, not a host path.
+- **A foreground subagent, not a background one.** The one measured `system/task_progress` capture (pyrycode `internal/e2e/realclaude/testdata/parent_tool_use_v2.1.259.json`) comes from a foreground `general-purpose` subagent. It is still a `local_agent` task, which the daemon reports through `background_task_started` and `background_task_progress`, and neither the daemon nor `BackgroundTaskProjection` filters on `is_backgrounded`. The main turn stays open while the subagent works, and the Actions footer stays enabled during a turn (`footerControlEnabled`). One prompt, one turn: no task notification starts a second one.
+- **A diagnosable timeout.** Step 2's failure now gives the counts of recorded `background_task_started` frames and joined progress frames, so the next red says whether claude started no task or whether the task never reported progress.
+
+The steps, the panel assertion and the always-on `LIVE=1` membership are unchanged.
+
+**Open question resolved.** "Whether real claude honours one call per message" could not be answered: the subagent made no calls. The Read rework reopens it, and the next live run decides it, with `@Ignore` still the documented fallback.

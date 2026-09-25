@@ -1164,8 +1164,8 @@ elif [ -n "${LIVE}" ]; then
   # back before and after a new session, archived and restored. Two pings (Reset session also runs the
   # daemon's wrap-up turn), so the list holds 42 methods and 41 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_createEditArchiveChannel_readsPromptBack"
-  # #1076: a background subagent's progress shows on its running panel card. One turn: the prompt that
-  # starts the subagent, which holds itself open with permission-free Glob calls. The list now holds
+  # #1076: a subagent's progress shows on its running panel card. One turn: the prompt that starts the
+  # subagent, which holds itself open with permission-free Read calls on missing files. The list now holds
   # 43 methods and 42 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
