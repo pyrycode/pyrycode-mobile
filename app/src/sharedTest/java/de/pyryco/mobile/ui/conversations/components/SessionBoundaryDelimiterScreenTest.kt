@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -82,6 +83,25 @@ class SessionBoundaryDelimiterScreenTest {
                     substring = true,
                 ),
             ).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Install").assertIsDisplayed()
+    }
+
+    @Test
+    fun a_Codex_conversation_names_Codex_and_keeps_the_install_button() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                SessionBoundaryDelimiter(boundary = clearBoundary(), agent = ConversationAgent.Codex)
+            }
+        }
+
+        composeTestRule
+            .onNode(
+                hasText(
+                    "Codex doesn't remember messages above this line. Install a memory plugin to preserve context.",
+                    substring = true,
+                ),
+            ).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Claude doesn't remember", substring = true)).assertDoesNotExist()
         composeTestRule.onNodeWithText("Install").assertIsDisplayed()
     }
 

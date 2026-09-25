@@ -243,9 +243,11 @@ when {
 }
 ```
 
-(`apiRetry` and `isCompacting`'s own arms also gained `agent = agent` in #1114 — omitted from the ladder
-above for brevity; see [API-retry indicator](api-retry-indicator.md#placement-in-the-thread) and [Compacting
-indicator](compacting-indicator.md#placement-in-the-thread). `resetting` and `turnOutcome` did not.)
+(`apiRetry` and `isCompacting`'s own arms also gained `agent = agent` in #1114, and `resetting`'s gained
+it in #1112 — all three omitted from the ladder above for brevity; see [API-retry
+indicator](api-retry-indicator.md#placement-in-the-thread), [Compacting
+indicator](compacting-indicator.md#placement-in-the-thread) and [Resetting indicator § The agent
+name](resetting-indicator.md#the-agent-name-1112). `turnOutcome` still has not.)
 
 **Exactly one affordance renders; the arms never stack.** api-retry keeps the top arm ("something is
 going wrong" over lower-urgency signals), then resetting, then compaction, then the turn outcome, then this
@@ -423,11 +425,13 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
 - **A short tool call may never show a time (#897, expected).** claude's `tool_progress` heartbeat arrives
   roughly every 30 seconds, so `Running Bash…` alone (no elapsed suffix) is the common case for a quick
   call, not a sign anything is missing.
-- **The agent-naming rollout is partial by design (#1114, open).** Of the five status-ladder arms, only
-  this one, `ApiRetryIndicator` and `CompactingIndicator` take `agent` — `ResettingIndicator`'s four
-  `thread_resetting_*` labels and `TurnOutcomeIndicator`'s labels still say "Claude" unconditionally. #1114's
-  verifier flagged this as a non-blocking NIT for whichever of #1112/#1113/#1115 covers the rest; it is not
-  a defect in this ticket's own six strings.
+- **The agent-naming rollout is partial by design (#1114, narrowed by #1112).** Of the five status-ladder
+  arms, this one, `ApiRetryIndicator`, `CompactingIndicator` and (since #1112) `ResettingIndicator`'s
+  `WrappingUp` reading take `agent` — only `TurnOutcomeIndicator`'s labels still say "Claude"
+  unconditionally. #1114's verifier flagged the gap as a non-blocking NIT for whichever sibling ticket
+  covered the rest of the ladder; #1112 closed `ResettingIndicator`'s share of it (see [Resetting indicator
+  § The agent name](resetting-indicator.md#the-agent-name-1112)). `TurnOutcomeIndicator` remaining
+  Claude-only is not a defect in this ticket's own six strings.
 - **A very long or multi-line tool name can cut off its own elapsed reading (#897, open, not observed).**
   `maxLines = 1` + ellipsis bounds the row, but a name long enough to fill it pushes the appended elapsed
   text past the ellipsis with it. Desktop has the identical limitation. No tool name long enough to trigger

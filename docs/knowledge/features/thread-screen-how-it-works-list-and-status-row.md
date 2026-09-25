@@ -9,7 +9,10 @@ The body shape since [#246](../codebase/246.md) iterated `state.items.asReversed
 and `itemsIndexed(items = rows.asReversed(), ...)` dispatches at the `ThreadRow` sealed-interface level
 instead: `ThreadRow.Delivered` re-enters the pre-#782 `when (item)` dispatch on its wrapped `ThreadItem`
 (`MessageItem` → `MessageBubble(message = item.message)`, `SessionBoundary` →
-`SessionBoundaryDelimiter(boundary = item)`, `UnrecognizedMessage` → `UnrecognizedMessageRow(item = item)`),
+`SessionBoundaryDelimiter(boundary = item, agent = state.agent)` (agent since
+[#1112](https://github.com/pyrycode/pyrycode-mobile/issues/1112) — see [Session boundary delimiter § The
+agent name](session-boundary-delimiter.md#edge-cases--limitations)), `UnrecognizedMessage` →
+`UnrecognizedMessageRow(item = item)`),
 `ThreadRow.Queued` → `QueuedMessageRow(text = row.text, onDrop = { onDropQueued(row.queuedMessageId) })`.
 The screen does **not** re-dispatch by `Message.role`; [`MessageBubble`](message-bubble.md) owns that
 selection internally. No `verticalArrangement = Arrangement.Bottom` override — `reverseLayout = true`

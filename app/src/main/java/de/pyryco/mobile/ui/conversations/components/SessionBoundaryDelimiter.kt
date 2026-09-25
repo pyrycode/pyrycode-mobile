@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -54,11 +55,13 @@ private const val RULE_ALPHA = 0.60f
 fun SessionBoundaryDelimiter(
     boundary: ThreadItem.SessionBoundary,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     SessionBoundaryDelimiterContent(
         boundary = boundary,
         uriHandler = LocalUriHandler.current,
         modifier = modifier,
+        agent = agent,
     )
 }
 
@@ -68,6 +71,7 @@ internal fun SessionBoundaryDelimiterContent(
     boundary: ThreadItem.SessionBoundary,
     uriHandler: UriHandler,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     val label = boundaryLabel(boundary, TimeZone.currentSystemDefault(), Locale.getDefault())
     Column(
@@ -91,7 +95,9 @@ internal fun SessionBoundaryDelimiterContent(
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = "Claude doesn't remember messages above this line. Install a memory plugin to preserve context. ",
+                text = "${agentDisplayName(
+                    agent,
+                )} doesn't remember messages above this line. Install a memory plugin to preserve context. ",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -167,6 +173,13 @@ private fun BoundaryRule(modifier: Modifier = Modifier) {
                 .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = RULE_ALPHA)),
     )
 }
+
+/** The name the thread's fixed copy uses for [agent] (#1112): the agent that runs the conversation. */
+internal fun agentDisplayName(agent: ConversationAgent): String =
+    when (agent) {
+        ConversationAgent.Claude -> "Claude"
+        ConversationAgent.Codex -> "Codex"
+    }
 
 internal fun boundaryLabel(
     boundary: ThreadItem.SessionBoundary,

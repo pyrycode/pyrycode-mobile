@@ -3230,6 +3230,37 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun state_agent_followsTheConversation_andIsClaudeByDefault() =
+        runTest {
+            fun conversation(
+                id: String,
+                agent: ConversationAgent,
+            ) = Conversation(
+                id = id,
+                name = null,
+                cwd = DEFAULT_SCRATCH_CWD,
+                currentSessionId = "$id-s1",
+                sessionHistory = listOf("$id-s1"),
+                isPromoted = true,
+                lastUsedAt = Instant.parse("2026-09-21T00:00:00Z"),
+                agent = agent,
+            )
+            val repo =
+                fixedRepo(listOf(conversation("c-codex", ConversationAgent.Codex), conversation("c-claude", ConversationAgent.Claude)))
+            val codex = makeVm(SavedStateHandle(initialState = mapOf("conversationId" to "c-codex")), repo)
+            val claude = makeVm(SavedStateHandle(initialState = mapOf("conversationId" to "c-claude")), repo)
+            val collector =
+                launch {
+                    launch { codex.state.collect {} }
+                    launch { claude.state.collect {} }
+                }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Codex, codex.state.value.agent)
+            assertEquals(ConversationAgent.Claude, claude.state.value.agent)
+            collector.cancel()
+        }
+
+    @Test
     fun state_agent_isTheConversationsAgent() =
         runTest {
             val codexChannel =
