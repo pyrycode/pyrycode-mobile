@@ -19,6 +19,10 @@ exactly one notification whose tap opens the right thread —
 `InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`, LIVE
 only (see [docs/e2e-interactive-stream.md § Live mode](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay)).
 This package's own tests below still cover the same pipeline against fakes, for the deterministic gates.
+Both scenarios flaked once in the #1076 gate run on a fresh install with no token stored ten minutes
+after boot, then passed on the same image — diagnosed as FCM's first mint failing with no
+`PushTokenRefresher` (below, #1102) yet in place to ask again; `awaitPushRegistered`'s timeout message
+now reports an in-process token request's own outcome instead of guessing at Play services.
 
 ## Why the SDK is unconditional but push can still be off
 
@@ -71,8 +75,24 @@ may be destroyed as soon as `onNewToken` returns, so the write runs on the sink'
 (app-lifetime, not service-lifetime). A DataStore `IOException` is caught and logged content-free
 (`event=push_token_stored outcome=io_failure`); nothing downstream depends on that particular
 write succeeding — the next rotation, or the [#365](relay-repository-coordinator-seams-and-passthroughs.md#connect-time-fcm-push-token-re-registration-365)
-path on the next connect, sends whatever is currently stored. The service never reads the current
-token at startup; `onNewToken` alone covers both the first token and every later rotation.
+path on the next connect, sends whatever is currently stored.
+
+**[#1102](https://github.com/pyrycode/pyrycode-mobile/issues/1102) added a second writer: `PushTokenRefresher` asks FCM for the current token itself, rather than
+wait only for `onNewToken`.** `onNewToken` alone left a phone unreachable by push whenever FCM's first
+mint failed on a freshly booted device — the app then waited on FCM's own retry backoff with no token
+stored. `PushTokenRefresher` (`push/PushTokenRefresher.kt`) is a `DefaultLifecycleObserver` on the
+process `Lifecycle`: it asks once at `start()` (a push can start the process with no activity) and again
+on every `onStart` (each return to the foreground), but only while `AppPreferences.pushToken` is empty
+and a `FirebaseApp` exists (`PushTokenSource.isAvailable()`, checked before any
+`FirebaseMessaging.getInstance()` call, which throws without one). A successful request stores through
+`PushTokenSink.onNewToken` — the same write path the service's own callback uses — so `pushToken`
+still has exactly one writer *shape*, just two callers. A failure or a request past
+`PUSH_TOKEN_REQUEST_TIMEOUT` (60 s) is logged by exception class only and leaves nothing stored, so the
+next foreground retries; the 60 s bound exists so a hung request cannot hold the in-flight guard and
+block that retry. Once a token is stored, rotation stays `onNewToken`'s job alone — the refresher never
+requests again on that install. `FirebasePushTokenSource.currentToken()` wraps the FCM `Task` in
+`suspendCancellableCoroutine`; its completion listener runs on main with no executor, but it only resumes
+the continuation, so the refresher's own request stays on its own dispatcher.
 
 Manifest: `<service android:name=".push.PyryMessagingService" android:exported="false">` with the
 `com.google.firebase.MESSAGING_EVENT` intent filter. `exported="false"` means only the in-process
@@ -81,17 +101,34 @@ Firebase SDK can deliver to it — no external app can invoke it directly.
 ## Logging
 
 `event=push_token_stored outcome=success|io_failure` and `event=push_wake`, both through
-debug-gated `RelayLog`. The token itself, and every `RemoteMessage` field, appear in no log line.
+debug-gated `RelayLog`. `PushTokenRefresher` adds `event=push_token_requested
+outcome=success|failure|timeout`, with `error=<exception simple class name>` on failure — no line at
+all when a token is already stored or push is off. The token itself, and every `RemoteMessage` field,
+appear in no log line.
 
 ## Wiring
 
 ```kotlin
 // di/AppModule.kt
 single { PushTokenSink(get()) } onClose { it?.dispose() }
+single<PushTokenSource> { FirebasePushTokenSource(androidContext()) }
+single(createdAtStart = true) {
+    PushTokenRefresher(
+        storedToken = get<AppPreferences>().pushToken,
+        source = get(),
+        sink = get(),
+        lifecycle = ProcessLifecycleOwner.get().lifecycle,
+    ).also { it.start() }
+} onClose { it?.dispose() }
 ```
 
 `LifecycleConnectionDriver` is already a resolvable Koin singleton created at `startKoin`
 ([#302](lifecycle-connection-driver.md)); the service resolves it directly, adding no new binding.
+`PushTokenRefresher` is `createdAtStart` for the same push-can-start-the-process reason as the
+lifecycle driver and the attention notifier below — it must already be observing the process
+`Lifecycle` before a push-started process reaches `onStart`. It is a separate observer from
+`LifecycleConnectionDriver`, not a call site on it: `onStart` only launches a coroutine and never
+suspends, so the refresher cannot delay `connect()`.
 
 ## Testing
 
@@ -129,6 +166,23 @@ it drives an Android `Service` class, not a Compose screen, so it does not belon
 
 `LifecycleConnectionDriverTest` covers the wake-window behaviour the service triggers; see
 [Lifecycle driver § Testing](lifecycle-connection-driver.md#testing).
+
+`PushTokenRefresherTest` (plain JVM, `app/src/test`) covers `PushTokenRefresher` against a fake
+`PushTokenSource` and a same-scheduler `PushTokenSink`/DataStore (the #953 pattern above), with a
+`LifecycleRegistry.createUnsafe` process-lifecycle stand-in. Two lessons from getting it running:
+
+- **`LifecycleRegistry.createUnsafe(Owner())` with a throwaway owner fails partway through a test**
+  with "LifecycleOwner … already garbage collected" — the registry holds its owner only weakly. Keep
+  a strong reference to the owner for the test's whole body, not just at construction.
+- **`advanceUntilIdle()` runs virtual time past any `withTimeoutOrNull` bound inside the code under
+  test.** A test meant to catch the refresher mid-request (to prove a start and an immediate
+  foreground collapse to one call) that drives time with `advanceUntilIdle()` instead silently runs
+  the request past `PUSH_TOKEN_REQUEST_TIMEOUT` and exercises the timeout path instead of the
+  in-flight one. Use `runCurrent()` to advance only to the next scheduled point and keep the request
+  genuinely pending.
+
+`FirebasePushTokenSourceTest` (Robolectric) proves `isAvailable()` is false with no `FirebaseApp` —
+the same "Robolectric doesn't construct one" fact `PyryMessagingServiceTest` below already relies on.
 
 ## Attention alerts and the tap route (#685)
 
@@ -294,4 +348,7 @@ No id, digest or notification text appears in any of these lines.
   and the Edit channel checkbox (#1021) that writes it.
 - Spec: `docs/specs/architecture/361-fcm-push-wake.md` (§ Design, § Security review — verdict PASS,
   § Revisions for the two open questions above).
+- Spec: `docs/specs/architecture/1102-request-current-fcm-token.md` — `PushTokenRefresher`'s design,
+  the #1076 gate flake it fixes, and the Phase B revision resolving the `Task` listener/executor
+  question.
 - README `### Firebase` — where `app/google-services.json` and the conditional plugin are recorded.
