@@ -378,5 +378,11 @@ so TalkBack reads e.g. "Running, kitchenclaw refactor" — the meaning never res
 join](channel-list-viewmodel-projection.md#attention-join-877)). This ticket only draws the state;
 deriving it — the five-state precedence, the turn-state/turn-end join — is #877's.
 
-**Scope.** The live run of these states on a real turn belongs to #676, which #878 adds to the set of
-tickets blocking it — see [ChannelListScreen § Related](channel-list-screen.md#related).
+**Scope.** The live run of these states on a real turn, split from #676, is proven by
+`interactiveTurn_attentionDot_followsARealTurn` (#1090, rung 3) in
+[`e2e-interactive-stream.md`](../../e2e-interactive-stream.md#pre-ship-gate): the peer's ping in one
+chat marks only that chat's row Unread while every other composed row keeps its state, opening it reads
+Idle again, and the peer's held permission prompt in a second chat marks that row Waiting until the peer
+answers it. Every read is off the dot's content description, never its colour, and `Running` is never
+asserted there — it is transient on a ping, like the thinking spinner. See [ChannelListScreen §
+Related](channel-list-screen.md#related).
