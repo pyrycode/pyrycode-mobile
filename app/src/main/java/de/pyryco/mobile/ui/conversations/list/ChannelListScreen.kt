@@ -719,6 +719,7 @@ private fun LazyListScope.treeSection(
                     selected = target == hostState.selected,
                     onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
                     modifier = Modifier.testTag(section.rowTestTag),
+                    attention = entry.attentionFor(row.conversation.id),
                     // The row's own target, as for its tap: Edit channel on Channels rows (#667), Edit chat on Chats.
                     onEditTapped =
                         when (section) {

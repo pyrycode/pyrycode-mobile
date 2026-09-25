@@ -2,6 +2,12 @@ package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
 import androidx.annotation.StringRes
+import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -55,7 +62,10 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.success
+import de.pyryco.mobile.ui.theme.warning
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 
 // The tree's four indentation steps, mirroring the supplied design's absolute positions inside its
@@ -82,6 +92,10 @@ private val TreeNameGap = 6.dp
 private val TreeLegDotGap = 6.dp
 private val TreeDotSize = 8.dp
 private val TreeDotRingWidth = 1.dp
+
+// Desktop's working-dot blink (#878): opacity 1 -> 0.3 -> 1 over 2s, eased both ways.
+private const val RUNNING_BLINK_MIN_ALPHA = 0.3f
+private const val RUNNING_BLINK_HALF_PERIOD_MS = 1000
 private const val SECTION_HEADER_ALPHA = 0.85f
 
 // The design fills a selected conversation row with the primary family's next darker step below the
@@ -328,9 +342,8 @@ fun TreeWorkspaceRow(
  * One conversation under a workspace — the same row for a channel and for a chat, as the design
  * instances one component in both sections.
  *
- * The leading status slot is drawn only in the idle treatment and takes no state input: #668
- * introduces unread/activity state and the precedence behind it. [selected] draws the design's plain
- * highlighted treatment.
+ * The leading status dot draws [attention], the row's one state that #877 resolves by precedence (#878).
+ * [selected] draws the design's plain highlighted treatment.
  *
  * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge, permanently, since the
  * phone has no hover (#827) — the host row's pencil made the same trade (#744). The caller decides which
@@ -346,6 +359,7 @@ fun TreeConversationRow(
     modifier: Modifier = Modifier,
     onEditTapped: (() -> Unit)? = null,
     @StringRes editDescription: Int = R.string.cd_tree_chat_edit,
+    attention: ConversationAttention = ConversationAttention.Idle,
 ) {
     // Clamped once and reused for the name and the pencil's label, as the host row does.
     val bounded = boundedRowText(conversationName)
@@ -367,7 +381,7 @@ fun TreeConversationRow(
                 .padding(start = ConversationRowIndent, end = TreeRowEndPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IdleStatusDot()
+        ConversationStatusDot(attention = attention)
         Spacer(modifier = Modifier.width(TreeGlyphGap))
         Text(
             text = bounded,
@@ -542,16 +556,59 @@ private fun LegDot(visual: ConnectionLegVisual) {
     )
 }
 
-/** The conversation row's leading slot, drawn only in the design's idle ring treatment (#668). */
+/**
+ * The conversation row's leading dot (#878), after desktop's `ConversationStatusDot`: the design's idle
+ * ring on every state, with the state's fill inside it. Failed has no desktop counterpart and takes `error`.
+ *
+ * The dot names its state, so the meaning never rests on colour; the row's `selectable` merges that name
+ * with the conversation's. Only Running blinks, and the alpha is read in the layer, so the blink redraws
+ * the dot without recomposing the row.
+ */
 @Composable
-private fun IdleStatusDot() {
+private fun ConversationStatusDot(attention: ConversationAttention) {
+    val fill =
+        when (attention) {
+            ConversationAttention.WaitingForAnswer -> MaterialTheme.colorScheme.warning
+            ConversationAttention.Running -> MaterialTheme.colorScheme.tertiary
+            ConversationAttention.Failed -> MaterialTheme.colorScheme.error
+            ConversationAttention.Unread -> MaterialTheme.colorScheme.success
+            ConversationAttention.Idle -> Color.Transparent
+        }
+    val description = stringResource(attention.descriptionRes())
+    val blink =
+        if (attention == ConversationAttention.Running) {
+            rememberInfiniteTransition(label = "running-dot").animateFloat(
+                initialValue = 1f,
+                targetValue = RUNNING_BLINK_MIN_ALPHA,
+                animationSpec =
+                    infiniteRepeatable(
+                        animation = tween(RUNNING_BLINK_HALF_PERIOD_MS, easing = EaseInOut),
+                        repeatMode = RepeatMode.Reverse,
+                    ),
+                label = "running-dot-alpha",
+            )
+        } else {
+            null
+        }
     Box(
         modifier =
             Modifier
                 .size(TreeDotSize)
-                .border(TreeDotRingWidth, MaterialTheme.colorScheme.primary, CircleShape),
+                .graphicsLayer { alpha = blink?.value ?: 1f }
+                .background(fill, CircleShape)
+                .border(TreeDotRingWidth, MaterialTheme.colorScheme.primary, CircleShape)
+                .clearAndSetSemantics { contentDescription = description },
     )
 }
+
+private fun ConversationAttention.descriptionRes(): Int =
+    when (this) {
+        ConversationAttention.WaitingForAnswer -> R.string.cd_conversation_attention_waiting
+        ConversationAttention.Running -> R.string.cd_conversation_attention_running
+        ConversationAttention.Failed -> R.string.cd_conversation_attention_failed
+        ConversationAttention.Unread -> R.string.cd_conversation_attention_unread
+        ConversationAttention.Idle -> R.string.cd_conversation_attention_idle
+    }
 
 @Composable
 private fun TreeRowsPreviewMatrix() {
@@ -583,6 +640,9 @@ private fun TreeRowsPreviewMatrix() {
                 onClick = {},
             )
             TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {}, onEditTapped = {})
+            ConversationAttention.entries.forEach { state ->
+                TreeConversationRow(conversationName = state.name, selected = false, onClick = {}, attention = state)
+            }
             TreeHostRow(
                 serverId = "macbook",
                 hostName = "Macbook",
