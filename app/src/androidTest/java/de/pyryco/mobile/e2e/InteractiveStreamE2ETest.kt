@@ -3754,16 +3754,13 @@ class InteractiveStreamE2ETest {
      * Fail fast, and say so, when [peer]'s open session carries no frames: one `request_history` for
      * [conversationId] must be answered. Two live runs had peers whose handshake the daemon accepted and which
      * then saw nothing, so a permission prompt went unanswered until the turn timed out as a feature failure.
+     * A peer whose session closed first fails at once the same way (#1063).
      */
     private fun assertPeerAnswers(
         peer: SecondClientPeer,
         conversationId: String,
     ) {
-        try {
-            runBlocking { peer.history(conversationId, THREAD_TIMEOUT_MS) }
-        } catch (e: TimeoutCancellationException) {
-            throw AssertionError("the peer's open session answered no request within $THREAD_TIMEOUT_MS ms: a relay or daemon fault", e)
-        }
+        runBlocking { requirePeerAnswer(THREAD_TIMEOUT_MS) { peer.history(conversationId, THREAD_TIMEOUT_MS) } }
     }
 
     /** A message attachment's file row named [name] that is ready to act: tap opens, long-press saves. */

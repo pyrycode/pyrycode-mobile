@@ -2494,7 +2494,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   every peer wait today runs in `runBlocking` on the test thread and `close()` runs later on that same
   thread in `finally`, so the fail-fast path cannot fire in any current scenario — it is proven only by
   `PeerWaitTest`'s virtual-time cases, and will matter once a scenario closes the peer from another
-  coroutine while a wait is pending.
+  coroutine while a wait is pending. [#1063](https://github.com/pyrycode/pyrycode-mobile/issues/1063) gave
+  the close failure a named type, `PeerSessionClosedError : AssertionError` (same message), so
+  `assertPeerAnswers` can tell it apart from a `TimeoutCancellationException` without catching every
+  `AssertionError`; both now go through a new `requirePeerAnswer(timeoutMs, request)` helper (`PeerWait.kt`)
+  that labels each as "a relay or daemon fault" with matching wording — so `assertPeerAnswers` no longer
+  catches `TimeoutCancellationException` directly itself, `requirePeerAnswer` does on its behalf. The known
+  limit above still applies to this path (same `runBlocking`-on-test-thread shape), so it remains proven
+  only by `PeerWaitTest`, not a live scenario, pending pyrycode/pyrycode-relay#154 on the production relay.
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns
