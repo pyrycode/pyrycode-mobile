@@ -160,17 +160,17 @@ class MobileWireCodecTest {
         assertTrue(encoded.contains("\"protocol_versions\":[\"v2\"]"))
     }
 
-    // ---- #401 AC#1: hello advertises the interactive capability on the wire ----
+    // ---- #401 AC#1, #1119 AC#1: hello advertises interactive, then multi_agent, on the wire ----
 
     @Test
-    fun hello_advertisesInteractiveCapabilityOnEncode() {
+    fun hello_advertisesInteractiveThenMultiAgentCapabilityOnEncode() {
         // The defaulted capabilities list rides the wire via encodeDefaults = true — same mechanism
         // as protocol_versions. A hello built without an explicit capabilities still carries it.
         val hello = HelloClientPayload(deviceName = "d", clientVersion = "1.0", token = "t")
-        assertEquals(listOf(CAPABILITY_INTERACTIVE), hello.capabilities)
-        assertTrue(MobileJson.encodeToString(hello).contains("\"capabilities\":[\"interactive\"]"))
+        assertEquals(listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT), hello.capabilities)
+        assertTrue(MobileJson.encodeToString(hello).contains("\"capabilities\":[\"interactive\",\"multi_agent\"]"))
         // toString surfaces the (non-secret) capabilities while the token stays redacted.
-        assertTrue(hello.toString().contains("capabilities=[interactive]"))
+        assertTrue(hello.toString().contains("capabilities=[interactive, multi_agent]"))
         assertTrue(hello.toString().contains("token=***"))
     }
 
