@@ -445,6 +445,29 @@ report_stale_pairing_codes() {
   fi
 }
 
+# report_relay_link_drops (#1132)
+#   After a failed test task, names each harness daemon whose relay link ended other than by the teardown's
+#   own kill (`context canceled`), with the time= of each such end, e.g. a pong timeout when the gate
+#   machine lost its network. Prints nothing when no log has one. Prints only the time= token: the rest of
+#   the line holds addresses. Every pipeline ends in `|| true`, so the function cannot fail the run.
+report_relay_link_drops() {
+  local entry name logfile times
+  for entry in "${PYRY_NAME}:${DAEMON_LOG}" "${PYRY_NAME_B}:${DAEMON_B_LOG}" \
+      "${PYRY_NAME_BYPASS}:${DAEMON_BYPASS_LOG}" "${PYRY_NAME_ANSWER}:${DAEMON_ANSWER_LOG}"; do
+    name="${entry%%:*}"
+    logfile="${entry#*:}"
+    if [ ! -f "${logfile}" ]; then
+      continue
+    fi
+    times="$(grep -F 'msg="transport: disconnected"' "${logfile}" | grep -vF 'context canceled' \
+      | sed -n 's/^time=\([^ ]*\) .*/\1/p' | paste -sd ',' - | sed 's/,/, /g' || true)"
+    if [ -n "${times}" ]; then
+      printf '\033[1;33m[e2e] WARN:\033[0m relay_link_dropped: %s (%s) lost its relay link at %s; a failure overlapping these times points to the gate machine'"'"'s network, not the test\n' \
+        "${name}" "$(basename "${logfile}")" "${times}" >&2
+    fi
+  done
+}
+
 # Copy claude's session transcripts from the operator-bypass HOME (#687) into WORK_DIR/bypass-transcripts,
 # keeping their relative paths. `find -type f` skips symlinks.
 keep_bypass_transcripts() {
@@ -1234,6 +1257,7 @@ TEST_STATUS=0
   --console=plain || TEST_STATUS=$?
 if [ "${TEST_STATUS}" -ne 0 ]; then
   report_stale_pairing_codes
+  report_relay_link_drops
   exit "${TEST_STATUS}"
 fi
 
