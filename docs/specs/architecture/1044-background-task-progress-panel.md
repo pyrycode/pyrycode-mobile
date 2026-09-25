@@ -67,3 +67,30 @@ No failure modes: negative counters clamp to zero; oversized or control-characte
 ## Documentation handoff
 
 Pending for the documentation stage: fold the progress block (layout, formatting rules, `last_tool_name` marker) into `docs/knowledge/features/` for the background-task panel. The ticket names no reference doc of its own.
+
+## Revisions
+
+- **2026-09-25 — security review added (verifier finding on PR #1073).** The ticket carries `security-sensitive`, and the committed plan had no `## Security review` section. The § A6 pass below was run against this plan and the implementation already on the branch. Verdict PASS. No design or code change follows from it. The contract stays as written under **Design**.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The daemon-to-UI boundary for this ticket is the two new daemon-text sinks, the progress `description` (activity line) and `last_tool_name` (meta line). Both pass through the panel's single display boundary, `boundedText` → `printableText`. That strips C0 and C1 control characters (keeping `\n` and `\t`) and bounds each field to `MAX_PANEL_TEXT_CHARS`, the same treatment every other panel field gets. The activity goes through `TaskField`. The tool name goes through `boundedText` in `TaskProgress` before it is joined. Both render as plain `Text`: no `LinkAnnotation`, no clickable modifier, no autolinking. Neither is used as a URL, a filename, a key or a log line. `subagent_type` is decoded but never rendered.
+- [Trust boundaries — format strings] No findings. Daemon text is never a format pattern or format argument. `progressCounters` takes only the three `Long` counters. Its string and plural resources are fixed patterns filled with client-computed numbers. The tokens plural's `%1$s` receives the client-built figure from `tokenFigure`. The tool name is joined on after formatting, with `joinToString`.
+- [Trust boundaries — meta-line spoofing, accepted] The tool name shares one `Text` with the counters. A hostile value could therefore imitate counter segments, for example `"Bash · 99 tools"`. It could also carry a Unicode bidi override that `isISOControl` does not strip, reordering how the counters after it display. This gives no new capability. The only author able to send such a value is the daemon, or claude through it, and that same author sends the integers the counters are formatted from, so it could simply send different integers. Third-party MCP tool names reach claude already constrained by the API's `[a-zA-Z0-9_-]` tool-name rule. Bidi controls inside any single panel field are the existing panel-wide behaviour, not something this ticket introduces. Per evidence-based fix selection, no defence is added for an unobserved failure.
+- [Counters from daemon integers] No findings. Negative readings clamp to zero, because the protocol says the counters are not monotonic. The plural quantity is clamped to `Int.MAX_VALUE` before `getQuantityString`. Half-up rounding in `tokenFigure` uses division and remainder, not `+500`, so `Long.MAX_VALUE` cannot overflow. `Long.MIN_VALUE` clamps to 0. The largest possible output is a ~19-digit number: bounded, and still a number.
+- [Tokens, secrets, credentials] No findings. The ticket reads no token, key or credential, and stores or logs nothing.
+- [File / storage] No findings. There is no file, path or storage access. The progress frame lives only in memory, in the roster #1042 holds.
+- [Inter-process / Android attack surface] No findings. There is no intent, deep link, pending intent, push, content provider or WebView. The card stays non-clickable, and the new text adds no action.
+- [Cryptographic primitives] No findings. None are used or touched. The frame arrives through the existing `NoiseIkSession` transport and the #1042 decoder.
+- [Network & I/O] No findings. No frame, verb or decoder changes. Wire decoding and its bounds belong to #1042 (`BackgroundTaskPayloads`). This ticket only renders the held model.
+- [Error messages, logs, telemetry] No findings. The block logs nothing and emits no telemetry. No daemon text reaches Logcat.
+- [Concurrency] No findings. No coroutine, flow or state is added. `TaskProgress` is a pure composable of `BackgroundTask.progress`, and it reads `Resources` from `LocalContext` during composition.
+- [Threat model — hostile daemon frame] No findings. An oversized or control-laden activity or tool name is bounded and stripped, then marked cut when the client or the daemon (`truncatedFields` naming `description` / `last_tool_name`) cut it. A finished task never shows progress, even with a non-null frame, because `TaskRow` gates on `isFinished`.
+- [Threat model — UI-side leakage] OUT OF SCOPE. The activity line can show claude's current file path or command on screen, which a screenshot or an accessibility service can read. That exposure already exists for the task description and the latest update. Screen-capture protection for the thread is not part of this ticket, and no ticket covers it yet.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-25
