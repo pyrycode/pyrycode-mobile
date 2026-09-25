@@ -86,3 +86,7 @@ Pending for the documentation stage: `docs/knowledge/features/markdown-reader-sc
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-25
+
+## Revisions
+
+- **2026-09-25, implementation.** Open question resolved: the screen test compiles into the device test set too, so it cannot use Robolectric's `setupContentProvider`. It writes through a `file://` URI into the app's cache directory instead. Robolectric's `openOutputStream(uri, "wt")` passes an unregistered URI to the real resolver, and a device resolves it the same way. A missing parent directory makes the write fail. `DocumentsContract.deleteDocument` cannot reach a `file://` URI and throws, and `runCatching` drops the exception, so the discard is asserted only in the `saveNoteText` unit tests. The failed-write screen test asserts the notice and that no file exists.

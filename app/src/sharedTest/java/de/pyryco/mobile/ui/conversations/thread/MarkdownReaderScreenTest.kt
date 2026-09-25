@@ -2,6 +2,13 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.ClipDescription
 import android.content.ClipboardManager
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.result.ActivityResultRegistry
+import androidx.activity.result.ActivityResultRegistryOwner
+import androidx.activity.result.contract.ActivityResultContract
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -10,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.core.app.ActivityOptionsCompat
 import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -20,6 +28,7 @@ import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.MAX_CLIPBOARD_CHARS
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CompletableDeferred
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -43,6 +52,9 @@ class MarkdownReaderScreenTest {
     private val copyHtml = context.getString(R.string.markdown_reader_copy_html)
     private val refresh = context.getString(R.string.markdown_reader_refresh)
     private val openInApp = context.getString(R.string.markdown_reader_open_in_app)
+    private val saveToDevice = context.getString(R.string.markdown_reader_save_to_device)
+    private val saved = context.getString(AttachmentNotice.SAVED.message)
+    private val saveFailed = context.getString(AttachmentNotice.SAVE_FAILED.message)
     private val noApp = context.getString(AttachmentNotice.NO_APP.message)
     private val openFailed = context.getString(AttachmentNotice.OPEN_FAILED.message)
     private val clipboard = context.getSystemService(ClipboardManager::class.java)
@@ -178,13 +190,13 @@ class MarkdownReaderScreenTest {
     }
 
     @Test
-    fun theOverflow_opensTheFiveItems_inOrder() {
+    fun theOverflow_opensTheSixItems_inOrder() {
         show(MarkdownDocument("Plan.md", "text"))
 
         composeRule.onNodeWithContentDescription(more).performClick()
 
         val tops =
-            listOf(copyMarkdown, copyPlain, copyHtml, refresh, openInApp).map { item ->
+            listOf(copyMarkdown, copyPlain, copyHtml, refresh, openInApp, saveToDevice).map { item ->
                 composeRule
                     .onNodeWithText(item)
                     .assertIsDisplayed()
@@ -192,7 +204,103 @@ class MarkdownReaderScreenTest {
                     .boundsInRoot.top
             }
         assertEquals(tops.sorted(), tops)
-        assertEquals(5, tops.distinct().size)
+        assertEquals(6, tops.distinct().size)
+    }
+
+    /** Stands in for the system picker (#1069): records each launch, and answers when the test says so. */
+    private class PickerRegistry : ActivityResultRegistry() {
+        val launches = mutableListOf<Pair<Int, Intent>>()
+
+        override fun <I, O> onLaunch(
+            requestCode: Int,
+            contract: ActivityResultContract<I, O>,
+            input: I,
+            options: ActivityOptionsCompat?,
+        ) {
+            launches += requestCode to contract.createIntent(InstrumentationRegistry.getInstrumentation().targetContext, input)
+        }
+    }
+
+    private fun showWithPicker(
+        document: MarkdownDocument,
+        registry: PickerRegistry,
+    ) = composeRule.setContent {
+        val owner =
+            object : ActivityResultRegistryOwner {
+                override val activityResultRegistry: ActivityResultRegistry = registry
+            }
+        CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
+            PyrycodeMobileTheme {
+                MarkdownReaderScreen(document = document, onBack = {})
+            }
+        }
+    }
+
+    private fun answer(
+        registry: PickerRegistry,
+        destination: Uri?,
+    ) {
+        composeRule.runOnIdle { registry.dispatchResult(registry.launches.single().first, destination) }
+    }
+
+    private fun awaitText(text: String) {
+        // The document is written on the IO dispatcher, off the test's main clock.
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test
+    fun saveToDevice_opensTheCreateDocumentPicker_withTheNotesNameAndMarkdownType() {
+        val registry = PickerRegistry()
+        showWithPicker(MarkdownDocument("notes/Plan.md", "# Plan"), registry)
+
+        choose(saveToDevice)
+
+        val intent = registry.launches.single().second
+        assertEquals(Intent.ACTION_CREATE_DOCUMENT, intent.action)
+        assertEquals("text/markdown", intent.type)
+        assertEquals("Plan.md", intent.getStringExtra(Intent.EXTRA_TITLE))
+    }
+
+    @Test
+    fun aPickedDocument_receivesTheTextOnScreen_andTheReaderSaysSaved() {
+        val registry = PickerRegistry()
+        val text = "# Plän ✓\n\nNaïve café 🙂"
+        val destination = File(context.cacheDir, "saved-note.md").apply { writeText("older, longer content to truncate") }
+        showWithPicker(MarkdownDocument("Plan.md", text), registry)
+
+        choose(saveToDevice)
+        answer(registry, Uri.fromFile(destination))
+
+        awaitText(saved)
+        assertArrayEquals(text.toByteArray(Charsets.UTF_8), destination.readBytes())
+        composeRule.onNodeWithText(saveFailed).assertDoesNotExist()
+    }
+
+    @Test
+    fun aFailedWrite_saysTheSaveFailed() {
+        val registry = PickerRegistry()
+        val destination = File(context.cacheDir, "missing-directory/Plan.md")
+        showWithPicker(MarkdownDocument("Plan.md", "# Plan"), registry)
+
+        choose(saveToDevice)
+        answer(registry, Uri.fromFile(destination))
+
+        awaitText(saveFailed)
+        assertFalse(destination.exists())
+        composeRule.onNodeWithText(saved).assertDoesNotExist()
+    }
+
+    @Test
+    fun aCancelledPicker_writesNothing_andSaysNothing() {
+        val registry = PickerRegistry()
+        showWithPicker(MarkdownDocument("Plan.md", "# Plan"), registry)
+
+        choose(saveToDevice)
+        answer(registry, null)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(saved).assertDoesNotExist()
+        composeRule.onNodeWithText(saveFailed).assertDoesNotExist()
     }
 
     @Test

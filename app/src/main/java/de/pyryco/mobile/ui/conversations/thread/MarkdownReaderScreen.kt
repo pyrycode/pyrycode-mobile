@@ -312,7 +312,8 @@ private fun markdownClip(
  * A markdown file rendered in-app (#1027), Figma `Markdown Reader Screen` (553:2574): the thread's bar with
  * the file name and the overflow menu (#1067), fixed, over a scrolling [MarkdownText] body. Copies act on
  * [document] and show no notice of their own, since the system confirms a copy; Open in another app (#1068)
- * hands [document] on and reports a failure in [snackbarHostState]. Refresh is the caller's, and so is
+ * hands [document] on and reports a failure in [snackbarHostState]; Save to device (#1069) writes [document] into
+ * a document the operator picks and reports the outcome there. Refresh is the caller's, and so is
  * [snackbarHostState], where a failed refresh is reported.
  */
 @Composable
@@ -348,6 +349,7 @@ fun MarkdownReaderScreen(
             notice?.let { snackbarHostState.showSnackbar(notices.getValue(it)) }
         }
     }
+    val saveNote = rememberNoteSaver { notice -> scope.launch { snackbarHostState.showSnackbar(notices.getValue(notice)) } }
     // A Surface, not a bare background: it also sets `onSurface` as the content colour MarkdownText's text uses.
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Box {
@@ -358,6 +360,7 @@ fun MarkdownReaderScreen(
                     onCopy = onCopy,
                     onRefresh = onRefresh,
                     onOpenInApp = onOpenInApp,
+                    onSaveToDevice = { saveNote(document) },
                 )
                 Column(
                     modifier =
@@ -391,6 +394,7 @@ private fun MarkdownReaderTopBar(
     onCopy: (MarkdownCopyFormat) -> Unit,
     onRefresh: () -> Unit,
     onOpenInApp: () -> Unit,
+    onSaveToDevice: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -430,6 +434,7 @@ private fun MarkdownReaderTopBar(
                     onCopy = onCopy,
                     onRefresh = onRefresh,
                     onOpenInApp = onOpenInApp,
+                    onSaveToDevice = onSaveToDevice,
                 )
             }
         }
@@ -442,7 +447,7 @@ private fun MarkdownReaderTopBar(
 
 /**
  * The reader's overflow (#1067), built as [ThreadOverflowMenu] is: each item dismisses, then acts. Open in
- * another app (#1068) comes last, after Refresh.
+ * another app (#1068) follows Refresh, and Save to device (#1069) comes last.
  */
 @Composable
 private fun MarkdownReaderMenu(
@@ -451,6 +456,7 @@ private fun MarkdownReaderMenu(
     onCopy: (MarkdownCopyFormat) -> Unit,
     onRefresh: () -> Unit,
     onOpenInApp: () -> Unit,
+    onSaveToDevice: () -> Unit,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         listOf(
@@ -478,6 +484,13 @@ private fun MarkdownReaderMenu(
             onClick = {
                 onDismiss()
                 onOpenInApp()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.markdown_reader_save_to_device)) },
+            onClick = {
+                onDismiss()
+                onSaveToDevice()
             },
         )
     }

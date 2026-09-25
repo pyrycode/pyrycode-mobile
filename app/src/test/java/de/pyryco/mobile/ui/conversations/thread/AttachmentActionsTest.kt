@@ -239,6 +239,49 @@ class AttachmentActionsTest {
         assertFalse(saved)
     }
 
+    @Test
+    fun noteSave_writesTheTextAsUtf8_andDiscardsNothing() {
+        val text = "# Plän ✓\n\nNaïve café — 日本語 🙂\n"
+        val output = ByteArrayOutputStream()
+        var discarded = false
+
+        val saved = saveNoteText(text, { output }, { discarded = true })
+
+        assertTrue(saved)
+        assertArrayEquals(text.toByteArray(Charsets.UTF_8), output.toByteArray())
+        assertFalse(discarded)
+    }
+
+    @Test
+    fun noteSave_whoseWriteFails_discardsTheDocument() {
+        var discarded = false
+        val failing =
+            object : OutputStream() {
+                override fun write(b: Int) = throw IOException("disk full")
+            }
+
+        val saved = saveNoteText("# Plan", { failing }, { discarded = true })
+
+        assertFalse(saved)
+        assertTrue(discarded)
+    }
+
+    @Test
+    fun noteSave_withTheTextLost_discardsTheDocument_withoutOpeningIt() {
+        var discarded = false
+        var outputOpened = false
+
+        val saved =
+            saveNoteText(null, {
+                outputOpened = true
+                ByteArrayOutputStream()
+            }, { discarded = true })
+
+        assertFalse(saved)
+        assertFalse(outputOpened)
+        assertTrue(discarded)
+    }
+
     private fun registerMarkdownViewer() {
         val viewer = ComponentName("com.example.editor", "com.example.editor.Edit")
         shadowOf(context.packageManager).apply {
