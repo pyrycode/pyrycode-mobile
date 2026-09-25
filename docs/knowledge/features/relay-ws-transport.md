@@ -118,7 +118,7 @@ The securely-configured shared `OkHttpClient` lives here (unit-asserted), even t
 The asset is the phone↔relay channel; the relay is **untrusted and content-blind by design** (pyrycode-side ADR 024) — E2E authenticity + confidentiality come from the [Noise_IK session](noise-ik-session.md) one layer up, not from this transport. This transport's security job is narrow and the spec's § Security review verdict is **PASS**:
 
 - **Single untrusted→trusted crossing is `onMessage(text)`** — it trusts only the *structural envelope* (`decodeFromString<InnerFrameV2>` succeeds + size ≤ cap); `data` stays untrusted and opaque. Malformed/oversized/binary → reject (close + `Down`), never passed up.
-- **Token hygiene** — read only into the `X-Pyrycode-Token` header (which the relay ignores under v2); never logged (no `Log`/`Timber`/`println` anywhere; `Down.reason`/exception strings are **category-only** — `t.javaClass.simpleName`, never the token, dial URL, or frame bytes; no `HttpLoggingInterceptor`). Token revocation propagates as a server WS close (`4401`), whose code this transport surfaces via `Down.code`.
+- **Token hygiene** — read only into the `X-Pyrycode-Token` header (which the relay ignores under v2); never logged. `Down.reason`/exception strings are **category-only** — `t.javaClass.simpleName`, never the token, dial URL, or frame bytes; no `HttpLoggingInterceptor`. The [#1039](https://github.com/pyrycode/pyrycode-mobile/issues/1039) `event=transport_end` line (§ Logging below) is built from the same fixed labels, integer codes and class names — never the token, the dial URL, or the peer's close reason text. Token revocation propagates as a server WS close (`4401`), whose code this transport surfaces via `Down.code`.
 - **No cert pinning on the relay TLS** — intentional: the trust anchor is the QR-pinned **Noise server static key** (`rs`), verified end-to-end in #298. A malicious relay is already defeated by Noise; pinning its cert would add rotation pain for no security gain.
 - **No file/storage, no IPC/exported Android surface, no hand-rolled crypto, no RNG** — a portable `android.*`-free object; the only Android-origin values (`Build.MODEL`, version) arrive pre-resolved via `NoiseClientInfo`.
 
@@ -136,6 +136,29 @@ The asset is the phone↔relay channel; the relay is **untrusted and content-bli
 | `connect()` twice | state guard | `IllegalStateException` (caller bug) |
 
 **Bad data → uniform `Down`; bad call order → throw** — external/stored failures all funnel to `events` so the supervisor handles them in one place; only programmer errors raise.
+
+## Logging (#1039)
+
+`terminate` — the CAS every row of the table above funnels into (see § Lifecycle) — writes exactly one
+[`RelayLog`](relay-log.md) line before it sends the terminal `Down`:
+
+`event=transport_end end=<label>[ code=<n>][ peer_closing=<n>][ cause=<SimpleClassName>]`
+
+| `end` | Source |
+|---|---|
+| `local_close` | `close()` |
+| `peer_close` | `onClosed` |
+| `failure` | `onFailure` |
+| `protocol_violation` | `failLocally` (the untrusted-relay rejects above) |
+| `invalid_request` | `connect()`'s bad-request catch |
+
+`code` is the peer's close code, the `onFailure` HTTP status when there is one, or the local close code
+`failLocally` sent. `peer_closing` carries the code `onClosing` recorded when the end was not itself a
+clean `peer_close` — without it, a relay `1011` close followed by the peer dropping TCP before the close
+handshake finishes would log as a bare `failure`, indistinguishable from an ordinary network blip. `cause`
+is `Down.cause`'s class name, never its message. Level is `i` for `local_close`/`peer_close`, `w`
+otherwise. See [`RelayLog` § Adopted call sites](relay-log.md#adopted-call-sites-1039) for the full label
+table shared with [the pump's teardown line](noise-session-pump.md#logging-1039).
 
 ## Edge cases & limitations
 
