@@ -1,11 +1,13 @@
 import importlib.util
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -75,7 +77,7 @@ class AndroidGateTest(unittest.TestCase):
 
                     stdout = io.StringIO()
                     with patch.object(gate, "ROOT", root), \
-                            patch.dict(os.environ, {"DEVICE": device}, clear=True), \
+                            patch.dict(os.environ, {"DEVICE": device, "ANDROID_USER_HOME": tmp}, clear=True), \
                             patch("sys.argv", ["android-test-gate.py", "live"]), \
                             patch.object(gate, "claude_authenticated", return_value=True), \
                             patch.object(gate.time, "time_ns", return_value=started), \
@@ -206,12 +208,14 @@ class AndroidGateTest(unittest.TestCase):
             with self.subTest(changed=changed, environment=environment), tempfile.TemporaryDirectory() as tmp:
                 self.device_test(Path(tmp), "de/pyryco/mobile/data/StoreTest.kt")
                 run = Mock(return_value=subprocess.CompletedProcess([], 0))
-                with patch.object(gate, "ROOT", Path(tmp)), patch.dict(os.environ, environment, clear=True), \
+                with patch.object(gate, "ROOT", Path(tmp)), patch.dict(os.environ, {**environment, "ANDROID_USER_HOME": tmp}, clear=True), \
                         patch("sys.argv", ["android-test-gate.py", "ui"]), \
                         patch.object(gate, "changed_paths", return_value=changed), \
                         patch.object(gate.subprocess, "run", run), contextlib.redirect_stderr(io.StringIO()):
                     result = gate.main()
                 self.assertEqual(run.called, runs)
+                # #1071: a skipped run never takes the device hold.
+                self.assertEqual((Path(tmp) / "avd" / "pyrycode-device-gate.lock").exists(), runs)
                 if runs:
                     self.assertIn(":app:pixel2Api33AtdDebugAndroidTest", run.call_args.args[0])
                 else:
@@ -224,7 +228,7 @@ class AndroidGateTest(unittest.TestCase):
 
     def ui_command(self, root, environment):
         run = Mock(return_value=subprocess.CompletedProcess([], 0))
-        with patch.object(gate, "ROOT", root), patch.dict(os.environ, environment, clear=True), \
+        with patch.object(gate, "ROOT", root), patch.dict(os.environ, {**environment, "ANDROID_USER_HOME": str(root)}, clear=True), \
                 patch("sys.argv", ["android-test-gate.py", "ui"]), \
                 patch.object(gate, "changed_paths", return_value=["app/src/main/X.kt"]), \
                 patch.object(gate.subprocess, "run", run), contextlib.redirect_stderr(io.StringIO()):
@@ -366,7 +370,7 @@ class AndroidGateTest(unittest.TestCase):
 
             stdout = io.StringIO()
             with patch.object(gate, "ROOT", root), \
-                    patch.dict(os.environ, {"LIVE_TESTS": "stale"}, clear=True), \
+                    patch.dict(os.environ, {"LIVE_TESTS": "stale", "ANDROID_USER_HOME": tmp}, clear=True), \
                     patch("sys.argv", ["android-test-gate.py", "live", "--tests", method]), \
                     patch.object(gate, "claude_authenticated", return_value=True), \
                     patch.object(gate.time, "time_ns", return_value=started), \
@@ -400,7 +404,7 @@ class AndroidGateTest(unittest.TestCase):
 
                 baseline = live_report(gate.LIVE_MINIMUM)
                 stdout = io.StringIO()
-                with patch.object(gate, "ROOT", root), patch.dict(os.environ, {}, clear=True), \
+                with patch.object(gate, "ROOT", root), patch.dict(os.environ, {"ANDROID_USER_HOME": tmp}, clear=True), \
                         patch("sys.argv", ["android-test-gate.py", "live"]), \
                         patch.object(gate, "claude_authenticated", return_value=True), \
                         patch.object(gate.time, "time_ns", return_value=started), \
@@ -435,6 +439,139 @@ class AndroidGateTest(unittest.TestCase):
             _, passed, count = gate.combine_reports([report], 1, "C")
             self.assertTrue(passed)
             self.assertEqual(count, 1)
+
+
+# #1071: another gate run holding the host's device, as a separate process so the kernel lock is real.
+HOLDER = """import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT)
+fcntl.flock(fd, fcntl.LOCK_EX)
+os.ftruncate(fd, 0)
+os.write(fd, sys.argv[2].encode())
+print("held", flush=True)
+time.sleep(float(sys.argv[3]))
+"""
+RECORD = '{"mode": "live", "worktree": "/work/other-tree", "started": "2026-09-25T01:19:00Z", "pid": 1}'
+
+
+class DeviceHoldTest(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.dict(os.environ, {"ANDROID_USER_HOME": str(self.home)}))
+        self.path = self.home / "avd" / "pyrycode-device-gate.lock"
+        self.path.parent.mkdir(parents=True)
+
+    def holder(self, seconds, record=RECORD):
+        process = subprocess.Popen([sys.executable, "-c", HOLDER, str(self.path), record, str(seconds)],
+                                   stdout=subprocess.PIPE, text=True)
+        self.addCleanup(process.stdout.close)
+        self.addCleanup(process.wait)
+        self.addCleanup(process.kill)
+        self.assertEqual(process.stdout.readline().strip(), "held")
+        return process
+
+    def held_elsewhere(self):
+        fd = os.open(self.path, os.O_RDWR)
+        try:
+            gate.fcntl.flock(fd, gate.fcntl.LOCK_EX | gate.fcntl.LOCK_NB)
+            return False
+        except BlockingIOError:
+            return True
+        finally:
+            os.close(fd)
+
+    def test_hold_path_sits_beside_the_gradle_managed_avds(self):
+        self.assertEqual(gate.device_hold_path(), self.path)
+
+    def test_waiter_gives_up_naming_the_holder(self):
+        self.holder(30)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(gate.DeviceBusy) as busy:
+            with gate.device_hold("ui", 0.3):
+                self.fail("took a held device")
+        self.assertIn("held by live from /work/other-tree since 2026-09-25T01:19:00Z", str(busy.exception))
+        self.assertIn("waiting up to 0s", stderr.getvalue())
+
+    def test_unreadable_record_names_an_unknown_holder(self):
+        self.holder(30, record="")
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(gate.DeviceBusy) as busy:
+            with gate.device_hold("ui", 0):
+                pass
+        self.assertIn("held by an unknown run", str(busy.exception))
+
+    def test_waiter_takes_the_device_when_the_holder_finishes_and_says_how_long_it_waited(self):
+        self.holder(0.5)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), gate.device_hold("scripted", 30):
+            self.assertTrue(self.held_elsewhere())
+            record = json.loads(self.path.read_text())
+        self.assertEqual((record["mode"], record["worktree"], record["pid"]), ("scripted", str(gate.ROOT), os.getpid()))
+        self.assertRegex(stderr.getvalue(), r"device free after \d+s waiting")
+        self.assertFalse(self.held_elsewhere())
+
+    def test_a_killed_holder_never_leaves_the_device_busy(self):
+        process = self.holder(30)
+        process.kill()
+        process.wait()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), gate.device_hold("ui", 0):
+            self.assertTrue(self.held_elsewhere())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_an_exception_in_the_run_releases_the_hold(self):
+        with self.assertRaises(KeyboardInterrupt), gate.device_hold("scripted-all", 0):
+            raise KeyboardInterrupt
+        self.assertFalse(self.held_elsewhere())
+
+    def run_main(self, argv, environment=None):
+        seen = []
+
+        def run(command, **kwargs):
+            seen.append(self.held_elsewhere())
+            return subprocess.CompletedProcess(command, 0)
+
+        root = self.home / "tree"
+        path = root / "app/src/androidTest/java/de/pyryco/mobile/data/StoreTest.kt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("@Test fun ok() {}")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(gate, "ROOT", root), \
+                patch.dict(os.environ, {"ANDROID_USER_HOME": str(self.home), **(environment or {})}, clear=True), \
+                patch("sys.argv", ["android-test-gate.py", *argv]), \
+                patch.object(gate, "changed_paths", return_value=["app/src/main/X.kt"]), \
+                patch.object(gate, "claude_authenticated", return_value=True), \
+                patch.object(gate.signal, "signal"), patch.object(gate.subprocess, "run", side_effect=run), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = gate.main()
+        return result, seen, stdout.getvalue(), stderr.getvalue()
+
+    def test_every_device_mode_drives_the_device_only_while_holding_it(self):
+        for argv in (["ui"], ["scripted", "ping"], ["scripted-all"], ["live"]):
+            with self.subTest(argv=argv):
+                _, seen, _, _ = self.run_main(argv)
+                self.assertTrue(seen)
+                self.assertTrue(all(seen))
+                self.assertFalse(self.held_elsewhere())
+
+    def test_a_run_that_gives_up_starts_nothing_and_is_not_a_test_result(self):
+        self.holder(30)
+        for argv in (["ui"], ["scripted", "ping"], ["scripted-all"], ["live"]):
+            with self.subTest(argv=argv):
+                result, seen, stdout, stderr = self.run_main(argv, {"ANDROID_GATE_WAIT_SECONDS": "0"})
+                self.assertEqual(result, gate.DEVICE_BUSY_EXIT)
+                self.assertNotEqual(result, 0)
+                self.assertEqual(seen, [])
+                self.assertEqual(stdout, "")
+                self.assertIn("device busy, not a test result", stderr)
+                self.assertIn("held by live from /work/other-tree since 2026-09-25T01:19:00Z", stderr)
+
+    def test_the_default_wait_fits_a_ui_run_inside_the_dispatchers_ten_minute_cap(self):
+        # A device-only ui run took 1m39s-2m22s of Gradle time in the dispatcher's 2026-09 gate logs.
+        self.assertLessEqual(gate.DEFAULT_DEVICE_WAIT_SECONDS + 3 * 60, 10 * 60)
+
+    def test_a_malformed_wait_bound_is_refused(self):
+        for value in ("soon", "-1", "nan", ""):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                self.run_main(["ui"], {"ANDROID_GATE_WAIT_SECONDS": value})
 
 
 if __name__ == "__main__":
