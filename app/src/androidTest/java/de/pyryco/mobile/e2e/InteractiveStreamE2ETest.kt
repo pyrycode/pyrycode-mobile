@@ -2301,6 +2301,168 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A workspace label set from another client reaches every open surface, for its host only (#1089, rung 3).
+     * The daemon pushes `workspace_updated` to every connection but the requester's, so the label is set and
+     * cleared by the [SecondClientPeer] on host A while each surface is open in turn: an empty discussion's
+     * workspace chip, the tree's workspace row, and A's Default workspace row in Settings. Each shows the
+     * label and then the folder's name again without navigating away. Each surface gets its own label, so
+     * only that round's push can satisfy its wait.
+     *
+     * **Per host.** Host B holds a conversation in the same folder: both test daemons share `HOME`, so one
+     * path backs a workspace on each. B's never carries the label, in its live repository or on its tree row.
+     *
+     * **A real folder.** Settings names a label only for the stored default's own path, and the scratch row
+     * still sends the literal `~/.pyrycode/scratch`, which the daemon stores resolved, so A's default is a
+     * new, run-unique folder picked from A's Settings.
+     *
+     * **Shared state.** The label is cleared, both conversations deleted, both stored defaults written back
+     * and B removed in `finally`. The folder stays under `~/pyry-workspace`, as #1086's do.
+     *
+     * **Zero real-claude turns**: pairing, folder and chat creation and the renames are daemon round trips.
+     */
+    @Test
+    fun interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost() {
+        val serverIdA = twoHostArg(ARG_SERVER_ID)
+        val serverIdB = twoHostArg(ARG_SERVER_ID_B)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val stamp = System.currentTimeMillis()
+        val folder = "${LABEL_E2E_PREFIX}$stamp"
+        val originalA = runBlocking { preferences.defaultWorkspace(serverIdA).first() }
+        var originalB: String? = null
+        var path: String? = null
+        var chatA: String? = null
+        var chatB: String? = null
+        val peer = runningToolPeer()
+        try {
+            // 1. Pair host B by code, as #847 does, and record its default before anything could move it.
+            awaitChannelList()
+            awaitConnected()
+            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+            pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
+            originalB = runBlocking { preferences.defaultWorkspace(serverIdB).first() }
+
+            // 2. A's default is a new folder, picked from A's Settings.
+            openSettings()
+            showHostSettings(serverIdA)
+            val shared = pickNewDefaultFolder(serverIdA, folder).also { path = it }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+
+            // 3. B holds a conversation in the same folder.
+            val onB = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdB).createDiscussion(shared) } }
+            chatB = onB.id
+            assertEquals("B's conversation is not in the shared folder", shared, onB.cwd)
+            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 4. AC-1 + AC-2, thread chip: a discussion from A's row lands in A's default. With its empty thread
+            //    open, the peer's label replaces the folder's name on the chip, and the clear puts it back.
+            val idA = createChatOn(serverIdA).also { chatA = it }
+            assertEquals("A's discussion is not in A's default", shared, heldConversation(serverIdA, idA).cwd)
+            val labels = WorkspaceLabels(serverIdA, idA, serverIdB, onB.id)
+            awaitChipShows(folder)
+            val chipLabel = "${LABEL_E2E_PREFIX}chip-$stamp"
+            peerStep(peer, "set the chip label") { peer.renameWorkspace(shared, chipLabel, THREAD_TIMEOUT_MS) }
+            awaitChipShows(chipLabel)
+            assertWorkspaceLabels(labels, chipLabel)
+            peerStep(peer, "clear the chip label") { peer.renameWorkspace(shared, null, THREAD_TIMEOUT_MS) }
+            awaitChipShows(folder)
+            assertWorkspaceLabels(labels, null)
+            leaveThread()
+
+            // 5. AC-1 + AC-2, tree row: A's row takes the label while B's row at the same folder keeps its name.
+            awaitWorkspaceRow(folder)
+            val treeLabel = "${LABEL_E2E_PREFIX}tree-$stamp"
+            peerStep(peer, "set the tree label") { peer.renameWorkspace(shared, treeLabel, THREAD_TIMEOUT_MS) }
+            awaitWorkspaceRow(treeLabel)
+            // A's row now shows the label, so a pencil still named after the folder is B's.
+            awaitWorkspaceRow(folder)
+            assertWorkspaceLabels(labels, treeLabel)
+            peerStep(peer, "clear the tree label") { peer.renameWorkspace(shared, null, THREAD_TIMEOUT_MS) }
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(hasContentDescription(workspaceEditDescription(treeLabel))) }.isFailure
+            }
+            awaitWorkspaceRow(folder)
+            assertWorkspaceLabels(labels, null)
+
+            // 6. AC-1 + AC-2, Settings: A's Default workspace row takes the label and gives it back.
+            openSettings()
+            showHostSettings(serverIdA)
+            awaitDefaultWorkspaceRowShows(folder)
+            val settingsLabel = "${LABEL_E2E_PREFIX}settings-$stamp"
+            peerStep(peer, "set the settings label") { peer.renameWorkspace(shared, settingsLabel, THREAD_TIMEOUT_MS) }
+            awaitDefaultWorkspaceRowShows(settingsLabel)
+            assertWorkspaceLabels(labels, settingsLabel)
+            peerStep(peer, "clear the settings label") { peer.renameWorkspace(shared, null, THREAD_TIMEOUT_MS) }
+            awaitDefaultWorkspaceRowShows(folder)
+            assertWorkspaceLabels(labels, null)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+
+            // 7. AC-2: no label change moved a stored default or the discussion's folder.
+            assertEquals("A's stored default moved", shared, runBlocking { preferences.defaultWorkspace(serverIdA).first() })
+            assertEquals("B's stored default moved", originalB, runBlocking { preferences.defaultWorkspace(serverIdB).first() })
+            assertEquals("A's discussion changed folder", shared, heldConversation(serverIdA, idA).cwd)
+        } finally {
+            path?.let { cwd ->
+                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).renameWorkspace(cwd, null) } } }
+                    .onFailure { Log.w("E2E", "workspace label clear failed: ${it::class.simpleName}") }
+            }
+            chatA?.let { id ->
+                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).delete(id) } } }
+                    .onFailure { Log.w("E2E", "host A discussion delete failed: ${it::class.simpleName}") }
+            }
+            chatB?.let { id ->
+                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdB).delete(id) } } }
+                    .onFailure { Log.w("E2E", "host B conversation delete failed: ${it::class.simpleName}") }
+            }
+            peer.close()
+            runBlocking {
+                val koin = GlobalContext.getOrNull()
+                val saved = koin?.get<AppPreferences>()
+                saved?.setDefaultWorkspace(serverIdA, originalA)
+                originalB?.let { saved?.setDefaultWorkspace(serverIdB, it) }
+                koin?.get<PairedServerCollectionStore>()?.remove(serverIdB)
+            }
+        }
+    }
+
+    /** The two conversations #1089 reads labels from: host A's discussion and host B's at the same folder. */
+    private data class WorkspaceLabels(
+        val serverIdA: String,
+        val conversationA: String,
+        val serverIdB: String,
+        val conversationB: String,
+    )
+
+    /** A's conversation carries [label] in A's live repository, and B's carries none in B's. */
+    private fun assertWorkspaceLabels(
+        labels: WorkspaceLabels,
+        label: String?,
+    ) {
+        assertEquals("host A's workspace label", label, heldConversation(labels.serverIdA, labels.conversationA).workspaceLabel)
+        assertNull("host B's workspace took a label", heldConversation(labels.serverIdB, labels.conversationB).workspaceLabel)
+    }
+
+    /** Wait until the open thread's workspace chip names [name], with the thread still on screen. */
+    private fun awaitChipShows(name: String) {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(workspaceChipText(name)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).assertIsDisplayed()
+    }
+
+    /** The workspace chip's text for a workspace shown as [name]; `WorkspaceChip` hardcodes the shape. */
+    private fun workspaceChipText(name: String): String = "Workspace: $name (change)"
+
+    /** Wait until the open Settings' Default workspace row names [name]. */
+    private fun awaitDefaultWorkspaceRowShows(name: String) {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasText(DEFAULT_WORKSPACE_ROW) and hasText(name)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
      * A channel created, edited and archived from the list, with its prompt read back (#1088, rung 3). A
      * Channels-section workspace row's plus opens #958's Create channel, whose OK creates the channel with a
      * name and a prompt and opens it. One ping starts its session with that prompt. The row's pen opens #667's
@@ -3363,6 +3525,71 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.answerQuestion(second, 0, QUESTION_OTHER, THREAD_TIMEOUT_MS) }
             awaitNoQuestionModal("the question stayed after the peer answered it")
             awaitTurnEnd(peer, chat, 2, "the peer-answered turn")
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
+     * A conversation's attention dot follows a real turn (#1090, rung 3), on the #966 answer daemon and its peer.
+     * The peer starts every turn, so the phone stays on the list and never views the conversation it marks.
+     *  * **A completed turn marks only its row.** The peer's ping in A ends; A's row reads Unread, and every
+     *    other composed row, B among them, reads what it read before.
+     *  * **Opening reads it.** Opening A and returning to the list shows A Idle.
+     *  * **A held prompt marks its row until answered.** The peer's command in B raises a permission prompt;
+     *    B reads Waiting for your answer, still after a settle with nothing answered, while A stays Idle. The
+     *    peer allows it, B's turn ends, and B reads Unread.
+     *
+     * Each state is read from the dot's content description, never its colour. Running is never asserted: on a
+     * ping it is transient, like the thinking spinner.
+     *
+     * **Two real-claude turns**: A's ping and B's allowed command.
+     */
+    @Test
+    fun interactiveTurn_attentionDot_followsARealTurn() {
+        val (serverId, peer) = answerHostPeer()
+        val idle = string(R.string.cd_conversation_attention_idle)
+        val unread = string(R.string.cd_conversation_attention_unread)
+        val waiting = string(R.string.cd_conversation_attention_waiting)
+        try {
+            pairAnswerHost()
+            val (chatA, nameA) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "a-")
+            val (chatB, nameB) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "b-")
+            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 1. Both new chats start Idle; every composed row's state is recorded.
+            awaitRowAttention(nameA, idle, "A before any turn")
+            awaitRowAttention(nameB, idle, "B before any turn")
+            val before = treeRowAttention()
+
+            // 2. AC-1: the peer's ping in A completes while the phone shows the list. Only A's row changes.
+            peerStep(peer, "send the ping to A") { peer.sendMessage(chatA, PING_PROMPT, THREAD_TIMEOUT_MS) }
+            awaitTurnEnd(peer, chatA, 1, "A's ping")
+            awaitRowAttention(nameA, unread, "A after its turn completed on the list")
+            val after = treeRowAttention()
+            assertEquals("B after A's turn", listOf(idle), after[nameB])
+            val changed = (before.keys intersect after.keys).filter { it != nameA && before[it] != after[it] }
+            assertTrue("rows other than A changed state after A's turn: ${changed.size}", changed.isEmpty())
+
+            // 3. AC-1: opening A and returning to the list reads it.
+            openChatRow(nameA)
+            leaveThread()
+            awaitRowAttention(nameA, idle, "A after it was opened")
+
+            // 4. AC-2: the peer's command in B holds its turn on a permission prompt. B waits, and keeps waiting.
+            peerStep(peer, "send the command to B") { peer.sendMessage(chatB, ANSWER_PERMISSION_PROMPT, THREAD_TIMEOUT_MS) }
+            val modalId = peerStep(peer, "await B's permission prompt") { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) }
+            awaitRowAttention(nameB, waiting, "B while its prompt is outstanding")
+            SystemClock.sleep(SCOPE_SETTLE_MS)
+            awaitRowAttention(nameB, waiting, "B after a settle with its prompt unanswered")
+            awaitRowAttention(nameA, idle, "A while B's prompt is outstanding")
+
+            // 5. AC-2: the peer answers; B's turn ends and its row stops waiting.
+            peerStep(peer, "allow B's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            peerStep(peer, "await B's prompt dismissal") { peer.awaitModalDismissed(modalId, THREAD_TIMEOUT_MS) }
+            awaitTurnEnd(peer, chatB, 1, "B's allowed turn")
+            awaitRowAttention(nameB, unread, "B after its prompt was answered and its turn ended")
         } finally {
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
@@ -5032,6 +5259,64 @@ class InteractiveStreamE2ETest {
         return chat.id to name
     }
 
+    /** The Chats row whose name contains [name], with its dot reading [state] (#1090). */
+    private fun attentionRow(
+        name: String,
+        state: String,
+    ): SemanticsMatcher = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true) and hasContentDescription(state)
+
+    /** Scroll to the Chats row named [name] and wait until its dot reads [state], naming [what] and the state it reads. */
+    private fun awaitRowAttention(
+        name: String,
+        state: String,
+        what: String,
+    ) {
+        val row = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
+        try {
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(row) }.isSuccess &&
+                    composeTestRule.onAllNodes(attentionRow(name, state)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            val shown = composeTestRule.onAllNodes(row).fetchSemanticsNodes().map { attentionOf(it) }
+            throw AssertionError("$what: the row's dot never read '$state' within $LIST_TIMEOUT_MS ms (it reads $shown)", e)
+        }
+    }
+
+    /**
+     * Every composed Channels and Chats tree row's dot state, grouped by the row's name and sorted, so two rows
+     * sharing a name on different hosts compare as a set of states.
+     */
+    private fun treeRowAttention(): Map<String, List<String>> =
+        composeTestRule
+            .onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG) or hasTestTag(TREE_CHANNEL_ROW_TEST_TAG))
+            .fetchSemanticsNodes()
+            .groupBy(
+                { node ->
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .joinToString(" ") { it.text }
+                },
+                { node -> attentionOf(node) },
+            ).mapValues { (_, states) -> states.sorted() }
+
+    /** The attention state a tree row's merged node carries: whichever of the dot's five descriptions it holds. */
+    private fun attentionOf(node: SemanticsNode): String {
+        val states =
+            listOf(
+                R.string.cd_conversation_attention_waiting,
+                R.string.cd_conversation_attention_running,
+                R.string.cd_conversation_attention_failed,
+                R.string.cd_conversation_attention_unread,
+                R.string.cd_conversation_attention_idle,
+            ).map(::string)
+        return node.config
+            .getOrNull(SemanticsProperties.ContentDescription)
+            .orEmpty()
+            .firstOrNull { it in states } ?: "none"
+    }
+
     /** An answer-daemon argument (#966), failing with the script that passes it. */
     private fun answerArg(key: String): String =
         requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
@@ -6367,6 +6652,10 @@ class InteractiveStreamE2ETest {
         // and the chat "e2e1087-chat-<ms>": the label differs from the folder, so #905's rule keeps it.
         const val WORKSPACE_E2E_PREFIX = "e2e1087-"
 
+        // #1089 workspace label from the peer. The folder is "e2e1089-<ms>"; the labels are "e2e1089-chip-<ms>",
+        // "e2e1089-tree-<ms>" and "e2e1089-settings-<ms>", none equal to the folder or to each other.
+        const val LABEL_E2E_PREFIX = "e2e1089-"
+
         // #1088 channel create, edit and archive. The anchor's folder is "e2e1088-<ms>" and the channel is
         // "e2e1088-<ms>-a", renamed "e2e1088-<ms>-b". Neither prompt changes what the ping replies.
         const val CHANNEL_E2E_PREFIX = "e2e1088-"
@@ -6442,6 +6731,9 @@ class InteractiveStreamE2ETest {
         // The answer host's display name and its chats' run-unique prefix: neither contains "ping".
         const val ANSWER_HOST_NAME = "Answer e2e host"
         const val ANSWER_CHAT_NAME_PREFIX = "e2e966-"
+
+        // #1090: the attention-dot scenario's run-unique chat prefix on the answer host; it does not contain "ping".
+        const val ATTENTION_CHAT_NAME_PREFIX = "e2e1090-"
 
         // #1016: the attachment exchange. Fixture names are plain ASCII, which the daemon stores unchanged, and
         // run-unique, so MediaStore never renames one. The document is about 100 KB: three 45000-byte chunks.
