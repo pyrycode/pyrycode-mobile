@@ -347,7 +347,6 @@ fun ThreadScreen(
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         resetting = resetting,
-                        agent = state.agent,
                         isCompacting = isCompacting,
                         turnOutcome = turnOutcome,
                         isThinking = isThinking,
@@ -355,6 +354,7 @@ fun ThreadScreen(
                         runningTool = if (isBusy) openTool else null,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
+                        agent = state.agent,
                     )
                     // #933: Figma's `Attachment area`, between the status area and the input field, only when
                     // this chat has something pending.
@@ -814,7 +814,6 @@ fun ThreadScreen(
 private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    agent: ConversationAgent,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
@@ -822,9 +821,10 @@ private fun ThreadStatusArea(
     runningTool: ToolCall?,
     taskCount: Int,
     onTasksClick: () -> Unit,
+    agent: ConversationAgent,
 ) {
     val reading: @Composable (Modifier) -> Unit = { modifier ->
-        StatusReading(apiRetry, resetting, agent, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
+        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, agent, modifier)
     }
     if (taskCount <= 0) {
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
@@ -857,18 +857,18 @@ private fun ThreadStatusArea(
 private fun StatusReading(
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    agent: ConversationAgent,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
+    agent: ConversationAgent,
     modifier: Modifier = Modifier,
 ) {
     when {
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
         turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
         else ->
             ThinkingIndicator(
@@ -876,6 +876,7 @@ private fun StatusReading(
                 modifier = modifier,
                 progress = thinkingProgress,
                 runningTool = runningTool,
+                agent = agent,
             )
     }
 }

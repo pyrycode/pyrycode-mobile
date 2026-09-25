@@ -161,6 +161,13 @@ one rendered case.
 
 ## Edge cases / limitations
 
+- **Still names Claude unconditionally ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114),
+  open).** #1114 gave `ThinkingIndicator`, `ApiRetryIndicator` and `CompactingIndicator` a trailing `agent:
+  ConversationAgent` parameter so their live status labels name a Codex conversation's agent; this
+  component's four `thread_resetting_*` labels were left out of that ticket's scope and still say "Claude"
+  regardless of `Conversation.agent`. #1114's verifier flagged this as a non-blocking NIT for whichever
+  sibling ticket (#1112/#1113/#1115) covers the rest of the ladder. See [Thinking indicator § The agent
+  name](thinking-indicator.md#the-agent-name-1114) for the pattern the fix would follow.
 - **Visual is design-owed**, the same gap already recorded for
   [`ThinkingIndicator`](thinking-indicator.md), [`ApiRetryIndicator`](api-retry-indicator.md) and
   [`CompactingIndicator`](compacting-indicator.md#edge-cases--limitations): Figma `111:3525` draws one

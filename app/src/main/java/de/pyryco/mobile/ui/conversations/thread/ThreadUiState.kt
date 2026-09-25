@@ -70,7 +70,8 @@ data class ThreadUiState(
     // #957: the conversation's own name, before [displayName]'s fallback; `null` when it has none.
     val conversationName: String? = null,
     val isPromoted: Boolean = false,
-    // #1112: the agent that runs this conversation, named by the reset line and the boundary explanation.
+    // #1114: the agent that runs this conversation; the live status labels name it.
+    // #1112: so do the reset line and the boundary explanation.
     val agent: ConversationAgent = ConversationAgent.Claude,
     val hasMessages: Boolean = false,
     val workspaceLabel: String = "scratch",
