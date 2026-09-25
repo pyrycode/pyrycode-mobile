@@ -1168,6 +1168,9 @@ elif [ -n "${LIVE}" ]; then
   # Settings row live, and never host B's workspace at the same folder. It joins at no turn cost, so the
   # list holds 43 methods and 41 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost"
+  # #1090: a conversation's attention dot follows a real turn on the answer daemon: Unread after the peer's
+  # ping, Idle once opened, Waiting while the peer holds a prompt. It adds one method and two turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attentionDot_followsARealTurn"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
