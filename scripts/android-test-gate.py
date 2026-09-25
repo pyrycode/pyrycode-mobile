@@ -36,6 +36,8 @@ LIVE_MINIMUM += 2
 LIVE_MINIMUM += 2
 # #1020 adds the third, the peer's file after a history reload, now that history replay names it.
 LIVE_MINIMUM += 1
+# #1050 adds the live markdown-note link method.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

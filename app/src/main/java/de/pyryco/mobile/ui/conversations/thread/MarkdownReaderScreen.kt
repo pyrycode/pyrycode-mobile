@@ -28,6 +28,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.network.attachmentDisplayName
+import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.ui.conversations.components.MarkdownText
@@ -36,6 +38,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
@@ -109,6 +112,54 @@ private fun readBoundedFile(file: File): ByteArray? =
         val bytes = input.readNBytes(MAX_MARKDOWN_READER_BYTES + 1)
         bytes.takeIf { it.size <= MAX_MARKDOWN_READER_BYTES }
     }
+
+/**
+ * The workspace note [path] of [conversationId], read live through [repository] (#1050), or `null` when it
+ * cannot be shown: any failed read, more than [MAX_MARKDOWN_READER_BYTES], or bytes that are not UTF-8. One
+ * call is one `read_workspace_file`; the bytes stay in memory. [path] is sent exactly as the link wrote it.
+ * Exceptions other than cancellation are dropped unread, as [readMarkdownAttachment] drops them.
+ */
+internal suspend fun readLinkedMarkdown(
+    repository: ConversationRepository,
+    conversationId: String,
+    path: String,
+): MarkdownDocument? =
+    try {
+        (repository.readWorkspaceFile(conversationId, path) as? AttachmentFetchResult.Fetched)
+            ?.content
+            ?.takeIf { it.size <= MAX_MARKDOWN_READER_BYTES }
+            ?.let { content -> ByteArrayOutputStream(content.size.toInt()).also(content::writeTo).toByteArray() }
+            ?.let(::decodeUtf8Strictly)
+            ?.let { text -> MarkdownDocument(linkedMarkdownName(path), text) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
+/** The top bar's name for a linked note (#1050): the path's last component, sanitised, since the assistant wrote it. */
+internal fun linkedMarkdownName(path: String): String = attachmentDisplayName(path.substringAfterLast('/'))
+
+/**
+ * The reader for a linked workspace note (#1050). The thread read [document] live just before navigating
+ * and hands it over in memory, so nothing is fetched here. `null` means there is no note to show, for
+ * example after the process was restored with the reader on top, and goes [onBack] once rather than
+ * drawing an empty reader.
+ */
+@Composable
+fun LinkedMarkdownReaderDestination(
+    document: MarkdownDocument?,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val currentOnBack by rememberUpdatedState(onBack)
+    if (document != null) {
+        MarkdownReaderScreen(document = document, onBack = onBack, modifier = modifier)
+    } else {
+        Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {}
+        LaunchedEffect(Unit) { currentOnBack() }
+    }
+}
 
 /**
  * The reader's destination (#1027): reads [attachmentId] through the host's [repository] and draws it. The
