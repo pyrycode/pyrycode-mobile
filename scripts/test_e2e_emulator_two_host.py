@@ -61,6 +61,17 @@ class EmulatorTwoHostTest(unittest.TestCase):
             self.assertEqual(0o600, stat.S_IMODE(path.stat().st_mode))
             self.assertEqual(["conversations.json"], sorted(p.name for p in instance.iterdir()))
 
+    def test_seed_binds_the_row_only_when_given_a_session_id(self):
+        # #1017: host A's copy is bound so a send there revives a session; an empty id leaves the row unbound.
+        with tempfile.TemporaryDirectory() as tmp:
+            instance = Path(tmp) / "e2e-live"
+            for session_id, expected in (("s-1", {"current_session_id": "s-1"}), ("", {})):
+                with self.subTest(session_id=session_id):
+                    result = self.run_function("seed_collision_conversation", str(instance), "id-1", "n", "/h", session_id)
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    row = json.loads((instance / "conversations.json").read_text())["conversations"][0]
+                    self.assertEqual(expected, {k: v for k, v in row.items() if k == "current_session_id"})
+
     def test_seed_creates_a_private_instance_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             instance = Path(tmp) / "e2e-auto-1a2b3c4d-b"
