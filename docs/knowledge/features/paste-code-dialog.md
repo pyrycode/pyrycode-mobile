@@ -209,10 +209,14 @@ host's plug still emits `TreeHostReconnectTapped(serverId)` — the existing
 keeps proving the retry event for its own (non-rejected) fixtures.
 
 Existing `InteractiveStreamE2ETest` regressions and the
-[live gate](../../e2e-interactive-stream.md#pre-ship-gate) remain unchanged. They do
-not prove named B pairing through this screen followed by rename/unpair while A
-remains intact. That real-daemon/live-relay scenario belongs to
-[#676](https://github.com/pyrycode/pyrycode-mobile/issues/676).
+[live gate](../../e2e-interactive-stream.md#pre-ship-gate) remain unchanged.
+[#1085](https://github.com/pyrycode/pyrycode-mobile/issues/1085)'s
+`interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched` now proves named
+B pairing through this screen (by code, via `pairHostByCode`), followed by rename and
+unpair from the second host's Edit host modal, while host A keeps its label, its
+conversations and its own connection instance. It pairs by code, not by scanning a
+real QR, so real camera QR capture through this flow stays unproven live; that
+remains [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676)'s scope.
 
 ## Related
 

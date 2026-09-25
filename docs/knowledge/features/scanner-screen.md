@@ -239,10 +239,16 @@ Notes:
   preview slot proves layout and callback wiring, not CameraX binding or QR
   capture. `InteractiveStreamE2ETest` begins with injected pairing credentials:
   its [eight-test live pass for #640](https://github.com/pyrycode/pyrycode-mobile/issues/640#issuecomment-5756259017)
-  does not prove real camera/QR → fingerprint → confirmed pairing or scanner →
-  manual pairing against real daemons/live relay. Those scenarios and second-host
-  management belong to [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676).
-  See [Camera preview](camera-preview.md) and the existing
+  does not prove real camera/QR → fingerprint → confirmed pairing against real
+  daemons/live relay — that stays [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676)'s
+  scope. Scanner → manual pairing against real daemons/live relay is proven by #847
+  (`interactiveTurn_twoHostsCollidingConversationId_stayPerHost`, pairing a second
+  host by code through this screen's paste-code fallback), and second-host
+  management — rename and unpair from the Edit host modal, with the first host left
+  untouched — is proven by
+  [#1085](https://github.com/pyrycode/pyrycode-mobile/issues/1085)'s
+  `interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched`. See
+  [Camera preview](camera-preview.md) and the existing
   [live gate](../../e2e-interactive-stream.md#pre-ship-gate); #640 adds no rung-3
   scenario or rung-4 twin.
 - **`ScannerScreen.kt` is foundational, not disposable.** The `ScannerViewModel` state machine, the `when(state)` renderer, and `ScannerViewport` were **consumed** by #334 (the live preview injected through the `cameraPreview` slot, `CameraError` produced on bind failure), not replaced. `Routes.SCANNER` stays a single destination.
@@ -292,7 +298,9 @@ live camera rendering.
 - Figma node: `13:2` (no confirm-pairing surface drawn — `AwaitingConfirm` is design-later)
 - Upstream: #8 (NavHost), #295 (historical pairing startup gate), #60/#121 (atmosphere and scan-line drawing retained in the #640 frame), #61 (denied screen reused as the `Denied` state), #326 (stateful + permission), #333 (decode core), #320 (parse the `Decoded` payload → real `PairedServer`; the `PairingFailed → Error` route), #342 (`staticKeyFingerprint`, derived in the rewired `Decoded` effect), #343 (the confirm gate — `AwaitingConfirm` state, `PairingConfirmContent`, the gated persist)
 - Downstream: [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676) owns
-  real camera/manual pairing and second-host management coverage. The
+  real camera QR capture coverage. Manual pairing against real daemons/live relay
+  is proven by #847, and second-host management (rename, unpair) by
+  [#1085](https://github.com/pyrycode/pyrycode-mobile/issues/1085). The
   [manual pair-with-code flow](paste-code-dialog.md) shares the fingerprint gate
   and returns here on cancellation.
 - Sibling docs: [Pairing confirm gate](pairing-confirm-gate.md) (the #343 security checkpoint hosted as this screen's `AwaitingConfirm` branch), [Pairing payload parser](pairing-payload-parser.md) (the #320 parse/validate/map boundary the `Decoded` binding runs + the #343 `serverKeyFingerprint`), [Static-key fingerprint](static-key-fingerprint.md) (the #342 derivation the gate displays), [Camera preview](camera-preview.md) (the #334 live-camera composable injected through this screen's slot), [QR code analyzer](qr-code-analyzer.md) (the #333 decode core feeding this screen's VM), [Scanner Denied screen](scanner-denied-screen.md), [Navigation](navigation.md), [Welcome screen](welcome-screen.md), [App preferences](app-preferences.md)
