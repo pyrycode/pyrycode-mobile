@@ -64,3 +64,24 @@ Rung-3/4 e2e: the live proof waits for #1119 (the phone does not advertise `mult
 ## Open questions
 
 - None blocking. Whether a conversation absent from the list should read Claude or suppress the menu: reads Claude, matching `Conversation.agent`'s default and today's behaviour.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings — the one boundary stays the `MobileJson` decode of `ModelListRowDto`. `agent` is daemon text that is collapsed to `ConversationAgent?` by `modelRowAgentOf` at that boundary through exact comparison with two literals; nothing downstream holds the raw string, and an unrecognised value (including a case variant such as `Codex`) fails closed to `null`, which no conversation lists. `family` is carried verbatim under `ModelMenuRow`'s existing SECURITY paragraph and is never rendered, logged, parsed or used as a key by this ticket.
+- [Trust boundaries] No findings — the filter in `forAgent` is a menu-shaping aid, not an authorization control: a hostile daemon can already publish any menu it likes, and every model/effort write is still re-validated daemon-side against the session's agent (protocol § `model_list` property 3). A mis-tagged row can at worst hide or show a row the daemon then refuses through the existing refusal path.
+- [Trust boundaries] No findings — displayed text is unchanged: rows still render through `toChoice`, whose `inert()` bound applies to `display_name`, `resolved_model` and effort levels exactly as today; no name is built or reformatted on the phone.
+- [Tokens, secrets] Not applicable — no token, key or credential is read, stored or produced.
+- [File / storage] Not applicable — nothing is written to disk; the remembered effort store is read and written only through its existing `EffortRecall` path.
+- [Inter-process] Not applicable — no Activity, intent, deep link, push or WebView change.
+- [Crypto] Not applicable — no primitive touched.
+- [Network & I/O] No findings — no new verb or request. Sharing `conversations` through `shareIn` keeps `list_conversations` at one request per thread subscription rather than adding a second (`RemoteConversationRepository.observeConversations` sends on every subscription).
+- [Logs] No findings — no new log call; row text and tags never reach `RelayLog`.
+- [Concurrency] No findings — the shared flow lives in `viewModelScope`, is scoped to one ViewModel (one conversation id), and stops with its last subscriber; the per-conversation read is filtered by id, so no other conversation's data is exposed beyond what the `state` combine already reads.
+- [Threat model] OUT OF SCOPE — advertising `multi_agent` (and so receiving Codex rows and Codex conversations at all) is #1119.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-25
