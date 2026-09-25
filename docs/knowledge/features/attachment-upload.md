@@ -196,6 +196,12 @@ No emulator scenario of its own: this is a data-layer ticket with no operator-fa
 [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016) adds the rung-3 live scenario
 (`interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`, `docs/e2e-interactive-stream.md`),
 proving the phone's own upload reaches a real second client with matching bytes.
+[#1017](https://github.com/pyrycode/pyrycode-mobile/issues/1017) adds
+`interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes`, proving that a link cut after one
+chunk of a multi-chunk upload settles `ReconnectRequired` and that a retry, once the link is restored,
+reaches the peer as exactly one message with the fixture's exact bytes — no duplicate, because the failed
+attempt never reached `send_message`. The cut is fired deterministically from the `event=attachment_chunk`
+`RelayLog` line above, not from a timer, so it can never race `attachment_stored`.
 
 ## Related
 

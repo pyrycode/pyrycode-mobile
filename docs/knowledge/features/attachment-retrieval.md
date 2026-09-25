@@ -382,6 +382,12 @@ message, or a local path.
   scenario for the same reason: it is not operator-facing until the sibling UI ticket wires the link tap
   that opens a workspace file this way.
 - No Compose surface and no operator-facing flow of its own — the UI is [#984](message-bubble-attachment-slot.md#attachment-slot-since-984), which maps this leg's four failure members onto `AttachmentViewState` (`Retrieved → Ready`, `NotFound → NotFound`, `TooLarge`/`Invalid`/`Unavailable` → `Failed`) — so no rung-3/4 scenario here either; [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016) (split from #674) proves `request_attachment` live from the peer's side (retrieving the phone's own upload) and from the phone's side (retrieving a file claude offers with `send_file`), each matching the fixture's SHA-256; see `docs/e2e-interactive-stream.md`. The remaining leg — another client's upload, named on a message, retrieved after a history reload — was blocked on the daemon dropping a `message` entry's `attachment_ids` from history entirely, so `request_attachment` being answered said nothing about whether a client could ever learn the id to ask for after a reload; [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020) closed that gap (see [Remote conversation repository — reads and the thread store — history paging](remote-conversation-repository-reads-and-thread-store-history-paging.md) for the reducer change) and the live scenario proving this leg, `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`, is now in `docs/e2e-interactive-stream.md`'s LIVE list.
+  [#1017](https://github.com/pyrycode/pyrycode-mobile/issues/1017) adds
+  `interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile`, proving that a link cut at
+  `event=attachment_request` — after the transfer registers, before the request is sent — settles
+  `Unavailable` and shows the failed row with Retry, and that Retry, once the link is restored, reaches
+  ready under the correct name with the fixture's exact bytes on open and save. The cut is deterministic,
+  fired from the `RelayLog` line above rather than a timer.
 
 ## Related
 
