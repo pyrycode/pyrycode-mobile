@@ -67,3 +67,25 @@ No Compose screen test: the overlay already renders a disabled option (#884), an
 ## Documentation handoff
 
 Pending for the documentation stage: the ticket names no documentation requirement. The thread-screen / run-config overview may want a line that the effort and permission menus and the Actions slash-command rows follow `SessionSettings.capabilities` when present.
+
+## Security review
+
+**Verdict:** PASS
+
+This section was added in a second commit after the plan commit and before any implementation code; the design above is unchanged by it.
+
+**Findings:**
+
+- [Trust boundaries] No findings — the `capabilities` object crosses at the one existing decode boundary, `toSessionSettings`, into a typed `SessionCapabilities`. Its strings are compared by equality only, against published row values (`ThreadEffortChoice.value`) and the fixed `PermissionModeOption.wire` set, and never reach `inert`, `Text`, a log, a key or a write argument. The design property that bounds a hostile list: **it can only remove options, never add one.** Effort is an intersection with the row's levels, a permission mode must already be a `PermissionModeOption`, and `slash_commands: false` only adds to `absentActions` — `true` never re-enables a command the published menu proves absent (the two absent sets are unioned). The daemon also re-checks every write (`protocol-mobile.md` § `capabilities`, "Support is not permission"), so the client filter is UX, not enforcement.
+- [Trust boundaries] No findings — a hostile daemon can hide every effort level or permission mode, or disable both commands. That is denial of UI the same daemon can already achieve by refusing the writes; accepted.
+- [Tokens / secrets] N/A — nothing in this design creates, stores or moves a credential.
+- [File / storage] N/A — `SessionCapabilities` is held in memory on the settings reading only; nothing is persisted, no path is built from it.
+- [Android attack surface] N/A — no intent, deep link, pending intent, provider, push path or WebView is touched.
+- [Crypto] N/A — no primitive, key or nonce involved.
+- [Network & I/O] No findings — array sizes are bounded by the transport's existing inbound frame cap; the membership checks run over a handful of rows and six enum entries per recomposition.
+- [Logs / errors] No findings — no new log line. A malformed object fails the frame through the same `SerializationException` path as the seven existing fields, handled by the existing `SessionSettingsCommands` caller; this ticket authors no exception message.
+- [Concurrency] No findings — no new coroutine, flow or job; the list rides the existing settings reading into `runConfigFlow`. The send guards (`onComposerCommand`, `onPermissionModeSelected`) read `state.value` exactly as they already do for the menu-proven absence and the Auto guard.
+- [Threat model] Hostile daemon frame: covered by the decode boundary and the narrowing-only property above. Malicious relay: content-blind inside Noise; nothing new. UI leakage: nothing new is rendered.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-25
