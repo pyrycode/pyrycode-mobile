@@ -115,7 +115,14 @@ destination's own host) + `HostOwnerTrailing()` (badge and chevron together) for
 `onOpenHost(row.serverId)` callback + `ChevronIcon()` alone for every other saved host — every row now
 passes a non-null `onClick`, where #750 had left the owner's `null`. The click target is the whole
 `Column` including the status line beneath the identity `ListItem`, so the
-affordance covers everything the row describes, not just its headline. Takes four already-resolved
+affordance covers everything the row describes, not just its headline. Because the `ListItem`'s own
+surface merges its descendants separately from the outer clickable `Column`, `serverId` and the "This
+server" badge sit on a *descendant* of the click target, never on the click target's own node — a
+device-test matcher that requires both on one node (`hasText(serverId) and hasClickAction()`) finds
+nothing and times out live; match instead as `hasClickAction() and hasAnyDescendant(hasText(serverId))`,
+as `SettingsScreenTest` and `InteractiveStreamE2ETest#interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost`
+(#1086) do. `SettingsRow`'s own rows (headline, supporting text and click action all on one node) need no
+such split. Takes four already-resolved
 display values plus the two optional slots rather than a `SettingsConnectionState` or a row model, so
 the same component draws every row in the Connection section's list instead of a second treatment
 being built for it; `name` is resolved once, in `SettingsHostRow.name`
