@@ -1285,7 +1285,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the thirty-eight curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the thirty-nine curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
 peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
@@ -1294,7 +1294,8 @@ running-tool status label, #950; stop-running-turn, #965; operator-bypass permis
 permission-answer and question-answer, #966; reconnect-footer, reconnect-commands and background-task, #967;
 background-push-turn-end and background-push-prompt, #955; attachments-from-phone and claude-offered-file, #1016;
 peer-attachment, #1020; markdown-link, #1050; mute-channel round trip, #1021; interrupted-upload,
-interrupted-retrieval and cross-host-attachment-recovery, #1017; second-host rename and unpair, #1085)
+interrupted-retrieval and cross-host-attachment-recovery, #1017; second-host rename and unpair, #1085;
+Log data diagnostic download, #684)
 ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
@@ -1329,7 +1330,7 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** thirty-nine real claude turns across thirty-eight curated methods — five pings (ping,
+**Cost:** thirty-nine real claude turns across thirty-nine curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
 ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, the
@@ -1355,7 +1356,8 @@ on host A of the colliding conversation), #1017 —
 and a reset wrap-up turn for the new-session scenario's own live child. Delete, archive-restore,
 change-workspace, rename, save-as-channel,
 list-archive-entry, two-host separation, the model-change scenario, the mute-channel round trip
-(#1021) and the second-host rename and unpair scenario (#1085) spend no Claude turns. Allow a few
+(#1021), the second-host rename and unpair scenario (#1085) and the Log data diagnostic-download
+scenario (#684) spend no Claude turns. Allow a few
 minutes of wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
@@ -1370,7 +1372,7 @@ adding the peer-attachment method once the reducer let its history-replayed row 
 adding the markdown-link method, then from 33 to 34 with #1021 adding the zero-turn mute-channel method,
 then from 34 to 37 with #1017 adding the interrupted-upload, interrupted-retrieval and
 cross-host-attachment-recovery methods, then from 37 to 38 with #1085 adding the second-host rename
-and unpair method.
+and unpair method, then from 38 to 39 with #684 adding the Log data diagnostic-download method.
 `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
@@ -1395,8 +1397,9 @@ to 29, adding the two push methods, #1016 raised it again, from
 29 to 31, adding the attachments-from-phone and claude-offered-file methods, and #1020 raised it again,
 from 31 to 32, adding the peer-attachment method, #1050 raised it again, from 32 to 33, and #1021 raised it again,
 from 33 to 34, adding the mute-channel method, #1017 raised it again, from 34 to 37, adding the
-interrupted-upload, interrupted-retrieval and cross-host-attachment-recovery methods, and #1085 raised
-it again, from 37 to 38, adding the second-host rename and unpair method. Shell cleanup
+interrupted-upload, interrupted-retrieval and cross-host-attachment-recovery methods, #1085 raised
+it again, from 37 to 38, adding the second-host rename and unpair method, and #684 raised it again,
+from 38 to 39, adding the Log data diagnostic-download method. Shell cleanup
 preserves the original result and retains failure artifacts; a clean XML report with a failing process
 status is not a passing gate.
 
@@ -1420,7 +1423,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of thirty-eight rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of thirty-nine rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1444,7 +1447,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Thirty-eight curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Thirty-nine curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -1482,7 +1485,8 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes` (#1017), and
 `InteractiveStreamE2ETest#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile` (#1017),
 `InteractiveStreamE2ETest#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost` (#1017), and
-`InteractiveStreamE2ETest#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched` (#1085),
+`InteractiveStreamE2ETest#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched` (#1085), and
+`InteractiveStreamE2ETest#interactiveTurn_logData_savesTheOwningHostsArchive` (#684),
 so exactly
 **thirty-nine real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
@@ -1509,14 +1513,14 @@ interrupted-retrieval scenario's own turn — the peer's message naming the file
 retried; and the cross-host-attachment-recovery scenario's own turn — the phone's message on host A of the
 colliding conversation id #847 seeded (#1017); the delete,
 archive-restore, change-workspace, rename,
-save-as-channel, list-archive-entry, two-host, model-change, mute-channel and second-host
-rename-and-unpair scenarios each add a
+save-as-channel, list-archive-entry, two-host, model-change, mute-channel, second-host
+rename-and-unpair and Log data diagnostic-download scenarios each add a
 method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
 list-archive-entry is pure navigation with no daemon round-trip at all; two-host separation is pairing,
 navigation, rename and link cycling, also daemon round-trips; mute-channel's promote, mute and unmute
 are daemon round-trips too, #1021; pairing, rename and unpair are daemon round-trips or phone-local too,
-#1085).
+#1085; a mute and two archive transfers are daemon round-trips too, #684).
 The full class also includes the
 \#481 tool-use test and #950's `@Ignore`d elapsed-reading twin, which stay excluded from LIVE;
 `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`
@@ -1559,7 +1563,7 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **thirty-nine real claude turns per run across thirty-eight curated methods** (ping + create-workspace-folder,
+Cost: **thirty-nine real claude turns per run across thirty-nine curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
 \#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
 status-sheet-running-model scenario's own ping, #891 + the footer-context-usage scenario's own ping,
@@ -1584,13 +1588,14 @@ turn — the peer's message whose retrieval is cut and retried, and the cross-ho
 scenario's own turn — the phone's message on host A of the colliding conversation, #1017; `/clear` spends
 none beyond the ping that primes the session; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
-\#740, two-host separation, #847, model change, the mute-channel round trip, #1021, and the second-host
-rename-and-unpair scenario, #1085, each spend
+\#740, two-host separation, #847, model change, the mute-channel round trip, #1021, the second-host
+rename-and-unpair scenario, #1085, and the Log data diagnostic-download scenario, #684, each spend
 none — create/rename/delete/archive/restore/
 change-workspace/promote are daemon round-trips, list-archive-entry is pure navigation, two-host
 separation is pairing, navigation, rename and link cycling, also daemon round-trips, mute-channel's
-promote, mute and unmute are daemon round-trips too, and the second-host scenario's pairing, rename and
-unpair are daemon round-trips or phone-local), a few minutes of
+promote, mute and unmute are daemon round-trips too, the second-host scenario's pairing, rename and
+unpair are daemon round-trips or phone-local, and the Log data scenario's mute and two archive transfers
+are daemon round-trips too), a few minutes of
 wall clock, subscription-covered.
 
 Environment checks for a new host (the recorded API 33 run passed these paths):
@@ -1893,6 +1898,18 @@ revalidation. The committed context's pending final gate describes its capture-t
 handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
+
+- **LIVE verified for #684 (2026-09-25):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/684` at `7ae8fea8fc` merged with
+  `origin/main` at `dbaf249934` (0 commits behind before the merge) on managed `pixel2Api33Atd` —
+  mobile revision `7ae8fea8fc1b1503084a09e58610a9b99ea7cc53`, daemon revision
+  `fef4d6958ab63ef80ff0a5f3142b2f40ba559531`, Claude Code **2.1.280** — 39 executed, 39 passed, no
+  failures or skips, exit 0, wall clock 434.5s. `LIVE_MINIMUM` rose from 38 to 39 with this ticket's
+  new method (see [Pre-ship gate](#pre-ship-gate)); this run executed all thirty-nine curated methods
+  against `LIVE_MINIMUM` 39. This is the first live run of
+  `interactiveTurn_logData_savesTheOwningHostsArchive` — it passed outright, saving host A's diagnostic
+  archive (with a run-unique marker only A's daemon logged) unaffected by a mid-transfer selection
+  change to host B and a first cancelled picker.
 
 - **LIVE verified for #1066 (2026-09-25):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/1066` at `e7263d546e` merged with
