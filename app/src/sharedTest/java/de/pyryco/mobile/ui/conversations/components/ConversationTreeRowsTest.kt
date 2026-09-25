@@ -31,6 +31,7 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import org.junit.Assert.assertEquals
@@ -133,6 +134,38 @@ class ConversationTreeRowsTest {
             composeTestRule.onNode(hasText(longName), useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertRightEdgeWithinRow(bounds.right, "conversation name")
         assertSingleLine(bounds.height, "conversation name")
+    }
+
+    @Test
+    fun conversationRow_eachAttentionState_carriesItsOwnDescription_andFollowsAStateChange() {
+        val descriptions =
+            mapOf(
+                ConversationAttention.WaitingForAnswer to string(R.string.cd_conversation_attention_waiting),
+                ConversationAttention.Running to string(R.string.cd_conversation_attention_running),
+                ConversationAttention.Failed to string(R.string.cd_conversation_attention_failed),
+                ConversationAttention.Unread to string(R.string.cd_conversation_attention_unread),
+                ConversationAttention.Idle to string(R.string.cd_conversation_attention_idle),
+            )
+        assertEquals("every state needs its own description", ConversationAttention.entries.size, descriptions.values.toSet().size)
+        val attention = mutableStateOf(ConversationAttention.Idle)
+        setBoundedContent {
+            TreeConversationRow(
+                conversationName = "rocd-thinking",
+                selected = false,
+                onClick = {},
+                attention = attention.value,
+            )
+        }
+
+        ConversationAttention.entries.forEach { state ->
+            attention.value = state
+            composeTestRule.waitForIdle()
+            descriptions.forEach { (other, description) ->
+                composeTestRule
+                    .onAllNodes(hasContentDescription(description), useUnmergedTree = true)
+                    .assertCountEquals(if (other == state) 1 else 0)
+            }
+        }
     }
 
     @Test

@@ -124,6 +124,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -1702,24 +1703,19 @@ class InteractiveStreamE2ETest {
             // 1. The phone creates a chat and is in its thread; the new id is the one it did not hold before.
             awaitChannelList()
             awaitConnected()
-            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            val before = hostConversationIds(serverId)
             createChat()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
-            val conversationId =
-                runBlocking {
-                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
-                }.single()
+            val conversationId = newHostConversationId(serverId, before)
             val chatName = PEER_CHAT_NAME_PREFIX + System.currentTimeMillis()
             renameOpenThread(chatName)
 
             // 2. AC-1: the peer, as its own device, sends into that conversation and observes its frames.
-            runBlocking {
-                peer.open(CONNECT_TIMEOUT_MS)
-                peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
-                peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS)
-            }
+            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+            peerStep(peer, "send the ping and await its ack") { peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS) }
+            peerStep(peer, "await the ping turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
 
             // 3. AC-2: with the thread open, claude's reply renders there once.
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
@@ -1780,15 +1776,12 @@ class InteractiveStreamE2ETest {
             // 1. The phone creates and renames a chat, as #848 does; the peer joins as its own device.
             awaitChannelList()
             awaitConnected()
-            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            val before = hostConversationIds(serverId)
             createChat()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
-            val conversationId =
-                runBlocking {
-                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
-                }.single()
+            val conversationId = newHostConversationId(serverId, before)
             renameOpenThread(QUEUE_CHAT_NAME_PREFIX + System.currentTimeMillis())
 
             // 2. The peer starts the conversation with a turn that stops on a permission prompt. The prompt
@@ -1891,24 +1884,20 @@ class InteractiveStreamE2ETest {
             // 1. A fresh chat on the selected host, its id read off the host's repository as #849 does.
             awaitChannelList()
             awaitConnected()
-            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            val before = hostConversationIds(serverId)
             createChat()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
-            val conversationId =
-                runBlocking {
-                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
-                }.single()
+            val conversationId = newHostConversationId(serverId, before)
 
             // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
             //    the permission dialog leaves the composer.
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
             sendFromPhone(STOP_HOLD_PROMPT)
-            runBlocking {
-                val modalId = peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS)
-                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
-            }
+            val modalId =
+                peerStep(peer, "await the held command's permission prompt") { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+            peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
 
             // 3. Tap the composer's Stop control once no dialog covers it.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -1918,7 +1907,8 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(stopControl).performClick()
 
             // 4. AC-1: the turn ends as cancelled, the Stop control goes, and the status area says Interrupted.
-            val turnEnd = runBlocking { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
+            val turnEnd =
+                peerStep(peer, "await the stopped turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
             assertEquals(
                 "stopped turn's stop_reason",
                 "cancelled",
@@ -1934,7 +1924,10 @@ class InteractiveStreamE2ETest {
             //    conversation's second; the stopped turn's own reply was never drawn.
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            runBlocking { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
+            peerStep(
+                peer,
+                "await the ping turn's turn_end",
+            ) { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
             composeTestRule.onAllNodes(hasText(STOP_HOLD_REPLY, ignoreCase = true), useUnmergedTree = true).assertCountEquals(0)
         } finally {
             peer.close()
@@ -1979,15 +1972,12 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             awaitChannelList()
             awaitConnected()
-            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            val before = hostConversationIds(serverId)
             createChat()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
-            val conversationId =
-                runBlocking {
-                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
-                }.single()
+            val conversationId = newHostConversationId(serverId, before)
             val chatName = OFFLINE_CHAT_NAME_PREFIX + System.currentTimeMillis()
             renameOpenThread(chatName)
 
@@ -4375,18 +4365,51 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** Wait until [serverId]'s repository holds a conversation-id set satisfying [ready], and return it. */
-    private suspend fun hostConversationIds(
+    /** The ids [serverId]'s live repository lists, read off whichever connection is current (#1036). */
+    private fun hostConversationIds(serverId: String): Set<String> = hostConversationIds(serverId, "its conversation list") { true }
+
+    /**
+     * The one conversation id [serverId]'s live repository lists that [before] does not: the chat the phone
+     * just created. Read off whichever connection is current (#1036).
+     */
+    private fun newHostConversationId(
         serverId: String,
+        before: Set<String>,
+    ): String = (hostConversationIds(serverId, "a new chat's id") { ids -> (ids - before).isNotEmpty() } - before).single()
+
+    /**
+     * The first conversation-id set [serverId]'s repository lists that satisfies [ready], following the host's
+     * redial with `firstOnLive` as #1029's reads do; a timeout names [what] the phone was reading.
+     */
+    private fun hostConversationIds(
+        serverId: String,
+        what: String,
         ready: (Set<String>) -> Boolean,
     ): Set<String> {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
-        val repository = checkNotNull(bundle.coordinator.currentRepository.first { it != null })
-        return repository
-            .observeConversations(ConversationFilter.All)
-            .first { rows -> ready(rows.mapTo(mutableSetOf()) { it.id }) }
-            .mapTo(mutableSetOf()) { it.id }
+        return runBlocking {
+            withTimeoutOrNull(LIST_TIMEOUT_MS) {
+                bundle.coordinator.currentRepository.firstOnLive({ repository ->
+                    repository.observeConversations(ConversationFilter.All).map { rows -> rows.mapTo(mutableSetOf()) { it.id } }
+                }, ready)
+            }
+        } ?: throw AssertionError("the phone's live repository never listed $what within $LIST_TIMEOUT_MS ms")
     }
+
+    /**
+     * Run one suspending [peer] call, and name [step] and the peer's session state if it times out (#1036):
+     * a coroutine timeout's own stack says nothing about which wait ran out.
+     */
+    private fun <T> peerStep(
+        peer: SecondClientPeer,
+        step: String,
+        block: suspend () -> T,
+    ): T =
+        try {
+            runBlocking { block() }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("peer step '$step' timed out; ${peer.linkState()}", e)
+        }
 
     /** The #849 peer on the first test daemon, the one device allowed to answer its permission prompts. */
     private fun runningToolPeer(): SecondClientPeer {
@@ -4413,15 +4436,12 @@ class InteractiveStreamE2ETest {
         val serverId = twoHostArg(ARG_SERVER_ID)
         awaitChannelList()
         awaitConnected()
-        val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+        val before = hostConversationIds(serverId)
         createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
-        val conversationId =
-            runBlocking {
-                withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
-            }.single()
+        val conversationId = newHostConversationId(serverId, before)
         runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
         sendFromPhone(prompt)
         val modalId = runBlocking { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
