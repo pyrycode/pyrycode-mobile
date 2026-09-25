@@ -351,6 +351,25 @@ class HistoryPageReducerTest {
         assertEquals(reduceHistoryPage(listOf(entry(77, "unrecognized_message", unrecognizedPayload("line_type"))), true), rows)
     }
 
+    // #1109: the Codex translator's two sites fold on history reload; any other unknown site still drops.
+    @Test
+    fun reduce_unrecognizedMessage_codexSitesFoldAndAnUnknownSiteDrops() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(3, "unrecognized_message", unrecognizedPayload("wormhole")),
+                    entry(2, "unrecognized_message", unrecognizedPayload("codex_item")),
+                    entry(1, "unrecognized_message", unrecognizedPayload("codex_method")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(
+            listOf(UnrecognizedSite.CodexMethod, UnrecognizedSite.CodexItem),
+            rows.map { (it as ThreadItem.UnrecognizedMessage).site },
+        )
+    }
+
     // ---- Forward compatibility: an unrecognised type or a bad payload costs one entry, not the page --
 
     @Test

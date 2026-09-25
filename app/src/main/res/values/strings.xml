@@ -193,6 +193,8 @@
     <string name="thread_unrecognized_site_assistant_block">assistant block</string>
     <string name="thread_unrecognized_site_user_block">user block</string>
     <string name="thread_unrecognized_site_undecodable">could not be decoded</string>
+    <string name="thread_unrecognized_site_codex_method">Codex notification</string>
+    <string name="thread_unrecognized_site_codex_item">Codex item</string>
     <string name="cd_thread_unrecognized_expand">Show the unrecognized payload</string>
     <string name="cd_thread_unrecognized_collapse">Hide the unrecognized payload</string>
     <string name="thread_banner_attribution">"Claude: "</string>

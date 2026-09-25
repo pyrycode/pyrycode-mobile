@@ -7675,7 +7675,8 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("m1", "unrecognized:LineType", "m2"), threadShape(emissions.last()))
         }
 
-    // AC #1: each of the four closed-set site values maps to its UnrecognizedSite constant.
+    // AC #1: each of the six closed-set site values maps to its UnrecognizedSite constant (#1109 added
+    // the two Codex sites).
     @Test
     fun unrecognizedMessage_eachSiteMapsToItsConstant() =
         runTest {
@@ -7688,6 +7689,8 @@ class RemoteConversationRepositoryTest {
             pump.push(unrecognizedMessageEnvelope("c1", "assistant_block", "b", "{}", id = 2L))
             pump.push(unrecognizedMessageEnvelope("c1", "user_block", "c", "{}", id = 3L))
             pump.push(unrecognizedMessageEnvelope("c1", "undecodable", "", "{}", id = 4L))
+            pump.push(unrecognizedMessageEnvelope("c1", "codex_method", "error", "{}", id = 5L))
+            pump.push(unrecognizedMessageEnvelope("c1", "codex_item", "webSearch", "{}", id = 6L))
             runCurrent()
 
             assertEquals(
@@ -7696,6 +7699,8 @@ class RemoteConversationRepositoryTest {
                     UnrecognizedSite.AssistantBlock,
                     UnrecognizedSite.UserBlock,
                     UnrecognizedSite.Undecodable,
+                    UnrecognizedSite.CodexMethod,
+                    UnrecognizedSite.CodexItem,
                 ),
                 unrecognizedRowsOf(emissions.last()).map { it.site },
             )
