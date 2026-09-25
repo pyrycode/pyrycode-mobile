@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTask
+import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.ConnectionState
@@ -89,7 +90,28 @@ class BackgroundTaskPanelTest {
         latestUpdate: BackgroundTaskUpdate? = null,
         finish: BackgroundTaskUpdate? = null,
         isFinished: Boolean = false,
-    ) = BackgroundTask(id, "toolu_$id", taskType, description, truncatedFields, latestUpdate, finish, isFinished)
+        progress: BackgroundTaskProgress? = null,
+    ) = BackgroundTask(id, "toolu_$id", taskType, description, truncatedFields, latestUpdate, finish, isFinished, progress)
+
+    private fun progress(
+        activity: String = "Running go test with the race detector",
+        lastToolName: String = "Bash",
+        truncatedFields: List<String>? = null,
+    ) = BackgroundTaskProgress(
+        description = activity,
+        subagentType = "general-purpose",
+        lastToolName = lastToolName,
+        totalTokens = 18_000,
+        toolUses = 4,
+        durationMs = 161_000,
+        truncatedFields = truncatedFields,
+    )
+
+    private fun top(text: String) =
+        composeTestRule
+            .onNodeWithText(text, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .boundsInRoot.top
 
     private fun midLife(
         patch: String,
@@ -401,7 +423,84 @@ class BackgroundTaskPanelTest {
         markers().assertCountEquals(1)
     }
 
+    // #1044 AC#1: activity then meta, under the description and above "Latest update".
+    @Test
+    fun runningTaskWithProgress_showsActivityThenMeta_underTheDescription() {
+        setPanel(roster = roster(task(description = "go test ./...", latestUpdate = midLife("{}"), progress = progress())))
+
+        composeTestRule.onNodeWithText(ACTIVITY, useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText(META, useUnmergedTree = true).assertIsDisplayed()
+        assertTrue(top("go test ./...") < top(ACTIVITY))
+        assertTrue(top(ACTIVITY) < top(META))
+        assertTrue(top(META) < top(LATEST_UPDATE))
+        composeTestRule.onAllNodesWithText("general-purpose", substring = true, useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun runningTaskWithoutProgress_showsNoProgressBlock() {
+        setPanel(roster = roster(task()))
+        composeTestRule.onAllNodesWithText("tokens", substring = true, useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    // #1044 AC#2: a finished task never shows progress, even if the held frame is non-null.
+    @Test
+    fun finishedTask_showsNoProgressBlock_evenWithProgressHeld() {
+        setPanel(roster = roster(task(finish = terminal("done"), isFinished = true, progress = progress())))
+
+        composeTestRule.onNodeWithText(ACTIVITY, useUnmergedTree = true).assertDoesNotExist()
+        composeTestRule.onAllNodesWithText("tokens", substring = true, useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    // #1044 AC#3: the progress frame's own list marks the activity.
+    @Test
+    fun truncatedActivity_isMarkedFromTheProgressFramesOwnList() {
+        setPanel(roster = roster(task(progress = progress(truncatedFields = listOf("description")))))
+
+        markers().assertCountEquals(1)
+        assertTrue(top(ACTIVITY) < top(TRUNCATED))
+        assertTrue(top(TRUNCATED) < top(META))
+    }
+
+    @Test
+    fun truncatedToolName_isMarked() {
+        setPanel(roster = roster(task(progress = progress(truncatedFields = listOf("last_tool_name")))))
+        markers().assertCountEquals(1)
+    }
+
+    @Test
+    fun theTasksListNamingDescription_doesNotMarkTheActivity() {
+        setPanel(roster = roster(task(truncatedFields = listOf("description"), progress = progress())))
+        markers().assertCountEquals(1)
+        assertTrue(top(TRUNCATED) < top(ACTIVITY))
+    }
+
+    @Test
+    fun emptyToolName_dropsItsSegment() {
+        setPanel(roster = roster(task(progress = progress(lastToolName = ""))))
+        composeTestRule.onNodeWithText("4 tools · 18k tokens · 2m 41s", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun progressText_isInert_andStrippedOfControlCharacters() {
+        setPanel(roster = roster(task(progress = progress(activity = "Reading \u001B[31ma.go", lastToolName = "Ba\u0007sh"))))
+
+        composeTestRule.onNodeWithText("Reading [31ma.go", useUnmergedTree = true).assertHasNoClickAction()
+        composeTestRule.onNodeWithText(META, useUnmergedTree = true).assertHasNoClickAction()
+        markers().assertCountEquals(0)
+    }
+
+    @Test
+    fun overLongActivity_isBounded_andMarked() {
+        setPanel(roster = roster(task(progress = progress(activity = "a".repeat(5000)))))
+
+        composeTestRule.onNodeWithText("a".repeat(4096), useUnmergedTree = true).assertExists()
+        markers().assertCountEquals(1)
+    }
+
     private companion object {
+        const val ACTIVITY = "Running go test with the race detector"
+        const val META = "Bash · 4 tools · 18k tokens · 2m 41s"
+
         const val UNREPORTED = "No background-task report yet"
         const val EMPTY = "No background tasks"
         const val PARTIAL_PREFIX = "Partial list"
