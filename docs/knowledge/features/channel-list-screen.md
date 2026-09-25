@@ -80,8 +80,9 @@ sealed interface ChannelListEvent {
      *  name is read from the host's own snapshot, never from the row's text. */
     data class TreeChannelEditTapped(val target: HostConversationTarget) : ChannelListEvent
     /** The Edit channel modal's OK: the name already trimmed by the component, the prompt verbatim — or
-     *  `null` when the modal never showed a stored prompt. No ids: the target is the open modal's. */
-    data class ChannelEditSubmitted(val name: String, val systemPrompt: String?) : ChannelListEvent
+     *  `null` when the modal never showed a stored prompt — and the Mute notifications checkbox as it
+     *  stands (#1021). No ids: the target is the open modal's. */
+    data class ChannelEditSubmitted(val name: String, val systemPrompt: String?, val muted: Boolean) : ChannelListEvent
     /** The Edit channel modal's Archive channel; the target is the open modal's. */
     data object ChannelArchiveRequested : ChannelListEvent
     /** The Edit channel modal's Cancel, Close and Back. */
@@ -280,6 +281,14 @@ distinction from the tree's own blank at all — see the next section.
   so a pencil assertion on a lower row needs `performScrollToNode(hasScrollAction())` first — the same call
   the tree's own reach-the-last-row test above already uses; `onAllNodes(...).assertCountEquals(1)` against
   an uncomposed row finds nothing and reads as a missing pencil rather than as an unscrolled list.
+
+  `ChannelListScreenTest` gained (#1021): `editChannelModal_muteRowOpensAtTheHostsFlag_andOkReportsTheToggledValue`
+  asserts the Mute notifications row is the checkbox role at the 48dp touch floor, opens `isOn` for a
+  muted `savedMuted`, and that OK reports the toggled value on `ChannelEditSubmitted.muted` — including
+  after a `failed` state change, which keeps the operator's toggle where they left it rather than
+  reverting to the opening value; `editChannelModal_muteRowOpensUncheckedForAnUnmutedChannel` covers the
+  unmuted open. Every existing `ChannelEditSubmitted(...)` expectation in this file gained `muted = false`,
+  and the prompt-redaction assertion still passes with the widened event.
 
 ## Related
 

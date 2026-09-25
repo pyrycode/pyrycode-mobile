@@ -319,15 +319,17 @@ sealed interface ChannelListEvent {
 
     /**
      * The Edit channel modal's OK: the name already trimmed by the component, the prompt verbatim — or `null`
-     * when the modal never showed a stored prompt. No ids: the target is the open modal's.
+     * when the modal never showed a stored prompt — and the Mute notifications checkbox as it stands (#1021).
+     * No ids: the target is the open modal's.
      */
     data class ChannelEditSubmitted(
         val name: String,
         val systemPrompt: String?,
+        val muted: Boolean,
     ) : ChannelListEvent {
         // The prompt may hold a pasted credential; a logged or crash-traced event must not carry it.
         override fun toString(): String =
-            "ChannelEditSubmitted(name=$name, systemPrompt=${if (systemPrompt == null) "absent" else "<redacted>"})"
+            "ChannelEditSubmitted(name=$name, systemPrompt=${if (systemPrompt == null) "absent" else "<redacted>"}, muted=$muted)"
     }
 
     /** The Edit channel modal's Archive channel; the target is the open modal's. */
@@ -401,7 +403,8 @@ private fun ChannelEditorModal(
         conversationId = editor.conversationId,
         initialName = editor.savedName,
         prompt = editor.prompt,
-        onSubmit = { name, systemPrompt -> onEvent(ChannelListEvent.ChannelEditSubmitted(name, systemPrompt)) },
+        initialMuted = editor.savedMuted,
+        onSubmit = { name, systemPrompt, muted -> onEvent(ChannelListEvent.ChannelEditSubmitted(name, systemPrompt, muted)) },
         onArchiveRequested = { onEvent(ChannelListEvent.ChannelArchiveRequested) },
         onDismissRequest = { onEvent(ChannelListEvent.ChannelEditDismissed) },
         hostAvailable = hostState.isHostConnected(editor.serverId),

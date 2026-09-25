@@ -2,10 +2,16 @@ package de.pyryco.mobile.ui.components
 
 import android.content.res.Configuration
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -14,8 +20,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -31,12 +39,17 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 private val ArchiveTopPadding = 8.dp
 private val ActionMinHeight = 48.dp
 
+// The desktop frame's 12dp between the checkbox and its label (#1021).
+private val CheckboxLabelGap = 12.dp
+
 /**
  * Edit channel on the phone (#667): [ChannelFormFields] plus an outlined Archive channel action in a
  * [MobileModal], driven entirely by its caller — desktop's `EditChannelDialog`, opened from a Channels row's pen.
  *
  * Presentation only. It reports the trimmed name and the prompt through [onSubmit], the archive intent
  * through [onArchiveRequested] and every dismissal route through [onDismissRequest]; none closes it.
+ * [onSubmit] also carries the Mute notifications checkbox (#1021), which opens at [initialMuted] — the host's
+ * stored flag — and is reported as it stands; the caller decides whether that is a change.
  *
  * The name opens with [initialName]. The prompt field stays disabled, with a static line under it, until
  * [prompt] is a [ChannelPromptReading.Read]; it then shows the stored prompt verbatim, and [onSubmit] carries
@@ -44,7 +57,7 @@ private val ActionMinHeight = 48.dp
  * A `Differs` reading adds the next-session note. OK needs an available host, a non-blank name and a prompt
  * within [SystemPromptLimit.MAX_BYTES] UTF-8 bytes; Archive needs only the host and no write in flight.
  *
- * Both typed values are keyed on [conversationId] alone, so a failure, a reconnect or a late reading leaves
+ * The typed values and the checkbox are keyed on [conversationId] alone, so a failure, a reconnect or a late reading leaves
  * them in place. They use `remember`, not `rememberSaveable`: the prompt may hold a pasted credential and
  * stays out of the saved-state Bundle. Keep [error] generic: the shell announces it aloud.
  */
@@ -53,7 +66,8 @@ internal fun EditChannelModal(
     conversationId: String,
     initialName: String,
     prompt: ChannelPromptReading,
-    onSubmit: (name: String, systemPrompt: String?) -> Unit,
+    initialMuted: Boolean,
+    onSubmit: (name: String, systemPrompt: String?, muted: Boolean) -> Unit,
     onArchiveRequested: () -> Unit,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
@@ -65,6 +79,7 @@ internal fun EditChannelModal(
         mutableStateOf(TextFieldValue(text = initialName, selection = TextRange(initialName.length)))
     }
     var typedPrompt by remember(conversationId) { mutableStateOf<String?>(null) }
+    var muted by remember(conversationId) { mutableStateOf(initialMuted) }
     // Derived, not copied in by an effect: the field holds the stored prompt from the draw it arrives in,
     // and is null — disabled, and reported as null — until then. Only an enabled field can be typed into.
     val shownPrompt = typedPrompt ?: (prompt as? ChannelPromptReading.Read)?.let { it.prompt.orEmpty() }
@@ -79,7 +94,7 @@ internal fun EditChannelModal(
     MobileModal(
         title = stringResource(R.string.edit_channel_title),
         onDismissRequest = onDismissRequest,
-        onSubmit = { onSubmit(name.text.trim(), shownPrompt) },
+        onSubmit = { onSubmit(name.text.trim(), shownPrompt, muted) },
         modifier = modifier,
         submissionEnabled =
             hostAvailable && name.text.isNotBlank() && (shownPrompt == null || SystemPromptLimit.fits(shownPrompt)),
@@ -94,7 +109,45 @@ internal fun EditChannelModal(
             promptEnabled = shownPrompt != null,
             promptNote = note,
         )
+        MuteNotificationsRow(checked = muted, onCheckedChange = { muted = it })
         ArchiveChannelAction(enabled = hostAvailable && !loading, onClick = onArchiveRequested)
+    }
+}
+
+/**
+ * The desktop frame's "Checkbox with label" (`500-2120`): a tertiary box, then the label in label-medium
+ * SemiBold. No mobile frame draws it, so it takes the permission modal's checkbox row: the whole row toggles
+ * with the checkbox role, at the shell's touch floor.
+ */
+@Composable
+private fun MuteNotificationsRow(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = ActionMinHeight)
+                .toggleable(value = checked, role = Role.Checkbox, onValueChange = onCheckedChange),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(CheckboxLabelGap),
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = null,
+            colors =
+                CheckboxDefaults.colors(
+                    checkedColor = MaterialTheme.colorScheme.tertiary,
+                    uncheckedColor = MaterialTheme.colorScheme.tertiary,
+                    checkmarkColor = MaterialTheme.colorScheme.onTertiary,
+                ),
+        )
+        Text(
+            text = stringResource(R.string.edit_channel_mute),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -135,7 +188,8 @@ private fun EditChannelModalPreview() {
             conversationId = "preview",
             initialName = "Release notes",
             prompt = ChannelPromptReading.Read("Answer in short paragraphs.", SessionPromptStatus.Differs),
-            onSubmit = { _, _ -> },
+            initialMuted = true,
+            onSubmit = { _, _, _ -> },
             onArchiveRequested = {},
             onDismissRequest = {},
         )
@@ -150,7 +204,8 @@ private fun EditChannelModalReadingPreview() {
             conversationId = "preview",
             initialName = "Release notes",
             prompt = ChannelPromptReading.Reading,
-            onSubmit = { _, _ -> },
+            initialMuted = false,
+            onSubmit = { _, _, _ -> },
             onArchiveRequested = {},
             onDismissRequest = {},
         )
