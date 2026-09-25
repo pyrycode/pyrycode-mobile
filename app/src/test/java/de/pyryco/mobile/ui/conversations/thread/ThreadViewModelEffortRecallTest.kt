@@ -295,13 +295,24 @@ class ThreadViewModelEffortRecallTest {
             val job1 = Job()
             val scope1 = CoroutineScope(Dispatchers.IO + job1)
             val prefs1 = AppPreferences(PreferenceDataStoreFactory.create(scope = scope1, produceFile = { file }))
+            val real = prefs1.asRememberedEffortStore()
+            val written = CompletableDeferred<Unit>()
+            val store =
+                object : RememberedEffortStore by real {
+                    override suspend fun remember(level: String) {
+                        real.remember(level)
+                        written.complete(Unit)
+                    }
+                }
             val repo = ScriptedRepo()
-            val vm = collectedVm(repo, prefs1.asRememberedEffortStore(), reading(effort = "low"))
+            val vm = collectedVm(repo, store, reading(effort = "low"))
 
             vm.onEffortSelected("max")
-            withContext(Dispatchers.Default) {
-                withTimeout(5_000) { prefs1.rememberedEffort.first { it == "max" } }
-            }
+            assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, effort = "max")), repo.calls)
+            // Wait for the tap's own write to return, not for `prefs1.rememberedEffort.first { it == "max" }`: a
+            // read that overlaps DataStore's write can emit the old value under the new version and then drop the
+            // write's emission as not newer, so that wait can miss it for good (#1094).
+            withContext(Dispatchers.Default) { withTimeout(5_000) { written.await() } }
             scope1.cancel()
             job1.join() // the first store releases the file only once its scope has completed
 
