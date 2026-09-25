@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -310,8 +311,9 @@ private fun markdownClip(
 /**
  * A markdown file rendered in-app (#1027), Figma `Markdown Reader Screen` (553:2574): the thread's bar with
  * the file name and the overflow menu (#1067), fixed, over a scrolling [MarkdownText] body. Copies act on
- * [document] and show no notice of their own, since the system confirms a copy; Refresh is the caller's,
- * and so is [snackbarHostState], where a failed refresh is reported.
+ * [document] and show no notice of their own, since the system confirms a copy; Open in another app (#1068)
+ * hands [document] on and reports a failure in [snackbarHostState]. Refresh is the caller's, and so is
+ * [snackbarHostState], where a failed refresh is reported.
  */
 @Composable
 fun MarkdownReaderScreen(
@@ -323,16 +325,40 @@ fun MarkdownReaderScreen(
 ) {
     val clipboard = LocalClipboardManager.current
     val clipLabel = stringResource(R.string.markdown_reader_clip_label)
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val chooserTitle = stringResource(R.string.markdown_reader_open_in_app)
+    val notices = AttachmentNotice.entries.associateWith { stringResource(it.message) }
     val onCopy: (MarkdownCopyFormat) -> Unit = { format ->
         val clip = markdownClip(document.text, format, clipLabel)
         clipboard.setClip(ClipEntry(clip))
         RelayLog.d { "event=markdown_reader_copy format=${format.logName} chars=${document.text.length}" }
     }
+    val onOpenInApp: () -> Unit = {
+        val shown = document
+        scope.launch {
+            val notice = openNoteInAnotherApp(context, shown, chooserTitle)
+            val outcome =
+                when (notice) {
+                    null -> "opened"
+                    AttachmentNotice.NO_APP -> "no_app"
+                    else -> "failed"
+                }
+            RelayLog.d { "event=markdown_reader_open_in_app outcome=$outcome chars=${shown.text.length}" }
+            notice?.let { snackbarHostState.showSnackbar(notices.getValue(it)) }
+        }
+    }
     // A Surface, not a bare background: it also sets `onSurface` as the content colour MarkdownText's text uses.
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Box {
             Column {
-                MarkdownReaderTopBar(name = document.name, onBack = onBack, onCopy = onCopy, onRefresh = onRefresh)
+                MarkdownReaderTopBar(
+                    name = document.name,
+                    onBack = onBack,
+                    onCopy = onCopy,
+                    onRefresh = onRefresh,
+                    onOpenInApp = onOpenInApp,
+                )
                 Column(
                     modifier =
                         Modifier
@@ -364,6 +390,7 @@ private fun MarkdownReaderTopBar(
     onBack: () -> Unit,
     onCopy: (MarkdownCopyFormat) -> Unit,
     onRefresh: () -> Unit,
+    onOpenInApp: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -402,6 +429,7 @@ private fun MarkdownReaderTopBar(
                     onDismiss = { menuExpanded = false },
                     onCopy = onCopy,
                     onRefresh = onRefresh,
+                    onOpenInApp = onOpenInApp,
                 )
             }
         }
@@ -412,13 +440,17 @@ private fun MarkdownReaderTopBar(
     }
 }
 
-/** The reader's overflow (#1067), built as [ThreadOverflowMenu] is: each item dismisses, then acts. */
+/**
+ * The reader's overflow (#1067), built as [ThreadOverflowMenu] is: each item dismisses, then acts. Open in
+ * another app (#1068) comes last, after Refresh.
+ */
 @Composable
 private fun MarkdownReaderMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
     onCopy: (MarkdownCopyFormat) -> Unit,
     onRefresh: () -> Unit,
+    onOpenInApp: () -> Unit,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         listOf(
@@ -439,6 +471,13 @@ private fun MarkdownReaderMenu(
             onClick = {
                 onDismiss()
                 onRefresh()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.markdown_reader_open_in_app)) },
+            onClick = {
+                onDismiss()
+                onOpenInApp()
             },
         )
     }
