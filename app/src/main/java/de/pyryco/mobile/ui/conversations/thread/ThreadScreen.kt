@@ -573,7 +573,7 @@ fun ThreadScreen(
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
-                                                    SessionBoundaryDelimiter(boundary = item)
+                                                    SessionBoundaryDelimiter(boundary = item, agent = state.agent)
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
                                                 is ThreadItem.Banner -> BannerNoticeRow(item = item)
@@ -867,7 +867,7 @@ private fun StatusReading(
 ) {
     when {
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
-        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
+        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
         turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
         else ->
