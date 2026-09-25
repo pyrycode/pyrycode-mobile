@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
@@ -45,9 +46,10 @@ private val SpinnerLabelGap = 8.dp
 fun ResettingIndicator(
     status: ResetStatus?,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     if (status == null) return
-    val label = stringResource(resettingLabelRes(status))
+    val label = stringResource(resettingLabelRes(status, agent))
     Row(
         modifier =
             modifier
@@ -74,12 +76,20 @@ fun ResettingIndicator(
 /**
  * The label for [status] (#872). Total over both enums, because the wire carries `phase` and `handoff`
  * independently: the phase decides the reading, and the handoff outcome is shown only once restarting. A
- * restart whose outcome is still `Pending` claims no outcome at all.
+ * restart whose outcome is still `Pending` claims no outcome at all. The wrap-up is the conversation's own
+ * agent writing the note (#1112), so only that reading names [agent]; the restart labels name no agent.
  */
 @StringRes
-internal fun resettingLabelRes(status: ResetStatus): Int =
+internal fun resettingLabelRes(
+    status: ResetStatus,
+    agent: ConversationAgent = ConversationAgent.Claude,
+): Int =
     when (status.phase) {
-        ResetStatus.Phase.WrappingUp -> R.string.thread_resetting_wrapping_up
+        ResetStatus.Phase.WrappingUp ->
+            when (agent) {
+                ConversationAgent.Claude -> R.string.thread_resetting_wrapping_up
+                ConversationAgent.Codex -> R.string.thread_resetting_wrapping_up_codex
+            }
         ResetStatus.Phase.Restarting ->
             when (status.handoff) {
                 ResetStatus.Handoff.Written -> R.string.thread_resetting_restarting_written

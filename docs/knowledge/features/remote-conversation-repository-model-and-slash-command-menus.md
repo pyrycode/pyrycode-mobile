@@ -56,6 +56,17 @@ nothing here branches on delivery path. Decode boundary:
   `flatMapLatest` switch is the **host-isolation mechanism**: dropping the previous connection's
   projection on a host swap is what stops one host's vocabulary being offered for another's conversation.
 
+**`agent`/`family` tags (#1110).** `ModelListRowDto` also decodes `agent: String?` and `family: String?`,
+both `omitempty` on the wire and untouched here on frames that don't carry them — a `multi_agent` client's
+`model_list` merges Claude's rows and Codex's into one list, identical for every conversation, so a row
+needs its own tag to say which agent it belongs to. `toMenu` maps `agent` through `modelRowAgentOf`: absent
+or `"claude"` reads `Claude`, `"codex"` reads `Codex`, anything else — including a case variant — is `null`,
+a row that belongs to no conversation. `family` is copied verbatim and stays unparsed. Retention and routing
+are unchanged: the filter to one conversation's own agent runs downstream, in `ThreadViewModel`, not here —
+see [Conversation repository § `ModelMenu`/`ModelMenuRow`](conversation-repository.md#shape) for the field
+KDoc and [Thread screen § the model-menu agent filter](thread-screen-how-it-works-state.md#the-model-menu-agent-filter-1110)
+for where a merged menu becomes one conversation's.
+
 **Renders nothing.** This slice adds no UI, no outbound verb, and does not retire the device `Model` /
 `Effort` enums — [#649](https://github.com/pyrycode/pyrycode-mobile/issues/649) reads what this retains
 when the composer's model/effort controls land.

@@ -19,9 +19,11 @@ History decode: `data/repository/HistoryPageReducer.kt` (`withHistoryEntry`'s `T
 
 Wire SSOT: pyrycode `docs/protocol-mobile.md` § `banner` (sibling checkout) + § *Joining a page to the
 live stream* for the `(type, ts)` join key. Desktop sibling: pyrycode-desktop `ConversationScreen.tsx`'s
-`bannerDisplayText` and the `banner` arm of the timeline render — this row's stripping set and
-`"Claude: "` attribution are taken from it, without desktop's composer-slot handling of `stops_turn`,
-which mobile has no equivalent surface for.
+`bannerDisplayText` and the `banner` arm of the timeline render — this row's stripping set and its
+attribution are taken from it, without desktop's composer-slot handling of `stops_turn`, which mobile has
+no equivalent surface for. The attribution originally read a fixed `"Claude: "`; since
+[#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113) it names the conversation's own agent
+(§ Security below).
 
 ## The thread-row type
 
@@ -104,19 +106,21 @@ it to seven — a specific number invites falling out of sync again the next tim
 
 ```kotlin
 @Composable
-fun BannerNoticeRow(item: ThreadItem.Banner, modifier: Modifier = Modifier)
+fun BannerNoticeRow(item: ThreadItem.Banner, agent: ConversationAgent, modifier: Modifier = Modifier)
 ```
 
 Stateless, single `Row` inside the [`MessageContentGutter`](message-bubble.md), no bubble fill —
 borrows the thread's `Session reset` body-small treatment, since Figma 16:8 has no dedicated notice
 component. A `BannerLevel.Warning` row takes the theme's existing `colorScheme.warning` token for both a
-leading 16dp `Icons.Outlined.WarningAmber` (content description `cd_thread_banner_warning`) and the text;
-every other level uses `onSurfaceVariant` and draws no icon — the two read apart without relying on
-colour alone. The `Text` is one `AnnotatedString` built from three parts, in order: the client-owned
-`thread_banner_attribution` ("Claude: ") in `FontWeight.Medium`, `bannerDisplayText(item.text)` in the
-row's normal weight, and — only when `item.truncated` — the client-owned `thread_banner_truncated`
-(" (truncated)") in `FontStyle.Italic`. No `SelectionContainer`, no markdown, no link detection, no
-click, and no second length cap beyond the daemon's 4 KiB bound.
+leading 16dp `Icons.Outlined.WarningAmber` (content description `cd_thread_banner_warning`, "Warning from
+%1$s") and the text; every other level uses `onSurfaceVariant` and draws no icon — the two read apart
+without relying on colour alone. The `Text` is one `AnnotatedString` built from three parts, in order: the
+client-owned `thread_banner_attribution` ("%1$s: ", the conversation's agent name from `agentName()`,
+[#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113); "Claude: " for a Claude conversation) in
+`FontWeight.Medium`, `bannerDisplayText(item.text)` in the row's normal weight, and — only when
+`item.truncated` — the client-owned `thread_banner_truncated` (" (truncated)") in `FontStyle.Italic`. No
+`SelectionContainer`, no markdown, no link detection, no click, and no second length cap beyond the
+daemon's 4 KiB bound.
 
 `bannerDisplayText(text: String): String` is the pure render-boundary stripping function, mirroring
 desktop's set without its prefix/suffix concerns: OSC strings and DCS/SOS/PM/APC strings (terminated or
@@ -129,23 +133,39 @@ that plain text plus tab/newline/carriage-return survive untouched.
 ### Security — why the attribution is its own span
 
 `item.text` is claude-authored and unsanitized; the realistic abuse the protocol names is text at
-`warning` impersonating daemon chrome. The `"Claude: "` attribution is a separate `SpanStyle` in a
-distinct weight, appended before `bannerDisplayText(item.text)` rather than concatenated into one plain
-string — claude can type the literal characters `"Claude: "` into `text`, but it cannot restyle a span,
-so the attribution cannot be forged from inside the banner's own text. **Keep it a separate styled span
-in any future edit to this row.** Unicode bidi/format-character stripping (U+202A–U+202E, U+2066–U+2069)
-is deliberately out of scope, matching desktop — such characters can only reorder glyphs inside a row
-whose attribution span is client-owned, and there is no observed abuse to justify the added complexity
-(see [Development verification](development-verification.md) on evidence-based fix selection).
+`warning` impersonating daemon chrome. The attribution (`"<agent>: "`, e.g. "Claude: " or "Codex: ") is a
+separate `SpanStyle` in a distinct weight, appended before `bannerDisplayText(item.text)` rather than
+concatenated into one plain string — claude can type the literal characters `"Claude: "` into `text`, but
+it cannot restyle a span, so the attribution cannot be forged from inside the banner's own text. **Keep it
+a separate styled span in any future edit to this row.** Unicode bidi/format-character stripping
+(U+202A–U+202E, U+2066–U+2069) is deliberately out of scope, matching desktop — such characters can only
+reorder glyphs inside a row whose attribution span is client-owned, and there is no observed abuse to
+justify the added complexity (see [Development verification](development-verification.md) on
+evidence-based fix selection).
+
+**The agent name stays client-owned ([#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113)).**
+The name inside the attribution and the warning content description comes from `agentName(agent):
+String` (`components/AgentName.kt`), an exhaustive `when` over the closed `ConversationAgent` enum
+resolving one of two string resources (`agent_name_claude`, `agent_name_codex`) — never text the daemon
+sent. `agent` is a **required** parameter on this row (no default), so a future call site cannot silently
+credit Claude. `ConversationAgent` comes from `Conversation.agent` ([#1108](https://github.com/pyrycode/pyrycode-mobile/issues/1108))
+via `ThreadUiState.agent`, set in `ThreadViewModel`'s existing conversations `combine` (`conv?.agent ?:
+ConversationAgent.Claude`); `ThreadScreen` passes `state.agent` straight through. With a Claude
+conversation every string renders byte-for-byte as before #1113. This is a **different idiom** from the
+one `ApiRetryIndicator`/`CompactingIndicator`/`ThinkingIndicator` use for the same job — see [Turn-outcome
+indicator § The agent name](turn-outcome-indicator.md#the-agent-name-1113) for both idioms and why the
+divergence is a non-blocking NIT, not a defect. [`ModelRefusalRow`](model-refusal-row.md) reuses this same
+`agentName()` / `thread_banner_attribution` pair for its own opened explanation.
 
 ## `ThreadRow` / `ThreadScreen` wiring
 
 All four of the exhaustive `when`s over `ThreadItem` gained a `Banner` arm:
 
 - **`ThreadRow.listKey()`** — `"banner:$occurredAt"`; unique because `holdsBanner` is.
-- **`ThreadScreen`'s `LazyColumn` render** — `BannerNoticeRow(item = item)`, inside the same
-  `rowAlpha`-driven `Box` as its neighbours, so above-delimiter dimming applies with no new code. A
-  banner row is **not** a session boundary for `mostRecentSessionBoundaryIndex` — unchanged.
+- **`ThreadScreen`'s `LazyColumn` render** — `BannerNoticeRow(item = item, agent = state.agent)` (`agent`
+  since #1113), inside the same `rowAlpha`-driven `Box` as its neighbours, so above-delimiter dimming
+  applies with no new code. A banner row is **not** a session boundary for
+  `mostRecentSessionBoundaryIndex` — unchanged.
 - **`ThreadItem.timestamp()`** — `occurredAt`.
 - **`RemoteConversationRepositoryTest.threadShape()`** — the test-fixture helper outside production code
   that also needs every `ThreadItem` arm to keep compiling, the same fourth site #608's Lessons learned
@@ -180,16 +200,23 @@ replay is what restores a banner after a cold start or a fresh cache — not the
 - `BannerNoticeRowTest` (Compose instrumented, `app/src/androidTest/.../components/`): the attribution +
   sanitized text render as one string with escapes gone; a truncated row carries the mark and an
   untruncated one does not; a `Warning` row exposes `cd_thread_banner_warning` and a `Notice` row does
-  not; the row has no click action even when its text contains something that looks like a link.
+  not; the row has no click action even when its text contains something that looks like a link. Since
+  #1113 every case passes `agent = ConversationAgent.Claude` and keeps asserting the literal "Claude: "
+  copy — the "reads exactly as today" guard.
 - **No rung-4 scripted twin.** The daemon has no scripted `banner` emitter, so this ticket added none;
   live verification against a real claude is [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679),
   per the ticket.
+- **#1113**: the new sharedTest `ThreadAgentAttributionTest` (Robolectric, through `ThreadScreen`) covers
+  a Codex conversation's warning banner — "Codex: …" text, "Warning from Codex" content description — and
+  a Claude conversation rendering unchanged, proving the `state.agent` wiring end to end.
 
 ## Related
 
-- Ticket notes: [`../codebase/873.md`](../codebase/873.md)
+- Ticket notes: [`../codebase/873.md`](../codebase/873.md). #1113 postdates the 2026-09-05 codebase-archive
+  freeze and has no per-ticket note.
 - Spec: [`docs/specs/architecture/873-banner-notice-row.md`](../../specs/architecture/873-banner-notice-row.md)
-  (design + security review, verdict PASS)
+  (design + security review, verdict PASS) ·
+  `docs/specs/architecture/1113-agent-name-in-thread-notices.md` (the `agent` param, § Security above).
 - Wire SSOT: `pyrycode/docs/protocol-mobile.md` § `banner`, § *Joining a page to the live stream* (sibling
   checkout).
 - Desktop sibling: pyrycode-desktop `ConversationScreen.tsx`'s `bannerDisplayText` and `banner` timeline

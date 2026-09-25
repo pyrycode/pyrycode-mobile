@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
@@ -1128,6 +1129,12 @@ data class ModelMenu(
  * @param truncatedFields The names of **this row's** cut fields, in producer order, or `null` when
  *   nothing was cut. Each row reports its own; there is no hoisted or flattened list, and this is never
  *   recomputed from what survived.
+ * @param agent The agent this row's model belongs to (#1110): a `multi_agent` menu merges Claude's rows
+ *   and Codex's, the same list for every conversation, and a conversation lists only its own agent's.
+ *   Claude when the daemon did not tag the row; `null` for an agent this client does not know, which no
+ *   conversation lists.
+ * @param family The row's model family as the daemon tagged it, or `null` when untagged. Daemon-authored
+ *   text under the same obligation as the strings above; nothing parses, renders or keys off it.
  */
 data class ModelMenuRow(
     val resolvedModel: String,
@@ -1136,6 +1143,8 @@ data class ModelMenuRow(
     val effortLevels: List<String>,
     val supportsAutoMode: Boolean,
     val truncatedFields: List<String>?,
+    val agent: ConversationAgent? = ConversationAgent.Claude,
+    val family: String? = null,
 )
 
 /**

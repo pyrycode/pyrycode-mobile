@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
-import de.pyryco.mobile.ui.conversations.components.nameRes
+import de.pyryco.mobile.ui.conversations.components.agentName
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 /**
@@ -117,7 +117,7 @@ internal fun EffortNote.textRes(): Int =
  * The footer and the Status sheet both resolve it here, so the two never disagree.
  */
 @Composable
-internal fun EffortNote.text(agent: ConversationAgent): String = stringResource(textRes(), stringResource(agent.nameRes()))
+internal fun EffortNote.text(agent: ConversationAgent): String = stringResource(textRes(), agentName(agent))
 
 /**
  * What a footer control offers when its overlay opens. [notListed] is how many entries the list leaves

@@ -74,7 +74,7 @@ when {
     apiRetry != ApiRetryStatus.NotRetrying ->
         ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth(), agent = agent) // #1114
     resetting != null ->
-        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth())
+        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth(), agent = agent) // #1112
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth(), agent = agent) // #1114
     turnOutcome != null ->
@@ -84,8 +84,10 @@ when {
 }
 ```
 
-`resetting` and `turnOutcome` did not gain `agent` in #1114 — see [Thinking indicator § Edge
-cases](thinking-indicator.md#edge-cases--limitations) for the partial-rollout note.
+`resetting` gained `agent` in #1112, closing the gap #1114 left on this one arm — see [Resetting
+indicator § The agent name](resetting-indicator.md#the-agent-name-1112). `turnOutcome` still has not — see
+[Thinking indicator § Edge cases](thinking-indicator.md#edge-cases--limitations) for the remaining
+partial-rollout note.
 
 **Exactly one affordance renders; the arms never stack.** Two things about the ordering:
 

@@ -99,7 +99,7 @@ and (transitively) `ThreadRow.listKey()` all agree with it.
 
 ```kotlin
 @Composable
-fun ModelRefusalRow(item: ThreadItem.ModelRefusal, modifier: Modifier = Modifier)
+fun ModelRefusalRow(item: ThreadItem.ModelRefusal, agent: ConversationAgent, modifier: Modifier = Modifier)
 ```
 
 Stateful/stateless split matching [`UnrecognizedMessageRow`](unrecognized-message-row.md): the public
@@ -118,9 +118,15 @@ identifier crafted to read as client copy (e.g. `"a, continued on b"` sent as `o
 no-fallback frame) cannot pass itself off as the surrounding words. A blank identifier renders the
 client-owned `thread_refusal_unknown_model` ("unknown model") in the client span instead. Expanding shows
 one `Text` built the same way [`BannerNoticeRow`](banner-notice-row.md) builds its line: the reused
-`thread_banner_attribution` ("Claude: ") span in `FontWeight.Medium`, then `bannerDisplayText(item.banner)`,
-then — when `bannerTruncated` — the reused `thread_banner_truncated` in italic. No markdown, no
-`SelectionContainer`, no link detection, no second length cap beyond the daemon's bound.
+`thread_banner_attribution` ("%1$s: ", the conversation's agent name from `agentName()`,
+[#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113); "Claude: " for a Claude conversation)
+span in `FontWeight.Medium`, then `bannerDisplayText(item.banner)`, then — when `bannerTruncated` — the
+reused `thread_banner_truncated` in italic. No markdown, no `SelectionContainer`, no link detection, no
+second length cap beyond the daemon's bound.
+
+The expand/collapse click label (`cd_thread_refusal_expand`/`_collapse`, "Show/Hide %1$s's explanation")
+takes the same agent name, since #1113 — before, both read "Show/Hide Claude's explanation"
+unconditionally.
 
 `refusalModelDisplay(model: String): String?` is the model-identifier render-boundary function:
 `bannerDisplayText(model)` (the same CSI/OSC/C0/C1/DEL stripping `banner` uses) with tab, `\n` and `\r`
@@ -135,9 +141,18 @@ The realistic abuse the protocol names is a claude-authored identifier trying to
 client's sentence, or as a second attribution. Both are addressed the way `BannerNoticeRow` addresses banner
 spoofing: every claude-authored value is its own styled `SpanStyle` between client-owned proportional spans,
 never concatenated into one plain string, so claude can type the client's literal words into a field but
-cannot restyle a span to make them look like part of the chrome. `"Claude: "` stays a separate medium-weight
-span, the #873 rule. Unicode bidi/format-character stripping is out of scope here, matching `banner` and
-desktop.
+cannot restyle a span to make them look like part of the chrome. The `"<agent>: "` attribution stays a
+separate medium-weight span, the #873 rule. Unicode bidi/format-character stripping is out of scope here,
+matching `banner` and desktop.
+
+**The agent name stays client-owned ([#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113)),
+same as `BannerNoticeRow`.** The attribution and both click labels take their name from `agentName(agent)`
+(`components/AgentName.kt`), an exhaustive `when` over the closed `ConversationAgent` enum — never text
+the daemon sent. `agent` is a **required** parameter on this row (no default). See [Banner notice row §
+Security](banner-notice-row.md#security--why-the-attribution-is-its-own-span) for the shared idiom, why it
+diverges from #1114's twin-string approach on the other status indicators, and where `agent` comes from
+(`ThreadUiState.agent` ← `Conversation.agent`, #1108). With a Claude conversation every string renders
+byte-for-byte as before #1113.
 
 ## `ThreadRow` / `ThreadScreen` wiring
 
@@ -145,8 +160,8 @@ All the exhaustive `when`s over `ThreadItem` gained a `ModelRefusal` arm:
 
 - **`ThreadRow.listKey()`** — `"refusal:fallback:$occurredAt"` when `fallbackModel != null`, else
   `"refusal:no-fallback:$occurredAt"` — unique because `holdsModelRefusal` is.
-- **`ThreadScreen`'s `LazyColumn` render** — `ModelRefusalRow(item = item)`. Not a session boundary for
-  `mostRecentSessionBoundaryIndex` — unchanged.
+- **`ThreadScreen`'s `LazyColumn` render** — `ModelRefusalRow(item = item, agent = state.agent)` (`agent`
+  since #1113). Not a session boundary for `mostRecentSessionBoundaryIndex` — unchanged.
 - **`ThreadItem.timestamp()`** — `occurredAt`.
 - **`HistoryPageReducer.alreadyHolds`** — `holdsModelRefusal(row)`.
 - **`FileConversationCache.toRecord`** — throws `IllegalStateException("model refusal rows are never cached")`.
@@ -184,16 +199,24 @@ fresh cache — not the cache.
 - `ModelRefusalRowTest` (Compose instrumented, `app/src/androidTest/.../components/`): a fallback reads
   "Refused on X, continued on Y", a no-fallback reads "Refused by X", an empty model reads "unknown model",
   the banner stays hidden until tapped then shows "Claude: " + stripped text, the truncated mark shows only
-  when cut, and an empty banner leaves the row with no click action.
+  when cut, and an empty banner leaves the row with no click action. Since #1113 every case passes
+  `agent = ConversationAgent.Claude`; the test only gained the argument, unchanged assertions. It is
+  `androidTest`-only, so #1113 compiled it but did not run it on a device — the sharedTest below carries
+  the actual Codex proof.
 - **No rung-3 / rung-4 scenario.** The daemon has no scripted refusal emitter; live verification against a
   real claude is [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679), per the ticket. #679's own
   body does not yet mention either frame — the only record of that handoff is on #875 and here.
+- **#1113**: the new sharedTest `ThreadAgentAttributionTest` (Robolectric, through `ThreadScreen`) covers a
+  Codex conversation's refusal — "Codex: …" text once expanded, click label "Show Codex's explanation" then
+  "Hide Codex's explanation" after the toggle — and a Claude conversation rendering unchanged.
 
 ## Related
 
-- Ticket notes: [`../codebase/875.md`](../codebase/875.md)
+- Ticket notes: [`../codebase/875.md`](../codebase/875.md). #1113 postdates the 2026-09-05 codebase-archive
+  freeze and has no per-ticket note.
 - Spec: [`docs/specs/architecture/875-model-refusal-row.md`](../../specs/architecture/875-model-refusal-row.md)
-  (design + security review, verdict PASS)
+  (design + security review, verdict PASS) ·
+  `docs/specs/architecture/1113-agent-name-in-thread-notices.md` (the `agent` param, § Security above).
 - Wire SSOT: `pyrycode/docs/protocol-mobile.md` § `model_refusal_fallback`, § `model_refusal_no_fallback`,
   § *Joining a page to the live stream* (sibling checkout).
 - Desktop sibling: pyrycode-desktop `ConversationScreen.tsx`'s `ModelRefusalRow`.

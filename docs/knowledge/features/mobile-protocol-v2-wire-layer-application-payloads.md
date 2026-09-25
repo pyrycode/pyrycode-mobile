@@ -190,6 +190,12 @@ pairs it with the mapped value rather than returning the bare domain value. Wire
   deliberately wants and `effective_effort` (above) had to *avoid*, because *its* three states mean three
   different things. An out-of-contract `[]` decodes to an empty list rather than being punned to `null` —
   what arrived is what is retained.
+- `agent` and `family` ([#1110](https://github.com/pyrycode/pyrycode-mobile/issues/1110)) are `omitempty`
+  strings a `multi_agent` client's merged row carries; a client that hasn't negotiated `multi_agent` is
+  never sent either key. Absence defaults `agent` to `Claude`, the one string default on this frame that is
+  *not* read from a stated wire contract the way `supports_auto_mode`'s is — it is this client's own choice,
+  matching `Conversation.agent`'s default, and it holds only because a non-`multi_agent` client is never
+  sent a Codex row to mis-default. `family` stays `null` when absent and is never given a fallback value.
 
 `dropped_models` is carried **verbatim** into `ModelMenu.droppedModels`, never recomputed from
 `rows.size` — the producer's entry cap is daemon-side and not a wire constant, so `models.size +

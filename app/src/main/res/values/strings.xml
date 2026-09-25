@@ -130,9 +130,6 @@
     <string name="thread_footer_context_unavailable">Cxt: n/a</string>
     <string name="cd_context_usage">Context usage %1$d%%</string>
     <string name="cd_context_usage_unavailable">Context usage unavailable</string>
-    <!-- #1115: the client-owned agent names; %1$s of the effort notes and usage-limit lines below. -->
-    <string name="agent_name_claude" translatable="false">Claude</string>
-    <string name="agent_name_codex" translatable="false">Codex</string>
     <string name="thread_effort_note_selected_unavailable">Selected effort. The running effort is unavailable.</string>
     <string name="thread_effort_note_default_unavailable">%1$s\'s default applies. The running effort is unavailable.</string>
     <string name="thread_effort_note_not_reported">%1$s reports no effort parameter.</string>
@@ -163,6 +160,7 @@
     <!-- #872: Reset session's phase in the thread status area. Each is both the visible label and the
          row's merged content description; chosen by closed-set enum, never daemon text. -->
     <string name="thread_resetting_wrapping_up">Claude is writing a handoff note for the next session</string>
+    <string name="thread_resetting_wrapping_up_codex">Codex is writing a handoff note for the next session</string>
     <string name="thread_resetting_restarting_written">Restarting · handoff note saved</string>
     <string name="thread_resetting_restarting_skipped">Restarting without a handoff note</string>
     <string name="thread_resetting_restarting">Restarting</string>
@@ -172,13 +170,13 @@
     <string name="thread_usage_limit_label_no_status">%1$s reported a usage-limit update</string>
     <string name="thread_usage_limit_spent">" · %1$d%% spent"</string>
     <string name="thread_usage_limit_resets">" · resets %1$s"</string>
-    <!-- #805: a turn that failed or was interrupted. Everything claude said about the stop follows
-         "Claude reports", so an account state such as billing_error never reads as the app's own finding. -->
+    <!-- #805: a turn that failed or was interrupted. Everything the agent said about the stop follows
+         "<agent> reports" (#1113), so an account state such as billing_error never reads as the app's own finding. -->
     <string name="thread_turn_outcome_interrupted">Turn interrupted</string>
     <string name="thread_turn_outcome_failed">Turn failed</string>
     <string name="thread_turn_outcome_stopped">Turn stopped early</string>
-    <string name="thread_turn_outcome_claude_reports">" · Claude reports %1$s"</string>
-    <string name="thread_turn_outcome_claude_reports_error">" · Claude reports an error"</string>
+    <string name="thread_turn_outcome_agent_reports">" · %1$s reports %2$s"</string>
+    <string name="thread_turn_outcome_agent_reports_error">" · %1$s reports an error"</string>
     <string name="thread_turn_outcome_api_error">API error %1$s</string>
     <string name="thread_history_loading_label">Loading earlier messages</string>
     <string name="cd_thread_history_loading">Loading earlier messages in this conversation</string>
@@ -207,15 +205,19 @@
     <string name="thread_unrecognized_site_codex_item">Codex item</string>
     <string name="cd_thread_unrecognized_expand">Show the unrecognized payload</string>
     <string name="cd_thread_unrecognized_collapse">Hide the unrecognized payload</string>
-    <string name="thread_banner_attribution">"Claude: "</string>
+    <!-- #1113: the conversation's agent, always a client-owned name and never daemon text. Every
+         attribution and label below that names an agent takes one of these as %1$s. -->
+    <string name="agent_name_claude">Claude</string>
+    <string name="agent_name_codex">Codex</string>
+    <string name="thread_banner_attribution">"%1$s: "</string>
     <string name="thread_banner_truncated">" (truncated)"</string>
-    <string name="cd_thread_banner_warning">Warning from Claude</string>
+    <string name="cd_thread_banner_warning">Warning from %1$s</string>
     <string name="thread_refusal_refused_on">"Refused on "</string>
     <string name="thread_refusal_continued_on">", continued on "</string>
     <string name="thread_refusal_refused_by">"Refused by "</string>
     <string name="thread_refusal_unknown_model">unknown model</string>
-    <string name="cd_thread_refusal_expand">Show Claude\'s explanation</string>
-    <string name="cd_thread_refusal_collapse">Hide Claude\'s explanation</string>
+    <string name="cd_thread_refusal_expand">Show %1$s\'s explanation</string>
+    <string name="cd_thread_refusal_collapse">Hide %1$s\'s explanation</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="cd_tool_done">Tool call done</string>

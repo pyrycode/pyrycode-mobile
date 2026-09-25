@@ -53,7 +53,7 @@ internal fun usageLimitLabel(
     reading: UsageLimitReading,
     agent: ConversationAgent,
 ): String {
-    val agentName = stringResource(agent.nameRes())
+    val name = agentName(agent)
     val now = remember(reading) { Clock.System.now() }
     val status = usageLimitStatusLabel(reading.status, reading.truncatedFields)
     val spent = usageLimitSpentPercent(reading.utilization)
@@ -61,9 +61,9 @@ internal fun usageLimitLabel(
     return buildString {
         append(
             if (status != null) {
-                stringResource(R.string.thread_usage_limit_label, agentName, status)
+                stringResource(R.string.thread_usage_limit_label, name, status)
             } else {
-                stringResource(R.string.thread_usage_limit_label_no_status, agentName)
+                stringResource(R.string.thread_usage_limit_label_no_status, name)
             },
         )
         if (spent != null) append(stringResource(R.string.thread_usage_limit_spent, spent))

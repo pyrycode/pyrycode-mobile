@@ -22,6 +22,7 @@ Package: `de.pyryco.mobile.ui.conversations.components`
 fun ResettingIndicator(
     status: ResetStatus?,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 )
 ```
 
@@ -38,21 +39,24 @@ Pure function of `status`: no `ViewModel` reference, no flow collection, no `rem
   `CircularProgressIndicator` (`size(16.dp)`, `strokeWidth = 2.dp`) and a `Text` (`bodySmall` /
   `onSurfaceVariant`) — **indeterminate, deliberately**: neither phase streams a counter, percent, or ETA
   on the wire, so a determinate bar would invent data.
-- **`resettingLabelRes(status): @StringRes Int`** (`internal`, unit-tested directly) is total over both
-  enums, not a partial mapping of the three documented wire pairings:
+- **`resettingLabelRes(status, agent = ConversationAgent.Claude): @StringRes Int`** (`internal`,
+  unit-tested directly) is total over both `ResetStatus` enums, not a partial mapping of the three
+  documented wire pairings:
 
-  | `phase` | `handoff` | Resource | Text |
-  |---|---|---|---|
-  | `WrappingUp` | any | `thread_resetting_wrapping_up` | "Claude is writing a handoff note for the next session" |
-  | `Restarting` | `Written` | `thread_resetting_restarting_written` | "Restarting · handoff note saved" |
-  | `Restarting` | `Skipped` | `thread_resetting_restarting_skipped` | "Restarting without a handoff note" |
-  | `Restarting` | `Pending` | `thread_resetting_restarting` | "Restarting" |
+  | `phase` | `handoff` | `agent` | Resource | Text |
+  |---|---|---|---|---|
+  | `WrappingUp` | any | `Claude` | `thread_resetting_wrapping_up` | "Claude is writing a handoff note for the next session" |
+  | `WrappingUp` | any | `Codex` | `thread_resetting_wrapping_up_codex` | "Codex is writing a handoff note for the next session" |
+  | `Restarting` | `Written` | any | `thread_resetting_restarting_written` | "Restarting · handoff note saved" |
+  | `Restarting` | `Skipped` | any | `thread_resetting_restarting_skipped` | "Restarting without a handoff note" |
+  | `Restarting` | `Pending` | any | `thread_resetting_restarting` | "Restarting" |
 
   `WrappingUp` ignores the handoff field regardless of its value — the outcome is only meaningful once
   restarting. `Restarting`+`Pending` is not a documented wire combination (the wire resolves the outcome
   in the same frame that raises `restarting`), but the mapping stays total rather than partial so a future
   wire change can't produce an unrenderable `ResetStatus`; that arm claims no outcome rather than guessing
-  one.
+  one. See [The agent name (#1112)](#the-agent-name-1112) for why only the `WrappingUp` row branches on
+  `agent`.
 - **Accessibility** — `Modifier.semantics(mergeDescendants = true) { contentDescription = label }` on the
   `Row`, sourced from the **same** `label` the `Text` renders (the [`UsageLimitIndicator`](usage-limit-indicator.md)
   precedent: one wording source, not a separate `cd_*` string).
@@ -97,6 +101,21 @@ for why the arm is deliberately undefended against a daemon that raises but neve
 the composer and the interrupt control stay live throughout, the same posture `CompactingIndicator`
 ships.
 
+### The agent name (#1112)
+
+**Only the `WrappingUp` reading names an agent.** The wrap-up is the conversation's own agent writing its
+handoff note, so `"Claude is writing a handoff note for the next session"` gets a whole sibling string,
+`thread_resetting_wrapping_up_codex`, rather than a shared format with a name placeholder — the same
+whole-string posture [`ThinkingIndicator`](thinking-indicator.md#configuration) used for its own #1114
+strings. The three `Restarting` labels (`"Restarting · handoff note saved"`, `"Restarting without a
+handoff note"`, `"Restarting"`) never named an agent in the first place, so they take the `agent` parameter
+for signature symmetry with the other status-ladder arms but stay the single shared resource regardless of
+its value — there was no Claude-specific wording in them to fork. `agent` is threaded exactly like
+[`ApiRetryIndicator`](api-retry-indicator.md) and [`CompactingIndicator`](compacting-indicator.md)'s own
+\#1114 parameter: a trailing defaulted param, not a `ThreadUiState` field on this component, sourced from
+`ThreadScreen`'s existing `state.agent` (see [Thinking indicator § The agent
+name](thinking-indicator.md#the-agent-name-1114) for where `state.agent` itself comes from).
+
 ## Wiring
 
 Threaded exactly like `isCompacting` — a **defaulted hoisted value**, sibling to `usageLimit`, **not** a
@@ -124,7 +143,9 @@ Threaded exactly like `isCompacting` — a **defaulted hoisted value**, sibling 
   `resetting_observesOnlyOwnConversationId` and the scripted other-conversation case.
 - **`ThreadScreen`** gains `resetting: ResetStatus? = null` in its trailing-defaults block, beside
   `usageLimit`. Defaulting it keeps every pre-#872 `ThreadScreen(` call site and preview compiling
-  unchanged; only `MainActivity` and the scripted harness gain an argument.
+  unchanged; only `MainActivity` and the scripted harness gain an argument. `ThreadScreen`'s private
+  `StatusReading` (`ThreadScreen.kt`) passes its own `agent` parameter straight through:
+  `ResettingIndicator(status = resetting, modifier = modifier, agent = agent)` (#1112).
 - **`MainActivity`** collects it via `vm.resetting.collectAsStateWithLifecycle()` beside `usageLimit` /
   `isCompacting`, and passes it through — two lines, mirroring the `isCompacting` wiring.
 
@@ -148,26 +169,27 @@ one rendered case.
 
 - **No new dependencies.** Existing Compose Material 3 imports only. No `gradle/libs.versions.toml`
   edits.
-- **Four new string resources** in `res/values/strings.xml`, appended beside the compacting and
-  usage-limit strings. None takes a format argument — nothing daemon-supplied reaches any of them, and
-  each is both the visible label and (via the merged `semantics`) the content description:
+- **Five string resources** in `res/values/strings.xml` (four from #872, one more from #1112), appended
+  beside the compacting and usage-limit strings. None takes a format argument — nothing daemon-supplied
+  reaches any of them, and each is both the visible label and (via the merged `semantics`) the content
+  description:
 
   | Name | Value |
   |---|---|
   | `thread_resetting_wrapping_up` | `Claude is writing a handoff note for the next session` |
+  | `thread_resetting_wrapping_up_codex` | `Codex is writing a handoff note for the next session` |
   | `thread_resetting_restarting_written` | `Restarting · handoff note saved` |
   | `thread_resetting_restarting_skipped` | `Restarting without a handoff note` |
   | `thread_resetting_restarting` | `Restarting` |
 
 ## Edge cases / limitations
 
-- **Still names Claude unconditionally ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114),
-  open).** #1114 gave `ThinkingIndicator`, `ApiRetryIndicator` and `CompactingIndicator` a trailing `agent:
-  ConversationAgent` parameter so their live status labels name a Codex conversation's agent; this
-  component's four `thread_resetting_*` labels were left out of that ticket's scope and still say "Claude"
-  regardless of `Conversation.agent`. #1114's verifier flagged this as a non-blocking NIT for whichever
-  sibling ticket (#1112/#1113/#1115) covers the rest of the ladder. See [Thinking indicator § The agent
-  name](thinking-indicator.md#the-agent-name-1114) for the pattern the fix would follow.
+- **Now names the agent, wrap-up only ([#1112](https://github.com/pyrycode/pyrycode-mobile/issues/1112)).**
+  #1114 gave `ThinkingIndicator`, `ApiRetryIndicator` and `CompactingIndicator` a trailing `agent:
+  ConversationAgent` parameter so their live status labels name a Codex conversation's agent, but left this
+  component's four `thread_resetting_*` labels out of scope — #1114's verifier flagged that as a
+  non-blocking NIT for whichever sibling ticket covered the rest of the ladder. #1112 closed it for the one
+  label that actually names an agent: see [The agent name (#1112)](#the-agent-name-1112).
 - **Visual is design-owed**, the same gap already recorded for
   [`ThinkingIndicator`](thinking-indicator.md), [`ApiRetryIndicator`](api-retry-indicator.md) and
   [`CompactingIndicator`](compacting-indicator.md#edge-cases--limitations): Figma `111:3525` draws one
@@ -205,8 +227,12 @@ one rendered case.
 
 - Ticket: [#872](https://github.com/pyrycode/pyrycode-mobile/issues/872) (this component, split from
   #630) · [#871](https://github.com/pyrycode/pyrycode-mobile/issues/871) (the data/repository half it
-  consumes).
-- Spec: `docs/specs/architecture/872-resetting-indicator.md`.
+  consumes) · [#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114) (the `agent` param pattern
+  on `ThinkingIndicator`/`ApiRetryIndicator`/`CompactingIndicator`, left this component out) ·
+  [#1112](https://github.com/pyrycode/pyrycode-mobile/issues/1112) (this component's own `agent` param —
+  see [The agent name](#the-agent-name-1112)).
+- Spec: `docs/specs/architecture/872-resetting-indicator.md`,
+  `docs/specs/architecture/1112-agent-name-reset-and-boundary.md`.
 - Upstream signal: [Resetting state](resetting-state.md) — `ThreadViewModel.resetting` /
   `observeResetting`, the `resetting` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `resetting` as another flat sibling parameter and
