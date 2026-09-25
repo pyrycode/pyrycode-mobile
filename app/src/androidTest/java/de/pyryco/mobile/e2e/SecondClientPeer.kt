@@ -531,8 +531,11 @@ class SecondClientPeer(
         }
     }
 
-    /** Run one wait of up to [timeoutMs] that fails at once, naming [what], if the peer is [close]d under it (#1059). */
-    private suspend fun <T> awaiting(
+    /**
+     * Run one wait of up to [timeoutMs] that fails at once, naming [what], if the peer is [close]d under it (#1059).
+     * Scenarios that poll [recorded] run their loop through it too (#1064).
+     */
+    internal suspend fun <T> awaiting(
         what: String,
         timeoutMs: Long,
         block: suspend () -> T,

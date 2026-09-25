@@ -4,8 +4,10 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -47,6 +49,31 @@ class PeerWaitTest {
             assertTrue("$error", error is AssertionError)
             assertTrue("${error?.message}", error?.message.orEmpty().contains("closed while awaiting modal_shown"))
             assertEquals(0L, currentTime)
+        }
+
+    @Test
+    fun `closing the peer fails a polling wait at once, naming its frame`() =
+        runTest {
+            // #1064: allowPromptsUntil polls a snapshot of the peer's frames and delays between polls.
+            val frames = MutableStateFlow(emptyList<String>())
+            val wait =
+                async {
+                    runCatching {
+                        awaitPeer("background_task_started", TIMEOUT_MS, closed) {
+                            while (frames.value.none { it == "background_task_started" }) delay(POLL_MS)
+                        }
+                    }
+                }
+            advanceTimeBy(3 * POLL_MS)
+
+            closed.value = true
+            runCurrent()
+
+            assertTrue(wait.isCompleted)
+            val error = wait.await().exceptionOrNull()
+            assertTrue("$error", error is AssertionError)
+            assertTrue("${error?.message}", error?.message.orEmpty().contains("closed while awaiting background_task_started"))
+            assertTrue("$currentTime", currentTime < TIMEOUT_MS)
         }
 
     @Test
@@ -146,5 +173,6 @@ class PeerWaitTest {
 
     private companion object {
         const val TIMEOUT_MS = 90_000L
+        const val POLL_MS = 250L
     }
 }
