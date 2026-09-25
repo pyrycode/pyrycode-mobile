@@ -31,6 +31,28 @@ its weighted field container distributes spare space. Without the intrinsic
 minimum, the second field collapsed when the keyboard reduced the viewport;
 adding scrolling alone did not keep both fields reachable.
 
+The outer `Column` applies `systemBarsPadding()` before `imePadding()` (#1141),
+matching [`ScannerViewport`](scanner-screen.md#scannerviewport--the-locked-viewport-body):
+the `surface` background still fills the window edge to edge, but the header
+sits below the status bar and Cancel/the footer sit above the navigation bar.
+`imePadding()` after it then adds only the keyboard height beyond the
+navigation bar `systemBarsPadding()` already consumed. The toolbar Back
+`IconButton` is explicitly sized `Modifier.size(48.dp)`, the same as the
+scanner's — M3's default `IconButton` is 40 dp centred in a 48 dp touch
+target, so two headers with identical row padding can otherwise report Back
+tops several dp apart even though their arrows sit in the same place. The
+`Confirming` phase returns `ScannerScreen` before this `Column` is composed,
+so it does not gain a second system-bar inset.
+
+Like every other screen, this one sits under the root `Scaffold`'s own
+`innerPadding` (see [navigation § Insets](navigation.md#configuration)), which
+already reserves the system-bar space; the screen's own `systemBarsPadding()`
+pads a second time in production. That is the existing, accepted
+"harmless double-padding" pattern navigation.md describes, not something new
+this ticket introduced — the ticket's goal was parity with the scanner's
+existing inset handling, and both screens now carry the same double inset
+rather than one carrying it and the other not.
+
 ## Draft and fingerprint gate
 
 The destination-scoped Koin `PairCodeViewModel` owns both draft strings in memory;
@@ -194,6 +216,21 @@ test IME before Activity launch and uses the app's edge-to-edge/Scaffold shape.
 It asserts visible IME insets, scrolls to both fields and clear controls, and
 checks action bounds above the keyboard. Focus or text input alone can pass with
 no keyboard; see [Compose evidence](development-verification.md#compose-evidence).
+
+(#1141) `PairCodeScreenInsetsTest` (Robolectric, `app/src/sharedTest`) puts the
+host activity edge to edge and applies fixed nonzero status-bar/navigation-bar
+insets to its window with `ViewCompat.dispatchApplyWindowInsets`, since
+Robolectric reports none on its own. It renders `ScannerScreen(ReadyToScan)`,
+records the Back button's top, switches the same content to `PairCodeScreen`,
+and asserts the two tops match within 1 px, that Back clears the status-bar
+inset, and that Cancel and the footer clear the navigation-bar inset. Reading
+`WindowInsets` from the test content keeps Compose's inset listener attached
+across the content switch — without that read, the listener detaches and a
+fresh `requestApplyInsets` puts the real zero insets back, and the test would
+pass vacuously. The fixture hosts each screen without the production outer
+`Scaffold` padding described above, so it proves the composables' own insets,
+not the full production stack; parity between the two screens still holds in
+production because both sit under the same `NavHost` padding.
 Two (#842) additions: `targetedRouteNamesItsHostAndBackReturnsWithoutSaving` navigates through
 `Routes.PAIR_CODE_ROUTE` with a `serverId` argument via a real `NavHostController`, asserts the
 disabled Host name field shows the target's name, and Back returns to `Routes.WELCOME` without a
@@ -220,8 +257,10 @@ remains [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676)'s scope.
 
 ## Related
 
-- [Pair-with-code design and revisions](../../specs/architecture/639-pair-with-code.md)
-- [Navigation](navigation.md), [scanner](scanner-screen.md) and
+- [Pair-with-code design and revisions](../../specs/architecture/639-pair-with-code.md);
+  [system-bar insets and the 48 dp Back target](../../specs/architecture/1141-pair-code-system-bar-insets.md)
+  (#1141)
+- [Navigation](navigation.md) § [Insets](navigation.md#configuration), [scanner](scanner-screen.md) and
   [paired-server collection](paired-server-store.md)
 - [Legacy dialog history](../codebase/501.md): store-free callback contract retained
   by `PasteCodeDialogTest`; it does not test the production full-screen flow.
