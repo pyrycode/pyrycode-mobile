@@ -2459,6 +2459,107 @@ class HostChannelListViewModelTest {
             )
         }
 
+    private fun Fixture.mutes() = a.repo.mutes + b.repo.mutes
+
+    @Test
+    fun channelEditorOpensAtItsOwnHostsMuteFlagAndWritesItOnlyWhenChanged() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            f.a.repo.rows.value =
+                f.a.repo.rows.value
+                    ?.map { if (it.id == "same") it.copy(muted = true) else it }
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            runCurrent()
+
+            // Each host's own flag, though the ids collide.
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            assertEquals(true, f.channelEditor()?.savedMuted)
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            assertEquals(false, f.channelEditor()?.savedMuted)
+
+            // The opening value sends no mute write; Cancel, Close and Back send nothing.
+            f.vm.submitChannelEdit("B channel", "B prompt", muted = false)
+            runCurrent()
+            assertNull(f.channelEditor())
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            f.vm.dismissChannelEditor()
+            runCurrent()
+            assertTrue(f.mutes().isEmpty())
+
+            // A flipped value: one write to the editor's own host, then the modal closes.
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            f.vm.submitChannelEdit("B channel", "B prompt", muted = true)
+            runCurrent()
+            assertEquals(listOf("same" to true), f.b.repo.mutes)
+            assertTrue(
+                f.a.repo.mutes
+                    .isEmpty(),
+            )
+            assertNull(f.channelEditor())
+
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.vm.submitChannelEdit("A channel", "  A prompt\n", muted = false)
+            runCurrent()
+            assertEquals(listOf("same" to false), f.a.repo.mutes)
+            assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty())
+            assertNull(f.channelEditor())
+        }
+
+    @Test
+    fun aFailedMuteWriteStaysOpenAndARetrySendsOnlyTheUnconfirmedWrites() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            val read = ChannelPromptReading.Read("  A prompt\n", SessionPromptStatus.Matches)
+
+            // The rename lands, the mute write fails: open, holding the confirmed name, nothing else sent.
+            f.a.repo.muteFailures = 1
+            f.vm.submitChannelEdit("Renamed", "New prompt", muted = true)
+            runCurrent()
+            assertEquals(ChannelEditorState("Host", "same", "Renamed", read, failed = true), f.channelEditor())
+            assertTrue(f.mutes().isEmpty() && f.promptWrites().isEmpty())
+
+            // The mute lands, the prompt write fails: the confirmed flag is recorded.
+            f.a.repo.promptFailures = 1
+            f.vm.submitChannelEdit("Renamed", "New prompt", muted = true)
+            runCurrent()
+            assertEquals(ChannelEditorState("Host", "same", "Renamed", read, failed = true, savedMuted = true), f.channelEditor())
+            assertEquals(listOf("same" to true), f.a.repo.mutes)
+            assertTrue(f.promptWrites().isEmpty())
+
+            // OK retries only the prompt.
+            f.vm.submitChannelEdit("Renamed", "New prompt", muted = true)
+            runCurrent()
+            assertNull(f.channelEditor())
+            assertEquals(listOf("same" to "Renamed"), f.a.repo.renames)
+            assertEquals(listOf("same" to true), f.a.repo.mutes)
+            assertEquals(listOf<Pair<String, String?>>("same" to "New prompt"), f.a.repo.promptWrites)
+            assertEquals(listOf("mute", "prompt"), f.a.repo.channelCalls)
+            assertTrue(
+                f.b.repo.mutes
+                    .isEmpty() &&
+                    f.b.repo.renames
+                        .isEmpty() &&
+                    f.b.repo.promptWrites
+                        .isEmpty(),
+            )
+
+            assertTrue(logs.any { "channel_mute_write_failed" in it })
+            assertTrue(
+                "no name, prompt, id or server message may reach a log line: $logs",
+                logs.none { "secret" in it || "Renamed" in it || "New prompt" in it || "A prompt" in it || "same" in it },
+            )
+        }
+
     @Test
     fun anUnreadPromptNeverWritesAndNeverBlocksTheNameOrArchive() =
         runTest(dispatcher) {
@@ -2930,6 +3031,23 @@ class HostChannelListViewModelTest {
             promptWrites += conversationId to systemPrompt
             channelCalls += "prompt"
         }
+
+        // #1021: records every mute write and applies it to this repo's own rows, as the daemon's echo would.
+        override suspend fun setMuted(
+            conversationId: String,
+            muted: Boolean,
+        ) {
+            if (muteFailures > 0) {
+                muteFailures--
+                throw IllegalStateException("mute secret")
+            }
+            mutes += conversationId to muted
+            channelCalls += "mute"
+            rows.value = rows.value?.map { if (it.id == conversationId) it.copy(muted = muted) else it }
+        }
+
+        val mutes = mutableListOf<Pair<String, Boolean>>()
+        var muteFailures = 0
 
         val channelCreates = mutableListOf<Pair<String, String>>()
         val promptWrites = mutableListOf<Pair<String, String?>>()

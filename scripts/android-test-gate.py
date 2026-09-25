@@ -38,6 +38,8 @@ LIVE_MINIMUM += 2
 LIVE_MINIMUM += 1
 # #1050 adds the live markdown-note link method.
 LIVE_MINIMUM += 1
+# #1021 adds the Edit channel mute round trip.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

@@ -296,6 +296,7 @@
     -->
     <string name="edit_channel_title">Edit channel</string>
     <string name="edit_channel_archive">Archive channel</string>
+    <string name="edit_channel_mute">Mute notifications</string>
     <string name="edit_channel_save_failed">Couldn\'t save the channel. Try again.</string>
     <string name="edit_channel_prompt_reading">Reading the stored system prompt…</string>
     <string name="edit_channel_prompt_unavailable">Couldn\'t read the stored system prompt.</string>

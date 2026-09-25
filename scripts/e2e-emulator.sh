@@ -1129,6 +1129,8 @@ elif [ -n "${LIVE}" ]; then
   # #1050: a markdown link in claude's reply opens the note live in the in-app reader (two turns: the note and
   # its rewrite). The list holds 33 methods and 36 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownLink_opensLiveNoteInReader"
+  # #1021: the Edit channel mute round trip joins at no turn cost, so the list holds 34 methods and 36 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_muteChannel_roundTripsThroughTheHost"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

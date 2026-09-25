@@ -406,7 +406,7 @@ internal fun PyryNavHost(
                         ChannelListEvent.CreateChannelDismissed -> vm.dismissCreateChannel()
                         // And for editing a channel (#667): the pen's own host and conversation.
                         is ChannelListEvent.TreeChannelEditTapped -> vm.openChannelEditor(event.target)
-                        is ChannelListEvent.ChannelEditSubmitted -> vm.submitChannelEdit(event.name, event.systemPrompt)
+                        is ChannelListEvent.ChannelEditSubmitted -> vm.submitChannelEdit(event.name, event.systemPrompt, event.muted)
                         ChannelListEvent.ChannelArchiveRequested -> vm.archiveChannel()
                         ChannelListEvent.ChannelEditDismissed -> vm.dismissChannelEditor()
                     }
