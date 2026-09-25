@@ -121,3 +121,28 @@ Pending for the documentation stage:
 ## Open questions
 
 - Exact location of AGP's per-test logcat under the managed-device results directory (directly in `<device>/` or a nested folder). Resolved by searching recursively, so either works.
+
+## Revisions
+
+### 2026-09-25 — verifier triage: `RelayConnectionFactoryTest` regression
+
+The **Files read** claim that the other tests capturing `RelayLog.sink` "construct neither the real transport nor the real pump" was wrong for `RelayConnectionFactoryTest`. Its `Fixture` builds bundles through the real `RelayConnectionSupervisor`, which builds a real `NoiseSessionPump` over a fake transport, so the new `event=pump_teardown` lines reached the exact-list assertion at the end of `explicitRecordsKeepDialHandshakeAndRekeyIdentityAfterLatestSaveChanges`. That assertion pins the bundle lifecycle, so it now compares only the `event=relay_bundle_*` lines. The logging contract is unchanged. The verifier's full `./gradlew check` found no other failing `RelayLog.sink` capture, so no other assertion changes.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The only relay-controlled values that reach a line are integers: the peer's close code in `Listener.onClosed` / `onClosing` and the HTTP status of `onFailure`'s `response`. `Down.reason`, which carries the relay's close reason text, never reaches `OkHttpRelayTransport.logEnd`. No daemon-authored text reaches Compose, a path or a log.
+- [Tokens] No findings. `logEnd` and `NoiseSessionPump.teardown` build their messages from the `END_*` / `TRIGGER_*` constants, `Int` codes and `Throwable.javaClass.simpleName`, never the exception message. `OkHttpRelayTransport.connect`'s bad-request catch can hold an exception whose message names the URL or header value, and only its class name is logged. The transport tests check each captured line for the token, the server id and the dial host.
+- [File / storage] No findings. `fresh_logcats` copies files AGP already writes under `app/build/outputs/androidTest-results/` into `build/dispatcher-tests/<mode>-*`. Both are gitignored build output on the host running the gate, so the copies do not reach anyone the originals did not. Nothing from them reaches `dispatcher.xml` or stdout, as the module docstring requires.
+- [Android attack surface] No findings. No component, intent, deep link or push path changes.
+- [Cryptographic primitives] No findings. The pump's handshake, AEAD and re-key logic are unchanged. `labelled` and `OpenFrameFault` wrap exceptions only, rethrow `CancellationException` unwrapped, and `teardown` still wipes the session keys under the same CAS.
+- [Network & I/O] No findings. No change to the frame caps, timeouts, TLS or supervisor backoff.
+- [Logs] No findings. `RelayLog` builds the message lambda only when `enabled`, which `BuildConfig.DEBUG` sets, so release builds write nothing to Logcat. Each transport and each pump writes at most one line, from inside its terminal CAS, so a hostile relay that floods closes cannot turn this into log spam past one line per connection.
+- [Concurrency] No findings. No new coroutine or scope. `peerClosingCode` is `@Volatile`, written on the OkHttp reader thread and read by the CAS winner. A stale read only drops the `peer_closing=` field.
+- [Threat model] OUT OF SCOPE: the drop this logging diagnoses, including a possible relay 1011 outbox close. Its fix gets a separate ticket, filed in the repo the logs implicate (`pyrycode-relay` for a 1011 close), as the ticket's Scope section states.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-25
