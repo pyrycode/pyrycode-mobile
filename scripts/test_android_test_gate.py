@@ -417,6 +417,68 @@ class AndroidGateTest(unittest.TestCase):
                 self.assertIn("end=peer_close code=1011", (run_dir / kept[0]).read_text())
                 self.assertNotIn("RelayLog", stdout.getvalue())
 
+    def ui_run_with_logcats(self, root, report_xml, logcats):
+        """Drive `ui` through main() with a fake Gradle run writing [report_xml] and fresh or stale logcats."""
+        self.device_test(root, "de/pyryco/mobile/ui/KeyboardTest.kt")
+        directory = root / "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd"
+        started = 2_000_000_000
+
+        def run(command, **kwargs):
+            device = directory / "emulator-5554"
+            device.mkdir(parents=True)
+            stamped = [(self.report(directory, report_xml), started + 1)]
+            for name, (text, fresh) in logcats.items():
+                path = device / f"logcat-C-{name}.txt"
+                path.write_text(text)
+                stamped.append((path, started + 1 if fresh else started - 1))
+            for item, stamp in stamped:
+                os.utime(item, ns=(stamp, stamp))
+            return subprocess.CompletedProcess(command, 0)
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(gate, "ROOT", root), patch.dict(os.environ, {"ANDROID_USER_HOME": str(root)}, clear=True), \
+                patch("sys.argv", ["android-test-gate.py", "ui"]), \
+                patch.object(gate, "changed_paths", return_value=["app/src/main/X.kt"]), \
+                patch.object(gate.time, "time_ns", return_value=started), \
+                patch.object(gate.subprocess, "run", side_effect=run), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = gate.main()
+        return result, stdout.getvalue(), stderr.getvalue()
+
+    def test_failing_device_test_prints_its_focus_record_on_stderr_only(self):
+        # #1131: the device-side listener logs the window manager's focus state under tag FocusRecord when a test
+        # fails; the dispatcher log keeps the gate's stderr after the worktree and its logcats are gone.
+        record = ("test=C#bad focus=Window{1a u0 Application Not Responding: com.android.systemui} "
+                  "focusedApp=ActivityRecord{2b u0 de.pyryco.mobile/.MainActivity t9} "
+                  "anr=Application Not Responding: com.android.systemui")
+        failed = '<testsuite tests="3" failures="2"><testcase classname="C" name="ok"/>' \
+                 '<testcase classname="C" name="bad"><failure>x</failure></testcase>' \
+                 '<testcase classname="C" name="broken"><failure>x</failure></testcase></testsuite>'
+        with tempfile.TemporaryDirectory() as tmp:
+            result, stdout, stderr = self.ui_run_with_logcats(Path(tmp), failed, {
+                "ok": ("09-25 18:27:01.100  1842  1856 I TestRunner: started: ok(C)\n", True),
+                "bad": (f"09-25 18:27:02.100  1842  1856 I TestRunner: started: bad(C)\n"
+                        f"09-25 18:27:03.200  1842  1856 W FocusRecord: {record}\n"
+                        f"09-25 18:27:03.300  1842  1856 I TestRunner: finished: bad(C)\n", True),
+                "broken": ("09-25 18:27:04.200  1842  1856 W FocusRecord: test=C#broken error=SecurityException: denied\n",
+                           True),
+                "old": ("09-24 10:00:00.000  1842  1856 W FocusRecord: test=C#old focus=stale\n", False),
+            })
+        self.assertEqual(result, 1)
+        self.assertIn("Android gate: focus record for C#bad: " + record, stderr)
+        self.assertIn("Android gate: focus record for C#broken: test=C#broken error=SecurityException: denied", stderr)
+        self.assertNotIn("C#old", stderr)
+        self.assertNotIn("FocusRecord", stdout)
+        self.assertNotIn("focus=", stdout)
+
+    def test_passing_device_run_prints_no_focus_record(self):
+        passed = '<testsuite tests="1"><testcase classname="C" name="ok"/></testsuite>'
+        with tempfile.TemporaryDirectory() as tmp:
+            result, _, stderr = self.ui_run_with_logcats(Path(tmp), passed, {
+                "ok": ("09-25 18:27:01.100  1842  1856 I TestRunner: started: ok(C)\n", True)})
+        self.assertEqual(result, 0)
+        self.assertNotIn("focus record", stderr)
+
     def test_live_tests_is_refused_outside_live_and_when_malformed(self):
         for argv in (["ui", "--tests", gate.LIVE_CLASS + "#a"], ["live", "--tests", "Other#a"]):
             with self.subTest(argv=argv), patch("sys.argv", ["android-test-gate.py", *argv]), \
