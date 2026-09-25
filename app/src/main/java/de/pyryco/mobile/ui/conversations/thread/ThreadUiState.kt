@@ -70,7 +70,8 @@ data class ThreadUiState(
     // #957: the conversation's own name, before [displayName]'s fallback; `null` when it has none.
     val conversationName: String? = null,
     val isPromoted: Boolean = false,
-    // #1115: the agent the usage-limit line and the effort notes name; Claude until the conversation is known.
+    // #1114: the agent that runs this conversation; the live status labels name it.
+    // #1115: the usage-limit line and the effort notes name it too; Claude until the conversation is known.
     val agent: ConversationAgent = ConversationAgent.Claude,
     val hasMessages: Boolean = false,
     val workspaceLabel: String = "scratch",
