@@ -89,6 +89,17 @@
     <string name="background_tasks_truncated">Truncated by the daemon</string>
     <string name="background_tasks_no_change">No change reported</string>
     <string name="background_tasks_finished">Finished</string>
+    <string name="background_tasks_group_running">Running · %1$d</string>
+    <string name="background_tasks_group_running_shown">Running · %1$d shown</string>
+    <string name="background_tasks_group_finished">Finished · %1$d</string>
+    <string name="background_tasks_group_finished_shown">Finished · %1$d shown</string>
+    <string name="background_tasks_status_running">Running</string>
+    <string name="background_tasks_status_completed">Completed</string>
+    <string name="background_tasks_status_failed">Failed</string>
+    <string name="background_tasks_status_stopped">Stopped</string>
+    <string name="background_tasks_latest_update">Latest update</string>
+    <string name="background_tasks_empty_support">Claude has nothing running in the background for this conversation.</string>
+    <string name="background_tasks_unreported_support">The daemon has not reported on this conversation since the app connected.</string>
     <string name="status_sheet_running_model">Running model</string>
     <string name="status_sheet_running_model_unavailable">Not announced yet</string>
     <string name="status_sheet_running_build">Claude Code %1$s</string>
