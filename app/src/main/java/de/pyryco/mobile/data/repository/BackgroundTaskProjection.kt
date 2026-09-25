@@ -1,8 +1,10 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.BackgroundTask
+import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
+import de.pyryco.mobile.data.network.BackgroundTaskProgressPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskRosterPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskRowDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
@@ -56,7 +58,8 @@ class FinishedBackgroundTasks {
 
 /**
  * The background tasks every conversation holds on one connection (#677): the state, decoder and read for
- * `background_task_started`, `background_task_updated` and `background_task_roster`, split out of
+ * `background_task_started`, `background_task_updated`, `background_task_roster` and
+ * `background_task_progress` (#1042), split out of
  * [RemoteConversationRepository] like [QueueProjection]. The repository's `onInbound` arm calls [apply]
  * only behind the negotiated `interactive` gate. These frames are daemon state, not turn content, so they
  * never reach the thread timeline.
@@ -64,7 +67,7 @@ class FinishedBackgroundTasks {
  * One instance per repository, and a fresh repository per connection, so after a reconnect a conversation
  * holds only what that connection's frames report. The only state carried over is [finished].
  *
- * The three frames join on `task_id` in whatever order they arrive. Merge rules follow desktop's
+ * The four frames join on `task_id` in whatever order they arrive. Merge rules follow desktop's
  * `backgroundTaskRosterStore`, with three differences: an update keeps its `status` and `summary`
  * (desktop#1558 drops them), any non-empty `status` finishes a task rather than a closed set of three, and a
  * started task is listed at once rather than held until a roster lists it.
@@ -83,16 +86,17 @@ internal class BackgroundTaskProjection(
     val rosters: StateFlow<Map<String, BackgroundTaskRoster>> = mutableRosters.asStateFlow()
 
     /**
-     * Updates for tasks a conversation does not hold yet, keyed `conversationId -> taskId`, so a start or
+     * Updates and progress for tasks a conversation does not hold yet, keyed `conversationId -> taskId`, so a start or
      * roster that arrives later joins them. Confined to the single inbound collector like [mutableRosters];
      * a roster for the conversation clears its entry, which keeps it bounded.
      */
     private val pending = mutableMapOf<String, Map<String, Slots>>()
 
-    /** The two update slots of one task; see [BackgroundTask.latestUpdate] and [BackgroundTask.finish]. */
+    /** The frame slots of one task; see [BackgroundTask.latestUpdate], [BackgroundTask.finish] and [BackgroundTask.progress]. */
     private data class Slots(
         val latestUpdate: BackgroundTaskUpdate? = null,
         val finish: BackgroundTaskUpdate? = null,
+        val progress: BackgroundTaskProgress? = null,
     )
 
     fun apply(envelope: Envelope) {
@@ -104,6 +108,8 @@ internal class BackgroundTaskProjection(
                     applyUpdated(MobileJson.decodeFromJsonElement<BackgroundTaskUpdatedPayloadDto>(envelope.payload))
                 RemoteConversationRepository.TYPE_BACKGROUND_TASK_ROSTER ->
                     applyRoster(MobileJson.decodeFromJsonElement<BackgroundTaskRosterPayloadDto>(envelope.payload))
+                RemoteConversationRepository.TYPE_BACKGROUND_TASK_PROGRESS ->
+                    applyProgress(MobileJson.decodeFromJsonElement<BackgroundTaskProgressPayloadDto>(envelope.payload))
             }
         } catch (e: IllegalArgumentException) {
             return
@@ -149,6 +155,36 @@ internal class BackgroundTaskProjection(
             return
         }
         val task = held.withSlots(conversationId, held.slots().with(update, terminal))
+        publish(conversationId, roster.copy(tasks = roster.tasks.map { if (it.taskId == dto.taskId) task else it }))
+    }
+
+    /**
+     * Replaces the task's progress whole, nothing summed. A task known to be finished, on this connection or an
+     * earlier one, takes none. Like an update, progress for a task not held yet waits in [pending] and never
+     * creates a roster.
+     */
+    private fun applyProgress(dto: BackgroundTaskProgressPayloadDto) {
+        val conversationId = dto.conversationId
+        if (finished.contains(conversationId, dto.taskId)) return
+        val progress =
+            BackgroundTaskProgress(
+                description = dto.description,
+                subagentType = dto.subagentType,
+                lastToolName = dto.lastToolName,
+                totalTokens = dto.totalTokens,
+                toolUses = dto.toolUses,
+                durationMs = dto.durationMs,
+                truncatedFields = dto.truncatedFields,
+            )
+        val roster = mutableRosters.value[conversationId]
+        val held = roster?.tasks?.firstOrNull { it.taskId == dto.taskId }
+        if (roster == null || held == null) {
+            val byTask = pending[conversationId].orEmpty()
+            val slots = byTask[dto.taskId] ?: Slots()
+            pending[conversationId] = byTask + (dto.taskId to slots.copy(progress = progress))
+            return
+        }
+        val task = held.withSlots(conversationId, held.slots().copy(progress = progress))
         publish(conversationId, roster.copy(tasks = roster.tasks.map { if (it.taskId == dto.taskId) task else it }))
     }
 
@@ -200,8 +236,9 @@ internal class BackgroundTaskProjection(
         description: String,
         truncatedFields: List<String>?,
         slots: Slots,
-    ): BackgroundTask =
-        BackgroundTask(
+    ): BackgroundTask {
+        val isFinished = slots.finish != null || finished.contains(conversationId, taskId)
+        return BackgroundTask(
             taskId = taskId,
             toolCallId = toolCallId,
             taskType = taskType,
@@ -209,8 +246,10 @@ internal class BackgroundTaskProjection(
             truncatedFields = truncatedFields,
             latestUpdate = slots.latestUpdate,
             finish = slots.finish,
-            isFinished = slots.finish != null || finished.contains(conversationId, taskId),
+            isFinished = isFinished,
+            progress = if (isFinished) null else slots.progress,
         )
+    }
 
     private fun takePending(
         conversationId: String,
@@ -230,20 +269,24 @@ internal class BackgroundTaskProjection(
         mutableRosters.update { it + (conversationId to roster) }
     }
 
-    private fun BackgroundTask.slots(): Slots = Slots(latestUpdate, finish)
+    private fun BackgroundTask.slots(): Slots = Slots(latestUpdate, finish, progress)
 
     private fun BackgroundTask.withSlots(
         conversationId: String,
         slots: Slots,
-    ): BackgroundTask =
-        copy(
+    ): BackgroundTask {
+        val isFinished = slots.finish != null || finished.contains(conversationId, taskId)
+        return copy(
             latestUpdate = slots.latestUpdate,
             finish = slots.finish,
-            isFinished = slots.finish != null || finished.contains(conversationId, taskId),
+            isFinished = isFinished,
+            progress = if (isFinished) null else slots.progress,
         )
+    }
 
+    /** A terminal update also drops the progress: a finished task carries none. */
     private fun Slots.with(
         update: BackgroundTaskUpdate,
         terminal: Boolean,
-    ): Slots = if (terminal) copy(finish = update) else copy(latestUpdate = update)
+    ): Slots = if (terminal) copy(finish = update, progress = null) else copy(latestUpdate = update)
 }
