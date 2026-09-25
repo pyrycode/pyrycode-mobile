@@ -420,7 +420,14 @@ explicit `exit "${STATUS}"` then keeps the run non-zero. A helper called from th
 step must be written with `if` statements, never a trailing `cond && grep` chain —
 `set -e` kills the run at the call site when such a chain's last command finds
 nothing, which for a log scan is the common, successful case
-(`report_stale_pairing_codes` in `e2e-emulator.sh`, #993).
+(`report_stale_pairing_codes` in `e2e-emulator.sh`, #993; the sibling `report_relay_link_drops`, #1132,
+names each daemon whose relay link dropped for a reason other than the teardown's own kill).
+
+In `test_e2e_emulator_gradle.py`, add new cases for one of these diagnostic steps to the
+`unittest.TestCase` that already extracts and runs it (`EmulatorBuildBeforeMintTest` for the failed-test
+branch), not to a new subclass of it — subclassing to reuse its extraction helpers also re-runs every
+inherited test method under the subclass's name, which silently multiplies the suite (#1132: a first draft
+took it from 12 tests to 17 before the new cases moved into the base class).
 
 Splitting a Gradle build step ahead of the device test task, to keep build time out
 of a time-limited window elsewhere in the harness (#993 moved e2e pairing-code
