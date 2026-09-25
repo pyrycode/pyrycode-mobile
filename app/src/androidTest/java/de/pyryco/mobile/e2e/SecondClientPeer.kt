@@ -50,7 +50,6 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.Base64
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -70,7 +69,8 @@ import java.util.concurrent.atomic.AtomicLong
  * snapshots to a new connection, so waits carry across a replacement. [linkState] says which link is up.
  *
  * Every frame the daemon sends it is recorded, so [awaitFrame] also finds a frame that arrived before
- * the wait began. A prompt the daemon re-sends on a new link is recorded once. Nothing here logs;
+ * the wait began. A prompt the daemon re-sends on a new link is recorded once. A wait still pending when
+ * the peer is [close]d fails at once, naming what it awaited (#1059). Nothing here logs;
  * failures name a category or an error `code`, never the token, the key or any payload text.
  */
 class SecondClientPeer(
@@ -80,7 +80,7 @@ class SecondClientPeer(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val received = MutableStateFlow<List<Envelope>>(emptyList())
     private val requestId = AtomicLong()
-    private val closed = AtomicBoolean(false)
+    private val closed = MutableStateFlow(false)
     private val link = RedialingLink(scope, ::dialLink, ::awaitEnd) { it.pump.close() }
 
     /** Dial the relay until a session completes its handshake and answers, and start recording frames. */
@@ -135,7 +135,8 @@ class SecondClientPeer(
         fun Envelope.answers() =
             (type == "attachment_stored" && payloadField("attachment_id") == attachmentId) ||
                 (type == "error" && inReplyTo in chunkIds)
-        val reply = withTimeout(timeoutMs) { received.first { frames -> frames.any { it.answers() } }.first { it.answers() } }
+        val reply =
+            awaiting("attachment_stored", timeoutMs) { received.first { frames -> frames.any { it.answers() } }.first { it.answers() } }
         check(reply.type == "attachment_stored") { "peer upload refused: ${reply.payloadField("code")}" }
         return attachmentId
     }
@@ -156,7 +157,7 @@ class SecondClientPeer(
                 MobileJson.encodeToJsonElement(RequestAttachmentPayloadDto(conversationId = conversationId, attachmentId = attachmentId)),
             )
         val chunks =
-            withTimeout(timeoutMs) {
+            awaiting("attachment_chunk", timeoutMs) {
                 received
                     .map { frames -> frames.filter { it.inReplyTo == id } }
                     .first { answers ->
@@ -338,7 +339,7 @@ class SecondClientPeer(
         timeoutMs: Long,
         ready: (List<QueuedMessageDto>) -> Boolean,
     ): List<QueuedMessageDto> =
-        withTimeout(timeoutMs) {
+        awaiting("queue_state", timeoutMs) {
             received
                 .map { frames -> frames.lastOrNull { it.type == "queue_state" && it.payloadField("conversation_id") == conversationId } }
                 .filterNotNull()
@@ -356,7 +357,7 @@ class SecondClientPeer(
         timeoutMs: Long,
         occurrence: Int = 1,
     ): Envelope =
-        withTimeout(timeoutMs) {
+        awaiting(if (occurrence == 1) type else "$type #$occurrence", timeoutMs) {
             received
                 .first { frames -> frames.count { it.isFor(conversationId, type) } >= occurrence }
                 .filter { it.isFor(conversationId, type) }[occurrence - 1]
@@ -399,7 +400,7 @@ class SecondClientPeer(
         timeoutMs: Long,
         resend: Boolean,
     ): Envelope =
-        withTimeout(timeoutMs) {
+        awaiting("the reply to peer $type", timeoutMs) {
             link.request("peer $type", resend) { live -> attempt(live, type, payload) { id -> inReplyTo == id } }
         }
 
@@ -416,7 +417,7 @@ class SecondClientPeer(
         id: String,
         timeoutMs: Long,
     ): Envelope =
-        withTimeout(timeoutMs) {
+        awaiting(dismissalType, timeoutMs) {
             link.request("peer $type", resend = true) { live ->
                 attempt(live, type, payload) { this.type == dismissalType && payloadField(idField) == id }
             }
@@ -525,10 +526,17 @@ class SecondClientPeer(
         timeoutMs: Long,
     ): Envelope {
         fun Envelope.matches() = this.type == type && payloadField(idField) == id
-        return withTimeout(timeoutMs) {
+        return awaiting(type, timeoutMs) {
             received.first { frames -> frames.any { it.matches() } }.first { it.matches() }
         }
     }
+
+    /** Run one wait of up to [timeoutMs] that fails at once, naming [what], if the peer is [close]d under it (#1059). */
+    private suspend fun <T> awaiting(
+        what: String,
+        timeoutMs: Long,
+        block: suspend () -> T,
+    ): T = awaitPeer(what, timeoutMs, closed, block)
 
     private fun Envelope.payloadField(name: String): String? = (payload as? JsonObject)?.get(name)?.jsonPrimitive?.contentOrNull
 
