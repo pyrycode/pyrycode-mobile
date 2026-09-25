@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
@@ -67,6 +68,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.scan
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -306,6 +308,21 @@ class ThreadViewModel(
         }
 
     /**
+     * The conversation list, shared (#1110) so [state] and [conversationAgent] ride one upstream
+     * subscription: the remote repository sends a `list_conversations` request on every subscription.
+     */
+    private val conversations: Flow<List<Conversation>> =
+        repository
+            .observeConversations(ConversationFilter.All)
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+
+    /** The agent that runs this conversation (#1110); Claude while the list does not hold it yet. */
+    private val conversationAgent: Flow<ConversationAgent> =
+        conversations
+            .map { list -> list.firstOrNull { it.id == conversationId }?.agent ?: ConversationAgent.Claude }
+            .distinctUntilChanged()
+
+    /**
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
      * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine, and
@@ -314,7 +331,9 @@ class ThreadViewModel(
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
             sessionSettings,
-            repository.observeModelMenu(conversationId),
+            // #1110: the agent joins by a chained combine, since this one is at the typed ceiling. Filtering
+            // here, before [runConfig] caps the rows, is what makes the hidden count the filtered list's.
+            repository.observeModelMenu(conversationId).combine(conversationAgent) { menu, agent -> menu?.forAgent(agent) },
             pendingModel,
             pendingEffort,
             pendingPermission,
@@ -412,7 +431,7 @@ class ThreadViewModel(
 
     val state: StateFlow<ThreadUiState> =
         combine(
-            repository.observeConversations(ConversationFilter.All),
+            conversations,
             threadContent,
             pendingWorkspacePicker,
             transientDialogs,
@@ -2189,6 +2208,18 @@ private fun runConfig(
         appliedEffort = settings?.effectiveEffort ?: EffectiveEffort.Unavailable,
     )
 }
+
+/**
+ * The rows [agent]'s conversation lists (#1110), in the daemon's order. A merged `multi_agent` menu is the
+ * same for every conversation and the daemon refuses a model or effort outside the session's own agent, so
+ * the other agent's rows, and rows naming an agent this client does not know, are left out. `droppedModels`
+ * counts only Claude's cut entries, so a Codex conversation reports none.
+ */
+private fun ModelMenu.forAgent(agent: ConversationAgent): ModelMenu =
+    ModelMenu(
+        rows = rows.filter { it.agent == agent },
+        droppedModels = if (agent == ConversationAgent.Claude) droppedModels else 0,
+    )
 
 /**
  * Hides a permission mode (#650) and an applied effort (#889) left over from a replaced session. A
