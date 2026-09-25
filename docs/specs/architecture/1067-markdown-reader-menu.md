@@ -143,3 +143,8 @@ Pending for the documentation stage: `docs/knowledge/features/markdown-reader-sc
 - The plain-text copy also drops a quote's continuation `>` and the space after it, which sit inside the paragraph. Without that, a two-line quote copies as `words  and more` with a double space.
 - The copy log line carries `chars=<source length>` in place of `truncated`: a length is content-free and needs no second conversion pass to compute.
 - The bar's end padding is now `BarGutter - BarTouchSlack`, as in `ThreadTopAppBar`, because the row now ends in a 48dp touch target instead of text.
+
+**2026-09-25, rework after verifier review.**
+
+- MUST FIX (no live proof of Refresh): `InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader` now keeps the reader open while the peer has claude rewrite the note, then chooses Refresh from the reader's overflow and waits for the new heading, with the old one and "Couldn't open file" absent. The turn count stays at two: the rewrite moves from the phone's composer to the peer. The re-open through the link that #1050 asserts still follows. This replaces the Testing strategy's "no rung-3 scenario of its own".
+- SHOULD FIX (retry blocked by the notice): in `RefreshableMarkdownReader` the failure snackbar is shown in its own `scope.launch`, so the in-flight guard covers the read only. A retry while "Couldn't open file" still shows reads again; `MarkdownReaderScreenTest.aRetry_whileTheFailureNoticeShows_readsAgain` pins it.

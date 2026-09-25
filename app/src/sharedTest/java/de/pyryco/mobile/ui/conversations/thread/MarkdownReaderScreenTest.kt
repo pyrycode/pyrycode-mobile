@@ -283,4 +283,20 @@ class MarkdownReaderScreenTest {
         composeRule.onNodeWithText("Old note").assertIsDisplayed()
         composeRule.onNodeWithText(openFailed).assertIsDisplayed()
     }
+
+    @Test
+    fun aRetry_whileTheFailureNoticeShows_readsAgain() {
+        var reads = 0
+        showRefreshable(MarkdownDocument("Plan.md", "# Old note")) {
+            reads++
+            if (reads == 1) null else MarkdownDocument("Plan.md", "# New note")
+        }
+
+        choose(refresh)
+        composeRule.onNodeWithText(openFailed).assertIsDisplayed()
+        choose(refresh)
+
+        assertEquals(2, reads)
+        composeRule.onNodeWithText("New note").assertIsDisplayed()
+    }
 }

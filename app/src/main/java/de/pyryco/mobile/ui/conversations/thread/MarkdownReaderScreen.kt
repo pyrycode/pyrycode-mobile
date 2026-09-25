@@ -272,7 +272,8 @@ fun RefreshableMarkdownReader(
                         if (next != null) {
                             document = next
                         } else {
-                            snackbarHostState.showSnackbar(openFailed)
+                            // Its own job: the in-flight guard covers the read, not the notice, so a retry works.
+                            scope.launch { snackbarHostState.showSnackbar(openFailed) }
                         }
                     }
             }
