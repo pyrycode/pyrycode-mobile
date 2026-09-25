@@ -5,10 +5,12 @@ import android.content.ClipboardManager
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -21,6 +23,7 @@ import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -39,8 +42,25 @@ class MarkdownReaderScreenTest {
     private val copyPlain = context.getString(R.string.markdown_reader_copy_plain_text)
     private val copyHtml = context.getString(R.string.markdown_reader_copy_html)
     private val refresh = context.getString(R.string.markdown_reader_refresh)
+    private val openInApp = context.getString(R.string.markdown_reader_open_in_app)
+    private val noApp = context.getString(AttachmentNotice.NO_APP.message)
     private val openFailed = context.getString(AttachmentNotice.OPEN_FAILED.message)
     private val clipboard = context.getSystemService(ClipboardManager::class.java)
+
+    /**
+     * Open in another app (#1068) serves its file through FileProvider, which caches each authority's roots
+     * for the life of the process. Robolectric gives every test a fresh data directory, so a root cached by an
+     * earlier test in this JVM would refuse the file; see `AttachmentActionsTest`.
+     */
+    @Before
+    fun forgetCachedProviderRoots() {
+        val cache =
+            FileProvider::class.java
+                .getDeclaredField("sCache")
+                .apply { isAccessible = true }
+                .get(null) as MutableMap<*, *>
+        synchronized(cache) { cache.clear() }
+    }
 
     private fun show(
         document: MarkdownDocument,
@@ -158,13 +178,13 @@ class MarkdownReaderScreenTest {
     }
 
     @Test
-    fun theOverflow_opensTheFourItems_inOrder() {
+    fun theOverflow_opensTheFiveItems_inOrder() {
         show(MarkdownDocument("Plan.md", "text"))
 
         composeRule.onNodeWithContentDescription(more).performClick()
 
         val tops =
-            listOf(copyMarkdown, copyPlain, copyHtml, refresh).map { item ->
+            listOf(copyMarkdown, copyPlain, copyHtml, refresh, openInApp).map { item ->
                 composeRule
                     .onNodeWithText(item)
                     .assertIsDisplayed()
@@ -172,7 +192,19 @@ class MarkdownReaderScreenTest {
                     .boundsInRoot.top
             }
         assertEquals(tops.sorted(), tops)
-        assertEquals(4, tops.distinct().size)
+        assertEquals(5, tops.distinct().size)
+    }
+
+    @Test
+    fun openInAnotherApp_withNoAppForMarkdown_saysSo() {
+        show(MarkdownDocument("Plan.md", "# Plan"))
+
+        choose(openInApp)
+
+        // The file is written on the IO dispatcher, off the test's main clock.
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText(noApp).fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText(noApp).assertIsDisplayed()
+        composeRule.onNodeWithText("Plan").assertIsDisplayed()
     }
 
     @Test

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -26,6 +27,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentTarget
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,6 +39,7 @@ import java.io.OutputStream
 private const val FALLBACK_MIME_TYPE = "application/octet-stream"
 private const val PACKAGE_ARCHIVE_MIME_TYPE = "application/vnd.android.package-archive"
 private const val MAX_MIME_TYPE_CHARS = 127
+private const val MARKDOWN_MIME_TYPE = "text/markdown"
 
 // RFC 6838's restricted-name characters, for both halves of a concrete `type/subtype`. No wildcard, no
 // parameters: a hint either names one type exactly or is not used.
@@ -116,6 +119,45 @@ internal fun openAttachment(
     if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     return try {
         context.startActivity(intent)
+        null
+    } catch (e: ActivityNotFoundException) {
+        AttachmentNotice.NO_APP
+    } catch (e: Exception) {
+        AttachmentNotice.OPEN_FAILED
+    }
+}
+
+/**
+ * Hands [document], the text the reader shows, to whichever app the user picks from the system chooser
+ * (#1068), as `text/markdown`. The text is written to the shared-note file first ([writeSharedNote], on
+ * [ioDispatcher]), and the receiver gets a read grant on that one provider URI alone, as [openAttachment]
+ * gives. `null` once the chooser started; [AttachmentNotice.NO_APP] when no app views markdown, since an
+ * empty chooser never throws; [AttachmentNotice.OPEN_FAILED] when the file cannot be written or served.
+ * Exceptions are dropped unread.
+ */
+internal suspend fun openNoteInAnotherApp(
+    context: Context,
+    document: MarkdownDocument,
+    chooserTitle: String,
+    ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+): AttachmentNotice? {
+    val file =
+        withContext(ioDispatcher) {
+            writeSharedNote(sharedNoteDirectory(context.noBackupFilesDir), document.name, document.text)
+        } ?: return AttachmentNotice.OPEN_FAILED
+    val uri = attachmentContentUri(context, AttachmentSource.Kept(file)) ?: return AttachmentNotice.OPEN_FAILED
+    val view = attachmentViewIntent(uri, MARKDOWN_MIME_TYPE)
+    val viewers =
+        context.packageManager.queryIntentActivities(
+            view,
+            PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()),
+        )
+    if (viewers.isEmpty()) return AttachmentNotice.NO_APP
+    // createChooser carries the target's URI and its read grant, and nothing wider, to the chosen app.
+    val chooser = Intent.createChooser(view, chooserTitle)
+    if (context !is Activity) chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    return try {
+        context.startActivity(chooser)
         null
     } catch (e: ActivityNotFoundException) {
         AttachmentNotice.NO_APP

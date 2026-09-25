@@ -93,3 +93,7 @@ Pending for the documentation stage: `docs/knowledge/features/markdown-reader-sc
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-25
+
+## Revisions
+
+- **2026-09-25, implementation.** Open question resolved: Robolectric records the `ACTION_CHOOSER` start, so `AttachmentActionsTest` asserts both the target intent (exactly the read grant) and that the chooser's own flags carry no write, persistable or prefix bit. `MarkdownReaderScreenTest` gained the same `FileProvider.sCache` reset `AttachmentActionsTest` uses: without it the new screen test passed alone and failed after `AttachmentActionsTest` in the same JVM, because the cached provider root pointed at an earlier test's deleted data directory and the open reported `OPEN_FAILED` instead of `NO_APP`. `MarkdownReaderScreen` resolves the notice strings with `stringResource` up front rather than `Context.getString` in the coroutine (lint `LocalContextGetResourceValueCall`).
