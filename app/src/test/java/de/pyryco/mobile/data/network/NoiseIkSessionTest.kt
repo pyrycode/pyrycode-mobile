@@ -198,7 +198,8 @@ class NoiseIkSessionTest {
 
         val envelope = MobileJson.decodeFromString<Envelope>(helloJson)
         val hello = MobileJson.decodeFromJsonElement<HelloClientPayload>(envelope.payload)
-        assertTrue(hello.capabilities.contains(CAPABILITY_INTERACTIVE))
+        // #1119: multi_agent rides after interactive, so the daemon shows this phone Codex conversations.
+        assertEquals(listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT), hello.capabilities)
     }
 
     @Test
@@ -209,6 +210,7 @@ class NoiseIkSessionTest {
         val msg2 = responder.writeResp(ackEnvelope("conn-1", capabilities = listOf("interactive")))
 
         assertEquals("conn-1", session.readResp(msg2))
+        // #1119 AC#2: a daemon that grants only interactive leaves multi_agent out of the negotiated set.
         assertEquals(setOf("interactive"), session.negotiatedCapabilities)
     }
 
