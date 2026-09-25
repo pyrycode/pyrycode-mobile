@@ -200,8 +200,10 @@ private suspend fun sendArchiveToggle(conversationId: String, type: String) {
         payload = MobileJson.encodeToJsonElement(ArchiveConversationPayloadDto(conversationId = conversationId)),
     )
     val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
-    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    conversationList.upsertConversation(conversation)   // confirmed-upsert — ONLY after a successful decode; no return value (interface is Unit)
+    // Confirmed-upsert — ONLY after a successful decode; no return value (interface is Unit). Since #1108
+    // upsertConversation takes the decoded record, not a mapped Conversation — see
+    // [ConversationListProjection.upsertConversation](remote-conversation-repository-send-create-promote-rename.md#confirmed-insert-via-conversationlistprojectionupsertconversation-the-projections-second-writer).
+    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
 }
 ```
 
@@ -266,8 +268,7 @@ suspend fun setMuted(conversationId: String, muted: Boolean) {
         payload = MobileJson.encodeToJsonElement(SetConversationMutedPayloadDto(conversationId = conversationId, muted = muted)),
     )
     val reply = requests.sendAndAwaitReply(request)
-    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    conversationList.upsertConversation(conversation)
+    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
 }
 ```
 
@@ -383,8 +384,7 @@ suspend fun changeWorkspace(conversationId: String, workspace: String): Session 
         payload = MobileJson.encodeToJsonElement(ChangeWorkspacePayloadDto(conversationId = conversationId, cwd = workspace)),
     )
     val reply = requests.sendAndAwaitReply(request) // throws on server `error` / not-Open; the decode below is unreachable on failure
-    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    conversationList.upsertConversation(conversation) // confirmed-upsert — ONLY after a successful decode
+    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply)) // confirmed-upsert — ONLY after a successful decode
     return Session(id = "", conversationId = conversationId, claudeSessionUuid = "",
         startedAt = Clock.System.now(), endedAt = null)
 }
@@ -454,7 +454,7 @@ suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
         payload = setSystemPromptPayload(conversationId, systemPrompt),
     )
     val reply = requests.sendAndAwaitReply(request)
-    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
+    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
 }
 ```
 
