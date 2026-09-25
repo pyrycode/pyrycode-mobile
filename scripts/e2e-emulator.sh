@@ -1157,6 +1157,9 @@ elif [ -n "${LIVE}" ]; then
   # #1086: each host's default workspace and Archive stay its own with both hosts paired. It joins at no turn
   # cost (folder creation, chat creation, rename, archive and restore), so the list holds 40 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost"
+  # #1087: a workspace added from host A's row, renamed and archived from its pencil, and restored from
+  # Archive. It joins at no turn cost, so the list holds 41 methods and 39 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_addRenameArchiveWorkspace_roundTripsThroughTheHost"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

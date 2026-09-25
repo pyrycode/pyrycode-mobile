@@ -354,9 +354,11 @@ distinction from the tree's own blank at all — see the next section.
   #663 added; #664's other half, adding a workspace, already landed as #904's host-row long-press, above),
   #878 (done, split from #668 — draws each row's `ConversationAttention` (#877) as the leading dot's fill
   and content description, this section's own [Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878)),
-  #676 (the live
+  #676 (closed 2026-09-25 — the live
   emulator scenario for #744's rename flow, #745's removal, #715's two-host archive/restore case,
-  #905's rename/archive flow and #878's attention states, blocked by all five and still open), #668
+  #905's rename/archive flow and #878's attention states; #905's rename/archive flow is now proven
+  live by #1087's `interactiveTurn_addRenameArchiveWorkspace_roundTripsThroughTheHost`, see
+  [Live mode](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay)), #668
   (indicator-pair live accuracy, conversation-row unread/activity state — #878 split off drawing the
   state; #668 remains open for the rest), #665 (conversation-row edit
   pencil), #675 (disconnected-host
