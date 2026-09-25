@@ -1866,6 +1866,15 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #1065 (2026-09-25):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/1065` at `07d78c898e` merged with
+  `origin/main` at `57fcceb677` (0 commits behind before the merge) — 37 executed, 37 passed, no
+  failures or skips, exit 0, wall clock 404.5s. `LIVE_MINIMUM` stayed at 37; this ticket added no
+  new curated method. This is the first clean run of
+  `interactiveTurn_renameConversation_relabelsTopBarAndListRow` (#537) — no nondeterministic
+  same-tree re-run needed — since #1020 first tracked its flake, consistent with
+  pyrycode/pyrycode-relay#154 being live on the production relay.
+
 - **LIVE verified for #1059 (2026-09-25):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/1059` at `356c50f571` merged with
   `origin/main` at `2c213c1168` (5 commits behind before the merge) — 37 executed, 37 passed, no failures
@@ -2494,7 +2503,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   every peer wait today runs in `runBlocking` on the test thread and `close()` runs later on that same
   thread in `finally`, so the fail-fast path cannot fire in any current scenario — it is proven only by
   `PeerWaitTest`'s virtual-time cases, and will matter once a scenario closes the peer from another
-  coroutine while a wait is pending.
+  coroutine while a wait is pending. [#1063](https://github.com/pyrycode/pyrycode-mobile/issues/1063) gave
+  the close failure a named type, `PeerSessionClosedError : AssertionError` (same message), so
+  `assertPeerAnswers` can tell it apart from a `TimeoutCancellationException` without catching every
+  `AssertionError`; both now go through a new `requirePeerAnswer(timeoutMs, request)` helper (`PeerWait.kt`)
+  that labels each as "a relay or daemon fault" with matching wording — so `assertPeerAnswers` no longer
+  catches `TimeoutCancellationException` directly itself, `requirePeerAnswer` does on its behalf. The known
+  limit above still applies to this path (same `runBlocking`-on-test-thread shape), so it remains proven
+  only by `PeerWaitTest`, not a live scenario, pending pyrycode/pyrycode-relay#154 on the production relay.
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns
