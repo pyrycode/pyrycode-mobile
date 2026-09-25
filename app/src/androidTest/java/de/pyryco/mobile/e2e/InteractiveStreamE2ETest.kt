@@ -5743,10 +5743,10 @@ class InteractiveStreamE2ETest {
     private fun appliedEffortFooter(applied: EffectiveEffort): Pair<String, String?> =
         when (applied) {
             EffectiveEffort.Unavailable -> throw AssertionError("the reply after a real turn omitted effective_effort")
-            EffectiveEffort.NotReported -> EFFORT_PLACEHOLDER_LABEL to string(R.string.thread_effort_note_not_reported)
+            EffectiveEffort.NotReported -> EFFORT_PLACEHOLDER_LABEL to claudeNote(R.string.thread_effort_note_not_reported)
             is EffectiveEffort.Applied ->
                 if (applied.value.isEmpty()) {
-                    EFFORT_PLACEHOLDER_LABEL to string(R.string.thread_effort_note_default_unavailable)
+                    EFFORT_PLACEHOLDER_LABEL to claudeNote(R.string.thread_effort_note_default_unavailable)
                 } else {
                     applied.value.inert() to null
                 }
@@ -5906,6 +5906,10 @@ class InteractiveStreamE2ETest {
         }
 
     private fun string(id: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
+
+    /** An effort note as a Claude conversation words it (#1115); the harness runs Claude conversations only. */
+    private fun claudeNote(id: Int): String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(id, string(R.string.agent_name_claude))
 
     /** A footer control, found by the click label its merged node announces (#808). */
     private fun footerControl(clickLabel: String): SemanticsMatcher =

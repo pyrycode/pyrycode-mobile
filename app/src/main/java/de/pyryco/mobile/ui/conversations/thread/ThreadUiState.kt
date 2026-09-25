@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -69,6 +70,8 @@ data class ThreadUiState(
     // #957: the conversation's own name, before [displayName]'s fallback; `null` when it has none.
     val conversationName: String? = null,
     val isPromoted: Boolean = false,
+    // #1115: the agent the usage-limit line and the effort notes name; Claude until the conversation is known.
+    val agent: ConversationAgent = ConversationAgent.Claude,
     val hasMessages: Boolean = false,
     val workspaceLabel: String = "scratch",
     val workspacePickerVisible: Boolean = false,

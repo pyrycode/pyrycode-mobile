@@ -130,9 +130,12 @@
     <string name="thread_footer_context_unavailable">Cxt: n/a</string>
     <string name="cd_context_usage">Context usage %1$d%%</string>
     <string name="cd_context_usage_unavailable">Context usage unavailable</string>
+    <!-- #1115: the client-owned agent names; %1$s of the effort notes and usage-limit lines below. -->
+    <string name="agent_name_claude" translatable="false">Claude</string>
+    <string name="agent_name_codex" translatable="false">Codex</string>
     <string name="thread_effort_note_selected_unavailable">Selected effort. The running effort is unavailable.</string>
-    <string name="thread_effort_note_default_unavailable">Claude\'s default applies. The running effort is unavailable.</string>
-    <string name="thread_effort_note_not_reported">Claude reports no effort parameter.</string>
+    <string name="thread_effort_note_default_unavailable">%1$s\'s default applies. The running effort is unavailable.</string>
+    <string name="thread_effort_note_not_reported">%1$s reports no effort parameter.</string>
     <string name="thread_options_not_listed">+%1$d not listed</string>
     <string name="cd_options_overlay_dismiss">Close options</string>
     <string name="thread_thinking_label">Thinking…</string>
@@ -158,8 +161,8 @@
     <string name="thread_resetting_restarting">Restarting</string>
     <!-- #804: claude's usage-limit report. Attributed reportage only: a rate_limited frame does not prove a
          turn was blocked, so none of these may say "limited", "reached" or "lifted". -->
-    <string name="thread_usage_limit_label">Claude reports usage-limit status: %1$s</string>
-    <string name="thread_usage_limit_label_no_status">Claude reported a usage-limit update</string>
+    <string name="thread_usage_limit_label">%1$s reports usage-limit status: %2$s</string>
+    <string name="thread_usage_limit_label_no_status">%1$s reported a usage-limit update</string>
     <string name="thread_usage_limit_spent">" · %1$d%% spent"</string>
     <string name="thread_usage_limit_resets">" · resets %1$s"</string>
     <!-- #805: a turn that failed or was interrupted. Everything claude said about the stop follows

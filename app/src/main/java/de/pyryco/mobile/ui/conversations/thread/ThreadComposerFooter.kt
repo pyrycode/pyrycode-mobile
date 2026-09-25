@@ -36,7 +36,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
+import de.pyryco.mobile.ui.conversations.components.nameRes
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 /**
@@ -109,6 +111,13 @@ internal fun EffortNote.textRes(): Int =
         EffortNote.DefaultRunningUnavailable -> R.string.thread_effort_note_default_unavailable
         EffortNote.NotReported -> R.string.thread_effort_note_not_reported
     }
+
+/**
+ * The note's text for a conversation run by [agent] (#1115): the notes that name an agent name this one.
+ * The footer and the Status sheet both resolve it here, so the two never disagree.
+ */
+@Composable
+internal fun EffortNote.text(agent: ConversationAgent): String = stringResource(textRes(), stringResource(agent.nameRes()))
 
 /**
  * What a footer control offers when its overlay opens. [notListed] is how many entries the list leaves
@@ -245,6 +254,7 @@ fun ThreadComposerFooter(
     onAnchorChanged: (FooterControl, Rect) -> Unit,
     modifier: Modifier = Modifier,
     onAttach: () -> Unit = {},
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     // #1032: the text controls share one weighted slot, measured after the paperclip and the Status opener,
     // so a footer full of long labels shrinks the labels and never squeezes out the two icons.
@@ -286,7 +296,7 @@ fun ThreadComposerFooter(
                 clickLabel = stringResource(R.string.thread_footer_change_effort),
                 enabled = footerControlEnabled(FooterControl.Effort, runConfig),
                 pending = runConfig.pendingEffort != null,
-                note = runConfig.effortNote?.let { stringResource(it.textRes()) },
+                note = runConfig.effortNote?.text(agent),
                 onClick = { onOpen(FooterControl.Effort) },
                 onBounds = { onAnchorChanged(FooterControl.Effort, it) },
             )
