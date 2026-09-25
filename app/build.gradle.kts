@@ -105,6 +105,8 @@ android {
         // the e2e relay args (-e relayUrl …), which select the paired, tapped relay repository. Safe
         // for `connectedAndroidTest` as well as the managed-device run.
         testInstrumentationRunner = "de.pyryco.mobile.e2e.E2eInstrumentationRunner"
+        // #1131: a failing device test logs the window manager's focus state for the gate to print.
+        testInstrumentationRunnerArguments["listener"] = "de.pyryco.mobile.e2e.FocusRecordListener"
     }
 
     if (missingUploadSigningProperties.isEmpty()) {

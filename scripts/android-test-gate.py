@@ -96,6 +96,30 @@ def fresh_logcats(directory, started_ns):
     return sorted(p for p in directory.rglob("logcat-*.txt") if p.stat().st_mtime_ns >= started_ns)
 
 
+FOCUS_RECORD_TAG = "FocusRecord: "
+
+
+def print_focus_records(paths):
+    """Print each failing test's focus record from its logcat to stderr, where the dispatcher log keeps it (#1131).
+
+    FocusRecordListener logs one record per failing device test: the window manager's focused window, focused
+    app and any ANR dialog at the moment of failure. A passing run logs none, so it prints nothing here.
+    """
+    seen = set()
+    for path in paths:
+        try:
+            lines = path.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            _, tag, record = line.partition(FOCUS_RECORD_TAG)
+            if not tag or record in seen:
+                continue
+            seen.add(record)
+            test = record.split(" ", 1)[0].removeprefix("test=")
+            print(f"Android gate: focus record for {test}: {record}", file=sys.stderr)
+
+
 def combine_reports(paths, minimum, expected_class=None):
     if not paths:
         raise ValueError("No fresh Android test reports were produced")
@@ -361,8 +385,10 @@ def run_scripted_all(env, run_dir, device):
             outcome = subprocess.run(["bash", str(ROOT / "scripts" / "e2e-emulator.sh")], cwd=ROOT,
                                      env=scenario_env, stdout=sys.stderr, stderr=sys.stderr)
             paths = fresh_reports(directory, started)
-            for index, path in enumerate(fresh_logcats(directory, started)):
+            logcats = fresh_logcats(directory, started)
+            for index, path in enumerate(logcats):
                 shutil.copy2(path, run_dir / f"{scenario}-{index}-{path.name}")
+            print_focus_records(logcats)
             try:
                 _, passed, executed = combine_reports(paths, 1, expected_class)
             except ValueError as error:
@@ -511,8 +537,10 @@ def run_on_device(command, env, run_dir, device, minimum, expected_class):
         for index, path in enumerate(paths):
             shutil.copy2(path, run_dir / f"{index}-{path.name}")
         # Kept before the report is judged: a failing run is the one whose logcat someone needs to read.
-        for index, path in enumerate(fresh_logcats(directory, started)):
+        logcats = fresh_logcats(directory, started)
+        for index, path in enumerate(logcats):
             shutil.copy2(path, run_dir / f"{index}-{path.name}")
+        print_focus_records(logcats)
         xml, passed, executed = combine_reports(paths, minimum, expected_class)
         (run_dir / "dispatcher.xml").write_text(xml + "\n")
         print(xml)
