@@ -3790,11 +3790,16 @@ class InteractiveStreamE2ETest {
      * progress description, and a meta line with a tools segment of any count. Only the progress block draws the
      * tools segment, so the task's opening description cannot pass for it.
      *
-     * **Always-on**: the hold does not depend on a fixed delay, only on the subagent taking its Read calls one at a
-     * time. If a live run shows the task finishing before the panel reads it, `@Ignore` this with the reason, as
-     * #481 / #482 do, and take it out of the `LIVE=1` list. **One real-claude turn**: the prompt that starts the
+     * **`@Ignore`d, blocked on pyrycode/pyrycode#2658, a daemon parser gap.** Its own assertions pass live: the
+     * progress frame arrived and the card drew it. The class's [UnrecognizedRowSentinel] still fails the run. Claude
+     * echoes a foreground subagent's prompt as a `user` text block, and the daemon surfaces that block as an
+     * `unrecognized_message` (`site=user_block`, `message_type=text`), two runs out of two. To un-ignore once #2658
+     * lands, remove the annotation, put the method back on the `LIVE=1` list in `scripts/e2e-emulator.sh`, and
+     * raise `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The hold does not depend on a fixed delay, only on
+     * the subagent taking its Read calls one at a time. **One real-claude turn**: the prompt that starts the
      * subagent.
      */
+    @Ignore("blocked on pyrycode/pyrycode#2658 — the daemon surfaces a subagent's prompt echo as unrecognized; see KDoc")
     @Test
     fun interactiveTurn_backgroundAgentProgress_showsOnRunningCard() {
         val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))

@@ -60,7 +60,7 @@ Overlaps: none — no in-flight feature branch touches these three files.
 
 ## Documentation handoff (pending — documentation stage)
 
-`docs/e2e-interactive-stream.md`, beside the #967 background-task scenario: record `interactiveTurn_backgroundAgentProgress_showsOnRunningCard`, what it proves, its one-turn cost, that it runs always-on, and why it holds on a foreground subagent's run of Read calls on missing files rather than a permission prompt (the daemon's claude has no Glob tool; see Revisions). Add #1076 to the `LIVE=1` variant's ticket list and bump its method/turn counts.
+`docs/e2e-interactive-stream.md`, beside the #967 background-task scenario: record `interactiveTurn_backgroundAgentProgress_showsOnRunningCard`, what it proves, its one-turn cost, and why it holds on a foreground subagent's run of Read calls on missing files rather than a permission prompt (the daemon's claude has no Glob tool; see Revisions). It lands **`@Ignore`d, blocked on pyrycode/pyrycode#2658** (see the second Revisions entry), so it is **not** added to the `LIVE=1` variant's ticket list and the method/turn counts stay as they are. Record the un-ignore steps with it. *(Revised 2026-09-25; the earlier text said always-on.)*
 
 ## Open questions
 
@@ -80,3 +80,16 @@ Overlaps: none — no in-flight feature branch touches these three files.
 The steps, the panel assertion and the always-on `LIVE=1` membership are unchanged.
 
 **Open question resolved.** "Whether real claude honours one call per message" could not be answered: the subagent made no calls. The Read rework reopens it, and the next live run decides it, with `@Ignore` still the documented fallback.
+
+### 2026-09-25 (second): the scenario's own assertions pass, but the parser-gap sentinel fails. Landing it `@Ignore`d
+
+**Finding.** The real-claude gate ran the Read-based rework at daemon `9f76e401` and failed the scenario in both the full run and the re-run, with the same cause each time. Every step of the body passed, and the re-run took 12.5 s. The progress frame arrived and the card drew both lines. Then the class's `UnrecognizedRowSentinel` (#586) failed the run: `1 unrecognized-message row … site=user_block message_type="text"`. The daemon's claude transcript shows where the row came from. A foreground subagent's first sidechain entry is a `user` message carrying the prompt that the main agent gave it. In the daemon, `(*Parser).emitUser` drops only text written by the harness, so this echo becomes `Unrecognized{user_block, text}`. Any foreground subagent would hit it, whatever our prompt says.
+
+**Why not fix it here.** The gap is in the daemon's parser (pyrycode). The sentinel's own documentation says a red means the daemon's measured ignore-list needs re-taking. Waiving the sentinel for this method would hide a row that operators actually see, and moving the subagent to the background brings back the second turn. The fix belongs in the daemon, so it is filed there as **pyrycode/pyrycode#2658**, on the Pyrycode board in Inbox.
+
+**New contract.**
+- The method carries `@Ignore("blocked on pyrycode/pyrycode#2658 …")`. Its KDoc names the finding and the un-ignore steps: remove the annotation, restore the `LIVE=1` entry in `scripts/e2e-emulator.sh`, and raise `LIVE_MINIMUM` in `scripts/android-test-gate.py`.
+- The `LIVE=1` entry and the `LIVE_MINIMUM` bump are removed, so both scripts match main again. This is the AC-2 shape: a documented manual case, never an always-on red.
+- The body, the prompt and the panel assertion are unchanged. They are what the live run showed working.
+
+**Open question resolved.** Real claude does take the subagent's Read calls one per message. The run observed the progress frame and the card before the task finished.
