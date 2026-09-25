@@ -121,7 +121,8 @@ class EmulatorGradleTest(unittest.TestCase):
 
 
 class EmulatorBuildBeforeMintTest(unittest.TestCase):
-    """#993: the APKs are built before any pairing code is minted, and an expired code is named on failure."""
+    """#993: the APKs are built before any pairing code is minted, and an expired code is named on failure.
+    #1132: a failed run also names each unplanned relay-link drop."""
 
     def setUp(self):
         self.root = Path(__file__).resolve().parent.parent
@@ -172,7 +173,8 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
                 self.assertLess(build, min(calls))
 
     def run_test_task(self, status, logs):
-        function = self.block("report_stale_pairing_codes() {", "\n}\n")
+        function = (self.block("report_stale_pairing_codes() {", "\n}\n")
+                    + self.block("report_relay_link_drops() {", "\n}\n"))
         invocation = self.block("GRADLE_TEST_ARGS=(", 'exit "${TEST_STATUS}"\nfi\n')
         paths = {}
         for variable, name in (("DAEMON_LOG", "daemon.log"), ("DAEMON_B_LOG", "daemon-b.log"),
@@ -209,6 +211,44 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
     def test_success_does_not_scan(self):
         expired = "msg=v2.handshake.reject.redemption_window_elapsed\n"
         result = self.run_test_task(0, {"daemon.log": expired})
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("", result.stderr)
+
+    # Relay-link ends as pyrycode's WSSClient logs them; `context canceled` is the teardown's own kill.
+    CANCELED = ('time=2026-09-25T21:40:00.000+03:00 level=INFO msg="transport: disconnected" '
+                'uptime=5m0s err="context canceled"\n')
+    NO_ADDRESS = ('time=2026-09-25T21:46:00.712+03:00 level=INFO msg="transport: disconnected" uptime=1m2s '
+                  'err="read tcp 192.168.50.123:50123->213.188.218.250:443: read: can\'t assign requested address"\n')
+    PONG = ('time={} level=INFO msg="transport: disconnected" uptime=3m0s '
+            'err="transport: pong timeout token=log-secret: context deadline exceeded"\n')
+
+    def drops(self, result):
+        return [line for line in result.stderr.splitlines() if "relay_link_dropped" in line]
+
+    def test_failure_names_each_daemon_with_its_unplanned_drop_times(self):
+        pong = (self.PONG.format("2026-09-25T21:46:03.100+03:00")
+                + "time=2026-09-25T21:46:03.150+03:00 level=INFO msg=\"transport: connected\" attempt=1\n"
+                + self.PONG.format("2026-09-25T21:52:10.000+03:00"))
+        result = self.run_test_task(3, {"daemon.log": self.CANCELED + self.NO_ADDRESS, "daemon-b.log": pong,
+                                        "daemon-bypass.log": "level=INFO msg=up\n", "daemon-answer.log": self.CANCELED})
+        self.assertEqual(3, result.returncode)
+        drops = self.drops(result)
+        self.assertEqual(2, len(drops), result.stderr)
+        self.assertIn("e2e-x (daemon.log)", drops[0])
+        self.assertIn("2026-09-25T21:46:00.712+03:00", drops[0])
+        self.assertIn("e2e-x-b (daemon-b.log)", drops[1])
+        self.assertIn("2026-09-25T21:46:03.100+03:00, 2026-09-25T21:52:10.000+03:00", drops[1])
+        for absent in ("21:40:00", "21:46:03.150", "e2e-x-bypass", "e2e-x-answer", "192.168", "213.188",
+                       "assign", "pong", "log-secret", "deadline", "uptime", "err=", "stub-token", "stub-key"):
+            self.assertNotIn(absent, result.stderr)
+
+    def test_failure_with_only_the_teardowns_own_drops_prints_nothing(self):
+        result = self.run_test_task(3, {"daemon.log": self.CANCELED, "daemon-answer.log": self.CANCELED})
+        self.assertEqual(3, result.returncode)
+        self.assertEqual("", result.stderr)
+
+    def test_success_does_not_report_drops(self):
+        result = self.run_test_task(0, {"daemon.log": self.NO_ADDRESS})
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("", result.stderr)
 
