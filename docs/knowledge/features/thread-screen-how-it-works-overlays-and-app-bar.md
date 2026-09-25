@@ -32,7 +32,7 @@ Three design points pinned in #201:
 ```kotlin
 bottomBar = {
     Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null)
+        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true })
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
     }
@@ -47,17 +47,75 @@ private fun ThreadStatusArea(
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?, // #803
     runningTool: ToolCall?, // #897
+    taskCount: Int, // #1043
+    onTasksClick: () -> Unit, // #1043
 ) {
-    val slot = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter) // 20dp gutter − the indicators' own 16dp
+    val reading: @Composable (Modifier) -> Unit = { modifier ->
+        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
+    }
+    if (taskCount <= 0) {
+        reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
+        return
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        reading(Modifier.weight(1f))
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+            NoticePill(text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount), isError = false, onClick = onTasksClick, shadowElevation = 0.dp)
+        }
+    }
+}
+
+/** The one live reading; unchanged since #643 except for its extraction into its own function. */
+@Composable
+private fun StatusReading(
+    apiRetry: ApiRetryStatus,
+    resetting: ResetStatus?,
+    isCompacting: Boolean,
+    turnOutcome: TurnOutcomeReport?,
+    isThinking: Boolean,
+    thinkingProgress: ThinkingProgress?,
+    runningTool: ToolCall?,
+    modifier: Modifier,
+) {
     when {
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
-        resetting != null -> ResettingIndicator(status = resetting, modifier = slot)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-        else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress, runningTool = runningTool)
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
+        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
+        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
+        else -> ThinkingIndicator(isThinking = isThinking, modifier = modifier, progress = thinkingProgress, runningTool = runningTool)
     }
 }
 ```
+
+**[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count pill at the band's
+right end, and split the `when` out into `StatusReading` to make room for it.** Above zero,
+`state.backgroundTaskCount` (§ [Background-tasks panel placement](#background-tasks-panel-placement-post-678)
+below) renders as a [`NoticePill`](notice-pill.md) reading the client-owned plural `R.plurals.thread_task_count`
+("1 task running" / "N tasks running") beside whichever `StatusReading` arm is live, right-aligned on the
+20dp gutter; tapping it sets the same `backgroundTasksOpen` flag the Actions menu's row sets, opening the
+same `BackgroundTaskPanel`. `StatusReading` itself is byte-identical to the pre-#1043 `when` above, just
+parameterised on `modifier` instead of closing over the file-private `slot` — at `taskCount <= 0` it still
+gets exactly that `slot`, so an idle thread with no running tasks renders identically to before this ticket.
+When a reading is live, `StatusReading` takes `Modifier.weight(1f)` inside the `Row` and `Arrangement.End`
+keeps the pill flush against the gutter; when no reading is live, `StatusReading` emits no node (§ *The band
+collapses when nothing is live* below still holds), its weight goes with it, and `Arrangement.End` leaves the
+pill alone at the right end. `NoticePill` gained a `shadowElevation: Dp = PillShadow` parameter for this
+caller — Figma `568:3162` (the in-band pill) carries no drop shadow, unlike [`ThreadTopOverlay`](thread-top-overlay.md)'s
+pills, which keep the default; see [Notice pill § Three call sites](notice-pill.md#three-call-sites-three-contracts).
+A clickable `Surface` inside a 24dp band would otherwise lay out at M3's 48dp minimum interactive size and
+double the band's height — `CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides
+Dp.Unspecified)` around the pill keeps the layout at Figma's 24dp while Compose's hit-test still expands the
+pill's *touch* bounds to 48dp, so the tap target is unaffected. This is the app's first use of that local.
+`TaskCountPillTest` (`app/src/sharedTest/.../thread/`, `@GraphicsMode(NATIVE)` — see [Compose evidence](development-verification.md#compose-evidence))
+proves the band's collapse is exact rather than assumed: it measures the newest message row's bottom edge
+(not the input field's top — the composer is a bottom-anchored `bottomBar`, so only the band's own height
+moves that edge) at zero tasks, again once the pill raises it by exactly 32dp (the pill's 24dp plus the
+column's 8dp gap), and again after it returns to zero, asserting the second zero-count measurement equals
+the first.
 
 **[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed `usageLimit`, `showRePair` and
 `onRePair` from this composable, and deleted the private `RePairButton` it used to hold.** From #804 to
@@ -200,7 +258,11 @@ WorkspacePicker(...)
 `backgroundTasksOpen` is a plain `remember`, not `rememberSaveable`, keyed on `state.conversationId` — the
 same idiom `openControl` uses one field up: switching conversations drops an open panel, and a process
 death never restores one a fresh screen instance never opened. The Actions menu's background-tasks row sets
-it (see [Thread composer footer § Actions menu](thread-composer-footer.md#actions-menu-884)); closing the
+it (see [Thread composer footer § Actions menu](thread-composer-footer.md#actions-menu-884)); since
+[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) the status band's task-count pill (§
+[Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) above) sets the same
+flag through the same `{ backgroundTasksOpen = true }` lambda, so the panel now has two openers over one
+piece of state rather than a second flag to keep in sync. Closing the
 panel — the footer Close button, the close glyph, or Back, all routed through `MobileReadOnlyModal`'s single
 `onDismissRequest` — only flips it back, sending nothing and touching no task or conversation state.
 `state.backgroundTasks` (`BackgroundTaskRoster?`) and `state.backgroundTaskCount` (`Int`) reach
