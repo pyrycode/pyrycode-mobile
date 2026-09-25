@@ -1780,6 +1780,140 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * Each host's default workspace and Archive stay its own with two live hosts paired (#1086, rung 3).
+     * #714 scoped Settings' default-workspace row to its host and #715 bound Archive to its host; both were
+     * proven against fakes only.
+     *
+     * **Defaults.** Each host's default is set from that host's own Settings to a run-unique folder created
+     * through the picker, whose path is the daemon's canonical one (`workspace_folder_created`). A chat made
+     * from each host row's add control is then read back off that host's live repository: its `cwd`, which
+     * the daemon resolves before recording (pyrycode #2568), must equal that host's stored default. Real
+     * folders, not scratch: Settings' scratch row still sends the literal `~/.pyrycode/scratch`, which the
+     * daemon now records resolved, so it would not compare equal.
+     *
+     * **Archive.** One of host A's chats is archived from its thread and restored from A's Archive, reached
+     * through A's Settings. B's full list and B's archived list are read before and compared after each step.
+     *
+     * **Shared app state.** Both stored defaults are written back in `finally`, so later scenarios' chats keep
+     * landing in A's original default, and B is removed there as #847 does.
+     *
+     * **Zero real-claude turns**: pairing, folder creation, chat creation, rename, archive and restore are
+     * daemon round-trips.
+     */
+    @Test
+    fun interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost() {
+        val serverIdA = twoHostArg(ARG_SERVER_ID)
+        val serverIdB = twoHostArg(ARG_SERVER_ID_B)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val originalA = runBlocking { preferences.defaultWorkspace(serverIdA).first() }
+        var originalB: String? = null
+        try {
+            // 1. Pair host B by code, as #847 does, and record its default before anything writes one.
+            awaitChannelList()
+            awaitConnected()
+            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+            pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
+            originalB = runBlocking { preferences.defaultWorkspace(serverIdB).first() }
+
+            // 2. AC-1: A's default, from A's Settings. B's stored default does not move.
+            val stamp = System.currentTimeMillis()
+            val folderA = "${DEFAULTS_FOLDER_PREFIX}a-$stamp"
+            val folderB = "${DEFAULTS_FOLDER_PREFIX}b-$stamp"
+            openSettings()
+            showHostSettings(serverIdA)
+            val pathA = pickNewDefaultFolder(serverIdA, folderA)
+            assertEquals("setting A's default moved B's", originalB, runBlocking { preferences.defaultWorkspace(serverIdB).first() })
+
+            // 3. AC-1: B's default, from B's Settings. A's stays pathA, and A's Settings still shows only its own.
+            showHostSettings(serverIdB)
+            val pathB = pickNewDefaultFolder(serverIdB, folderB)
+            assertEquals("setting B's default moved A's", pathA, runBlocking { preferences.defaultWorkspace(serverIdA).first() })
+            showHostSettings(serverIdA)
+            composeTestRule.onNode(hasText(DEFAULT_WORKSPACE_ROW) and hasText(folderA)).performScrollTo().assertIsDisplayed()
+            composeTestRule.onAllNodesWithText(folderB, substring = true).assertCountEquals(0)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+
+            // 4. AC-1: a chat from A's host row lands in A's default, as A's daemon reports its cwd. It is
+            //    renamed so it can be found on the list and in the Archive.
+            val chatName = DEFAULTS_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            val chatA = createChatOn(serverIdA)
+            assertEquals("A's new chat is not in A's default", pathA, heldConversation(serverIdA, chatA).cwd)
+            renameOpenThread(chatName)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            awaitListText(chatName)
+
+            // 5. AC-1: a chat from B's host row lands in B's default.
+            val chatB = createChatOn(serverIdB)
+            assertEquals("B's new chat is not in B's default", pathB, heldConversation(serverIdB, chatB).cwd)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+
+            // 6. B's baseline for the archive steps: every conversation it lists, and its archived ones.
+            val allB = hostConversationIds(serverIdB)
+            val archivedB = archivedIds(serverIdB) { true }
+
+            // 7. AC-2: archive A's chat from its thread. It leaves the list and joins A's archive; B is unchanged.
+            awaitListText(chatName)
+            composeTestRule.onAllNodesWithText(chatName, substring = true).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVE_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(ARCHIVE_ITEM).performClick()
+            awaitChannelList()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(hasText(chatName, substring = true)) }.isFailure
+            }
+            archivedIds(serverIdA) { chatA in it }
+            assertEquals("archiving A's chat changed B's list", allB, hostConversationIds(serverIdB))
+            assertEquals("archiving A's chat changed B's archive", archivedB, archivedIds(serverIdB) { true })
+
+            // 8. AC-2: restore it from A's Archive, reached through A's Settings. The snackbar wait keeps the
+            //    restore coroutine from being cancelled by the Back that follows (#551).
+            openSettings()
+            showHostSettings(serverIdA)
+            composeTestRule.onNodeWithText(ARCHIVED_ROW).performScrollTo().performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(chatName, substring = true)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasContentDescription(chatName, substring = true)).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+
+            // 9. AC-2: the chat is back on A's list and out of A's archive; B is still unchanged.
+            awaitListText(chatName)
+            hostConversationIds(serverIdA, "the restored chat", ConversationFilter.Discussions) { chatA in it }
+            archivedIds(serverIdA) { chatA !in it }
+            assertEquals("restoring A's chat changed B's list", allB, hostConversationIds(serverIdB))
+            assertEquals("restoring A's chat changed B's archive", archivedB, archivedIds(serverIdB) { true })
+        } finally {
+            runBlocking {
+                val koin = GlobalContext.getOrNull()
+                val saved = koin?.get<AppPreferences>()
+                saved?.setDefaultWorkspace(serverIdA, originalA)
+                originalB?.let { saved?.setDefaultWorkspace(serverIdB, it) }
+                koin?.get<PairedServerCollectionStore>()?.remove(serverIdB)
+            }
+        }
+    }
+
+    /**
      * A turn started from another client continues on the phone (#848, rung 3). A [SecondClientPeer] —
      * a second paired device on host A with its own token ([ARG_PEER_TOKEN]) and key, standing in for the
      * desktop — sends the constrained ping prompt into a chat the phone has open.
@@ -4893,18 +5027,20 @@ class InteractiveStreamE2ETest {
 
     /**
      * The first conversation-id set [serverId]'s repository lists that satisfies [ready], following the host's
-     * redial with `firstOnLive` as #1029's reads do; a timeout names [what] the phone was reading.
+     * redial with `firstOnLive` as #1029's reads do; a timeout names [what] the phone was reading. [filter]
+     * narrows the list read, `All` by default.
      */
     private fun hostConversationIds(
         serverId: String,
         what: String,
+        filter: ConversationFilter = ConversationFilter.All,
         ready: (Set<String>) -> Boolean,
     ): Set<String> {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
         return runBlocking {
             withTimeoutOrNull(LIST_TIMEOUT_MS) {
                 bundle.coordinator.currentRepository.firstOnLive({ repository ->
-                    repository.observeConversations(ConversationFilter.All).map { rows -> rows.mapTo(mutableSetOf()) { it.id } }
+                    repository.observeConversations(filter).map { rows -> rows.mapTo(mutableSetOf()) { it.id } }
                 }, ready)
             }
         } ?: throw AssertionError("the phone's live repository never listed $what within $LIST_TIMEOUT_MS ms")
@@ -5000,19 +5136,23 @@ class InteractiveStreamE2ETest {
     private fun heldConversationName(
         serverId: String,
         conversationId: String,
-    ): String? {
+    ): String? = heldConversation(serverId, conversationId).name
+
+    /** The row [serverId]'s own live repository holds for [conversationId] now. */
+    private fun heldConversation(
+        serverId: String,
+        conversationId: String,
+    ): Conversation {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
-        val held =
-            runBlocking {
-                withTimeout(LIST_TIMEOUT_MS) {
-                    val repository = bundle.coordinator.currentRepository.first { it != null }
-                    checkNotNull(repository)
-                        .observeConversations(ConversationFilter.All)
-                        .first { rows -> rows.any { it.id == conversationId } }
-                        .first { it.id == conversationId }
-                }
+        return runBlocking {
+            withTimeout(LIST_TIMEOUT_MS) {
+                val repository = bundle.coordinator.currentRepository.first { it != null }
+                checkNotNull(repository)
+                    .observeConversations(ConversationFilter.All)
+                    .first { rows -> rows.any { it.id == conversationId } }
+                    .first { it.id == conversationId }
             }
-        return held.name
+        }
     }
 
     /** What #1085 holds host A to while host B is renamed and unpaired, captured before B is paired. */
@@ -5080,6 +5220,84 @@ class InteractiveStreamE2ETest {
                 .isNotEmpty()
         }
     }
+
+    /** Tap the channel list's gear, which opens the selected host's Settings. */
+    private fun openSettings() {
+        composeTestRule.onNode(hasContentDescription(CD_OPEN_SETTINGS)).performClick()
+    }
+
+    /**
+     * On Settings, make [serverId]'s Settings the one on screen: tap its Connection row unless it is already
+     * the owner's, then wait until that row carries the owner badge and exactly one Settings is composed, so
+     * no screen leaving the hop can answer a later check. The badge, not selection, proves where it landed.
+     */
+    private fun showHostSettings(serverId: String) {
+        val row = hasText(serverId) and hasClickAction()
+        val owner = row and hasText(string(R.string.settings_host_current))
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1
+        }
+        if (composeTestRule.onAllNodes(owner).fetchSemanticsNodes().isEmpty()) {
+            composeTestRule.onNode(row).performScrollTo().performClick()
+        }
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(owner).fetchSemanticsNodes().size == 1 &&
+                composeTestRule.onAllNodesWithText(DEFAULT_WORKSPACE_ROW).fetchSemanticsNodes().size == 1
+        }
+    }
+
+    /**
+     * On [serverId]'s Settings, create [folderName] from the Default workspace picker and wait until the row
+     * shows it and the host's stored default names it. Returns the stored path: the daemon's canonical one.
+     */
+    private fun pickNewDefaultFolder(
+        serverId: String,
+        folderName: String,
+    ): String {
+        composeTestRule.onNode(hasText(DEFAULT_WORKSPACE_ROW) and hasClickAction()).performScrollTo().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(folderName)
+        composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasText(DEFAULT_WORKSPACE_ROW) and hasText(folderName)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        return runBlocking {
+            withTimeout(THREAD_TIMEOUT_MS) { preferences.defaultWorkspace(serverId).first { it.endsWith("/$folderName") } }
+        }
+    }
+
+    /** Create a chat from [serverId]'s own host row, scrolled into view, and return its id once its thread is open. */
+    private fun createChatOn(serverId: String): String {
+        val before = hostConversationIds(serverId)
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            runCatching { scrollListTo(hasTestTag(treeHostAddTestTag(serverId))) }.isSuccess
+        }
+        createChat(serverId)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        return newHostConversationId(serverId, before)
+    }
+
+    /** Wait until the list can scroll to a row carrying [text]. */
+    private fun awaitListText(text: String) {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            runCatching { scrollListTo(hasText(text, substring = true)) }.isSuccess
+        }
+    }
+
+    /** The first archived-id set [serverId]'s live repository lists that satisfies [ready]. */
+    private fun archivedIds(
+        serverId: String,
+        ready: (Set<String>) -> Boolean,
+    ): Set<String> = hostConversationIds(serverId, "its archive", ConversationFilter.Archived, ready)
 
     /** The host row's label as the tree draws it: the saved display name, else "Unnamed host". */
     private fun hostLabel(serverId: String): String {
@@ -5253,8 +5471,8 @@ class InteractiveStreamE2ETest {
      * the two bodies #738 edits when the control changes, in place of the 33 sites they replaced. Each
      * carries its own wait rather than sharing a third helper, so the count stays at two.
      */
-    private fun createChat() {
-        awaitHostAddControl().performClick()
+    private fun createChat(serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))) {
+        awaitHostAddControl(serverId).performClick()
     }
 
     /**
@@ -5273,10 +5491,13 @@ class InteractiveStreamE2ETest {
      * per-host name instead, so the durable handle is the per-host test tag keyed on the `serverId` the
      * harness itself passed in — unambiguous the moment a second host is paired, which a name-based or
      * position-based match would not be. The tree draws the same host in both sections, so the tag matches
-     * twice; either node is the same control on the same host.
+     * twice; either node is the same control on the same host. [serverId] defaults to that first host;
+     * #1086 passes the second.
      */
-    private fun awaitHostAddControl(): SemanticsNodeInteraction {
-        val tag = treeHostAddTestTag(requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)))
+    private fun awaitHostAddControl(
+        serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
+    ): SemanticsNodeInteraction {
+        val tag = treeHostAddTestTag(serverId)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -5537,6 +5758,13 @@ class InteractiveStreamE2ETest {
         // HOST_B_NAME or another scenario's names, and the Edit host shell's hardcoded submit label.
         const val HOST_RENAME_PREFIX = "e2e1085-host-"
         const val EDIT_HOST_OK = "OK"
+
+        // #1086 per-host defaults. The two folders are "e2e1086-a-<ms>" and "e2e1086-b-<ms>", clean single
+        // path elements under the shared real ~/pyry-workspace, neither a substring of the other. The chat
+        // prefix is distinct from both. DEFAULT_WORKSPACE_ROW is the Settings row's hardcoded headline.
+        const val DEFAULTS_FOLDER_PREFIX = "e2e1086-"
+        const val DEFAULTS_CHAT_NAME_PREFIX = "e2e1086-chat-"
+        const val DEFAULT_WORKSPACE_ROW = "Default workspace"
 
         // #545 settings scenarios. Run-unique names for the chats and channel each method prepares on the host,
         // none containing "ping" or another scenario's prefix.

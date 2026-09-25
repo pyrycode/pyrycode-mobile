@@ -134,3 +134,14 @@ Executing the scenario needs the live relay and the host-B daemon. The dispatche
   live hosts" sentence), `docs/knowledge/features/archived-discussions-screen.md` (the restore note and
   follow-up (f)), `docs/knowledge/features/navigation.md` (the archive/restore sentences in § Testing and
   the follow-ups line).
+
+## Revisions
+
+- 2026-09-25, during implementation (no design change): `openHostSettings` became two helpers,
+  `openSettings` (the gear) and `showHostSettings(serverId)` (the hop and the owner-badge wait), because
+  step 3 hops between hosts while already on Settings. `showHostSettings` also waits until exactly one
+  "Default workspace" row is composed, so the screen leaving a hop cannot answer the `folderB` absence
+  check. Three small readers were added: `createChatOn(serverId)` (scroll to the host's add control,
+  create, return the new id), `awaitListText` and `archivedIds`. Open questions resolved: the Connection
+  row is matched by `hasText(serverId) and hasClickAction()`, and B's add control is scrolled into view
+  before the tap.
