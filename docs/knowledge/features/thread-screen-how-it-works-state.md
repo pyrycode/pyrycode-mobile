@@ -145,3 +145,12 @@ Claude's rows (including the `default` row when nothing is saved) for a Codex co
 reconsider once `decided` flips. The daemon would refuse the resulting write, so no visible corruption
 follows, but the recall opportunity for that opening would be spent on the wrong agent's vocabulary. Revisit
 this note before changing when `state` starts collecting relative to the conversation list's first emission.
+
+**#1116 duplicated this subscription, non-blocking.** The question-modal title also needs this
+conversation's agent, but its collector lives outside `state`'s combine chain and was planned before this
+section's shared `conversations` flow landed. It calls `repository.observeConversations(ConversationFilter.All)`
+on its own rather than reading `conversationAgent`, so holding a question batch opens a second
+`list_conversations` subscription alongside this one. `StateFlow` conflation absorbs it, so the verifier
+passed it as a SHOULD FIX rather than blocking the merge — see [Question batch modal § Title names the
+conversation's agent (#1116)](question-batch-modal.md#title-names-the-conversations-agent-1116). Fold that
+collector onto this file's `conversationAgent` before adding another such lookup.

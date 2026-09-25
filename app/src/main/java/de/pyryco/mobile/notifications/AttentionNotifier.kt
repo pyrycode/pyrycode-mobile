@@ -12,6 +12,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.HostConversationSnapshot
@@ -45,7 +46,7 @@ internal const val MAX_LEDGER_ENTRIES = 512
  * posts later. The ledger persists, which
  * is what holds "at most once" across a reconnect's replay, a new wake window and process death.
  *
- * The notification carries fixed app copy only. The alert's ids are identities: they pick the
+ * The notification carries fixed app copy only, naming the conversation's agent (#1116). The alert's ids are identities: they pick the
  * notification's tag and the tap's target, and are never shown, logged or written in the clear.
  */
 class AttentionNotifier(
@@ -54,6 +55,8 @@ class AttentionNotifier(
     private val notificationsEnabled: Flow<Boolean>,
     /** Whether the host [AttentionAlert.serverId] reports its conversation muted (#1022); unknown is not muted. */
     private val isMuted: (serverId: String, conversationId: String) -> Boolean,
+    /** The agent host [AttentionAlert.serverId] lists for its conversation (#1116); null when it lists none. */
+    private val agentOf: (serverId: String, conversationId: String) -> ConversationAgent?,
     private val isForeground: () -> Boolean,
     ledgerFile: File,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -93,10 +96,7 @@ class AttentionNotifier(
         )
         // One notification per conversation per host: the same id on two hosts gets two tags.
         val tag = digest(alert.serverId, alert.conversationId)
-        val text =
-            context.getString(
-                if (alert.kind == AttentionAlert.Kind.TurnCompleted) R.string.notification_turn_completed else R.string.notification_prompt,
-            )
+        val text = context.getString(copyFor(alert.kind, agentOf(alert.serverId, alert.conversationId)))
         val notification =
             NotificationCompat
                 .Builder(context, ATTENTION_CHANNEL_ID)
@@ -170,6 +170,28 @@ internal fun List<HostConversationSnapshot>.isMuted(
 ): Boolean {
     val host = firstOrNull { it.serverId == serverId } ?: return false
     return (host.channels + host.chats).any { it.id == conversationId && it.muted }
+}
+
+/** The agent host [serverId]'s last known rows give [conversationId] (#1116), or null when they hold no such row. */
+internal fun List<HostConversationSnapshot>.agentOf(
+    serverId: String,
+    conversationId: String,
+): ConversationAgent? {
+    val host = firstOrNull { it.serverId == serverId } ?: return null
+    return (host.channels + host.chats).firstOrNull { it.id == conversationId }?.agent
+}
+
+/** The alert's text: Claude's reads as it always has, Codex's names Codex, an unlisted conversation's names no one. */
+private fun copyFor(
+    kind: AttentionAlert.Kind,
+    agent: ConversationAgent?,
+): Int {
+    val turn = kind == AttentionAlert.Kind.TurnCompleted
+    return when (agent) {
+        ConversationAgent.Claude -> if (turn) R.string.notification_turn_completed else R.string.notification_prompt
+        ConversationAgent.Codex -> if (turn) R.string.notification_turn_completed_codex else R.string.notification_prompt_codex
+        null -> if (turn) R.string.notification_turn_completed_neutral else R.string.notification_prompt_neutral
+    }
 }
 
 /** SHA-256 over length-prefixed fields, so no two field tuples share a digest by concatenation. */

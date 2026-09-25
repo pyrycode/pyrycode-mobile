@@ -39,6 +39,7 @@ import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.notifications.AttentionNotifier
+import de.pyryco.mobile.notifications.agentOf
 import de.pyryco.mobile.notifications.isMuted
 import de.pyryco.mobile.push.FirebasePushTokenSource
 import de.pyryco.mobile.push.PushTokenRefresher
@@ -155,6 +156,7 @@ val appModule =
                 alerts = source.alerts,
                 notificationsEnabled = get<AppPreferences>().notificationsEnabled,
                 isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
+                agentOf = { serverId, conversationId -> source.snapshots.value.agentOf(serverId, conversationId) },
                 isForeground = {
                     ProcessLifecycleOwner
                         .get()
