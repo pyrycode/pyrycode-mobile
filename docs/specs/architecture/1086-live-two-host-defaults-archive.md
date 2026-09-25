@@ -145,3 +145,11 @@ Executing the scenario needs the live relay and the host-B daemon. The dispatche
   create, return the new id), `awaitListText` and `archivedIds`. Open questions resolved: the Connection
   row is matched by `hasText(serverId) and hasClickAction()`, and B's add control is scrolled into view
   before the tap.
+- 2026-09-25, live-gate rework (no design change): the first open question's resolution above was wrong.
+  The live gate failed in `showHostSettings` because no node matched `hasText(serverId) and
+  hasClickAction()`. The row's M3 `ListItem` merges its own semantics, so the server id and the "This
+  server" badge sit on a descendant of the clickable `Column`, not on it. The matcher is now
+  `hasClickAction() and hasAnyDescendant(hasText(serverId))`, with the badge also matched as a
+  descendant, the form `SettingsScreenTest` already uses. A temporary Robolectric probe against the
+  real `SettingsScreen` confirmed it before the probe was removed: the old matcher found 0 nodes, the
+  new one found exactly one row per host, and only the owner row matched the badge.

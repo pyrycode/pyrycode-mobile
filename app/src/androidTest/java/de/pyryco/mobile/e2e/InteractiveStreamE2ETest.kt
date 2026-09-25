@@ -5249,10 +5249,13 @@ class InteractiveStreamE2ETest {
      * On Settings, make [serverId]'s Settings the one on screen: tap its Connection row unless it is already
      * the owner's, then wait until that row carries the owner badge and exactly one Settings is composed, so
      * no screen leaving the hop can answer a later check. The badge, not selection, proves where it landed.
+     *
+     * The row's texts and badge are a descendant of its click target, not on it: the row's `ListItem` merges
+     * its own semantics, so the clickable `Column` around it carries the click action alone.
      */
     private fun showHostSettings(serverId: String) {
-        val row = hasText(serverId) and hasClickAction()
-        val owner = row and hasText(string(R.string.settings_host_current))
+        val row = hasClickAction() and hasAnyDescendant(hasText(serverId))
+        val owner = row and hasAnyDescendant(hasText(string(R.string.settings_host_current)))
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1
         }
