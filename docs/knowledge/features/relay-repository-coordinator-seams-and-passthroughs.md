@@ -285,6 +285,13 @@ survive a reconnect.
   roster calls `FinishedBackgroundTasks.retainOnly(conversationId, rowIds)`, forgetting any id the roster
   no longer lists. A task the daemon has fully forgotten is forgotten here too, on the next roster for
   that conversation.
+- **`background_task_progress` (#1042) carries nothing across a reconnect — not even the narrow
+  finished-id carry-over.** A task's `BackgroundTask.progress` lives only in the per-connection
+  `BackgroundTaskProjection`, the same as its `latestUpdate`; a fresh connection starts every task without
+  progress and rebuilds it from whatever `background_task_progress` frames that connection receives. The
+  one thing the host-lifetime `FinishedBackgroundTasks` buys a re-listed finished task is staying finished
+  — which, through the same `isFinished` check the projection already applies, is also why that task shows
+  no progress on the reconnect that relists it.
 - **Host isolation is structural**, the same as `questionBatches`: one coordinator per host, and the map
   and the finished set are both keyed by `conversationId` inside it, so a task id repeated across two
   hosts' conversations cannot cross between them.
@@ -300,10 +307,11 @@ survive a reconnect.
      lists it, because claude also sends starts for long foreground `Bash` calls a roster never carries.
      This ticket's one-set rule lists a start immediately instead. If a panel finds foreground starts
      inflating `liveCount`, desktop's `unlistedStarts` is the precedent to adopt.
-- **No log.** `description`, `patch`, `status` and `summary` are claude-authored, unsanitised strings —
-  held as inert fields, never parsed (`patch` included), never used as a key besides `taskId`/
-  `conversationId`, and never logged. A malformed frame is dropped inside `BackgroundTaskProjection.apply`
-  without reading the caught exception's message, the `QueueProjection`/question-arm posture.
+- **No log.** `description`, `patch`, `status`, `summary` and progress's own `description`/
+  `subagentType`/`lastToolName` are claude-authored, unsanitised strings — held as inert fields, never
+  parsed (`patch` included), never used as a key besides `taskId`/`conversationId`, and never logged. A
+  malformed frame is dropped inside `BackgroundTaskProjection.apply` without reading the caught
+  exception's message, the `QueueProjection`/question-arm posture.
 - **A consumer must read the per-conversation surface** (`observeBackgroundTasks` /
   `observeLiveBackgroundTaskCount`), not `backgroundTasks` directly — the whole-host map risks showing
   one conversation's tasks inside another's panel, the same rule as `observeQuestionBatch`. The
