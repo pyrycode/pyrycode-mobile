@@ -3354,8 +3354,9 @@ class InteractiveStreamE2ETest {
 
     /**
      * A file the phone sends stays on its host when a second host holds the same conversation id (#1017,
-     * rung 3). It uses #847's seeded collision: one conversation id on both test daemons. Host B is paired by
-     * code, as #847 does, and removed in `finally`. Each copy's current name is read by id, since #847's method
+     * rung 3). It uses #847's seeded collision: one conversation id on both test daemons. The harness binds
+     * host A's copy to a session the daemon revives on the first send; an unbound copy refuses every send
+     * (`no_bound_session`). Host B is paired by code, as #847 does, and removed in `finally`. Each copy's current name is read by id, since #847's method
      * renames host A's copy. The peer is on host A.
      *  * **The pending file stays with A.** While A's composer holds the file, B's copy shows no tile for it.
      *  * **The sent file is on A.** After the send, the peer's view of A's copy holds exactly one user
