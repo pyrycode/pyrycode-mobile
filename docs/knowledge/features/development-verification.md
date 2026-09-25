@@ -570,6 +570,17 @@ capture, check its redacted context, expected event count and reader version. Do
 not copy credentials, pairing codes, user prompts, host paths or raw daemon
 payloads into evidence.
 
+The demo binding (`-PuseRelayRepository=false`) does not skip onboarding: the start screen is
+chosen from the paired-host store, so a demo build's channel list, thread and modal screens are
+reachable only after a real pairing. Pair through the app's own paste-a-code flow against a
+throwaway, isolated local test daemon and relay built from the configured sibling checkouts (no
+Claude binary needed, no turns spent), then stop both afterwards. Two traps found doing this
+(#680): a long scratch `HOME` makes the daemon's unix socket path too long, and
+`adb shell input text` silently truncates a ~300-character pairing code, so type it in ~50-character
+chunks. The demo host is never in the paired-host store, so Edit host itself refuses to open
+(`host_editor_open_rejected code=unknown_host`); Edit channel shares the same modal shell and
+substitutes for it in a shell-only comparison.
+
 For camera overlays, the dispatcher must verify the real preview layer on the
 managed emulator or device when the change concerns it. A unit test or a fake
 preview slot cannot prove CameraX binding or that the preview respects the Compose

@@ -6,6 +6,8 @@ Android client for [Pyrycode](https://github.com/pyrycode/pyrycode) — talk to 
 
 As of 2026-09-20: UI complete (Phases 0-2 shipped); **Phase 4 backend is live** — the client has held a stable v2 `Noise_IK` session against the production relay since 2026-07-03. Normal app builds use the relay-backed `StableConversationRepository` facade to show the paired server's conversations. An explicit [demo build](#build) selects `FakeConversationRepository`; the [pre-ship gate](#pre-ship-gate) exercises the real stack end to end.
 
+The 2026-09-19 mobile parity batch was verified at commit `bf3749d8` (#680): all gates and the live 45-method real-Claude suite passed, and push notifications are no longer gated — Firebase setup (#579), token registration (#361) and alerts (#685) have all shipped, confirmed live by the two #955 push methods; see [the gap list](docs/specs/architecture/680-parity-release-candidate.md#gap-list) for the two remaining, non-blocking issues (#1135, #1136).
+
 This is a personal project under active development. Not yet on Play Store.
 
 ## Stack
