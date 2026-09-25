@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import kotlinx.serialization.SerializationException
@@ -292,6 +293,41 @@ class ModelListPayloadsTest {
         assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":""}"""), encoded)
     }
 
+    // #1110: a `multi_agent` frame tags every row with its agent and family; both decode per row, in
+    // wire order, and the family is carried verbatim.
+    @Test
+    fun taggedRows_decodeAgentAndFamily() {
+        val rows = decode(TAGGED_FRAME).rows
+
+        assertEquals(
+            listOf(ConversationAgent.Claude, ConversationAgent.Codex, null),
+            rows.map { it.agent },
+        )
+        assertEquals(listOf("sonnet", "GPT-6 Luna", "x"), rows.map { it.family })
+    }
+
+    // #1110: a row without the tags is Claude's, which is what every frame to a client without
+    // `multi_agent` holds, so an untagged frame decodes to the same rows as before the tags existed.
+    @Test
+    fun untaggedRows_readClaude_withNoFamily() {
+        val rows = decode(POPULATED_FRAME).rows
+
+        assertTrue(rows.all { it.agent == ConversationAgent.Claude })
+        assertTrue(rows.all { it.family == null })
+    }
+
+    // #1110: only the two documented strings name an agent; any other value — a case variant
+    // included — belongs to neither conversation.
+    @Test
+    fun rowAgent_mapsOnlyTheTwoDocumentedValues() {
+        assertEquals(ConversationAgent.Claude, modelRowAgentOf(null))
+        assertEquals(ConversationAgent.Claude, modelRowAgentOf("claude"))
+        assertEquals(ConversationAgent.Codex, modelRowAgentOf("codex"))
+        assertNull(modelRowAgentOf("Codex"))
+        assertNull(modelRowAgentOf("gemini"))
+        assertNull(modelRowAgentOf(""))
+    }
+
     private fun decode(raw: String): ModelMenu =
         MobileJson.decodeFromJsonElement(ModelListPayloadDto.serializer(), MobileJson.parseToJsonElement(raw)).toMenu()
 
@@ -313,6 +349,19 @@ class ModelListPayloadsTest {
                "effort_levels":["high","  MAX  "],"supports_auto_mode":false,"truncated_fields":["value"]},
               {"resolved_model":"claude-sonnet-5","value":"default","display_name":"Default",
                "effort_levels":[],"supports_auto_mode":true}
+            ]}
+            """.trimIndent()
+
+        /** A merged `multi_agent` frame (#1110): a Claude row, a Codex row and a row naming neither agent. */
+        val TAGGED_FRAME =
+            """
+            {"conversation_id":"$CONVERSATION_ID","dropped_models":3,"models":[
+              {"resolved_model":"claude-sonnet-5","value":"sonnet","display_name":"Sonnet 5",
+               "effort_levels":["low","high"],"agent":"claude","family":"sonnet"},
+              {"resolved_model":"gpt-6-luna-2026","value":"gpt-6-luna","display_name":"GPT-6 Luna",
+               "effort_levels":["low","ultra"],"agent":"codex","family":"GPT-6 Luna"},
+              {"resolved_model":"x","value":"x","display_name":"x",
+               "effort_levels":[],"agent":"gemini","family":"x"}
             ]}
             """.trimIndent()
 
