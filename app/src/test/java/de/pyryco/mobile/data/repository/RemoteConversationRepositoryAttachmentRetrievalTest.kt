@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AttachmentChunkPlan
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ReadWorkspaceFilePayloadDto
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -205,6 +206,154 @@ class RemoteConversationRepositoryAttachmentRetrievalTest {
             assertNull(second())
         }
 
+    @Test
+    fun readWorkspaceFile_sendsOneRequestNamingTheConversationAndPathVerbatim_andAssemblesTheMintedStream() =
+        runTest {
+            val pump = FakeSessionPump()
+            val bytes = ByteArray(ATTACHMENT_CHUNK_BYTES + 3) { it.toByte() }
+            val read = startRead(repo(pump))
+            runCurrent()
+
+            val request = pump.sent.single()
+            assertEquals("read_workspace_file", request.type)
+            val payload = request.payload.jsonObject
+            assertEquals(setOf("conversation_id", "path"), payload.keys)
+            assertEquals(CONVERSATION_ID, payload.getValue("conversation_id").jsonPrimitive.content)
+            assertEquals(PATH, payload.getValue("path").jsonPrimitive.content)
+
+            pump.push(chunk(bytes, 1, request.id, MINTED_ID))
+            pump.push(chunk(bytes, 0, request.id, MINTED_ID))
+            runCurrent()
+
+            val out = ByteArrayOutputStream().also { (read() as AttachmentFetchResult.Fetched).content.writeTo(it) }
+            assertArrayEquals(bytes, out.toByteArray())
+            assertEquals(
+                listOf(
+                    "event=workspace_file_request",
+                    "event=attachment_chunk_in id=$MINTED_ID index=1 total=2",
+                    "event=attachment_chunk_in id=$MINTED_ID index=0 total=2",
+                    "event=workspace_file_read outcome=Fetched",
+                ),
+                logs,
+            )
+        }
+
+    @Test
+    fun readWorkspaceFile_twiceForOnePath_sendsTwoRequests() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val first = startRead(repo)
+            runCurrent()
+            pump.push(chunk(ByteArray(4), 0, pump.sent.single().id, MINTED_ID))
+            runCurrent()
+            assertTrue(first() is AttachmentFetchResult.Fetched)
+
+            val second = startRead(repo)
+            runCurrent()
+            assertEquals(2, pump.sent.size)
+            assertEquals("read_workspace_file", pump.sent.last().type)
+            pump.push(chunk(ByteArray(4) { 7 }, 0, pump.sent.last().id, ATTACHMENT_ID))
+            runCurrent()
+            assertTrue(second() is AttachmentFetchResult.Fetched)
+        }
+
+    @Test
+    fun readWorkspaceFile_malformedConversationOrBlankPath_isNotFound_andSendsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            assertEquals(AttachmentRetrievalResult.NotFound, repo.readWorkspaceFile("../conv", PATH))
+            assertEquals(AttachmentRetrievalResult.NotFound, repo.readWorkspaceFile(CONVERSATION_ID, ""))
+            assertEquals(AttachmentRetrievalResult.NotFound, repo.readWorkspaceFile(CONVERSATION_ID, " \t"))
+            assertTrue(pump.sent.isEmpty())
+            assertTrue(logs.isEmpty())
+        }
+
+    @Test
+    fun readWorkspaceFile_refusalsAndFailures_matchFetchAttachment() =
+        runTest {
+            assertEquals(AttachmentRetrievalResult.NotFound, readAnswered { error("attachment.not_found", it) })
+            assertEquals(AttachmentRetrievalResult.Unavailable, readAnswered { error("attachment.stream_aborted", it) })
+            assertEquals(AttachmentRetrievalResult.Unavailable, readAnswered { error("protocol.malformed", it) })
+            assertEquals(
+                AttachmentRetrievalResult.Unavailable,
+                repo(FakeSessionPump().apply { sendResult = false }).readWorkspaceFile(CONVERSATION_ID, PATH),
+            )
+            assertEquals(
+                AttachmentRetrievalResult.Unavailable,
+                repo(FakeSessionPump().apply { throwOnSend = true }).readWorkspaceFile(CONVERSATION_ID, PATH),
+            )
+        }
+
+    @Test
+    fun readWorkspaceFile_droppedConnectionOrStall_isRetryable() =
+        runTest {
+            val dropped = FakeSessionPump()
+            val droppedRead = startRead(repo(dropped))
+            runCurrent()
+            dropped.push(chunk(ByteArray(ATTACHMENT_CHUNK_BYTES + 1), 0, dropped.sent.single().id, MINTED_ID))
+            runCurrent()
+            dropped.close()
+            runCurrent()
+            assertEquals(AttachmentRetrievalResult.Unavailable, droppedRead())
+
+            val stalled = FakeSessionPump()
+            val stalledRead = startRead(repo(stalled))
+            runCurrent()
+            advanceTimeBy(30_001)
+            runCurrent()
+            assertEquals(AttachmentRetrievalResult.Unavailable, stalledRead())
+        }
+
+    @Test
+    fun readWorkspaceFile_andFetchAttachment_runOneAtATimeOnOneConnection() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val read = startRead(repo)
+            val fetch = startFetch(repo)
+            runCurrent()
+            assertEquals(listOf("read_workspace_file"), pump.sent.map { it.type })
+
+            pump.push(error("attachment.not_found", pump.sent.single().id))
+            runCurrent()
+            assertEquals(AttachmentRetrievalResult.NotFound, read())
+            assertEquals(listOf("read_workspace_file", "request_attachment"), pump.sent.map { it.type })
+            assertNull(fetch())
+        }
+
+    @Test
+    fun readWorkspaceFile_neverLogsOrPrintsThePathOrConversation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val read = startRead(repo(pump))
+            runCurrent()
+            pump.push(chunk(ByteArray(5), 0, pump.sent.single().id, MINTED_ID))
+            runCurrent()
+            assertTrue(read() is AttachmentFetchResult.Fetched)
+
+            val printed =
+                logs + ReadWorkspaceFilePayloadDto(CONVERSATION_ID, PATH).toString() +
+                    AttachmentRetrievalTransfer(1L, null).toString()
+            assertTrue(printed.none { it.contains("secret notes") || it.contains(CONVERSATION_ID) })
+        }
+
+    private fun TestScope.readAnswered(answer: (Long) -> Envelope): AttachmentFetchResult? {
+        val pump = FakeSessionPump()
+        val read = startRead(repo(pump))
+        runCurrent()
+        pump.push(answer(pump.sent.single().id))
+        runCurrent()
+        return read()
+    }
+
+    private fun TestScope.startRead(repo: RemoteConversationRepository): () -> AttachmentFetchResult? {
+        var outcome: AttachmentFetchResult? = null
+        backgroundScope.launch { outcome = repo.readWorkspaceFile(CONVERSATION_ID, PATH) }
+        return { outcome }
+    }
+
     private fun TestScope.repo(pump: FakeSessionPump) = RemoteConversationRepository(pump, backgroundScope)
 
     private fun TestScope.startFetch(repo: RemoteConversationRepository): () -> AttachmentFetchResult? {
@@ -217,8 +366,9 @@ class RemoteConversationRepositoryAttachmentRetrievalTest {
         bytes: ByteArray,
         index: Int,
         inReplyTo: Long,
+        attachmentId: String = ATTACHMENT_ID,
     ): Envelope {
-        val dto = AttachmentChunkPlan("", ATTACHMENT_ID, bytes, "secret.pdf", "application/pdf").payload(index)
+        val dto = AttachmentChunkPlan("", attachmentId, bytes, "secret.pdf", "application/pdf").payload(index)
         return Envelope(100L + index, "attachment_chunk", TS, MobileJson.encodeToJsonElement(dto), inReplyTo = inReplyTo)
     }
 
@@ -266,5 +416,7 @@ class RemoteConversationRepositoryAttachmentRetrievalTest {
         const val TS = "2026-09-24T00:00:00Z"
         const val CONVERSATION_ID = "9d4e7a21-8c05-4f3b-b6e2-1a7c9e30d5f4"
         const val ATTACHMENT_ID = "7c1d5e92-4a30-4b8f-9e21-6d4c3b0a8f55"
+        const val MINTED_ID = "0f4c8a52-3d1e-4b7a-9c6d-2e5f8a1b3c4d"
+        const val PATH = "../docs/secret notes.md"
     }
 }
