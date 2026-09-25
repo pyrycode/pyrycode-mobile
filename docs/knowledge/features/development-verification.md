@@ -131,6 +131,19 @@ expected on such a branch and is not missing evidence; the scripted scenarios an
 the live gate still run. `UI_GATE_FULL=1` forces the suite. A unit test fails if
 any other source starts using one of the listed classes.
 
+Every device-using mode (`ui`, `scripted`, `scripted-all`, `live`) holds one
+host-wide lock on the Gradle-managed AVD before it drives an emulator, so two
+runs from different worktrees never share the device at once (#1071). The lock
+is a kernel `flock` on a file beside `avd/gradle-managed` under
+`ANDROID_USER_HOME` (or `~/.android`), so every worktree and checkout on the
+host contends for the same file regardless of where it runs from. A waiting run
+prints who holds the device on stderr and, once it acquires it, how long it
+waited. `ANDROID_GATE_WAIT_SECONDS` (default 300) bounds that wait; a run that
+gives up exits 75 without starting Gradle or the e2e harness, naming the
+holder's mode, worktree and start time — that exit code means a busy device,
+not a test result. A `ui` run that skips itself (above) takes no hold. A direct
+`./gradlew …AndroidTest` run bypasses the script and does not take the hold.
+
 ## Compose evidence
 
 Compose tests should assert the contract independently of the implementation.
@@ -425,6 +438,20 @@ while searching only managed reports misses a successful connected run.
 `test_android_test_gate.py` exercises both paths with fresh wrong-path reports,
 missing or stale selected reports, failed XML and a failing process despite passing
 XML. Preserve path selection and process-status checks together.
+
+The host-wide device hold (#1071) is one kernel `flock` per process, taken on a
+descriptor `main()` opens itself and releases when it returns — not a
+process-lifetime descriptor threaded through the module. A second `flock` from
+the same process on a fresh descriptor still conflicts with the first, so a test
+that calls `main()` more than once must let each call finish (and so release)
+before the next; nothing in the API stops a test from taking the lock twice and
+blocking on itself. Every test that drives `main()` also points
+`ANDROID_USER_HOME` at its own temp directory first: without that, the test
+takes the real lock file beside the host's actual `~/.android/avd/gradle-managed`,
+and a real gate run elsewhere on the host would block the test for the full wait
+bound instead of failing fast. `DeviceHoldTest` proves the hold against a real
+second process holding the lock, not a mock — including a SIGKILLed holder
+releasing immediately and a holder that finishes mid-wait.
 
 ## Probe the evidence itself
 
