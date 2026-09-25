@@ -63,6 +63,8 @@ Pending for the documentation stage, after the live gate passes:
 
 Two merges of main into `feature/680` landed after the plan commit (`b6d5fb95` and `bf3749d8`, the second made by the dispatcher before this run). They changed 71 files under `app/` and `scripts/`, so the plan commit `3366ea08` no longer carries the product the PR head runs. The candidate is now `bf3749d8`: its product tree is main `0abb4a0f` exactly, since that merge left no conflict and main has nothing `bf3749d8` lacks. Every commit after it on this branch changes only this file. `git diff --stat bf3749d8 <PR head> -- app scripts gradle build.gradle.kts settings.gradle.kts gradle.properties` is empty at the PR head. If a later dispatcher merge of main changes that tree, this record no longer describes the PR head, and the candidate has to be re-recorded.
 
+The same merges brought #1107, which put a 45th method on the live list and raised `LIVE_MINIMUM` to 45, so the Design section's "44" is now 45. Every suite method is still on the list, so no script change is needed.
+
 The machine this ticket runs on crashed twice during earlier builder runs of it, the second time while this record was being made. The layout emulator is therefore booted only when the dispatcher's device gates are idle, under the host-wide device hold from #1071, and never beside a second emulator.
 
 # Verification record
@@ -89,7 +91,7 @@ The machine this ticket runs on crashed twice during earlier builder runs of it,
 |---|---|---|---|
 | Continuity | #847 (#856) | `interactiveTurn_twoHostsCollidingConversationId_stayPerHost` | none |
 | Continuity | #848 (#857) | `interactiveTurn_peerStartedTurn_continuesOnPhone` | none |
-| Continuity | #849 (#858) | `interactiveTurn_peerQueue_staysConsistentAcrossClients` | none; the drop step checks the queued row is gone, not its text (#859) |
+| Continuity | #849 (#858) | `interactiveTurn_peerQueue_staysConsistentAcrossClients` | none |
 | Continuity | #850 (#860) | `interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` | none |
 | Interaction | #965 (#976) | `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`; `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (reset's wrapping-up phase) | the reset's restarting phase: `ScriptedResettingTest` |
 | Interaction | #966 (#991) | `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`, `interactiveTurn_questionAnswer_reachesTheAskingConversation` | none |
@@ -108,9 +110,44 @@ The machine this ticket runs on crashed twice during earlier builder runs of it,
 
 The rest of the list predates the batch or belongs to its settings follow-up and push work: ping, status-sheet model, footer context, workspace folder, delete, archive-restore, list archive entry, change workspace, rename, save as channel, model change, the three effort methods, permission-held tool, operator bypass, the two push methods (#955), the markdown note link (#1050) and background-agent progress (#1107).
 
-LAYOUT_SECTION
+## 3. Layout
 
-FEATURE_SECTION
+**Setup.** One headless Pixel 8 emulator (API 35, Gboard, 1080×2400 at 420 dpi, so 411×914 dp beside the frames' 412×892), dark theme, booted only after the dispatcher's `ui` gate finished and held under the #1071 device hold for the whole session. No second emulator ran beside it. Screenshots were compared by eye with each frame and not committed.
+
+- The scanner, pair-with-code and Settings version row are from the real-data APK (SHA-256 below).
+- The channel list, thread and modal need a paired host with conversations, and the builder runs no real Claude. They are from the same commit's demo binding (`-PuseRelayRepository=false`), which renders the same composables over seeded data. It was paired through the app's own paste-a-code flow with a throwaway isolated test daemon and local relay (no Claude binary) built from the configured sibling sources, both stopped afterwards.
+
+| Frame | Result |
+|---|---|
+| Scanner (13-2) | **Match.** Pairing top bar, dark camera well with four corner brackets and scan line, `pyry pair` hint card with the command in code style, "Trouble scanning? Paste the pairing code instead" link. The top bar sits about 31 dp lower than on pair-with-code, where the frames put both at the same height: #1136. |
+| Pair with code (533-2147) | **Match.** Same top bar over the radial blue glow, filled Host name and Pairing code fields with clear icons, full-width Pair button, Cancel and the open-source footer. The frame's footer names `pyrycode-desktop`; the app correctly names `pyrycode-mobile`. |
+| Channel list (15-8) | **Match in structure, mismatch in density.** Settings and archive icons, Channels and Chats sections, host rows with the server icon and two status dots, workspace folders, conversation rows with status dots, and the last-opened row highlighted. Rows are 48 dp against the frame's ~28 dp, and every row carries a pencil: #1136. |
+| Conversation thread (16-8) | **Match in structure, mismatch in one colour.** Back arrow, title and overflow menu, assistant bubbles left and user bubbles right, each with timestamp and copy icon, the tool row, composer with send, and the footer of Actions, permission, model, effort and context readings plus attach. Assistant bubbles are grey, not the frame's navy: #1136. The frame's thinking line, attachment chips and banners need a running turn or attachments and were not on screen; the scripted and live gates cover them. |
+| Mobile modal shell (533-2369) | **Match in structure, mismatch in tone.** Observed on Edit channel, which uses the same shell: title and round close button, labelled filled fields, an outlined action, Cancel and OK. The sheet is lighter blue than the frame's deep navy: #1136. Edit host itself would not open on the demo binding: the demo host is not in the paired-host store (`host_editor_open_rejected code=unknown_host`), a demo-only limit. |
+
+**Keyboard.** Pair with code in portrait: focusing Pairing code raised Gboard, and the focused field, Pair and Cancel stayed above it. Edit channel in portrait: the focused name field, prompt field, Cancel and OK stayed above it. Edit channel in landscape: only the title row stayed visible and the focused field was hidden behind the keyboard: #1135.
+
+**Back.** Pair with code → back hides the keyboard, then returns to the scanner, then to the welcome screen. Thread → channel list. Edit channel → back hides the keyboard, then closes the modal to the list. About → Settings → channel list.
+
+**Rotation.** Thread: portrait → landscape → portrait kept the conversation, its title and the typed draft. Edit channel: the modal stayed open through both rotations, but the unsaved name edit reset to the stored name. That reset is by design: `EditChannelModal` keeps its typed values in `remember`, not `rememberSaveable`, so a pasted credential in the prompt never enters the saved-state Bundle. #1135 notes it for the product decision on the name field alone.
+
+**Small screen.** `wm size 720x1280` at `wm density 320` gives 360×640 dp, smaller than the managed Pixel 2's 411×731 dp. The channel list scrolled to its last row ("Untitled discussion" in Chats) fully on screen. The thread opened at its last message, whose timestamp and copy icon sat above the composer, and it stayed pinned to the end while the demo reply streamed. The footer truncates its labels at that width ("Act…", "unkno…").
+
+## 4. Feature checks
+
+Every test named below ran in the candidate's `./gradlew test` run in section 2 with no failure or skip.
+
+| Feature | Proof |
+|---|---|
+| Message and code-block copy | `MessageBubbleTest` (7 tests): `copy_putsOnlyThatMessagesTextOnTheClipboard`, `copy_fromTheUserBubble_putsOnlyTheUserText_onTheClipboard`. `MarkdownTextTest` (19): `each_copy_control_copies_only_its_own_block_source_exactly`. Emulator: every bubble shows its copy control. |
+| Tables | `MarkdownTextTest`: `table_renders_its_header_and_body_cells`, `wide_table_scrolls_horizontally_without_widening_its_container`. `MarkdownTextParsingTest` (28): the pipe-table and column-alignment parses. |
+| Static task-list marks | `MarkdownTextTest`: `task_list_marks_distinguish_checked_from_unchecked_and_are_inert`. `MarkdownTextParsingTest`: the check-box token tests. |
+| Strikethrough | `MarkdownTextTest`: `double_tilde_renders_struck_and_de_emphasised`, `single_tilde_renders_struck_and_de_emphasised`, `home_relative_paths_keep_their_tildes_and_strike_nothing`. |
+| Tool-row expansion | `ToolCallRowTest` (14): `a_row_stays_expanded_while_it_is_updated_in_place`, `output_is_hidden_while_running_and_revealed_on_resolution`. No test taps an expanded tool row closed; the emulator did: tapping the demo thread's Read row showed its output, and tapping the header again hid it. |
+| Draft retention per chat | `ThreadViewModelTest` (197): `draft_seedsFromTheStore_soAReturnedToChatRestoresItsText`, `onDraftChange_writesThisChatsPairAndNoOther`. `ComposerDraftStoreTest` (23): `draft_roundTripsExactText`. Emulator: a draft typed in Pyrycode Mobile was absent from Joi Pilates and back in Pyrycode Mobile on return, after two rotations and on the small display. |
+| No cross-host leakage with two paired hosts | Unit: `ComposerDraftStoreTest.sameConversationIdOnTwoHosts_holdsTwoIndependentDrafts`, `ThreadViewModelTest.draft_isIndependentPerHost_forTheSameConversationId`, `HostConversationSourceAttentionTest.twoHostsSharingAConversationIdKeepSeparateStateAndOpeningTouchesOneHost`, `FileConversationCacheThreadTest` (threads isolated per host), `SettingsViewModelTest.defaultWorkspaceLabel_cannotReadAnotherHostsLabelForTheSameCwd`, `HostChannelListViewModelTest.confirmingUnpairDropsThatHostsDraftsAndLeavesEveryOtherHostsAlone`. Live, pending the live gate: `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`, `interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched`, `interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost`, `interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`. |
+
+The Settings version row, observed on the demo APK built at the same commit, reads "Version 1.0.0 / build bf3749d8". The real-data APK cannot reach Settings without a paired host. Its `BuildConfig.GIT_SHA` is `bf3749d8`, and that string is in its `classes4.dex`. `AboutScreen` renders the row from `BuildConfig.GIT_SHA`.
 
 ## 5. APK and gaps
 
@@ -119,4 +156,17 @@ FEATURE_SECTION
 - SHA-256: `4fc9f38a46fe9665a6c92735ab6bea0f20a4d8d9ec5aaf1394b32115917d2688`
 - Size: 102334052 bytes
 
-GAP_SECTION
+### Gap list
+
+| Gap | Issue |
+|---|---|
+| In landscape the keyboard hides Edit channel's focused field; whether the unsaved channel name should survive rotation is an open product decision | #1135 |
+| Scanner top-bar offset, channel-list density, assistant bubble colour and modal sheet tone differ from the frames | #1136 |
+
+**Push notifications.** Firebase setup #579, token registration #361 and alerts #685 have all shipped (closed). The live proof is `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` and `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` (#955), both on the live list. Background-notification parity holds for this candidate only once the live gate passes those two methods; until then it is not claimed.
+
+**Not gaps, pending.** The dispatcher's `ui`, `scripted-all` and `live` results on the PR head. A failure there is filed as its own issue and added to this list.
+
+### Open question resolved
+
+The emulator hosted the layout checks inside the run budget once the dispatcher's `ui` gate had finished, one emulator at a time under the device hold. The session took about 20 minutes and no crash occurred.
