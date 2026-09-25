@@ -76,10 +76,12 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.HistoryEntryDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -145,6 +147,7 @@ import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
@@ -256,6 +259,12 @@ class InteractiveStreamE2ETest {
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_saved)
     private val saveFailedNotice: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_save_failed)
+
+    // #1017: a failed attachment row's status and its retry control, from resources.
+    private val attachmentFailedText: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_failed)
+    private val attachmentRetryLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_retry)
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
@@ -2650,8 +2659,9 @@ class InteractiveStreamE2ETest {
         cycleHostLink(serverId)
 
         // 2. AC-2: `/` lists the published commands; picking the first completes it into the composer. The
-        //    menu is read off the host's live connection: the reconnect's fresh connection can drop and be
-        //    redialled within a second (#1029, #1039), and the app follows the redial, so the read does too.
+        //    menu is read off the host's live connection: the reconnect's fresh connection used to drop and be
+        //    redialled when the daemon's connect-time burst overflowed the relay's per-phone outbox
+        //    (pyrycode/pyrycode-relay#154), and the app follows any redial, so the read does too.
         val published =
             try {
                 val live =
@@ -3065,8 +3075,9 @@ class InteractiveStreamE2ETest {
      * The turn may Read the named files; the peer allows each prompt until the turn ends.
      *
      * The name places it last in JUnit's default order, which sorts by name hash. Peers opened on the first
-     * daemon after it stopped carrying frames in two live runs, so it runs after every other scenario on that
-     * daemon until that is explained.
+     * daemon after it stopped carrying frames in two live runs: by then the daemon held 15–23 sessions, and its
+     * connect-time reconcile burst overflowed the relay's per-phone outbox, which closed every new connection
+     * within a second of its handshake (pyrycode/pyrycode-relay#154).
      *
      * **One real-claude turn**: the phone's message.
      */
@@ -3256,6 +3267,263 @@ class InteractiveStreamE2ETest {
             deleteFixtures(inserted)
             peer.close()
             relaunched?.close()
+        }
+    }
+
+    /**
+     * An upload whose link drops recovers into exactly one message with its bytes (#1017, rung 3). In chat X
+     * the phone attaches a ~100 KB document (three chunks) and sends [PING_PROMPT]. The link is cut the moment
+     * chunk [CUT_AFTER_CHUNK] has been handed to the socket ([cutLinkOn]). The last chunk is never sent, so
+     * the daemon can neither complete the file nor acknowledge it: a cut that cannot race `attachment_stored`.
+     *  * **The send fails and keeps everything.** The composer still holds the text and the file, and the
+     *    peer's view of X holds no user message.
+     *  * **The retry sends once.** With the link restored and Send tapped again, the peer's view of X holds
+     *    exactly one user message, and `request_attachment` for the one id the phone named returns the
+     *    fixture's bytes. The id is the one the peer's history names on that message (#1020).
+     *
+     * **One real-claude turn**: the retried message.
+     */
+    @Test
+    fun interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        var cut: LinkCut? = null
+        try {
+            val stamp = System.currentTimeMillis()
+            val document = documentFixture("upload-$stamp")
+            val documentName = INTERRUPT_FILE_PREFIX + "upload-$stamp.txt"
+            val totalChunks = (document.size + ATTACHMENT_CHUNK_BYTES - 1) / ATTACHMENT_CHUNK_BYTES
+            check(totalChunks > CUT_AFTER_CHUNK + 1) { "the document fixture has no chunk after the cut" }
+
+            // 1. The peer records from here on; the phone opens a fresh chat X and attaches the document.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, INTERRUPT_CHAT_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+            attachDocument(stub, documentName, document, inserted)
+
+            // 2. AC-1: send, and cut the link once chunk CUT_AFTER_CHUNK is sent. The send fails and keeps both.
+            cut = cutLinkOn(serverId) { it.startsWith(CHUNK_SENT_EVENT) && it.endsWith(" index=$CUT_AFTER_CHUNK total=$totalChunks") }
+            sendFromPhone(PING_PROMPT)
+            cut.await("the upload never sent chunk $CUT_AFTER_CHUNK")
+            cut.close()
+            awaitComposerHolds(PING_PROMPT, documentName)
+            assertEquals(
+                "user messages in the peer's view of X after the failed send",
+                0,
+                userMessages(
+                    runBlocking {
+                        peer.history(chatX, THREAD_TIMEOUT_MS)
+                    },
+                ),
+            )
+
+            // 3. AC-1: restore the link and send again; the message reaches claude and its turn ends.
+            setHostLink(serverId, up = true)
+            awaitConnected()
+            val send = hasContentDescription(CD_SEND_MESSAGE) and isEnabled()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onAllNodes(send).onFirst().performClick()
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the retried attachment turn in X did not end") { it.type == "turn_end" }
+
+            // 4. AC-1: the peer's view of X holds one user message naming one id, which fetches the fixture's bytes.
+            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
+            assertEquals("user messages in the peer's view of X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids named by X's user message", 1, ids.size)
+            val fetched = runBlocking { peer.retrieveAttachment(chatX, ids.single(), REPLY_TIMEOUT_MS) }
+            assertEquals("digest of the file the peer fetched", sha256(document), sha256(fetched.bytes))
+        } finally {
+            cut?.close()
+            runCatching { setHostLink(serverId, up = true) }
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+        }
+    }
+
+    /**
+     * A retrieval whose link drops fails visibly, and Retry recovers it (#1017, rung 3). The [SecondClientPeer]
+     * uploads a ~100 KB document into chat X, which the phone does not open, and names it on a message, as
+     * the desktop does. The phone restarts with X's thread cache cleared, so X's row can only come from
+     * history replay (#1020), which keeps the id but no name. When the phone opens X, the link is cut at the
+     * retrieval's request for that id ([cutLinkOn]), before the request is sent.
+     *  * **Failed with Retry.** The row, unnamed since only retrieval supplies the name, shows the failed state
+     *    and its Retry control.
+     *  * **Retry recovers.** With the link restored, Retry brings the row to ready under the uploaded name, and
+     *    opening it (and saving it) yields the fixture's digest.
+     *
+     * **One real-claude turn**: the peer's message.
+     */
+    @Test
+    fun interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        var relaunched: ActivityScenario<MainActivity>? = null
+        var cut: LinkCut? = null
+        try {
+            val stamp = System.currentTimeMillis()
+            val document = documentFixture("retrieval-$stamp")
+            val documentName = INTERRUPT_FILE_PREFIX + "retrieval-$stamp.txt"
+
+            // 1. X is a fresh named chat the phone does not open; the peer uploads into it and names the file.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, INTERRUPT_CHAT_NAME_PREFIX)
+            val id =
+                runBlocking {
+                    val id = peer.uploadAttachment(chatX, documentName, TEXT_MIME, document, REPLY_TIMEOUT_MS)
+                    peer.sendMessage(chatX, PING_PROMPT, THREAD_TIMEOUT_MS, attachmentIds = listOf(id))
+                    id
+                }
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the peer's attachment turn in X did not end") { it.type == "turn_end" }
+
+            // 2. Restart with X's thread cache cleared, then open X with the cut armed for that id's request.
+            relaunched =
+                restartApp {
+                    val cache = GlobalContext.get().get<ConversationCache>()
+                    runBlocking {
+                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
+                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                    }
+                }
+            awaitChannelList()
+            awaitConnected()
+            cut = cutLinkOn(serverId) { it.startsWith(RETRIEVAL_REQUEST_EVENT + "id=$id") }
+            openChatRow(nameX)
+            // The row loads once it is drawn, so keep it on screen until the cut.
+            cut.await("the phone never requested the peer's file") {
+                runCatching { scrollListTo(hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)) }
+            }
+            cut.close()
+
+            // 3. AC-2: the row, still unnamed, shows the failed state with its Retry.
+            val unnamed = string(R.string.thread_attachment_unnamed)
+            val retry = attachmentRetry(unnamed)
+            try {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(retry, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() &&
+                        composeTestRule
+                            .onAllNodes(inAttachmentRow(unnamed, hasText(attachmentFailedText)), useUnmergedTree = true)
+                            .fetchSemanticsNodes()
+                            .isNotEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the interrupted row showed no failed state with Retry", e)
+            }
+
+            // 4. AC-2: with the link back, Retry brings the row to ready, and it opens with the fixture's bytes.
+            setHostLink(serverId, up = true)
+            awaitConnected()
+            composeTestRule.onAllNodes(retry, useUnmergedTree = true).onFirst().performClick()
+            awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
+            assertOpensAndSaves(stub, documentName, sha256(document), inserted)
+        } finally {
+            cut?.close()
+            runCatching { setHostLink(serverId, up = true) }
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * A file the phone sends stays on its host when a second host holds the same conversation id (#1017,
+     * rung 3). It uses #847's seeded collision: one conversation id on both test daemons. The harness binds
+     * host A's copy to a session the daemon revives on the first send; an unbound copy refuses every send
+     * (`no_bound_session`). Host B is paired by code, as #847 does, and removed in `finally`. Each copy's current name is read by id, since #847's method
+     * renames host A's copy. The peer is on host A.
+     *  * **The pending file stays with A.** While A's composer holds the file, B's copy shows no tile for it.
+     *  * **The sent file is on A.** After the send, the peer's view of A's copy holds exactly one user
+     *    message, and the one id the phone named fetches the fixture's bytes there.
+     *  * **Nothing reaches B.** B's copy shows no row and no tile with the file's name, B's thread cache names
+     *    no such id, and host B itself answers the id as not found.
+     *
+     * **One real-claude turn**: the phone's message on host A.
+     */
+    @Test
+    fun interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost() {
+        val serverIdA = twoHostArg(ARG_SERVER_ID)
+        val serverIdB = twoHostArg(ARG_SERVER_ID_B)
+        val collisionId = twoHostArg(ARG_COLLISION_CONVERSATION_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        try {
+            val stamp = System.currentTimeMillis()
+            val document = documentFixture("collision-$stamp")
+            val documentName = INTERRUPT_FILE_PREFIX + "collision-$stamp.txt"
+
+            // 1. Pair host B as #847 does, and read each copy's current name by the shared id.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+            pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
+            val nameA = heldName(serverIdA, collisionId)
+            val nameB = heldName(serverIdB, collisionId)
+            assertNotEquals("the two copies' names", nameA, nameB)
+            assertPeerAnswers(peer, collisionId)
+
+            // 2. AC-3: A's composer holds the file; B's copy shows no tile for it; A's still does.
+            openRow(nameA)
+            attachDocument(stub, documentName, document, inserted)
+            leaveThread()
+            openRow(nameB)
+            assertNoFileNamed(documentName, "host B's copy while A's composer holds the file")
+            leaveThread()
+            openRow(nameA)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(documentName)).fetchSemanticsNodes().isNotEmpty()
+            }
+
+            // 3. AC-3: send on A; the turn ends; A's copy holds one user message and the file's bytes.
+            sendFromPhone(PING_PROMPT)
+            allowPromptsUntil(peer, collisionId, WAIT_TURN_TIMEOUT_MS, "the attachment turn in A's copy did not end") {
+                it.type ==
+                    "turn_end"
+            }
+            val named = userMessageAttachmentIds(runBlocking { peer.history(collisionId, THREAD_TIMEOUT_MS) })
+            assertEquals("user messages in the peer's view of A's copy", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids named by A's user message", 1, ids.size)
+            val id = ids.single()
+            val fetched = runBlocking { peer.retrieveAttachment(collisionId, id, REPLY_TIMEOUT_MS) }
+            assertEquals("digest of the file the peer fetched from host A", sha256(document), sha256(fetched.bytes))
+            awaitReadyAttachmentRow(documentName, THREAD_TIMEOUT_MS)
+
+            // 4. AC-3: B's copy shows nothing of it, B's cache names no such id, and host B does not hold it.
+            leaveThread()
+            openRow(nameB)
+            assertNoFileNamed(documentName, "host B's copy after A's send")
+            val cachedOnB =
+                runBlocking { GlobalContext.get().get<ConversationCache>().readThread(serverIdB, collisionId) }.any { item ->
+                    item is ThreadItem.MessageItem && item.message.attachments.any { it.attachmentId == id }
+                }
+            assertTrue("host B's thread cache names the file sent on host A", !cachedOnB)
+            val onB = runBlocking { withTimeout(REPLY_TIMEOUT_MS) { hostRepository(serverIdB).fetchAttachment(collisionId, id) } }
+            assertEquals("host B's answer for the file sent on host A", AttachmentRetrievalResult.NotFound, onB)
+            leaveThread()
+        } finally {
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
         }
     }
 
@@ -3582,6 +3850,155 @@ class InteractiveStreamE2ETest {
             }
         } catch (e: TimeoutCancellationException) {
             throw AssertionError("the phone's thread cache holds no assistant row with the offered file", e)
+        }
+    }
+
+    /**
+     * Pick the one document [bytes], named [name], through the composer's **Attach files** action (#1017) and
+     * wait for its strip tile. [stub] answers the picker with a `MediaStore` fixture recorded in [inserted].
+     */
+    private fun attachDocument(
+        stub: ActivityIntentStub,
+        name: String,
+        bytes: ByteArray,
+        inserted: MutableList<Uri>,
+    ) {
+        val picked = insertDownload(name, TEXT_MIME, bytes, inserted)
+        stub.answer(Intent.ACTION_OPEN_DOCUMENT) {
+            Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { clipData = ClipData.newRawUri(null, picked) })
+        }
+        composeTestRule.onNode(hasContentDescription(attachFilesLabel)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(name)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * Wait until a send has ended with [text] still in the composer and the file [name] still pending (#1017).
+     * The tile's remove control is drawn only while no send is under way.
+     */
+    private fun awaitComposerHolds(
+        text: String,
+        name: String,
+    ) {
+        val remove =
+            hasContentDescription(InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_remove_attachment, name))
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(remove).fetchSemanticsNodes().isNotEmpty() && composerText() == text
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("the failed send did not leave its text and its file in the composer", e)
+        }
+    }
+
+    /** No tile and no row in the open thread carries the file name [name] (#1017); [where] names the check. */
+    private fun assertNoFileNamed(
+        name: String,
+        where: String,
+    ) {
+        composeTestRule.waitForIdle()
+        assertEquals(
+            "tiles named the file in $where",
+            0,
+            composeTestRule.onAllNodes(hasContentDescription(name), useUnmergedTree = true).fetchSemanticsNodes().size,
+        )
+        assertEquals(
+            "rows named the file in $where",
+            0,
+            composeTestRule.onAllNodes(hasText(name), useUnmergedTree = true).fetchSemanticsNodes().size,
+        )
+    }
+
+    /** A node matching [node] inside the message attachment file row named [name], in the unmerged tree. */
+    private fun inAttachmentRow(
+        name: String,
+        node: SemanticsMatcher,
+    ): SemanticsMatcher = node and hasAnyAncestor(hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG) and hasAnyDescendant(hasText(name)))
+
+    /** The Retry control of the failed file row named [name] (#984), in the unmerged tree. */
+    private fun attachmentRetry(name: String): SemanticsMatcher =
+        inAttachmentRow(
+            name,
+            hasClickAction() and hasAnyDescendant(hasText(attachmentRetryLabel)),
+        )
+
+    /** [conversationId]'s current name on [serverId], read from that host's own repository. */
+    private fun heldName(
+        serverId: String,
+        conversationId: String,
+    ): String {
+        val repository = hostRepository(serverId)
+        val held =
+            runBlocking {
+                withTimeout(LIST_TIMEOUT_MS) {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.id == conversationId } }
+                        .first { it.id == conversationId }
+                }
+            }
+        return checkNotNull(held.name) { "the seeded conversation has no name" }
+    }
+
+    /**
+     * Cut [serverId]'s link from inside the app, at the moment the app logs a line [matches] accepts (#1017).
+     * The lines are [RelayLog]'s debug lines, which carry ids, indices and totals only.
+     */
+    private fun cutLinkOn(
+        serverId: String,
+        matches: (String) -> Boolean,
+    ): LinkCut {
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        return LinkCut(serverId, { bundle.supervisor.close() }, matches)
+    }
+
+    /**
+     * A one-shot link cut (#1017). A wrapping [RelayLog.sink] still forwards every line. The first line that
+     * [matches] accepts closes the link on the thread that logged it, before that code's next step. So an
+     * upload's next chunk or a retrieval's request is refused, never raced. [close] restores the sink.
+     */
+    private inner class LinkCut(
+        private val serverId: String,
+        closeLink: () -> Unit,
+        matches: (String) -> Boolean,
+    ) : AutoCloseable {
+        private val previous = RelayLog.sink
+        private val armed = AtomicBoolean(true)
+        private val fired = CountDownLatch(1)
+
+        init {
+            RelayLog.sink = { priority, tag, message ->
+                previous(priority, tag, message)
+                if (matches(message) && armed.compareAndSet(true, false)) {
+                    closeLink()
+                    fired.countDown()
+                }
+            }
+        }
+
+        /**
+         * Wait until the cut has fired, running [poll] meanwhile, and then until the link's repository is gone.
+         * The failure names [failure].
+         */
+        fun await(
+            failure: String,
+            poll: () -> Unit = {},
+        ) {
+            try {
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                    poll()
+                    fired.count == 0L
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("$failure within $REPLY_TIMEOUT_MS ms, so the link was never cut", e)
+            }
+            setHostLink(serverId, up = false)
+        }
+
+        override fun close() {
+            armed.set(false)
+            RelayLog.sink = previous
         }
     }
 
@@ -5026,6 +5443,14 @@ class InteractiveStreamE2ETest {
         const val NOTE_FILE_PREFIX = "e2e1050-note-"
         const val NOTE_LINK_PREFIX = "e2e1050-open-"
         const val NOTE_MARKER_PREFIX = "pyrycode-mobile-note-"
+
+        // #1017: the interrupted transfers. The cut follows chunk 1 of the three-chunk document, so one chunk is
+        // never sent. The two log prefixes are RelayLog's own event names, which carry ids and counts only.
+        const val INTERRUPT_CHAT_NAME_PREFIX = "e2e1017-"
+        const val INTERRUPT_FILE_PREFIX = "e2e1017-"
+        const val CUT_AFTER_CHUNK = 1
+        const val CHUNK_SENT_EVENT = "event=attachment_chunk "
+        const val RETRIEVAL_REQUEST_EVENT = "event=attachment_request "
 
         // A `python3` command, so it needs permission (see WAIT_PROMPT). The token is its output, which no
         // prompt contains; claude could still compute it, so the tests prove the run by a successful Bash
