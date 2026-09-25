@@ -490,7 +490,7 @@ in the composition tree does not affect what it draws over. See
 `PermissionModalOverlay` and `QuestionBatchModal`, which use `MobileGateModal`, it draws inside
 `ThreadScreen` itself, behind screen-local `remember(state.conversationId)` visibility the Actions menu's
 background-tasks row flips — see [Thread composer footer § Actions
-menu](thread-composer-footer.md#actions-menu-884) for the row and its live-count label, and [Thread screen —
+menu](thread-composer-footer-actions-menu.md#actions-menu-884) for the row and its live-count label, and [Thread screen —
 overlays § Background-tasks panel placement](thread-screen-how-it-works-overlays-and-app-bar.md#background-tasks-panel-placement-post-678)
 for where it mounts. It lists the open conversation's `BackgroundTaskRoster?` (#677) read-only, with three
 readings: `null` draws a dashed ring, "No background-task report yet" and "The daemon has not reported on
