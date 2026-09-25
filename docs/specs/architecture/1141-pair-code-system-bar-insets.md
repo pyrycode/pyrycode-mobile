@@ -33,3 +33,9 @@ In `PairCodeScreen`, the main `Column` becomes `fillMaxSize().background(surface
 ## Documentation handoff
 
 Pending for the documentation stage: the pair-with-code topic, or `scanner-screen.md` if it covers the paste path, should state that pair-with-code applies `systemBarsPadding()` before `imePadding()` and matches the scanner's header position. The ticket names no specific document.
+
+## Revisions
+
+**2026-09-26, during implementation: the Back button's size.** The RED run put the scanner's Back top at 58 px and pair-with-code's at 22 px, with 40 px of status bar at density 1. The inset accounts for 36 px. The other 4 px come from the buttons: the scanner's `IconButton` is `Modifier.size(48.dp)`, while pair-with-code's is M3's default 40 dp, centred in the 48 dp touch target. Pair-with-code's Back `IconButton` now also takes `Modifier.size(48.dp)`, so the two top edges match exactly. The arrow icon stays centred in the same row, so its position on screen does not change.
+
+**Open question resolved (test fixture).** Robolectric reports no system bars, so the test applies fixed insets to the Compose view with `ViewCompat.dispatchApplyWindowInsets`. It asserts against the insets Compose read during composition, not those constants, so the same class holds on the emulator's real bars. Reading `WindowInsets` in the test content also keeps Compose's inset listener attached when the screens switch.
