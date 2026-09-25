@@ -1,11 +1,18 @@
 package de.pyryco.mobile.ui.components
 
+import android.app.UiAutomation
+import android.content.res.Configuration
+import android.hardware.display.DisplayManager
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.provider.Settings
+import android.view.Display
+import android.view.Surface
 import android.view.View
 import android.view.Window
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
@@ -20,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
@@ -46,7 +54,7 @@ import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isFocused
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -80,17 +88,22 @@ class MobileModalTest {
         TestRule { base, description ->
             object : Statement() {
                 override fun evaluate() {
-                    if (description.getAnnotation(WithTestIme::class.java) != null) {
-                        withTestIme { base.evaluate() }
-                    } else {
-                        base.evaluate()
+                    var run = { base.evaluate() }
+                    if (description.getAnnotation(Landscape::class.java) != null) {
+                        val inner = run
+                        run = { inLandscape(inner) }
                     }
+                    if (description.getAnnotation(WithTestIme::class.java) != null) {
+                        val inner = run
+                        run = { withTestIme(inner) }
+                    }
+                    run()
                 }
             }
         }
 
     @get:Rule(order = 1)
-    val rule = createComposeRule()
+    val rule = createAndroidComposeRule<ComponentActivity>()
 
     private var dismissals = 0
     private var submissions = 0
@@ -313,6 +326,52 @@ class MobileModalTest {
     }
 
     @Test
+    @WithTestIme
+    @Landscape
+    fun landscape_ime_keeps_focused_field_following_content_and_actions_reachable() {
+        rotateToLandscape()
+        show()
+        rule.waitUntil(5_000) {
+            rule.runOnIdle { ::dialogView.isInitialized && dialogView.hasWindowFocus() }
+        }
+        rule.runOnIdle { assertEquals(Configuration.ORIENTATION_LANDSCAPE, dialogView.resources.configuration.orientation) }
+        rule
+            .onNodeWithTag("field")
+            .performClick()
+            .assertIsFocused()
+        rule.runOnIdle { checkNotNull(keyboardController).show() }
+        rule.waitUntil(5_000) {
+            rule.runOnIdle {
+                ViewCompat.getRootWindowInsets(dialogView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithTag("field").assertIsFocused()
+        assertAboveKeyboard(rule.onNodeWithTag("field").fetchSemanticsNode().boundsInRoot)
+        rule.onNodeWithTag("field").performTextInput("Keyboard entry")
+        listOf("Final item", "OK", "Cancel").forEach { label ->
+            rule.onNodeWithText(label).performScrollTo()
+            assertAboveKeyboard(rule.onNodeWithText(label).fetchSemanticsNode().boundsInRoot)
+        }
+        rule.onNodeWithTag("field").assertIsFocused().assertTextContains("Keyboard entry")
+        rule.onNodeWithText("Cancel").performClick()
+        rule.runOnIdle { assertEquals(1, dismissals) }
+    }
+
+    /** The node's full height sits on screen, below the dialog's top and above the keyboard. */
+    private fun assertAboveKeyboard(bounds: Rect) {
+        rule.runOnIdle {
+            val location = IntArray(2)
+            dialogView.getLocationOnScreen(location)
+            val ime = ViewCompat.getRootWindowInsets(dialogView)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+            val keyboardTop = dialogView.resources.displayMetrics.heightPixels - ime
+            assertTrue("keyboard inset $ime", ime > 0)
+            assertTrue("bounds $bounds, keyboard top $keyboardTop", bounds.height > 0 && bounds.top >= 0)
+            assertTrue("bounds $bounds, keyboard top $keyboardTop", location[1] + bounds.bottom <= keyboardTop + 1)
+        }
+    }
+
+    @Test
     fun keyboard_navigation_stays_in_dialog_and_restores_launcher_focus() {
         val launcher = FocusRequester()
         lateinit var launcherInputMode: InputModeManager
@@ -365,6 +424,48 @@ class MobileModalTest {
         }
     }
 
+    /** Restores the device rotation after the inner Compose rule has closed its activity. */
+    private fun inLandscape(block: () -> Unit) {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        try {
+            block()
+        } finally {
+            automation.setRotation(UiAutomation.ROTATION_FREEZE_0)
+            automation.setRotation(UiAutomation.ROTATION_UNFREEZE)
+        }
+    }
+
+    /**
+     * The portrait-only launcher keeps the display upright until the host activity is on top, so
+     * rotate after launch and before content is set; the host's relaunch then carries no content.
+     */
+    private fun rotateToLandscape() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val displays = instrumentation.targetContext.getSystemService(DisplayManager::class.java)
+
+        fun rotation() = displays.getDisplay(Display.DEFAULT_DISPLAY).rotation
+        assertTrue(instrumentation.uiAutomation.setRotation(UiAutomation.ROTATION_FREEZE_90))
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        while (rotation() != Surface.ROTATION_90 && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
+        assertEquals("display rotation", Surface.ROTATION_90, rotation())
+        // Wait for the host's relaunch, so setContent reaches the landscape instance. The ATD image's
+        // Bluetooth crash dialog can hold window focus after the rotation; close system dialogs until
+        // the host has it.
+        rule.waitUntil(10_000) {
+            var ready = false
+            rule.activityRule.scenario.onActivity {
+                ready = it.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && it.hasWindowFocus()
+            }
+            if (!ready) {
+                ParcelFileDescriptor
+                    .AutoCloseInputStream(
+                        instrumentation.uiAutomation.executeShellCommand("am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS"),
+                    ).use { it.readBytes() }
+            }
+            ready
+        }
+    }
+
     private fun withTestIme(block: () -> Unit) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val resolver = instrumentation.targetContext.contentResolver
@@ -397,3 +498,7 @@ class MobileModalTest {
 @Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.RUNTIME)
 private annotation class WithTestIme
+
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.RUNTIME)
+private annotation class Landscape

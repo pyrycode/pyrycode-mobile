@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -202,68 +203,81 @@ private fun MobileModalShell(
             color = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = title,
-                            modifier = Modifier.weight(1f).semantics { heading() },
-                            style = MaterialTheme.typography.titleLarge,
-                        )
-                        // A gate's footer Cancel is its only dismissal control, so it draws no close glyph.
-                        if (!gate) {
-                            IconButton(onClick = dismiss, modifier = Modifier.size(48.dp)) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_modal_close),
-                                    contentDescription = "Close",
-                                    tint = MaterialTheme.colorScheme.primary,
+            // Too short to pin the chrome, as in landscape with the keyboard up (#1135), the header,
+            // content and footer scroll as one column. Only modifiers change between the modes, so the
+            // caller's content keeps its state and focus when the keyboard flips them. The outer scroll
+            // is always applied (with zero range while pinned) so the scroll that sees the keyboard
+            // shrink the viewport is the one that keeps the focused field in view.
+            val shellScroll = rememberScrollState()
+            val contentScroll = rememberScrollState()
+            BoxWithConstraints {
+                val pinned = maxHeight >= MinPinnedShellHeight
+                Column(
+                    modifier =
+                        Modifier
+                            .verticalScroll(shellScroll)
+                            .then(if (pinned) Modifier.height(maxHeight) else Modifier)
+                            .padding(horizontal = 28.dp, vertical = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(20.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = title,
+                                modifier = Modifier.weight(1f).semantics { heading() },
+                                style = MaterialTheme.typography.titleLarge,
+                            )
+                            // A gate's footer Cancel is its only dismissal control, so it draws no close glyph.
+                            if (!gate) {
+                                IconButton(onClick = dismiss, modifier = Modifier.size(48.dp)) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_modal_close),
+                                        contentDescription = "Close",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier =
+                                            Modifier
+                                                .size(28.dp)
+                                                .background(MaterialTheme.colorScheme.onPrimary, CircleShape),
+                                    )
+                                }
+                            }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.inversePrimary.copy(alpha = 0.6f))
+                    }
+                    BoxWithConstraints((if (pinned) Modifier.weight(1f) else Modifier).fillMaxWidth()) {
+                        Column(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .then(if (pinned) Modifier.verticalScroll(contentScroll).heightIn(min = maxHeight) else Modifier),
+                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                        ) {
+                            content()
+                            if (error != null) {
+                                Text(
+                                    text = error,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     modifier =
-                                        Modifier
-                                            .size(28.dp)
-                                            .background(MaterialTheme.colorScheme.onPrimary, CircleShape),
+                                        Modifier.semantics {
+                                            liveRegion = LiveRegionMode.Polite
+                                            error(error)
+                                        },
                                 )
                             }
                         }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.inversePrimary.copy(alpha = 0.6f))
-                }
-                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                    Column(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState())
-                                .heightIn(min = maxHeight),
-                        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        content()
-                        if (error != null) {
-                            Text(
-                                text = error,
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier =
-                                    Modifier.semantics {
-                                        liveRegion = LiveRegionMode.Polite
-                                        error(error)
-                                    },
-                            )
-                        }
+                        footer(dismiss)
                     }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    footer(dismiss)
                 }
             }
         }
@@ -317,6 +331,9 @@ private fun ModalSubmitButton(
         Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
     }
 }
+
+/** About 200 dp of padding, header and footer, plus room for one outlined text field. */
+private val MinPinnedShellHeight = 280.dp
 
 private fun logModalEvent(event: String) {
     if (BuildConfig.DEBUG) Log.d("MobileModal", "event=$event")

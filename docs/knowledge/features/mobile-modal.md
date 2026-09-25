@@ -159,10 +159,37 @@ Outside taps still do not dismiss, matching every other entry point on this shel
 ## Layout and theme
 
 The dialog disables platform default width and decor fitting. Safe-drawing and
-IME padding consume insets around the full-size surface. The header and centered
-Cancel/OK footer sit outside a weighted scroll area; short content centers
-vertically and overflow can scroll to the final item. Supply content for the
+IME padding consume insets around the full-size surface. Supply content for the
 non-lazy `ColumnScope`; the shell already owns vertical scrolling.
+
+`MobileModalShell` measures its own height with a `BoxWithConstraints` and picks one of two
+layouts (#1135):
+
+- **Pinned** (available height ≥ `MinPinnedShellHeight`, 280 dp — roughly the chrome's own
+  200 dp plus room for one outlined text field): the header and centered Cancel/OK footer sit
+  outside a weighted inner scroll area; short content centers vertically and overflow can
+  scroll to the final item. This is the layout Figma draws and the one every caller sees in
+  portrait, keyboard or not.
+- **Compact** (below 280 dp — landscape with the keyboard up, on the phones this shell has
+  been measured on): the header, content and footer scroll together as one column instead,
+  since the pinned layout's weighted region would otherwise collapse to zero height and hide
+  whatever is focused. Figma has no landscape-with-keyboard frame; this mode is a deliberate
+  deviation the ticket accepted because reachability there matters more than matching a frame
+  that doesn't exist.
+
+Both modes render the same composition tree — only modifiers change — so a caller's `remember`ed
+form state and the focused field survive the flip. Two structural rules keep that safe, because
+the mode flips *while the operator is typing* (the IME rising is what shrinks the shell):
+
+1. The tree shape never branches between modes; only the modifiers on it change. A branch that
+   called `content()` from two different composition positions would reset the caller's
+   `remember`ed values and drop focus on the flip, which would hide the keyboard and flip the
+   mode back.
+2. The outer `verticalScroll` is applied unconditionally (with a fixed `height` and so zero
+   scroll range while pinned), rather than added only in compact mode. The same scroll node
+   therefore sees its viewport shrink when the IME rises, and Compose's scrollable machinery
+   keeps the focused child in view — a scroll modifier added only at the mode flip would be a
+   new node with no prior size and would not reveal the field.
 
 The [design mapping](../../specs/architecture/638-mobile-modal.md#design-source)
 uses `PyrycodeMobileTheme` with these deliberate adaptations:
@@ -193,6 +220,28 @@ scrolling at 320 × 640 dp, actual IME insets and Tab/Enter navigation with laun
 focus restoration. The IME case checks positive keyboard visibility and a
 nonzero inset alongside final-item reachability and footer position;
 passing the no-keyboard overflow case cannot establish keyboard avoidance.
+
+`landscape_ime_keeps_focused_field_following_content_and_actions_reachable` (#1135) proves the
+same reachability in the compact layout: `@WithTestIme @Landscape`, a real 90° rotation, asserts
+the focused field is non-empty and sits above the IME top *before* any `performScrollTo` (so the
+always-applied outer scroll, not the test, is what keeps it in view), then scrolls to the final
+item, OK and Cancel and asserts each above the keyboard top in turn. The unchanged portrait IME
+test and the fixed-chrome overflow test keep proving the pinned layout untouched. The `@Landscape`
+annotation only restores rotation afterward; each test must call `rotateToLandscape()` itself, and
+a test that forgot to would silently run in portrait (the KDoc gap is a tracked verifier nit, not
+yet fixed).
+
+Three fixture lessons from that test, specific to the `pixel2Api33Atd` managed device:
+
+- Rotating before the Compose rule launches its activity does nothing — the portrait-only
+  launcher is still on top, so the display stays at rotation 0. Rotate in the test body after the
+  host activity launches and before `setContent`, then wait for the relaunched host to report
+  landscape and window focus.
+- Use `createAndroidComposeRule<ComponentActivity>()` rather than `createComposeRule()` so the
+  test can read the relaunched activity back through its scenario.
+- That image shows a "Bluetooth keeps stopping" system crash dialog after rotation, which steals
+  window focus and stalls a `hasWindowFocus()` wait. Broadcasting
+  `android.intent.action.CLOSE_SYSTEM_DIALOGS` from the instrumentation shell clears it.
 
 Keep the keyboard-mode and IME lifecycle setup described in
 [Compose evidence](development-verification.md#compose-evidence) when extending
