@@ -31,7 +31,9 @@ sealed interface ThreadItem {
     ) : ThreadItem
 }
 
-enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable }
+enum class UnrecognizedSite {
+    LineType, AssistantBlock, UserBlock, Undecodable, CodexMethod, CodexItem
+}
 ```
 
 - **`id` is client-owned, not a wire field.** The frame carries neither a message id nor a `turn_id`
@@ -57,8 +59,12 @@ enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable }
   `ThreadItem.timestamp()` needs one, and `toChannelInfoUiModel` (`ThreadScreen.kt:601`) reads
   `items.firstOrNull()?.timestamp()` for the channel-info **"created"** label — an unrecognized row
   landing first in a thread supplies that label.
-- **`UnrecognizedSite` is a closed, four-value enum** decoded from the wire string by #609. Its closure is
-  what lets `siteLabel()` (below) stay exhaustive with no `else`.
+- **`UnrecognizedSite` is a closed, six-value enum** decoded from the wire string by #609. Its closure is
+  what lets `siteLabel()` (below) stay exhaustive with no `else`. [#1109](https://github.com/pyrycode/pyrycode-mobile/issues/1109)
+  added the last two values, `CodexMethod` and `CodexItem`, for the Codex translator's own
+  `unrecognized_message` lanes: an app-server notification method it has no mapping for (`codex_method`)
+  and an item type it has no mapping for (`codex_item`) — see `pyrycode#2608`. Same frame shape, same
+  decode arm, same drop-on-unknown-string behavior; only the wire string set and the label lookup grew.
 
 ## The row composable
 
@@ -88,7 +94,7 @@ parsed/trimmed/reformatted), and, only when `truncated`, a second `Text` at `lab
 `onSurfaceVariant` carrying a client-owned truncation note.
 
 `siteLabel(site: UnrecognizedSite): String` is a `@Composable` `when` expression with **no `else`** —
-each arm returns a `stringResource`, so a future fifth site fails to compile rather than falling through
+each arm returns a `stringResource`, so a future seventh site fails to compile rather than falling through
 to a blank slot. This is the load-bearing half of the row's encoding posture: it keeps the daemon's
 `site` value *selecting* client copy and never *becoming* rendered text, leaving `raw` and `messageType`
 as the only daemon-supplied strings that reach the render.
@@ -189,10 +195,20 @@ end-to-end coverage: arrival-order interleaving, back-to-back repeats yielding t
 the fold's non-interference with stall/live-events/other status, all in
 `RemoteConversationRepositoryTest`.
 
+[#1109](https://github.com/pyrycode/pyrycode-mobile/issues/1109) extended the same three suites for the
+two Codex sites rather than adding a new test file: `RemoteConversationRepositoryTest` (live decode),
+`HistoryPageReducerTest` (history-reload fold — the other consumer of `toUnrecognizedSite`), and
+`UnrecognizedMessageRowTest` (the two new collapsed-summary labels). The unknown-site-is-dropped
+assertion already existing in each suite covers AC 2 without a new case, since `codex_method`/`codex_item`
+joining the mapped set doesn't change how an unmapped string is handled.
+
 ## Related
 
 - Ticket notes: [`../codebase/608.md`](../codebase/608.md) (row + type), [`../codebase/609.md`](../codebase/609.md) (decode + fold)
 - Spec: [`docs/specs/architecture/608-unrecognized-message-row.md`](../../specs/architecture/608-unrecognized-message-row.md)
+- [#1109](https://github.com/pyrycode/pyrycode-mobile/issues/1109) (landed): the two Codex sites,
+  spec [`docs/specs/architecture/1109-codex-unrecognized-sites.md`](../../specs/architecture/1109-codex-unrecognized-sites.md).
+  Wire values per the daemon's Codex translator, `pyrycode#2608`.
 - Wire SSOT: `pyrycode/docs/protocol-mobile.md` § `unrecognized_message` (sibling checkout).
 - Desktop sibling: `pyrycode-desktop`'s `ConversationScreen.tsx` `UnrecognizedRow` (shipped `8c0d013`) —
   this row's copy is taken verbatim from it so the two clients agree.

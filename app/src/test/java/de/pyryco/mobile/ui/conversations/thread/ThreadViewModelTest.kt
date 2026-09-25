@@ -3230,6 +3230,28 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun state_agent_isTheConversationsAgent() =
+        runTest {
+            val codexChannel =
+                Conversation(
+                    id = "c-codex",
+                    name = "codex",
+                    cwd = "pyry-workspace/my-app",
+                    currentSessionId = "c-codex-s1",
+                    sessionHistory = listOf("c-codex-s1"),
+                    isPromoted = true,
+                    lastUsedAt = Instant.parse("2026-09-25T00:00:00Z"),
+                    agent = ConversationAgent.Codex,
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "c-codex"))
+            val vm = makeVm(handle, fixedRepo(listOf(codexChannel)))
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Codex, vm.state.value.agent)
+            collector.cancel()
+        }
+
+    @Test
     fun state_workspaceLabel_prefersConversationLabel_overCwdBasename() =
         runTest {
             val labelled =

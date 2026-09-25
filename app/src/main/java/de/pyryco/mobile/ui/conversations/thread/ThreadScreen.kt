@@ -349,12 +349,12 @@ fun ThreadScreen(
                         resetting = resetting,
                         isCompacting = isCompacting,
                         turnOutcome = turnOutcome,
-                        agent = state.agent,
                         isThinking = isThinking,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
+                        agent = state.agent,
                     )
                     // #933: Figma's `Attachment area`, between the status area and the input field, only when
                     // this chat has something pending.
@@ -816,15 +816,15 @@ private fun ThreadStatusArea(
     resetting: ResetStatus?,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
-    agent: ConversationAgent,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
     taskCount: Int,
     onTasksClick: () -> Unit,
+    agent: ConversationAgent,
 ) {
     val reading: @Composable (Modifier) -> Unit = { modifier ->
-        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, agent, isThinking, thinkingProgress, runningTool, modifier)
+        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, agent, modifier)
     }
     if (taskCount <= 0) {
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
@@ -859,16 +859,16 @@ private fun StatusReading(
     resetting: ResetStatus?,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
-    agent: ConversationAgent,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
+    agent: ConversationAgent,
     modifier: Modifier = Modifier,
 ) {
     when {
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
         turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
         else ->
             ThinkingIndicator(
@@ -876,6 +876,7 @@ private fun StatusReading(
                 modifier = modifier,
                 progress = thinkingProgress,
                 runningTool = runningTool,
+                agent = agent,
             )
     }
 }

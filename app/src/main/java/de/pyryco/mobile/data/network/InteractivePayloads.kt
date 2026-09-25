@@ -863,9 +863,9 @@ internal data class UnrecognizedMessagePayloadDto(
 
 /**
  * Map a decoded [UnrecognizedMessagePayloadDto] to a [ThreadItem.UnrecognizedMessage], or **null** when
- * [site] is not one of the four documented values (AC #4 — the unknown-value drop is a mapper concern,
+ * [site] is not one of the six documented values (AC #4 — the unknown-value drop is a mapper concern,
  * like [SessionTransitionPayloadDto.toBoundary], distinct from a malformed envelope). [site] is the one
- * payload field that is **narrowed** rather than copied: only the four client-owned [UnrecognizedSite]
+ * payload field that is **narrowed** rather than copied: only the six client-owned [UnrecognizedSite]
  * constants can reach the UI's exhaustive label lookup, so a hostile daemon cannot inject a fifth label.
  *
  * [id] and [occurredAt] are **client-owned** and injected by the caller — the wire carries neither a row
@@ -1040,5 +1040,7 @@ private fun String.toUnrecognizedSite(): UnrecognizedSite? =
         "assistant_block" -> UnrecognizedSite.AssistantBlock
         "user_block" -> UnrecognizedSite.UserBlock
         "undecodable" -> UnrecognizedSite.Undecodable
+        "codex_method" -> UnrecognizedSite.CodexMethod
+        "codex_item" -> UnrecognizedSite.CodexItem
         else -> null
     }
