@@ -6,7 +6,7 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated set of rung-3 scenarios (twenty-nine methods, thirty-one real claude turns — listed at the LIVE
+#     curated set of rung-3 scenarios (thirty-two methods, thirty-four real claude turns — listed at the LIVE
 #     TEST_TARGET below) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
@@ -1118,13 +1118,16 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect"
   # #1016: the attachment exchange joins, one turn per method: phone to peer, and claude's offered file after a
   # restart. The list holds 31 methods and 33 turns. The peer's file after a history reload,
-  # interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload, stays out and @Ignore'd until #1020.
+  # interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload, joins below with #1020.
   # This list filters; it does not order. JUnit runs methods by name hash, and the two names place the
   # phone-to-peer method last and the offered-file method before the background-task one (see their KDoc).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart"
+  # #1020: history replay now names a user message's files, so the peer's file after a history reload joins,
+  # one turn (the peer's message). The list holds 32 methods and 34 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload"
   # #1050: a markdown link in claude's reply opens the note live in the in-app reader (two turns: the note and
-  # its rewrite). The list holds 32 methods and 35 turns.
+  # its rewrite). The list holds 33 methods and 36 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownLink_opensLiveNoteInReader"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.

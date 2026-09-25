@@ -126,6 +126,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -2983,10 +2984,9 @@ class InteractiveStreamE2ETest {
      * system picker answered by an [ActivityIntentStub] with `MediaStore` URIs, since the app refuses any
      * authority of its own, the test APK's included — and sends one message. Then the [SecondClientPeer], the
      * desktop stand-in, sees exactly what the desktop would:
-     *  * X's history holds exactly one user message;
-     *  * `request_attachment` for each of the two ids the phone named returns bytes whose SHA-256 digests are
-     *    the two fixtures' digests. The host's history drops the ids (#1020), so they are read from the
-     *    phone's own sent row;
+     *  * X's history holds exactly one user message, naming two attachment ids;
+     *  * `request_attachment` for each of those ids returns bytes whose SHA-256 digests are the two fixtures'
+     *    digests;
      *  * chat Y on the same host gains no message.
      * The document spans three 45000-byte chunks, so the phone's chunking and the daemon's reassembly both run.
      * The turn may Read the named files; the peer allows each prompt until the turn ends.
@@ -3039,12 +3039,12 @@ class InteractiveStreamE2ETest {
             // 3. The message reaches claude, and its turn ends: the host logs the user turn on delivery.
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the attachment turn in X did not end") { it.type == "turn_end" }
 
-            // 4. AC-1: one user message in X, its two ids each fetching its fixture's exact bytes; Y gained
-            // nothing. The host's history keeps the text but not the ids (#1020), so the ids are the ones the
-            // phone minted and named, read from its own sent row.
-            assertEquals("user messages in the peer's view of X", 1, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
-            val ids = awaitCachedSentAttachmentIds(serverId, chatX)
-            assertEquals("attachment ids named by the phone's message", 2, ids.distinct().size)
+            // 4. AC-1: the peer's view of X holds one user message naming two ids, each fetching its fixture's
+            // exact bytes; Y gained nothing.
+            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
+            assertEquals("user messages in the peer's view of X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids named by X's user message", 2, ids.distinct().size)
             val digests = ids.map { id -> sha256(runBlocking { peer.retrieveAttachment(chatX, id, REPLY_TIMEOUT_MS) }.bytes) }
             assertEquals("digests of the files the peer fetched", setOf(sha256(png), sha256(document)), digests.toSet())
             assertEquals("user messages in the other conversation", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
@@ -3060,18 +3060,14 @@ class InteractiveStreamE2ETest {
      * [SecondClientPeer] uploads a ~100 KB document into chat X — three chunks, so the phone's reassembly
      * runs — and names it on a message, as the desktop does. The phone never opens X before a restart
      * ([E2eTestApplication.rebuildGraph]) with X's thread cache cleared, so X's rows can only come from
-     * history replay, whose `send_message` entry keeps the id but no name. Then:
+     * history replay, whose user `message` entry keeps the id but no name (#1020). Then:
      *  * the row shows the uploaded filename, which only retrieval supplies, exactly once;
      *  * a tap hands `ACTION_VIEW` a content URI whose bytes have the fixture's digest;
      *  * a long-press writes the same bytes to the `ACTION_CREATE_DOCUMENT` target.
      * Both system activities are answered by an [ActivityIntentStub]; the save target is a `MediaStore` entry.
      *
      * **One real-claude turn**: the peer's message.
-     *
-     * Ignored and out of the LIVE list until #1020: the host logs the peer's message as a `message` entry
-     * with no `attachment_ids`, so history replay never names the file and no row can appear.
      */
-    @Ignore("blocked on #1020 — history replay drops a user message's attachment ids")
     @Test
     fun interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload() {
         val serverId = twoHostArg(ARG_SERVER_ID)
@@ -3375,11 +3371,16 @@ class InteractiveStreamE2ETest {
      * The user messages in a history. The host logs the operator's turn as a `message` entry with role `user`
      * when it is delivered; a stored `send_message` counts too, the shape the phone's reducer also reads.
      */
-    private fun userMessages(history: List<HistoryEntryDto>): Int =
-        history.count { entry ->
-            entry.type == "send_message" ||
-                (entry.type == "message" && (entry.payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
+    private fun userMessages(history: List<HistoryEntryDto>): Int = history.count { it.isUserMessage() }
+
+    /** The `attachment_ids` of each user message in a history, in log order; empty for a message naming none. */
+    private fun userMessageAttachmentIds(history: List<HistoryEntryDto>): List<List<String>> =
+        history.filter { it.isUserMessage() }.map { entry ->
+            ((entry.payload as? JsonObject)?.get("attachment_ids") as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
         }
+
+    private fun HistoryEntryDto.isUserMessage(): Boolean =
+        type == "send_message" || (type == "message" && (payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
 
     /**
      * Fail fast, and say so, when [peer]'s open session carries no frames: one `request_history` for
@@ -3394,35 +3395,6 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.history(conversationId, THREAD_TIMEOUT_MS) }
         } catch (e: TimeoutCancellationException) {
             throw AssertionError("the peer's open session answered no request within $THREAD_TIMEOUT_MS ms: a relay or daemon fault", e)
-        }
-    }
-
-    /** The attachment ids on the phone's own sent message in [conversationId], read from its thread cache. */
-    private fun awaitCachedSentAttachmentIds(
-        serverId: String,
-        conversationId: String,
-    ): List<String> {
-        val cache = GlobalContext.get().get<ConversationCache>()
-        return try {
-            runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    var ids: List<String>? = null
-                    while (ids == null) {
-                        ids =
-                            cache
-                                .readThread(serverId, conversationId)
-                                .filterIsInstance<ThreadItem.MessageItem>()
-                                .firstOrNull { it.message.role == Role.User && it.message.attachments.isNotEmpty() }
-                                ?.message
-                                ?.attachments
-                                ?.map { it.attachmentId }
-                        if (ids == null) delay(CACHE_POLL_MS)
-                    }
-                    checkNotNull(ids)
-                }
-            }
-        } catch (e: TimeoutCancellationException) {
-            throw AssertionError("the phone's thread cache holds no sent row with attachments", e)
         }
     }
 
