@@ -70,3 +70,11 @@ None named by the ticket.
 ## Open questions
 
 None.
+
+## Revisions
+
+**2026-09-25 — a timeout stays a `TimeoutCancellationException`.** The Design converted a wait that runs out into an `AssertionError` naming the frame and `linkState()`. Implementing it showed five scenario sites that catch `TimeoutCancellationException` from a peer wait to add their own context: `peerStep`, `awaitTurnEnd` (counts the prompts raised), `assertPeerAnswers` ("a relay or daemon fault"), and two inline catches around `awaitFrame` and `allowOnce`. Converting the timeout would have bypassed all of them, and the AC says waits on an open peer behave as before. New contract:
+
+- `awaitPeer(what, timeoutMs, closed, block)` — no `linkState` parameter. It adds only the fail-fast: a wait pending when `closed` turns true fails at once with `AssertionError("peer session closed while awaiting $what")`. A timeout propagates unchanged.
+- The timeout naming moves to the flaky test itself: `interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` now runs its four bare peer calls (`open`, `awaitPermissionModal`, `allowOnce`, `awaitFrame` for `turn_end`) through the existing `peerStep`, which names the step and the peer's link state on a timeout. The `held` bookkeeping is unchanged.
+- `PeerWaitTest`'s timeout case now asserts a `TimeoutCancellationException` after exactly `timeoutMs` of virtual time.

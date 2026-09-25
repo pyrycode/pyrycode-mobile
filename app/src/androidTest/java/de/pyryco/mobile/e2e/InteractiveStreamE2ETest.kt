@@ -2811,20 +2811,19 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val connectedAt = SystemClock.elapsedRealtime()
             val (chatId, name) = answerChat(serverId, PUSH_TURN_NAME_PREFIX)
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
             sendFromPhone(RUNNING_TOOL_PROMPT)
-            val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            val modalId =
+                peerStep(peer, "await the held command's permission prompt") { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
             held = chatId to modalId
             awaitPushRegistered(serverId, connectedAt)
 
             // 2. The app goes to the background; the turn ends while the phone is absent.
             val woke = sendAppToBackground(serverId, watch)
-            runBlocking {
-                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
-                held = null
-                peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
-            }
+            peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            held = null
+            peerStep(peer, "await the allowed turn's turn_end") { peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
 
             // 3. AC-1: the push wakes the app and exactly one turn alert shows.
             val alert = awaitAlert(string(R.string.notification_turn_completed), woke)
