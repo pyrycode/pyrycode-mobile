@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -26,6 +27,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentTarget
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,6 +39,7 @@ import java.io.OutputStream
 private const val FALLBACK_MIME_TYPE = "application/octet-stream"
 private const val PACKAGE_ARCHIVE_MIME_TYPE = "application/vnd.android.package-archive"
 private const val MAX_MIME_TYPE_CHARS = 127
+private const val MARKDOWN_MIME_TYPE = "text/markdown"
 
 // RFC 6838's restricted-name characters, for both halves of a concrete `type/subtype`. No wildcard, no
 // parameters: a hint either names one type exactly or is not used.
@@ -125,6 +128,45 @@ internal fun openAttachment(
 }
 
 /**
+ * Hands [document], the text the reader shows, to whichever app the user picks from the system chooser
+ * (#1068), as `text/markdown`. The text is written to the shared-note file first ([writeSharedNote], on
+ * [ioDispatcher]), and the receiver gets a read grant on that one provider URI alone, as [openAttachment]
+ * gives. `null` once the chooser started; [AttachmentNotice.NO_APP] when no app views markdown, since an
+ * empty chooser never throws; [AttachmentNotice.OPEN_FAILED] when the file cannot be written or served.
+ * Exceptions are dropped unread.
+ */
+internal suspend fun openNoteInAnotherApp(
+    context: Context,
+    document: MarkdownDocument,
+    chooserTitle: String,
+    ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+): AttachmentNotice? {
+    val file =
+        withContext(ioDispatcher) {
+            writeSharedNote(sharedNoteDirectory(context.noBackupFilesDir), document.name, document.text)
+        } ?: return AttachmentNotice.OPEN_FAILED
+    val uri = attachmentContentUri(context, AttachmentSource.Kept(file)) ?: return AttachmentNotice.OPEN_FAILED
+    val view = attachmentViewIntent(uri, MARKDOWN_MIME_TYPE)
+    val viewers =
+        context.packageManager.queryIntentActivities(
+            view,
+            PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()),
+        )
+    if (viewers.isEmpty()) return AttachmentNotice.NO_APP
+    // createChooser carries the target's URI and its read grant, and nothing wider, to the chosen app.
+    val chooser = Intent.createChooser(view, chooserTitle)
+    if (context !is Activity) chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    return try {
+        context.startActivity(chooser)
+        null
+    } catch (e: ActivityNotFoundException) {
+        AttachmentNotice.NO_APP
+    } catch (e: Exception) {
+        AttachmentNotice.OPEN_FAILED
+    }
+}
+
+/**
  * Copies an attachment's exact bytes into a picked document (#985). The input opens first, so a source
  * that has gone never truncates the document; any failure [discard]s the document the picker created, so
  * no partial file survives. Blocking and not interruptible, so a copy that has started always finishes or
@@ -147,6 +189,23 @@ internal fun copyAttachment(
         runCatching(discard)
         false
     }
+
+/**
+ * Writes a note's [text] as UTF-8 into a picked document (#1069) through [copyAttachment], so a failed write
+ * [discard]s the document. `null` [text], lost with the process while the picker was open, discards the
+ * document without opening it: nothing else is ever written in its place. Blocking: call it on an IO dispatcher.
+ */
+internal fun saveNoteText(
+    text: String?,
+    openOutput: () -> OutputStream,
+    discard: () -> Unit,
+): Boolean {
+    if (text == null) {
+        runCatching(discard)
+        return false
+    }
+    return copyAttachment({ text.toByteArray(Charsets.UTF_8).inputStream() }, openOutput, discard)
+}
 
 /** What a message attachment's tap and long-press do in the thread (#985). */
 class AttachmentActions(
@@ -264,6 +323,65 @@ internal fun rememberAttachmentActions(
                 }
             },
         )
+    }
+}
+
+/** The reader's note text waiting for the picker (#1069). Memory only, so it never enters the saved-state bundle. */
+private class PendingNote {
+    var text: String? = null
+}
+
+/**
+ * Save to device for the markdown reader (#1069), bound to this composition: the returned function opens the
+ * system's create-document picker for a `text/markdown` document named after the note's last path component,
+ * then writes the note's text, as it was when the picker opened, into the picked document with [saveNoteText].
+ * [onNotice] hears [AttachmentNotice.SAVED] or [AttachmentNotice.SAVE_FAILED]; a cancelled picker writes nothing
+ * and says nothing. The text lives in memory only: when the activity was recreated while the picker was open,
+ * the picked document is deleted and the save reported as failed.
+ */
+@Composable
+internal fun rememberNoteSaver(onNotice: (AttachmentNotice) -> Unit): (MarkdownDocument) -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val currentOnNotice by rememberUpdatedState(onNotice)
+    val pending = remember { PendingNote() }
+    val launcher =
+        rememberLauncherForActivityResult(CreateAttachmentDocument()) { destination ->
+            val text = pending.text
+            pending.text = null
+            if (destination == null) {
+                RelayLog.d { "event=markdown_reader_save outcome=cancelled" }
+                return@rememberLauncherForActivityResult
+            }
+            scope.launch {
+                val saved =
+                    withContext(Dispatchers.IO) {
+                        val resolver = context.contentResolver
+                        saveNoteText(
+                            text = text,
+                            openOutput = { checkNotNull(resolver.openOutputStream(destination, "wt")) },
+                            discard = {
+                                DocumentsContract.deleteDocument(resolver, destination)
+                                Unit
+                            },
+                        )
+                    }
+                RelayLog.d {
+                    "event=markdown_reader_save outcome=${if (saved) "saved" else "failed"} chars=${text?.length ?: -1}"
+                }
+                currentOnNotice(if (saved) AttachmentNotice.SAVED else AttachmentNotice.SAVE_FAILED)
+            }
+        }
+    return remember(pending, launcher) {
+        { document ->
+            pending.text = document.text
+            launcher.launch(
+                CreateAttachmentDocument.Request(
+                    suggestedName = sharedNoteFileName(document.name),
+                    mimeType = MARKDOWN_MIME_TYPE,
+                ),
+            )
+        }
     }
 }
 

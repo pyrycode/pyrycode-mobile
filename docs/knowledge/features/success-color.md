@@ -73,14 +73,18 @@ val dot = when (category) {
 }
 ```
 
-The sole consumer today is the [connection-status line](connection-status-line.md)'s
-`ConnectionLegCategory.color()` resolver ([#397](../codebase/397.md)) — `Up → success`.
+The first consumer was the [connection-status line](connection-status-line.md)'s
+`ConnectionLegCategory.color()` resolver ([#397](../codebase/397.md)) — `Up → success`. The [background
+task panel](mobile-modal.md#callers)'s `TaskStatusTag` ([#1041](https://github.com/pyrycode/pyrycode-mobile/issues/1041))
+is the second: its Completed style reads `colorScheme.success` as the dot/label colour on a 16% tint of
+itself as the pill fill — no new field, since a flat `success` colour is enough to derive both.
 
 ## Related
 
 - Precedent (mirrored one-for-one): [Warning color](warning-color.md) ([#119](../codebase/119.md)) —
   the first custom color slot and the pattern for all future ones.
-- Sole consumer: [Connection status line](connection-status-line.md) ([#397](../codebase/397.md)).
+- Consumers: [Connection status line](connection-status-line.md) ([#397](../codebase/397.md)) and the
+  [background task panel](mobile-modal.md#callers)'s `TaskStatusTag` ([#1041](https://github.com/pyrycode/pyrycode-mobile/issues/1041)).
 - Implementation notes: [`codebase/397.md`](../codebase/397.md).
 - Theme primitive: `app/src/main/java/de/pyryco/mobile/ui/theme/Theme.kt` — `PyrycodeMobileTheme`,
   the two `SuccessColors` instances. Palette: `…/ui/theme/Color.kt` — `successLight` / `successDark`.

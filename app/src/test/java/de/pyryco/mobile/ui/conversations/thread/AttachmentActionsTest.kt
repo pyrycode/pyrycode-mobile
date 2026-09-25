@@ -9,6 +9,8 @@ import androidx.core.content.FileProvider
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -235,6 +237,126 @@ class AttachmentActionsTest {
         val saved = copyAttachment({ throw IOException() }, { ByteArrayOutputStream() }, { throw SecurityException() })
 
         assertFalse(saved)
+    }
+
+    @Test
+    fun noteSave_writesTheTextAsUtf8_andDiscardsNothing() {
+        val text = "# Plän ✓\n\nNaïve café — 日本語 🙂\n"
+        val output = ByteArrayOutputStream()
+        var discarded = false
+
+        val saved = saveNoteText(text, { output }, { discarded = true })
+
+        assertTrue(saved)
+        assertArrayEquals(text.toByteArray(Charsets.UTF_8), output.toByteArray())
+        assertFalse(discarded)
+    }
+
+    @Test
+    fun noteSave_whoseWriteFails_discardsTheDocument() {
+        var discarded = false
+        val failing =
+            object : OutputStream() {
+                override fun write(b: Int) = throw IOException("disk full")
+            }
+
+        val saved = saveNoteText("# Plan", { failing }, { discarded = true })
+
+        assertFalse(saved)
+        assertTrue(discarded)
+    }
+
+    @Test
+    fun noteSave_withTheTextLost_discardsTheDocument_withoutOpeningIt() {
+        var discarded = false
+        var outputOpened = false
+
+        val saved =
+            saveNoteText(null, {
+                outputOpened = true
+                ByteArrayOutputStream()
+            }, { discarded = true })
+
+        assertFalse(saved)
+        assertFalse(outputOpened)
+        assertTrue(discarded)
+    }
+
+    private fun registerMarkdownViewer() {
+        val viewer = ComponentName("com.example.editor", "com.example.editor.Edit")
+        shadowOf(context.packageManager).apply {
+            addActivityIfNotPresent(viewer)
+            addIntentFilterForActivity(
+                viewer,
+                IntentFilter(Intent.ACTION_VIEW).apply {
+                    addDataType("text/*")
+                    addCategory(Intent.CATEGORY_DEFAULT)
+                },
+            )
+        }
+    }
+
+    private val note = MarkdownDocument("notes/Plan.md", "# Plan\n\nThe text on screen.")
+
+    @Test
+    fun sharedNote_isServedByTheAttachmentProvider_underTheNotesName() {
+        val file = writeSharedNote(sharedNoteDirectory(context.noBackupFilesDir), note.name, note.text)
+
+        val uri = attachmentContentUri(context, AttachmentSource.Kept(requireNotNull(file)))
+
+        assertEquals("content", uri?.scheme)
+        assertEquals(authority, uri?.authority)
+        assertEquals("Plan.md", uri?.lastPathSegment)
+    }
+
+    @Test
+    fun openNote_startsTheChooser_withAReadOnlyMarkdownView_ofTheTextOnScreen() {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        registerMarkdownViewer()
+
+        val notice = runBlocking { openNoteInAnotherApp(activity, note, "Open in another app", Dispatchers.Unconfined) }
+
+        assertNull(notice)
+        val chooser = shadowOf(activity).nextStartedActivity
+        assertEquals(Intent.ACTION_CHOOSER, chooser.action)
+        val grants =
+            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        assertEquals(0, chooser.flags and grants)
+        val target = requireNotNull(chooser.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java))
+        assertEquals(Intent.ACTION_VIEW, target.action)
+        assertEquals("text/markdown", target.type)
+        assertEquals("content", target.data?.scheme)
+        assertEquals(authority, target.data?.authority)
+        assertEquals("Plan.md", target.data?.lastPathSegment)
+        assertEquals(Intent.FLAG_GRANT_READ_URI_PERMISSION, target.flags)
+        val shared = File(sharedNoteDirectory(context.noBackupFilesDir), "Plan.md")
+        assertEquals(note.text, shared.readText())
+    }
+
+    @Test
+    fun openNote_withNoAppForMarkdown_reportsNoApp_andStartsNothing() {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+
+        val notice = runBlocking { openNoteInAnotherApp(activity, note, "Open in another app", Dispatchers.Unconfined) }
+
+        assertEquals(AttachmentNotice.NO_APP, notice)
+        assertNull(shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test
+    fun openNote_thatCannotBeWritten_failsWithoutStartingAnything() {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        registerMarkdownViewer()
+        sharedNoteDirectory(context.noBackupFilesDir).apply {
+            parentFile?.mkdirs()
+            writeBytes(byteArrayOf(1))
+        }
+
+        val notice = runBlocking { openNoteInAnotherApp(activity, note, "Open in another app", Dispatchers.Unconfined) }
+
+        assertEquals(AttachmentNotice.OPEN_FAILED, notice)
+        assertNull(shadowOf(activity).nextStartedActivity)
     }
 
     private companion object {

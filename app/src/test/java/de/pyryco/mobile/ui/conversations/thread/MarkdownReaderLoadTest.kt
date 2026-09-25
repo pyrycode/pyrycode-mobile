@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.repository.AttachmentContent
+import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
@@ -115,6 +117,70 @@ class MarkdownReaderLoadTest {
 
         assertFalse(printed, "secret" in printed)
     }
+
+    /** #1050: a workspace read that answers [result] and records each request it is asked for. */
+    private class WorkspaceRepository(
+        private val result: () -> AttachmentFetchResult,
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val reads = mutableListOf<Pair<String, String>>()
+
+        override suspend fun readWorkspaceFile(
+            conversationId: String,
+            path: String,
+        ): AttachmentFetchResult {
+            reads += conversationId to path
+            return result()
+        }
+    }
+
+    private fun fetched(bytes: ByteArray): AttachmentFetchResult =
+        AttachmentFetchResult.Fetched(AttachmentContent(listOf(bytes)), "daemon-name.md", "text/markdown")
+
+    @Test
+    fun linkedNote_isOneReadOfThePathAsGiven_namedByItsLastComponent() =
+        runTest {
+            val repository = WorkspaceRepository({ fetched("# Plan äö".toByteArray()) })
+
+            val document = linkedRead(repository, "../notes/My%20Plan.md")
+
+            assertEquals(listOf(CONV to "../notes/My%20Plan.md"), repository.reads)
+            assertEquals("My%20Plan.md", document?.name)
+            assertEquals("# Plan äö", document?.text)
+        }
+
+    @Test
+    fun linkedNoteName_isSanitisedAssistantText() {
+        assertEquals("Plan.md", linkedMarkdownName("notes/Pl‮an\u0007.md"))
+        assertEquals("Plan.md", linkedMarkdownName("Plan.md"))
+    }
+
+    @Test
+    fun linkedNote_failuresAndBadBytes_areNoDocument() =
+        runTest {
+            listOf(
+                AttachmentRetrievalResult.NotFound,
+                AttachmentRetrievalResult.Unavailable,
+                AttachmentRetrievalResult.Invalid,
+                AttachmentRetrievalResult.TooLarge,
+                fetched(byteArrayOf(0x41, 0x80.toByte())),
+                fetched(ByteArray(MAX_MARKDOWN_READER_BYTES + 1) { 'a'.code.toByte() }),
+            ).forEach { result -> assertNull("$result", linkedRead(WorkspaceRepository({ result }), "a.md")) }
+            assertNull(linkedRead(WorkspaceRepository({ throw IllegalStateException("/secret/path.md") }), "a.md"))
+        }
+
+    @Test
+    fun linkedNote_atTheByteBound_isTheDocument() =
+        runTest {
+            val document = linkedRead(WorkspaceRepository({ fetched(ByteArray(MAX_MARKDOWN_READER_BYTES) { 'a'.code.toByte() }) }), "a.md")
+
+            assertEquals(MAX_MARKDOWN_READER_BYTES, document?.text?.length)
+        }
+
+    private suspend fun linkedRead(
+        repository: ConversationRepository,
+        path: String,
+    ) = readLinkedMarkdown(repository, CONV, path)
 
     private companion object {
         const val CONV = "c1"

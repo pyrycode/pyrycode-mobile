@@ -89,6 +89,30 @@
     <string name="background_tasks_truncated">Truncated by the daemon</string>
     <string name="background_tasks_no_change">No change reported</string>
     <string name="background_tasks_finished">Finished</string>
+    <string name="background_tasks_group_running">Running · %1$d</string>
+    <string name="background_tasks_group_running_shown">Running · %1$d shown</string>
+    <string name="background_tasks_group_finished">Finished · %1$d</string>
+    <string name="background_tasks_group_finished_shown">Finished · %1$d shown</string>
+    <string name="background_tasks_status_running">Running</string>
+    <string name="background_tasks_status_completed">Completed</string>
+    <string name="background_tasks_status_failed">Failed</string>
+    <string name="background_tasks_status_stopped">Stopped</string>
+    <string name="background_tasks_latest_update">Latest update</string>
+    <string name="background_tasks_empty_support">Claude has nothing running in the background for this conversation.</string>
+    <string name="background_tasks_unreported_support">The daemon has not reported on this conversation since the app connected.</string>
+    <!-- #1044: a running task's progress meta line. Only client-computed counters fill these. -->
+    <plurals name="background_tasks_progress_tools">
+        <item quantity="one">%1$d tool</item>
+        <item quantity="other">%1$d tools</item>
+    </plurals>
+    <plurals name="background_tasks_progress_tokens">
+        <item quantity="one">%1$s token</item>
+        <item quantity="other">%1$s tokens</item>
+    </plurals>
+    <string name="background_tasks_progress_thousands">%1$dk</string>
+    <string name="background_tasks_elapsed_seconds">%1$ds</string>
+    <string name="background_tasks_elapsed_minutes">%1$dm %2$02ds</string>
+    <string name="background_tasks_elapsed_hours">%1$dh %2$02dm</string>
     <string name="status_sheet_running_model">Running model</string>
     <string name="status_sheet_running_model_unavailable">Not announced yet</string>
     <string name="status_sheet_running_build">Claude Code %1$s</string>
@@ -359,6 +383,11 @@
         <item quantity="one">%1$d file was not added: a message holds at most 32 files</item>
         <item quantity="other">%1$d files were not added: a message holds at most 32 files</item>
     </plurals>
+    <!-- #1043: the status band's task count pill. -->
+    <plurals name="thread_task_count">
+        <item quantity="one">%1$d task running</item>
+        <item quantity="other">%1$d tasks running</item>
+    </plurals>
     <!-- #984: a thread message's attachments. The file's own name is shown beside these, never inside them. -->
     <string name="thread_attachment_unnamed">Attachment</string>
     <string name="thread_attachment_loading">Loading…</string>
@@ -372,4 +401,12 @@
     <string name="thread_attachment_open_failed">Couldn\'t open file</string>
     <string name="thread_attachment_saved">File saved</string>
     <string name="thread_attachment_save_failed">Couldn\'t save file</string>
+    <!-- #1067: the markdown reader's overflow menu, and the clip label its copies carry (never the note's name). -->
+    <string name="markdown_reader_copy_markdown">Copy as markdown</string>
+    <string name="markdown_reader_copy_plain_text">Copy as plain text</string>
+    <string name="markdown_reader_copy_html">Copy as HTML</string>
+    <string name="markdown_reader_refresh">Refresh</string>
+    <string name="markdown_reader_open_in_app">Open in another app</string>
+    <string name="markdown_reader_save_to_device">Save to device</string>
+    <string name="markdown_reader_clip_label">Note</string>
 </resources>
