@@ -523,3 +523,24 @@ characters (e.g. U+202E), so a field can still be visually reordered to spell an
 pre-existing limit since #678 and not widened by this redraw, since a tag's style is chosen by exact match
 on the raw word rather than on what renders. Closing the panel — any of the three routes above — sends
 nothing and changes no task or conversation state.
+
+A running card's progress (#1044, the Figma Populated frame) draws directly under the description and
+above the finish summary / "Latest update", gated on `!task.isFinished && task.progress != null` — the
+panel gates on `isFinished` itself rather than trusting that the #1042 projection already nulls `progress`
+on finish. The block is the activity line (the held frame's `description`, `bodyMedium`/`onSurfaceVariant`,
+through the same `TaskField` + cut-marker treatment as every other field) then a meta line
+(`bodySmall`/`outline`) joining the last tool name and three client-formatted counters with " · ", e.g.
+"Bash · 4 tools · 18k tokens · 2m 41s". `subagentType` is decoded onto the held frame but never rendered.
+
+The progress frame carries its own `truncatedFields` — a *third* independent list alongside the task's own
+and an update's own, never crossing either: the task's own list naming `description` does not mark the
+activity line, only the progress frame's own list naming `description` does, and naming `last_tool_name`
+marks the meta line instead. An empty last-tool-name drops its segment rather than leaving a stray leading
+separator. The three counters (`BackgroundTaskProgressFormat.progressCounters`) format purely from the
+frame's three `Long` readings, never a daemon string: singular exactly at 1, tokens whole under 1000 then
+half-up-rounded thousands with a "k" suffix (division/remainder, not `+500`, so it cannot overflow), elapsed
+as `Ns` under a minute, `Nm SSs` under an hour, `Nh MMm` (seconds dropped) beyond, and any negative reading
+clamps to zero since the wire's counters are not guaranteed monotonic. Sharing one `Text` for the tool name
+and the counters is an accepted limit, not an oversight: a hostile tool name could imitate a counter segment
+or bidi-reorder the line, but the same author supplies the integers being formatted, so this grants no new
+capability — the same accepted-limit shape as the tag's raw-word display above.
