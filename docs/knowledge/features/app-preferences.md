@@ -299,6 +299,17 @@ owner; a scratch read alone cannot distinguish permanent ownership from no owner
 Likewise, preserve the explicit-scratch case: scratch is a stored choice and must
 prevent an old path from being copied over it.
 
+Any restart simulation that cancels one store's owner scope and reopens the same
+file must join the first scope's job, not merely cancel it, or the second open
+throws `IllegalStateException: There are multiple DataStores active for the same
+file` — `cancel()` returns before DataStore's active-file bookkeeping releases the
+file. `rememberedEffort_survivesProcessDeath` here and `HostWorkspacePreferencesTest`
+above do this correctly; `ThreadViewModelEffortRecallTest.aSuccessfulTap_survivesAnAppRestart`
+(`ui/conversations/thread/`) did not and failed on every isolated run until #1075
+added the missing `job1.join()`. See [Development verification § Test scheduling
+and harnesses](development-verification.md#test-scheduling-and-harnesses) for the
+full mechanism.
+
 ## Edge cases / limitations
 
 - **No corruption handler installed.** `PreferenceDataStoreFactory.create` accepts a `corruptionHandler: ReplaceFileCorruptionHandler<Preferences>?` parameter — currently `null`. If on-disk corruption is ever observed in the field, the right fix is a single line at the binding site. Evidence-based — not adding a defense for an unobserved failure mode.

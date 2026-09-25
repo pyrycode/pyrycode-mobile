@@ -311,6 +311,17 @@ the wait times out no matter how high the timeout is. Prefer owning every corout
 reading once with a plain `first()` after draining the scheduler, over racing a wall clock against
 writer code the test does not control.
 
+A test that simulates an app restart by cancelling one `DataStore`'s owner scope and immediately
+opening a second `PreferenceDataStoreFactory.create` on the same file must `join()` the first scope's
+`Job`, not merely `cancel()` it: DataStore unregisters a file from its process-wide active-file set only
+when the owning scope's job *completes*, and `cancel()` only requests that — it returns before the job
+finishes. A second store opened in the gap sees the file still registered and its first read throws
+`IllegalStateException: There are multiple DataStores active for the same file`, reproducing every time
+the affected test runs alone (#1075, mirroring the pattern `AppPreferencesTest.rememberedEffort_survivesProcessDeath`
+and `HostWorkspacePreferencesTest` — see [App preferences § Testing](app-preferences.md#testing) —
+already used correctly). Hold the first scope's `Job` in a named `val` and call `job1.join()` right after
+`scope1.cancel()`, before constructing the second store.
+
 A JVM unit test that constructs or resolves a component backed by `Dispatchers.Default` — a Koin
 singleton reached without an injected test dispatcher, for example — must stop it before that test
 class's `Dispatchers.resetMain()`, not merely dispose it. The failure this produces attaches to
