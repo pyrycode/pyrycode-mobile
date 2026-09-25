@@ -69,6 +69,7 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
+import de.pyryco.mobile.ui.conversations.thread.readLinkedMarkdown
 import de.pyryco.mobile.ui.onboarding.CameraPreview
 import de.pyryco.mobile.ui.onboarding.PairCodePhase
 import de.pyryco.mobile.ui.onboarding.PairCodeScreen
@@ -569,8 +570,8 @@ internal fun PyryNavHost(
             }
         }
         // #1050: a linked workspace note, read live by the thread beneath just before navigating. The route
-        // carries the thread's ids only; the note comes from that thread's ViewModel, in memory, never fetched
-        // again here and never in saved state.
+        // carries the thread's ids only; the note and its path come from that thread's ViewModel, in memory,
+        // never in saved state. Only the reader's Refresh (#1067) reads the path again, through this host.
         composable(
             route = Routes.MARKDOWN_LINK,
             arguments = Routes.hostArguments(),
@@ -583,8 +584,13 @@ internal fun PyryNavHost(
                     }
                 val threadVm = threadEntry?.let { koinViewModel<ThreadViewModel>(viewModelStoreOwner = it) }
                 // Read once: the thread releases its copy when it recomposes during the pop.
-                val document = remember(backStackEntry) { threadVm?.linkedMarkdown() }
-                LinkedMarkdownReaderDestination(document = document, onBack = { navController.popBackStack() })
+                val note = remember(backStackEntry) { threadVm?.linkedMarkdown() }
+                val repository = remember(target.serverId) { destinations.repository(target.serverId) }
+                LinkedMarkdownReaderDestination(
+                    note = note,
+                    reread = { path -> readLinkedMarkdown(repository, target.conversationId, path) },
+                    onBack = { navController.popBackStack() },
+                )
             }
         }
         // Deliberately not wrapped in HostDestination: that guard returns an unknown host to the
