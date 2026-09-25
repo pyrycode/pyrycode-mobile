@@ -57,6 +57,7 @@ import androidx.compose.ui.window.SecureFlagPolicy
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalContainer
 
 /**
  * Presentation only: the caller owns visibility, editable values and submission state.
@@ -190,8 +191,9 @@ private fun MobileModalShell(
             val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
             SideEffect { dialogWindow?.decorView?.filterTouchesWhenObscured = true }
         }
-        // Figma's onPrimaryFixed and 44/6 dp shapes are not configured in our theme.
-        // Use its adaptive container pair and extraLarge/small shapes in both modes.
+        // Figma fills the sheet with onPrimaryFixed, which cannot differ between themes and is unreadable
+        // behind the light content colour, so the fill is the modalContainer slot: the frame's navy in dark,
+        // primaryContainer in light (#1142). Its 44/6 dp shapes map to extraLarge/small.
         Surface(
             modifier =
                 modifier
@@ -200,7 +202,7 @@ private fun MobileModalShell(
                     .imePadding()
                     .semantics { paneTitle = title },
             shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.primaryContainer,
+            color = MaterialTheme.colorScheme.modalContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ) {
             // Too short to pin the chrome, as in landscape with the keyboard up (#1135), the header,

@@ -40,3 +40,7 @@ New `app/src/sharedTest/java/de/pyryco/mobile/ui/components/MobileModalFillTest.
 ## Documentation handoff (pending — documentation stage)
 
 `docs/knowledge/features/mobile-modal.md`, token table row "`onPrimaryFixed` background": dark theme now paints the frame's `#001D34` through `colorScheme.modalContainer`; light theme keeps `primaryContainer` (`#CFE4FF`); content colour stays `onPrimaryContainer` in both.
+
+## Revisions
+
+- **Test capture (Phase B).** `captureToImage` on the sheet node times out under Robolectric: it waits for a redraw of the dialog window that Robolectric never performs. `MobileModalFillTest` instead records the dialog's `LocalView` from inside `content` and draws it into a bitmap by hand, then samples the centre pixel. The assertions are unchanged.
