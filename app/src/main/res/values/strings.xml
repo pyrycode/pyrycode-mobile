@@ -370,6 +370,11 @@
         <item quantity="one">%1$d file was not added: a message holds at most 32 files</item>
         <item quantity="other">%1$d files were not added: a message holds at most 32 files</item>
     </plurals>
+    <!-- #1043: the status band's task count pill. -->
+    <plurals name="thread_task_count">
+        <item quantity="one">%1$d task running</item>
+        <item quantity="other">%1$d tasks running</item>
+    </plurals>
     <!-- #984: a thread message's attachments. The file's own name is shown beside these, never inside them. -->
     <string name="thread_attachment_unnamed">Attachment</string>
     <string name="thread_attachment_loading">Loading…</string>

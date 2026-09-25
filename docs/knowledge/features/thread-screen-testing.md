@@ -125,6 +125,22 @@ Tests added in [#789](https://github.com/pyrycode/pyrycode-mobile/issues/789), g
 
 **`ThrowingConversationRepository` does not throw for every reachable conversation id — only for the failure it was constructed with, and only from the overrides it actually implements.** The #789 refusal cases route through `sendMessage(conversationId, text)`, but `state` still assembles from `observeConversations`/`observeMessages`, which the seeded `FakeConversationRepository` backs by default. Pointing a refusal test's `conversationId` at an unseeded id throws `IllegalArgumentException` ("Unknown conversation") out of the *state* machinery, not the guarded `sendMessage` call under test — a different failure than the one the assertion means to pin, and one `launchGuardedRepoCall` does not catch. Fixture conversation ids for any test that reaches a repository's other reads need to be ones the fake actually seeds (`DRAFT_CONV = "seed-channel-personal"` here), not an arbitrary string.
 
+Sibling test file added in [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043):
+`app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/TaskCountPillTest.kt`
+(`@GraphicsMode(GraphicsMode.Mode.NATIVE)` — see [Compose evidence](development-verification.md#compose-evidence)
+for why an exact-width/position assertion needs real fonts rather than Robolectric's legacy renderer, which
+measured the pill's label at almost no width and made it wrap). Five `@Test`s host the real `ThreadScreen`:
+the pill beside a live `ThinkingIndicator` reading, positioned to that reading's right; the pill alone,
+right-edge-aligned on `rootWidth - ComposerGutter`; the singular "1 task running" copy (and that "1 tasks
+running" does not exist); the zero-count case, which measures the newest message row's **bottom** edge
+rather than the input field's top — the composer is a bottom-anchored `bottomBar`, so only the status band's
+own height moves that edge — at zero, again after the pill raises it by the exact 32dp of its own 24dp plus
+the composer column's 8dp gap, and again after the count returns to zero, asserting the last measurement
+equals the first; and a tap opening `BackgroundTaskPanel` with the roster's task visible. See [Thread screen
+— how it works, overlays, retry and the app bar §
+Thinking-indicator placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
+for the composable this test pins.
+
 **General lesson for the next structural change to `ThreadScreen`'s list:** a
 blast-radius search keyed on the symbols a change touches (`QueuedBacklog`,
 `foldQueuedRows`, `ThreadUiState`) will not surface a test helper whose matcher
