@@ -314,6 +314,22 @@ the wait times out no matter how high the timeout is. Prefer owning every corout
 reading once with a plain `first()` after draining the scheduler, over racing a wall clock against
 writer code the test does not control.
 
+A real file-backed DataStore can drop the emission for a documented reason, not just a scheduling
+accident: DataStore 1.1.7's `writeData` increments the store's version before it writes the scratch
+file, fsyncs it and renames it, and only afterwards updates the in-memory cache. A collector whose
+first read lands in that window sees the pre-rename file content under the already-bumped version, so
+`data`'s `dropWhile { it.version <= startState.version }` discards the real update once it finally
+lands, as "not newer". The window is just the fsync plus the rename, so the miss rate tracks machine
+load: `ThreadViewModelEffortRecallTest.aSuccessfulTap_survivesAnAppRestart` (#1094) missed 14 of 300
+loop iterations unloaded and 34 of 300 under load, throwing `TimeoutCancellationException` only in the
+full `./gradlew check`, never in a focused run of the one test class. There the write is driven by
+production code (`ThreadViewModel.onEffortSelected` -> `EffortRecall.remember`), so the test cannot own
+that coroutine the way the "owning every coroutine" advice above assumes. The fix instead waits on the
+write call itself returning, not on the data stream: wrap the real `RememberedEffortStore` in a
+delegating one whose `remember` calls through and then completes a `CompletableDeferred`, and await that
+deferred in place of `store.data.first { predicate }`. To wait for a write you don't control, wait for
+the writing call to return, never for a predicate over the read side.
+
 A test that simulates an app restart by cancelling one `DataStore`'s owner scope and immediately
 opening a second `PreferenceDataStoreFactory.create` on the same file must `join()` the first scope's
 `Job`, not merely `cancel()` it: DataStore unregisters a file from its process-wide active-file set only
