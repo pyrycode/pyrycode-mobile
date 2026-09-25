@@ -77,43 +77,11 @@ staleness handling of its own — `null` in is `null` (unavailable) out.
 
 ### Context usage segment (#946)
 
-`ThreadRunConfig.contextPercent: Int?` is a third independent reading, joined the same way [§ Running
-model](#running-model-891) is: `runConfigFlow` folds it in with one more
-`.combine(repository.observeContextUsage(conversationId)) { config, usage -> config.copy(contextPercent =
-usage?.percentage) }` after the `runningModel` combine — a third link, not a sixth arm of the five-arm
-`combine` (already at Kotlin's typed ceiling). It carries Claude's reported `percentage` verbatim; `null`
-is the unavailable state, never `0%`, and it is never derived from `SessionSettings.usedTokens` /
-`.windowTokens`. See [Conversation repository § `observeContextUsage`](conversation-repository.md#shape)
-for the reading's own contract.
-
-A private `ContextSegment(percent: Int?)` renders Figma's `Cxt: 84%` text node (`110:3497`) — it is
-**plain text, not a `FooterControl`**: it opens no overlay and carries no click action. It takes the
-row's `Modifier.weight(1f)` slot **in place of** the `Spacer` that used to fill it, so the Status opener
-keeps the row's trailing position. Being the weighted child, it is measured last, after every button and
-the opener — on a narrow row it ellipsizes (`maxLines = 1`, `TextOverflow.Ellipsis`) rather than
-squeezing the opener off the end. `percent != null` shows `thread_footer_context` ("Cxt: %1$d%%") in
-`colorScheme.primary` with `cd_context_usage` ("Context usage %1$d%%"); `null` shows
-`thread_footer_context_unavailable` ("Cxt: n/a") in `colorScheme.onSurfaceVariant` — the same dimmed
-color a disabled footer button uses — with `cd_context_usage_unavailable` ("Context usage unavailable").
-`const val CONTEXT_USAGE_TEST_TAG` (top-level, not `internal`) tags the node for the rung-3 scenario
-below, the same reason [`RUNNING_MODEL_TEST_TAG`](status-sheet-readings.md#runningmodelsection) is top-level.
-
-**No ask, since Rework 1.** Subscribing to this reading sends nothing to the daemon. #945 originally had
-`ContextUsageProjection` ask (`request_context_usage`) on the 0→1 subscriber edge, but this ticket's own
-PR #970 was the reading's first production subscriber, and the daemon's `handleRequestContextUsage`
-blocks the connection's serial frame worker until the open turn ends — a mid-turn ask deadlocked the
-scripted `reconnect` scenario. The ask was removed outright; the reading now arrives only from the
-daemon's post-turn `context_usage` push. A conversation shows `Cxt: n/a` until its next turn ends on the
-current connection, including an idle conversation opened for the first time. See [Remote conversation
-repository — live stream, modal seams and the replay cursor §
-`context_usage`](remote-conversation-repository-live-stream-and-modals.md#context_usage--the-context-usage-reading-945)
-for the wire contract and pyrycode/pyrycode#2563, the daemon fix that would let a future ticket restore
-the ask.
-
-**Same value, two surfaces.** [`StatusSheet`](status-sheet-readings.md#contextwindowsection)'s Context-window
-section reads the identical `ThreadRunConfig.contextPercent`, so the footer and the sheet cannot
-disagree. No rung-4 twin: whether the scripted `fakeclaude` path makes the daemon publish `context_usage`
-is not established.
+Split into [Thread composer footer — context usage
+segment](thread-composer-footer-context-usage.md) on 2026-09-25 to keep this document under the
+50000-byte cap the docs guard enforces. The `contextPercent` reading, the `ContextSegment` composable
+(including the corrected note on how [#1032](https://github.com/pyrycode/pyrycode-mobile/issues/1032)
+changed its layout), the no-ask rule and the shared-value-two-surfaces note moved there verbatim.
 
 ### Remembered effort recall (#686)
 
@@ -184,6 +152,12 @@ fun ThreadComposerFooter(
 Each button is a `Row` at least 32dp tall (Figma's own buttons are 16dp; this grows the touch target for a thumb) showing the resolved label (`bodySmall`, one line, ellipsized, width-capped at 140dp) followed by a 14dp up-chevron — the chevron is omitted when the button is neither enabled nor pending, since a disabled button with no pending write has nothing to promise. The button reports its own window bounds via `Modifier.onGloballyPositioned { onBounds(it.boundsInWindow()) }`; `ThreadScreen` uses this to place the overlay (below). A pending button (`pendingModel != null` for the model button, `pendingEffort != null` for the effort button, `pendingPermission != null` for the permission button — each read independently, not through `runConfig.pending`) renders at `0.55f` alpha and carries a `stateDescription` of `thread_footer_pending` ("Applying"), so a screen reader distinguishes "applying" from a plain disabled control. The trailing `Tune` icon is a 32dp tap target around a 16dp glyph with the existing `cd_thread_status_expand` content description — the design has no footer affordance for the Status sheet, which since #650 hosts Model, Effort and the Context-window section only (the permission control moved here and the YOLO switch was retired outright).
 
 The Actions button (#884) is drawn first, always enabled, with `label` and `clickLabel` `R.string.thread_footer_actions` / `R.string.thread_footer_open_actions` ("Actions" / "Open actions"). The permission button is drawn next, before Model and Effort (Figma `110:3494`'s `Actions · Auto · Opus · Max · Cxt` order), and only when `permissionModeLabel(runConfig)` is non-null — unlike Actions, Model and Effort, which always render (Model/Effort possibly disabled) once the footer itself is shown. The permission button's `clickLabel` is `R.string.thread_footer_change_permission` ("Change permission mode").
+
+### Trailing icons stay outside the weighted text region (#1032)
+
+The outer `Row` holds three top-level children: `FooterTextRow` (`Modifier.weight(1f)`), the paperclip `Box`, then the Status opener `Box`. A `Row` measures its non-weighted children first, in source order, before handing the rest to a weighted one — a fixed-size child placed *after* a weighted sibling in source order is not protected by that sibling's weight; it is measured exactly like every other non-weighted child, against whatever width is left once the row's earlier children have taken theirs. Before #1032 the two icon boxes sat after a weighted `ContextSegment` inside one flat `Row` with the buttons, so a full set of long labels (seen on a 1080px phone showing "Actions, Manual approval, default, medium") could still starve the icons to zero width — see [Thread composer footer — context usage segment](thread-composer-footer-context-usage.md) for that segment's corrected description. Moving the icon boxes to be siblings of the weighted region, not members of it, is what guarantees them their 32dp regardless of button count or label length.
+
+`FooterTextRow`, a private `Layout`, holds the buttons and, as its last child, `ContextSegment`. Each button is measured at `min(maxIntrinsicWidth, cap)`, where `internal fun footerShrinkCap(widths: List<Int>, available: Int): Int` (pure) is `Int.MAX_VALUE` when the buttons already fit, else the largest per-button cap that keeps every capped button's width sum within `available` — the widest labels shrink first, and no button is squeezed to nothing while another keeps its full label. `ContextSegment` gets whatever width the buttons leave, possibly none, same as before #1032. `FooterButton`'s label `Text` carries `Modifier.weight(1f, fill = false)` so a capped button's chevron is measured before the label and survives the ellipsis rather than being pushed off with it. A plain nested `Row` (buttons measured in source order with no shared cap) was rejected: at the full-footer width it would starve whichever button came last in the text region rather than sharing the shrink across the widest labels.
 
 ### Wiring in `ThreadScreen`
 
@@ -279,7 +253,8 @@ Two `@Preview`s in `ThreadComposerFooter.kt` — `ThreadComposerFooterDarkPrevie
 - [Shared mobile modal § Callers](mobile-modal.md#callers) — `BackgroundTaskPanel` (#678), the read-only panel the Actions menu's background-tasks row opens.
 - [Thread composer footer — testing](thread-composer-footer-testing.md) — the full test-case list for every control, split out to keep this document under the size cap.
 - [Thread composer footer — remembered effort recall](thread-composer-footer-effort-recall.md) — `EffortRecall`'s once-per-opening decision, cancel, remember-only-successes and isolation rules, split out to keep this document under the size cap.
-- Tickets: [#808](../codebase/808.md) (Model + Effort buttons, this component's shape), [#650](https://github.com/pyrycode/pyrycode-mobile/issues/650) (Permission button, the settle rule, session-reset staleness, YOLO retirement), [#889](https://github.com/pyrycode/pyrycode-mobile/issues/889) (applied effort display, § Applied effort above), [#686](https://github.com/pyrycode/pyrycode-mobile/issues/686) (remembered-effort recall, [split doc](thread-composer-footer-effort-recall.md) above; mobile port of desktop [#1549](https://github.com/pyrycode/pyrycode-desktop/issues/1549) / PR #1554), [#884](https://github.com/pyrycode/pyrycode-mobile/issues/884) (Actions menu, § Actions menu above; split from #655; ports desktop's `ComposerActionsMenu` / `composerActionAvailability.ts`, gated on the [#882](https://github.com/pyrycode/pyrycode-mobile/issues/882) published slash-command menu), [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678) (the `BackgroundTasks` row, § Actions menu above — live count and the panel it opens; the roster store itself is [#677](https://github.com/pyrycode/pyrycode-mobile/issues/677)), [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946) (`Cxt:` segment, § Context usage segment above; split from #591, sourced off [#945](https://github.com/pyrycode/pyrycode-mobile/issues/945)'s `observeContextUsage`). Specs: `docs/specs/architecture/808-composer-footer-model-effort-buttons.md`, `docs/specs/architecture/650-composer-permission-mode.md`, `docs/specs/architecture/889-applied-effort-footer.md`, `docs/specs/architecture/686-remembered-effort-recall.md`, `docs/specs/architecture/884-composer-actions-control.md`, `docs/specs/architecture/678-background-task-list.md`, `docs/specs/architecture/946-context-usage-footer.md`.
+- [Thread composer footer — context usage segment](thread-composer-footer-context-usage.md) — the `Cxt:` reading, its no-ask rule, and (since #1032) the corrected note on why the segment's own weight never protected the trailing icons; split out to keep this document under the size cap.
+- Tickets: [#808](../codebase/808.md) (Model + Effort buttons, this component's shape), [#650](https://github.com/pyrycode/pyrycode-mobile/issues/650) (Permission button, the settle rule, session-reset staleness, YOLO retirement), [#889](https://github.com/pyrycode/pyrycode-mobile/issues/889) (applied effort display, § Applied effort above), [#686](https://github.com/pyrycode/pyrycode-mobile/issues/686) (remembered-effort recall, [split doc](thread-composer-footer-effort-recall.md) above; mobile port of desktop [#1549](https://github.com/pyrycode/pyrycode-desktop/issues/1549) / PR #1554), [#884](https://github.com/pyrycode/pyrycode-mobile/issues/884) (Actions menu, § Actions menu above; split from #655; ports desktop's `ComposerActionsMenu` / `composerActionAvailability.ts`, gated on the [#882](https://github.com/pyrycode/pyrycode-mobile/issues/882) published slash-command menu), [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678) (the `BackgroundTasks` row, § Actions menu above — live count and the panel it opens; the roster store itself is [#677](https://github.com/pyrycode/pyrycode-mobile/issues/677)), [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946) (`Cxt:` segment, [split doc](thread-composer-footer-context-usage.md) above; split from #591, sourced off [#945](https://github.com/pyrycode/pyrycode-mobile/issues/945)'s `observeContextUsage`), [#1032](https://github.com/pyrycode/pyrycode-mobile/issues/1032) (the paperclip and Status opener kept visible on a full footer; § Trailing icons stay outside the weighted text region above). Specs: `docs/specs/architecture/808-composer-footer-model-effort-buttons.md`, `docs/specs/architecture/650-composer-permission-mode.md`, `docs/specs/architecture/889-applied-effort-footer.md`, `docs/specs/architecture/686-remembered-effort-recall.md`, `docs/specs/architecture/884-composer-actions-control.md`, `docs/specs/architecture/678-background-task-list.md`, `docs/specs/architecture/946-context-usage-footer.md`, `docs/specs/architecture/1032-footer-trailing-icons-always-visible.md`.
 - Live coverage: [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679) (Model/Effort, and, per the #884 AC, the Actions menu's command rows), [#687](https://github.com/pyrycode/pyrycode-mobile/issues/687)'s `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild` (the Plan → Bypass approvals → Manual approval permission transition and its tool approval, against a dedicated operator-bypass daemon); applied effort's own live proof is [#545](https://github.com/pyrycode/pyrycode-mobile/issues/545)'s `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` and `interactiveTurn_chosenEffort_appliesFromTheFirstTurn`, and the saved-model round trip is the same ticket's `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` — see [e2e coverage](../../e2e-interactive-stream.md). The context usage segment's own live proof is [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946)'s own `interactiveTurn_pingPrompt_footerShowsContextUsage` — see [e2e coverage](../../e2e-interactive-stream.md).
 - [App preferences § Remembered effort key](app-preferences.md) — the `rememberedEffort` storage key and `EffortRecall`'s `RememberedEffortStore` adapter.
 - Figma: `Input footer` [`110:3494`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=110-3494), overlay [`533:1958`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1958).
