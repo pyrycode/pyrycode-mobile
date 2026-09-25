@@ -68,6 +68,15 @@ data class Envelope(
 internal const val CAPABILITY_INTERACTIVE = "interactive"
 
 /**
+ * The wire token for the multi-agent capability (#1119). Advertised in [HelloClientPayload.capabilities]
+ * after [CAPABILITY_INTERACTIVE]; without it the daemon withholds every Codex conversation and every
+ * frame about one. It also adds the `agent`/`family` tags to `model_list` and the `capabilities` object
+ * to `session_settings`, all read as optional keys, so nothing on the phone checks whether it was
+ * granted. Wire SSOT: pyrycode `docs/protocol-mobile.md` § "Capability negotiation (v2)" `multi_agent`.
+ */
+internal const val CAPABILITY_MULTI_AGENT = "multi_agent"
+
+/**
  * Payload of the `hello` envelope, sent as `noise_init` early-data.
  *
  * [token] is the device-pairing secret. [toString] is overridden to redact it so
@@ -76,7 +85,7 @@ internal const val CAPABILITY_INTERACTIVE = "interactive"
  * (the wire needs it). `equals`/`hashCode` are intentionally NOT overridden.
  *
  * [capabilities] advertises the v2 features the phone understands; it defaults to
- * `["interactive"]` and rides every `hello` via `MobileJson`'s `encodeDefaults = true`
+ * `["interactive", "multi_agent"]` and rides every `hello` via `MobileJson`'s `encodeDefaults = true`
  * (same mechanism as [protocolVersions]). It is non-secret, so [toString] surfaces it.
  *
  * [lastEventId] is the replay cursor (#416): on reconnect the phone advertises the latest
@@ -96,7 +105,7 @@ data class HelloClientPayload(
     @SerialName("client_version") val clientVersion: String,
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,
-    val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE),
+    val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT),
     @SerialName("last_event_id") val lastEventId: Long? = null,
 ) {
     override fun toString(): String =
