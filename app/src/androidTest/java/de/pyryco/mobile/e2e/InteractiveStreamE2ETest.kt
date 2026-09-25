@@ -2852,7 +2852,14 @@ class InteractiveStreamE2ETest {
             sendFromPhone(BACKGROUND_PROMPT)
             val allowed = mutableSetOf<String>()
             val startedFrame =
-                allowPromptsUntil(peer, chatId, REPLY_TIMEOUT_MS, "claude started no background task", allowed) {
+                allowPromptsUntil(
+                    peer,
+                    chatId,
+                    REPLY_TIMEOUT_MS,
+                    "claude started no background task",
+                    allowed,
+                    frame = "background_task_started",
+                ) {
                     it.type ==
                         "background_task_started"
                 }
@@ -2872,7 +2879,14 @@ class InteractiveStreamE2ETest {
             // 3. AC-3: once the task finishes, the count is 0 and the panel no longer lists the task as live. It
             //    labels the task finished until the empty roster claude sends after a finish drops it (#677's
             //    `applyRoster`), then says there are no tasks; the live gate saw the empty roster win.
-            allowPromptsUntil(peer, chatId, BACKGROUND_FINISH_TIMEOUT_MS, "the background task never finished", allowed) { frame ->
+            allowPromptsUntil(
+                peer,
+                chatId,
+                BACKGROUND_FINISH_TIMEOUT_MS,
+                "the background task never finished",
+                allowed,
+                frame = "background_task_updated",
+            ) { frame ->
                 frame.type == "background_task_updated" &&
                     runCatching { MobileJson.decodeFromJsonElement(BackgroundTaskUpdatedPayloadDto.serializer(), frame.payload) }
                         .getOrNull()
@@ -4205,7 +4219,8 @@ class InteractiveStreamE2ETest {
      * Poll [peer]'s frames for [conversationId] until one passes [done], and return it. Every permission prompt
      * raised there on the way is allowed once through the peer, the main daemon's privileged device (#950).
      * [allowed] holds the modal ids already answered; share it across calls on one peer so a prompt still in
-     * its recorded frames is not answered twice. The failure names [failure] and a count, never a frame's text.
+     * its recorded frames is not answered twice. The failure names [failure], a count and the peer's link state,
+     * never a frame's text. If the peer is closed under it, it fails at once naming [frame], the type it awaits (#1064).
      */
     private fun allowPromptsUntil(
         peer: SecondClientPeer,
@@ -4213,11 +4228,12 @@ class InteractiveStreamE2ETest {
         timeoutMs: Long,
         failure: String,
         allowed: MutableSet<String> = mutableSetOf(),
+        frame: String = "turn_end",
         done: (Envelope) -> Boolean,
     ): Envelope =
         try {
             runBlocking {
-                withTimeout(timeoutMs) {
+                peer.awaiting(frame, timeoutMs) {
                     var found: Envelope? = null
                     while (found == null) {
                         val frames = peer.recorded(conversationId)
@@ -4247,7 +4263,10 @@ class InteractiveStreamE2ETest {
                 }
             }
         } catch (e: TimeoutCancellationException) {
-            throw AssertionError("$failure within $timeoutMs ms (permission prompts allowed: ${allowed.size})", e)
+            throw AssertionError(
+                "$failure within $timeoutMs ms (permission prompts allowed: ${allowed.size}; peer: ${peer.linkState()})",
+                e,
+            )
         }
 
     /**
