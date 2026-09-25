@@ -155,6 +155,16 @@ other additive field in this cache (see `CachedAttachment` above). Adding a bool
 `Conversation` means updating this record and both mapping functions, not only the DTOs — check
 here first, before the wire layer, since a cache miss is the harder failure to notice.
 
+**Known gap, not yet fixed: `agent` ([#1108](https://github.com/pyrycode/pyrycode-mobile/issues/1108)).**
+`Conversation.agent` was added without touching this cache — deliberately out of that ticket's scope, since
+nothing renders the field yet and the mobile does not negotiate `multi_agent`, so the key never actually
+arrives today. `CachedConversation` still has no `agent`, so `CachedConversation.toDomain()` produces the
+default `ConversationAgent.Claude` on every restore, and `HostConversationSource` publishes that row on cold
+start before the live list arrives — the same window this section describes for `muted`, but left open here
+because there is no observed failure yet to fix against (Evidence-Based Fix Selection). The ticket that first
+reads `Conversation.agent` for the model picker or the agent switch should either persist it next to `muted`
+here or gate on the live list before trusting a cold-started value.
+
 The thread document is the same shape, file-private to `FileConversationCache.kt`:
 `CachedThread(version: Int, rows: List<CachedThreadRow>)`, `CachedThreadRow(message:
 CachedMessage? = null, boundary: CachedBoundary? = null)` — exactly one of the two is set, mapping

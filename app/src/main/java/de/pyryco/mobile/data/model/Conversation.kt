@@ -16,7 +16,15 @@ data class Conversation(
     val muted: Boolean = false,
     /** Opaque daemon-authored display text; independent of [cwd] and never a path. */
     val workspaceLabel: String? = null,
+    /** The agent that runs this conversation's session; Claude when the daemon does not say. */
+    val agent: ConversationAgent = ConversationAgent.Claude,
 )
+
+/** The agent a conversation runs on, as the daemon's `agent` field names it (`claude` or `codex`). */
+enum class ConversationAgent {
+    Claude,
+    Codex,
+}
 
 /**
  * Sentinel `cwd` for conversations with no bound workspace.

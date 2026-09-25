@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerializationException
@@ -94,6 +95,25 @@ class ConversationsPayloadTest {
 
         assertTrue(rows[0].muted)
         assertFalse(rows[1].muted)
+    }
+
+    @Test
+    fun agent_readsCodexOnlyForCodexAndClaudeForAnyOtherValueOrAnAbsentKey() {
+        val fixture =
+            """
+            {"conversations":[
+              {"id":"codex","name":null,"is_promoted":false,"cwd":"/p","agent":"codex","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"},
+              {"id":"claude","name":null,"is_promoted":false,"cwd":"/p","agent":"claude","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"},
+              {"id":"unknown","name":null,"is_promoted":false,"cwd":"/p","agent":"gemini","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"},
+              {"id":"absent","name":null,"is_promoted":false,"cwd":"/p","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"}
+            ]}
+            """.trimIndent()
+        val rows = MobileJson.decodeFromJsonElement<ConversationsPayload>(MobileJson.parseToJsonElement(fixture)).toConversations()
+
+        assertEquals(
+            listOf(ConversationAgent.Codex, ConversationAgent.Claude, ConversationAgent.Claude, ConversationAgent.Claude),
+            rows.map { it.agent },
+        )
     }
 
     @Test

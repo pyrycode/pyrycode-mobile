@@ -31,7 +31,6 @@ import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.TurnStatePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
 import de.pyryco.mobile.data.network.toBoundary
-import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMessage
@@ -427,13 +426,13 @@ class RemoteConversationRepository(
                 // its waiter verbatim (whose own decode then throws), and the single inbound consumer
                 // survives. Drop silently — the record carries the conversation's name and cwd, so
                 // nothing here logs the payload.
-                val conversation =
+                val record =
                     try {
-                        MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload).toConversation()
+                        MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload)
                     } catch (e: IllegalArgumentException) {
                         null
                     }
-                conversation?.let(conversationListProjection::upsertConversation)
+                record?.let(conversationListProjection::upsertConversation)
                 relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
             }
             TYPE_WORKSPACE_UPDATED -> {
