@@ -38,8 +38,15 @@ import java.util.concurrent.TimeUnit
 class OkHttpRelayTransportTest {
     private lateinit var server: MockWebServer
 
+    /** RelayLog lines, written from OkHttp threads as well as the test thread. */
+    private val logs = java.util.Collections.synchronizedList(mutableListOf<String>())
+    private val previousSink = RelayLog.sink
+    private val previousEnabled = RelayLog.enabled
+
     @Before
     fun setUp() {
+        RelayLog.enabled = true
+        RelayLog.sink = { _, _, message -> logs += message }
         server = MockWebServer()
         server.start()
     }
@@ -47,6 +54,8 @@ class OkHttpRelayTransportTest {
     @After
     fun tearDown() {
         server.shutdown()
+        RelayLog.sink = previousSink
+        RelayLog.enabled = previousEnabled
     }
 
     // ---- AC #1, #4: connect path + required headers ----------------------------
@@ -163,6 +172,45 @@ class OkHttpRelayTransportTest {
         val down = events[1] as TransportEvent.Down
         assertEquals(4401, down.code)
         assertNull(down.cause)
+        assertEquals(listOf("event=transport_end end=peer_close code=4401"), endLines())
+        assertTrue(logs.none { "unauthorized" in it })
+    }
+
+    // ---- #1039: each transport end writes one RelayLog line ---------------------
+
+    @Test
+    fun close_logsOneLocalCloseLine() {
+        server.enqueue(MockResponse().withWebSocketUpgrade(RecordingServerListener()))
+        val transport = newTransport()
+        transport.connect()
+        runBlocking { withTimeout(TIMEOUT_MS) { transport.events.first() } } // await Up
+
+        transport.close()
+        transport.close() // idempotent: still one line
+
+        assertEquals(listOf("event=transport_end end=local_close code=1000"), endLines())
+        assertNoSecretsLogged()
+    }
+
+    @Test
+    fun peerClosingThenFailure_logsFailureWithThePeersClosingCode() {
+        // The relay sends close 1011 and drops TCP before the close handshake completes: OkHttp reports
+        // onClosing(1011) then onFailure, so the line must still carry the peer's code. Driven through a
+        // stub factory because a real server cannot reliably drop TCP at exactly that moment.
+        val factory = CapturingFactory()
+        val transport =
+            OkHttpRelayTransport(
+                pairedServer = PairedServer("srv-1", "tok", "ws://relay.invalid", "pk"),
+                clientInfo = NoiseClientInfo(deviceName = "Pixel-Test", clientVersion = "1.2.3"),
+                webSocketFactory = factory,
+            )
+        transport.connect()
+        val listener = factory.listener!!
+        listener.onClosing(factory.socket, 1011, "outbox overflow")
+        listener.onFailure(factory.socket, java.io.EOFException("frame content"), null)
+
+        assertEquals(listOf("event=transport_end end=failure peer_closing=1011 cause=EOFException"), endLines())
+        assertTrue(logs.none { "outbox" in it || "frame content" in it || "relay.invalid" in it })
     }
 
     // ---- AC #3: Down on dial failure -------------------------------------------
@@ -182,6 +230,12 @@ class OkHttpRelayTransportTest {
                 withTimeout(TIMEOUT_MS) { transport.events.first { it is TransportEvent.Down } }
             } as TransportEvent.Down
         assertNotNull(down.cause)
+        assertEquals(
+            listOf("event=transport_end end=failure cause=${down.cause!!.javaClass.simpleName}"),
+            endLines(),
+        )
+        assertTrue(logs.none { dead.port.toString() in it })
+        assertNoSecretsLogged()
     }
 
     // ---- Design: malformed stored relayUrl surfaces Down, does not throw -------
@@ -194,6 +248,8 @@ class OkHttpRelayTransportTest {
         val down =
             runBlocking { withTimeout(TIMEOUT_MS) { transport.events.first() } } as TransportEvent.Down
         assertNotNull(down.cause)
+        assertEquals(listOf("event=transport_end end=invalid_request cause=IllegalArgumentException"), endLines())
+        assertTrue(logs.none { "not a valid url" in it })
     }
 
     // ---- Design: malformed inbound JSON is rejected at the untrusted boundary ---
@@ -221,6 +277,12 @@ class OkHttpRelayTransportTest {
                 withTimeout(TIMEOUT_MS) { transport.events.first { it is TransportEvent.Down } }
             } as TransportEvent.Down
         assertNotNull(down.cause)
+        assertEquals(
+            listOf("event=transport_end end=protocol_violation code=1002 cause=${down.cause!!.javaClass.simpleName}"),
+            endLines(),
+        )
+        assertTrue(logs.none { "not an InnerFrameV2" in it })
+        assertNoSecretsLogged()
     }
 
     // ---- Design: binary inbound frame is rejected at the untrusted boundary -----
@@ -317,6 +379,15 @@ class OkHttpRelayTransportTest {
 
     // ---- Helpers ---------------------------------------------------------------
 
+    private fun endLines(): List<String> = synchronized(logs) { logs.filter { it.startsWith("event=transport_end") } }
+
+    /** No line may carry the token, the server id or the dial host (#1039, RelayLog's MUST NOT list). */
+    private fun assertNoSecretsLogged() {
+        synchronized(logs) {
+            assertTrue(logs.toString(), logs.none { "tok" in it || "srv-1" in it || server.hostName in it })
+        }
+    }
+
     private fun newTransport(
         relayUrl: String = "ws://${server.hostName}:${server.port}",
         serverId: String = "srv-1",
@@ -348,6 +419,36 @@ class OkHttpRelayTransportTest {
         assertNull(request!!.getHeader("X-Pyrycode-Device-Name"))
 
         transport.close()
+    }
+
+    /** A [WebSocket.Factory] that hands back a stub socket and keeps the transport's listener to drive. */
+    private class CapturingFactory : WebSocket.Factory {
+        var listener: WebSocketListener? = null
+        val socket =
+            object : WebSocket {
+                override fun request() = throw UnsupportedOperationException()
+
+                override fun queueSize() = 0L
+
+                override fun send(text: String) = true
+
+                override fun send(bytes: ByteString) = true
+
+                override fun close(
+                    code: Int,
+                    reason: String?,
+                ) = true
+
+                override fun cancel() = Unit
+            }
+
+        override fun newWebSocket(
+            request: okhttp3.Request,
+            listener: WebSocketListener,
+        ): WebSocket {
+            this.listener = listener
+            return socket
+        }
     }
 
     /**
