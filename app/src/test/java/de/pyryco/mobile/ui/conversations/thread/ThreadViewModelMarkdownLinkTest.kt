@@ -91,8 +91,10 @@ class ThreadViewModelMarkdownLinkTest {
 
             assertEquals(listOf(CONV to PATH), repository.reads)
             assertEquals(listOf<ThreadNavigation>(ThreadNavigation.OpenLinkedMarkdown), navigation)
-            assertEquals("Plan.md", vm.linkedMarkdown()?.name)
-            assertEquals("# Plan v1", vm.linkedMarkdown()?.text)
+            assertEquals("Plan.md", vm.linkedMarkdown()?.document?.name)
+            assertEquals("# Plan v1", vm.linkedMarkdown()?.document?.text)
+            // #1067: the path it read, for the reader's Refresh.
+            assertEquals(PATH, vm.linkedMarkdown()?.path)
             assertTrue(failures.isEmpty())
         }
 
@@ -132,7 +134,7 @@ class ThreadViewModelMarkdownLinkTest {
 
             assertEquals(2, repository.reads.size)
             assertEquals(2, navigation.size)
-            assertEquals("# Plan v2", vm.linkedMarkdown()?.text)
+            assertEquals("# Plan v2", vm.linkedMarkdown()?.document?.text)
         }
 
     @Test

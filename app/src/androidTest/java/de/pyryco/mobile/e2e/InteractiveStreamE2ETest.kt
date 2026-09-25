@@ -3189,9 +3189,10 @@ class InteractiveStreamE2ETest {
     /**
      * A markdown link in claude's reply opens the note in the in-app reader, read live (#1050, rung 3). Claude
      * writes a markdown note in its workspace with one `printf` and replies with a link to it. A tap on the
-     * link shows the note's heading and its file name in the reader, with the thread's composer gone. Back
-     * returns to the thread. Claude then rewrites the note, and the same link shows the new heading and not
-     * the old one: the reader reads the host's file on every open and keeps nothing between opens.
+     * link shows the note's heading and its file name in the reader, with the thread's composer gone. While the
+     * reader stays open, the peer has claude rewrite the note, and the reader's Refresh (#1067) shows the new
+     * heading and not the old one. Back returns to the thread, and the same link shows the new heading too:
+     * the reader reads the host's file on every open and keeps nothing between opens.
      *
      * **Two real-claude turns**: the note and the rewrite.
      */
@@ -3220,15 +3221,18 @@ class InteractiveStreamE2ETest {
             // 2. AC-1, AC-3: the tap opens the reader on the note as it is now, named by its file.
             assertLinkOpensNote(linkText, fileName, first, stale = null)
 
-            // 3. AC-3: back returns to the same thread.
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitThreadComposer()
-
-            // 4. AC-2, AC-5: claude rewrites the note; the same link now shows the new content only.
-            sendFromPhone(notePrompt(second, fileName, "reply with a single short word"))
+            // 3. #1067: with the reader still open, the peer has claude rewrite the note; Refresh shows it.
+            runBlocking { peer.sendMessage(chatX, notePrompt(second, fileName, "reply with a single short word"), THREAD_TIMEOUT_MS) }
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the rewrite turn in X did not end", allowed) {
                 it.type == "turn_end" && peer.recorded(chatX).count { frame -> frame.type == "turn_end" } >= 2
             }
+            assertRefreshShowsNote(second, stale = first)
+
+            // 4. AC-3: back returns to the same thread.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitThreadComposer()
+
+            // 5. AC-2, AC-5: the same link now shows the new content only.
             assertLinkOpensNote(linkText, fileName, second, stale = first)
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitThreadComposer()
@@ -3279,6 +3283,30 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasText(fileName)).assertIsDisplayed()
         composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).assertCountEquals(0)
         stale?.let { composeTestRule.onAllNodes(hasText(it)).assertCountEquals(0) }
+    }
+
+    /**
+     * Choose Refresh from the open reader's overflow (#1067) and wait for the note's [marker] heading, read
+     * again from the host: never the [stale] heading, and no could-not-open notice.
+     */
+    private fun assertRefreshShowsNote(
+        marker: String,
+        stale: String,
+    ) {
+        val openFailed = string(R.string.thread_attachment_open_failed)
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.onNode(hasText(string(R.string.markdown_reader_refresh))).performClick()
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(openFailed)).fetchSemanticsNodes().isNotEmpty() ||
+                    composeTestRule.onAllNodes(hasText(marker)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("Refresh in the reader did not show the rewritten note $marker", e)
+        }
+        composeTestRule.onAllNodes(hasText(openFailed)).assertCountEquals(0)
+        composeTestRule.onNode(hasText(marker)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(stale)).assertCountEquals(0)
     }
 
     /** Wait until the open thread's composer is back. */

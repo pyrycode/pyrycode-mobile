@@ -124,8 +124,8 @@ private val TaskMarkTopInset = 4.dp // sits the mark on the first text line, not
  * what they remove is the amplification tail, where a few kilobytes of pipes become tens of
  * thousands of measured composables, re-paid on every streaming reveal tick.
  */
-private const val MAX_TABLE_COLUMNS = 32
-private const val MAX_TABLE_ROWS = 256
+internal const val MAX_TABLE_COLUMNS = 32
+internal const val MAX_TABLE_ROWS = 256
 
 /**
  * GFM, not CommonMark, since #681. `org.jetbrains:markdown` offers no per-construct registration, so
@@ -137,7 +137,7 @@ private const val MAX_TABLE_ROWS = 256
  * The constructor flags configure only the HTML generating providers, which this renderer never
  * builds — it walks the AST itself — so their defaults are inert here rather than relied upon.
  */
-private val MarkdownFlavour = GFMFlavourDescriptor()
+internal val MarkdownFlavour = GFMFlavourDescriptor()
 
 /**
  * [onOpenMarkdownPath] (#1050) opts a caller in to workspace notes: a link whose target is a markdown path
@@ -493,7 +493,7 @@ private fun TableBlock(
  * Trimming the TOKENS and not the built string is what keeps the span offsets honest — an
  * `AnnotatedString` trimmed after the fact carries styles that no longer line up with its text.
  */
-private fun ASTNode.trimmedContent(): List<ASTNode> =
+internal fun ASTNode.trimmedContent(): List<ASTNode> =
     children
         .dropWhile { it.type == MarkdownTokenTypes.WHITE_SPACE }
         .dropLastWhile { it.type == MarkdownTokenTypes.WHITE_SPACE }
@@ -831,6 +831,25 @@ private fun buildInline(
     }
 }
 
+/**
+ * The text [nodes] render as, without styles or links (#1067): the same walk [buildInline] runs, so the
+ * reader's plain-text copy drops exactly the delimiters the screen hides. The handler and colours are inert,
+ * since nothing here is drawn or tapped.
+ */
+internal fun inlineText(
+    nodes: List<ASTNode>,
+    source: String,
+): String =
+    buildAnnotatedString {
+        appendInlineChildren(nodes, source, InertUriHandler, InertInlineColors)
+    }.text
+
+private object InertUriHandler : UriHandler {
+    override fun openUri(uri: String) = Unit
+}
+
+private val InertInlineColors = InlineColors(Color.Unspecified, Color.Unspecified, Color.Unspecified)
+
 private fun AnnotatedString.Builder.appendInline(
     node: ASTNode,
     source: String,
@@ -1071,7 +1090,7 @@ internal fun routeMarkdownLink(
     }
 }
 
-private fun isSafeLinkScheme(url: String): Boolean {
+internal fun isSafeLinkScheme(url: String): Boolean {
     val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
     return scheme == "http" || scheme == "https" || scheme == "mailto"
 }

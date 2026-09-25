@@ -868,7 +868,7 @@ class ThreadViewModel(
     private var markdownOpenJob: Job? = null
 
     // #1050: the linked note just read live, held in memory only until the operator is back on the thread.
-    private var linkedMarkdownDocument: MarkdownDocument? = null
+    private var linkedMarkdownNote: LinkedMarkdown? = null
 
     private val changeWorkspaceErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
 
@@ -1358,13 +1358,13 @@ class ThreadViewModel(
      */
     fun onOpenMarkdownLink(path: String) {
         if (markdownOpenJob?.isActive == true) return
-        linkedMarkdownDocument = null
+        linkedMarkdownNote = null
         markdownOpenJob =
             viewModelScope.launch {
                 val document = readLinkedMarkdown(repository, conversationId, path)
                 RelayLog.d { "event=thread_markdown_link_open outcome=${if (document != null) "reader" else "failed"}" }
                 if (document != null) {
-                    linkedMarkdownDocument = document
+                    linkedMarkdownNote = LinkedMarkdown(path, document)
                     navigationChannel.send(ThreadNavigation.OpenLinkedMarkdown)
                 } else {
                     markdownOpenFailureChannel.send(Unit)
@@ -1372,12 +1372,15 @@ class ThreadViewModel(
             }
     }
 
-    /** The note [onOpenMarkdownLink] last read, for the reader it opens (#1050); `null` once released. */
-    fun linkedMarkdown(): MarkdownDocument? = linkedMarkdownDocument
+    /**
+     * The note [onOpenMarkdownLink] last read, with the path it read, for the reader it opens (#1050) and that
+     * reader's Refresh (#1067); `null` once released.
+     */
+    fun linkedMarkdown(): LinkedMarkdown? = linkedMarkdownNote
 
     /** Drop the held note (#1050): the operator is back on the thread, so its reader has closed. */
     fun releaseLinkedMarkdown() {
-        linkedMarkdownDocument = null
+        linkedMarkdownNote = null
     }
 
     /** Remove one pending attachment from this chat (#932), leaving the rest in order. */
