@@ -5,7 +5,10 @@ Build/harness output goes to stderr. Full original reports remain in the build
 directory; the dispatcher report contains test names and outcomes, not app logs.
 """
 import argparse
+import contextlib
+import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -194,11 +197,15 @@ def changed_paths(base="main"):
 # the harness's `connected` device, each with its own daemon, relay and pairing as before. The app is
 # reinstalled per scenario, so no app state carries over.
 
+def avd_root():
+    return Path(os.environ.get("ANDROID_USER_HOME") or Path.home() / ".android") / "avd"
+
+
 def managed_avd(device):
     """The AVD Gradle created for the managed device, or None before the ui gate has ever made it."""
     if device != "pixel2Api33Atd":
         return None
-    home = Path(os.environ.get("ANDROID_USER_HOME") or Path.home() / ".android") / "avd" / "gradle-managed"
+    home = avd_root() / "gradle-managed"
     found = sorted(home.glob("dev33_google_atd_*_Pixel_2.ini"))
     return (home, found[0].stem) if found else None
 
@@ -251,6 +258,67 @@ def stop_emulator(env, serial, process):
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=20)
+
+
+# ---- the host-wide device hold (#1071) -------------------------------------------------------------------
+# Two runs driving the Gradle-managed AVD at once, from any worktrees, fail the window-focus device tests.
+# Every device-using mode holds one kernel lock beside that AVD while it drives an emulator. The descriptor
+# is never passed to a child, so the kernel drops the lock whenever this process exits, SIGKILL included.
+
+DEFAULT_DEVICE_WAIT_SECONDS = 300
+DEVICE_BUSY_EXIT = 75  # EX_TEMPFAIL: no test ran, so it is not a test result
+
+
+class DeviceBusy(Exception):
+    pass
+
+
+def device_hold_path():
+    """Beside gradle-managed rather than in it, so nothing that cleans that folder deletes a held lock file."""
+    return avd_root() / "pyrycode-device-gate.lock"
+
+
+def device_holder(fd):
+    try:
+        record = json.loads(os.pread(fd, 4096, 0))
+        return f"{record['mode']} from {record['worktree']} since {record['started']}"
+    except (OSError, ValueError, TypeError, KeyError):
+        return "an unknown run"
+
+
+@contextlib.contextmanager
+def device_hold(mode, wait):
+    """Hold the host's managed device for the block, waiting up to [wait] seconds; raises DeviceBusy."""
+    path = device_hold_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as error:
+        sys.exit(f"Android gate failed: cannot take the device hold at {path}: {error}")
+    try:
+        start, announced = time.monotonic(), False
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                waited = time.monotonic() - start
+                if waited >= wait:
+                    raise DeviceBusy(f"gave up after {waited:.0f}s; held by {device_holder(fd)}") from None
+                if not announced:
+                    print(f"Android gate: device held by {device_holder(fd)}; waiting up to {wait:.0f}s",
+                          file=sys.stderr)
+                    announced = True
+                time.sleep(min(1.0, wait - waited))
+        if announced:
+            print(f"Android gate: device free after {time.monotonic() - start:.0f}s waiting", file=sys.stderr)
+        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, json.dumps({"mode": mode, "worktree": str(ROOT), "started": started,
+                                  "pid": os.getpid()}).encode(), 0)
+        yield
+    finally:
+        os.close(fd)
 
 
 def raise_interrupt(*_):
@@ -331,6 +399,12 @@ def main():
     device = os.environ.get("DEVICE", "pixel2Api33Atd")
     if not device.isalnum():
         parser.error("DEVICE must be an alphanumeric Gradle device name")
+    try:
+        wait = float(os.environ.get("ANDROID_GATE_WAIT_SECONDS", DEFAULT_DEVICE_WAIT_SECONDS))
+    except ValueError:
+        wait = -1
+    if not math.isfinite(wait) or wait < 0:
+        parser.error("ANDROID_GATE_WAIT_SECONDS must be a non-negative number of seconds")
     # UI_GATE_FULL=1 runs the suite even on a branch that cannot affect it.
     if args.mode == "ui" and os.environ.get("UI_GATE_FULL") != "1" and ui_suite_skippable(changed_paths()):
         print("Android gate: ui skipped; the branch changes only docs, scripts and e2e-only tests", file=sys.stderr)
@@ -406,9 +480,18 @@ def main():
                 print(f"Android gate: failed to build {binary}", file=sys.stderr)
                 return 1
             env[variable] = str(destination)
-    print(f"Android gate: {args.mode} {args.scenario or ''}; artifacts: {run_dir}", file=sys.stderr)
-    if args.mode == "scripted-all":
-        return run_scripted_all(env, run_dir, device)
+    try:
+        with device_hold(args.mode, wait):
+            print(f"Android gate: {args.mode} {args.scenario or ''}; artifacts: {run_dir}", file=sys.stderr)
+            if args.mode == "scripted-all":
+                return run_scripted_all(env, run_dir, device)
+            return run_on_device(command, env, run_dir, device, minimum, expected_class)
+    except DeviceBusy as busy:
+        print(f"Android gate: device busy, not a test result: {busy}", file=sys.stderr)
+        return DEVICE_BUSY_EXIT
+
+
+def run_on_device(command, env, run_dir, device, minimum, expected_class):
     started = time.time_ns()
     try:
         outcome = subprocess.run(command, cwd=ROOT, env=env, stdout=sys.stderr, stderr=sys.stderr)
