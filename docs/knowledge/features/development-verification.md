@@ -144,6 +144,32 @@ holder's mode, worktree and start time — that exit code means a busy device,
 not a test result. A `ui` run that skips itself (above) takes no hold. A direct
 `./gradlew …AndroidTest` run bypasses the script and does not take the hold.
 
+`FocusRecordListener` (`app/src/androidTest/.../e2e/FocusRecordListener.kt`,
+registered through the `listener` instrumentation argument in
+`app/build.gradle.kts`) logs what the window manager reports when a device
+test fails, so a recurring focus failure (`RootViewWithoutFocusException`, an
+IME/paste/back `waitUntil` timeout) can be diagnosed instead of re-triaged as
+pre-existing (#1131). It never changes a test's result or hides its original
+exception; a failure while recording is itself logged and the run continues.
+The gate script prints the record to **stderr**, not stdout, so it survives
+worktree removal and never touches the dispatcher's XML:
+`Android gate: focus record for <Class#method>: …`. The same line is also in
+the kept per-test logcat under tag `FocusRecord`. A passing run has no
+records — the listener only runs on failure — so a passing gate prints
+nothing extra. Fields: `focus` is the window holding input focus,
+`focusedApp` the focused activity record, `anr` any
+`Application Not Responding: …` window titles or `none`, and `error` means
+recording itself failed (the other fields are absent). The record is read
+just after the failing test's rules tear down, not at the exact instant of
+failure: an `ActivityScenarioRule` or Compose rule has usually already closed
+the test activity by the time `testFailure` fires, so `focusedApp` commonly
+names whatever the teardown left focused (such as the launcher), not the test
+activity. A system dialog holding focus over the test is still captured. A
+crash dialog (`Application Error: …`) shows under `focus`, not `anr` — the
+first real record (#1131) found one blocking `com.android.bluetooth`, not an
+ANR. This ticket records evidence only; no mitigation (dismissal, retry) is
+implemented against it.
+
 ## Compose evidence
 
 Compose tests should assert the contract independently of the implementation.
