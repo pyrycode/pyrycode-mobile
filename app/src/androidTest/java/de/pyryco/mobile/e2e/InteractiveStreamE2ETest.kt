@@ -90,6 +90,7 @@ import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.RelayConnectionBundle
@@ -99,6 +100,7 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
+import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
@@ -2295,6 +2297,182 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(ok).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onAllNodes(ok).onFirst().performClick()
+    }
+
+    /**
+     * A channel created, edited and archived from the list, with its prompt read back (#1088, rung 3). A
+     * Channels-section workspace row's plus opens #958's Create channel, whose OK creates the channel with a
+     * name and a prompt and opens it. One ping starts its session with that prompt. The row's pen opens #667's
+     * Edit channel, which renames it and changes the prompt; reopened, it reads both back from the host and
+     * says the prompt applies from the next session, since the running one was spawned with the old prompt.
+     * After Reset session and a second ping, a session spawned after the edit runs, and the reopened modal
+     * drops that line. Archive channel moves it to host A's Archive, and restoring it returns it to Channels
+     * under its new name.
+     *
+     * The plus is drawn only where the host already holds an active channel, so an anchor channel is seeded
+     * on the host in a new, run-unique folder, whose name the workspace row shows.
+     *
+     * **Shared host state.** The channel and the anchor are deleted in `finally`. The anchor's folder stays
+     * under `~/pyry-workspace`, as #1087's does.
+     *
+     * **Two real-claude turns**: the two pings. Reset session also runs the daemon's wrap-up turn.
+     */
+    @Test
+    fun interactiveTurn_createEditArchiveChannel_readsPromptBack() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val stamp = System.currentTimeMillis()
+        val folderName = "${CHANNEL_E2E_PREFIX}$stamp"
+        val firstName = "${CHANNEL_E2E_PREFIX}$stamp-a"
+        val newName = "${CHANNEL_E2E_PREFIX}$stamp-b"
+        val nextSessionLine = string(R.string.edit_channel_prompt_next_session)
+        var anchorId: String? = null
+        var channelId: String? = null
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val repository = hostRepository(serverId)
+            anchorId =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        val path = repository.createWorkspaceFolder(folderName)
+                        repository.createChannel("${CHANNEL_E2E_PREFIX}anchor-$stamp", path).id
+                    }
+                }
+            val before = hostConversationIds(serverId)
+
+            // 1. AC-1: create a channel with a name and a prompt from the workspace row's plus. OK opens it.
+            val plus =
+                hasContentDescription(
+                    InstrumentationRegistry.getInstrumentation().targetContext.getString(
+                        R.string.cd_tree_workspace_new_channel,
+                        folderName,
+                    ),
+                )
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(plus) }.isSuccess
+            }
+            composeTestRule.onAllNodes(plus).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(string(R.string.create_channel_title)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextInput(firstName)
+            composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput(CHANNEL_PROMPT_FIRST)
+            clickEnabledOk()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val id = newHostConversationId(serverId, before).also { channelId = it }
+
+            // 2. AC-1: one ping starts the channel's session with the first prompt.
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            leaveThread()
+
+            // 3. AC-1: rename it and change its prompt. The field first reads back the prompt the create wrote.
+            openChannelEditor(firstName)
+            awaitPromptField(CHANNEL_PROMPT_FIRST)
+            composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextReplacement(newName)
+            composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement(CHANNEL_PROMPT_SECOND)
+            composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
+            awaitChannelEditorClosed()
+
+            // 4. AC-1: reopened, it reads back the new name and prompt, and the running session still has the old one.
+            openChannelEditor(newName)
+            composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
+            awaitPromptField(CHANNEL_PROMPT_SECOND)
+            composeTestRule.onNode(hasTestTag(CHANNEL_NAME_FIELD_TAG) and hasText(newName)).assertExists()
+            composeTestRule.onAllNodesWithText(nextSessionLine).onFirst().assertIsDisplayed()
+            composeTestRule.onNodeWithText(modalCancel).performClick()
+            awaitChannelEditorClosed()
+
+            // 5. AC-2: Reset session, then a second ping. Whether the respawn was eager or the ping spawned the
+            //    session, the host reports it runs with the stored prompt once one started after the edit.
+            openRow(newName)
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
+            composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
+            sendFromPhone(PING_PROMPT)
+            val live = hostRepository(serverId)
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    while (live.requestSystemPrompt(id).sessionPromptStatus != SessionPromptStatus.Matches) {
+                        delay(PROMPT_STATUS_POLL_MS)
+                    }
+                }
+            }
+            leaveThread()
+
+            // 6. AC-2: reopened, the same prompt without the next-session line. The filled field is the reading.
+            openChannelEditor(newName)
+            awaitPromptField(CHANNEL_PROMPT_SECOND)
+            composeTestRule.onAllNodesWithText(nextSessionLine).assertCountEquals(0)
+
+            // 7. AC-3: archive it from the same modal. It leaves Channels for host A's Archive.
+            composeTestRule.onNode(hasText(string(R.string.edit_channel_archive)) and hasClickAction()).performClick()
+            awaitChannelEditorClosed()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(channelRow(newName)) }.isFailure
+            }
+            archivedIds(serverId) { id in it }
+
+            // 8. AC-3: restore it from the Archive's Channels tab. The snackbar wait keeps the restore coroutine
+            //    from being cancelled by the Back that follows (#551).
+            openSettings()
+            showHostSettings(serverId)
+            composeTestRule.onNodeWithText(ARCHIVED_ROW).performScrollTo().performClick()
+            val channelsTab = string(R.string.archived_tab_channels).substringBefore(" (")
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(channelsTab, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(channelsTab, substring = true).onFirst().performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(newName, substring = true)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasContentDescription(newName, substring = true)).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            awaitChannelRow(newName)
+            composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
+        } finally {
+            listOfNotNull(channelId, anchorId).forEach { id ->
+                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
+                    .onFailure { Log.w("E2E", "channel cleanup failed: ${it::class.simpleName}") }
+            }
+        }
+    }
+
+    /** Tap the pen of the Channels row named [name] and wait for Edit channel's title. */
+    private fun openChannelEditor(name: String) {
+        awaitChannelRow(name)
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_channel_edit).format(name))).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(string(R.string.edit_channel_title)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Wait until Edit channel closes, which it does only once the host confirmed every write. */
+    private fun awaitChannelEditorClosed() {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(string(R.string.edit_channel_title)).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** Wait until Edit channel's prompt field is enabled and holds [prompt]: the host's reading has arrived. */
+    private fun awaitPromptField(prompt: String) {
+        val field = hasTestTag(CHANNEL_PROMPT_FIELD_TAG) and hasText(prompt) and isEnabled()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(field).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     /**
@@ -6175,6 +6353,15 @@ class InteractiveStreamE2ETest {
         // #1087 workspace add, rename and archive. The folder is "e2e1087-<ms>", the label "e2e1087-label-<ms>"
         // and the chat "e2e1087-chat-<ms>": the label differs from the folder, so #905's rule keeps it.
         const val WORKSPACE_E2E_PREFIX = "e2e1087-"
+
+        // #1088 channel create, edit and archive. The anchor's folder is "e2e1088-<ms>" and the channel is
+        // "e2e1088-<ms>-a", renamed "e2e1088-<ms>-b". Neither prompt changes what the ping replies.
+        const val CHANNEL_E2E_PREFIX = "e2e1088-"
+        const val CHANNEL_PROMPT_FIRST = "e2e1088 first prompt: answer briefly."
+        const val CHANNEL_PROMPT_SECOND = "e2e1088 second prompt: answer briefly and plainly."
+
+        // How often #1088 re-reads the channel's prompt status while the post-edit session starts.
+        const val PROMPT_STATUS_POLL_MS = 1_000L
 
         // #545 settings scenarios. Run-unique names for the chats and channel each method prepares on the host,
         // none containing "ping" or another scenario's prefix.
