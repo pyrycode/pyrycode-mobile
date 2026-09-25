@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.data.repository.SessionSettings
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
@@ -8,6 +9,7 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -241,6 +243,42 @@ class SessionSettingsPayloadsTest {
         assertEquals("sess-a", settings.sessionId)
     }
 
+    // ---- #1111: the `multi_agent` capability list -------------------------------------------------
+
+    @Test
+    fun capabilities_absent_decodesAsNoList() {
+        assertNull(decode(POPULATED_REPLY).capabilities)
+        assertNull(decode(ALL_ZERO_REPLY).capabilities)
+    }
+
+    @Test
+    fun capabilities_present_decodesTheListsVerbatim_andIgnoresUndeclaredKeys() {
+        val settings = decode(capabilitiesReply(CODEX_CAPABILITIES))
+
+        assertEquals(
+            SessionCapabilities(
+                effortLevels = listOf("low", "medium", "xhigh"),
+                permissionModes = listOf("default", "plan"),
+                slashCommands = false,
+            ),
+            settings.capabilities,
+        )
+    }
+
+    @Test
+    fun capabilities_withoutSlashCommands_countsAsTrue() {
+        val settings = decode(capabilitiesReply("""{"effort_levels":["high"],"permission_modes":["default"]}"""))
+
+        assertEquals(SessionCapabilities(listOf("high"), listOf("default"), slashCommands = true), settings.capabilities)
+    }
+
+    @Test
+    fun capabilities_missingEitherArray_failsTheFrame() {
+        for (raw in listOf("""{"permission_modes":["default"]}""", """{"effort_levels":["high"]}""", "[]")) {
+            assertThrows(raw, SerializationException::class.java) { decode(capabilitiesReply(raw)) }
+        }
+    }
+
     private fun decode(raw: String): SessionSettings = MobileJson.parseToJsonElement(raw).toSessionSettings()
 
     private companion object {
@@ -268,6 +306,21 @@ class SessionSettingsPayloadsTest {
                  "permission_mode":"default","used_tokens":1,"window_tokens":2$key}
                 """.trimIndent()
         }
+
+        /** The protocol document's Codex example: every capability key, only three of them declared. */
+        val CODEX_CAPABILITIES =
+            """
+            {"interrupt":true,"mid_turn_input":false,"slash_commands":false,"mcp_servers":false,
+             "context_usage_detail":false,"effort_levels":["low","medium","xhigh"],
+             "permission_modes":["default","plan"],"attachment_types":["*/*"],"models":["gpt-5-codex"]}
+            """.trimIndent()
+
+        /** A populated reply carrying [capabilities] verbatim. */
+        fun capabilitiesReply(capabilities: String): String =
+            """
+            {"session_id":"sess-b","model":"gpt-5-codex","effort":"xhigh","yolo":false,
+             "permission_mode":"default","used_tokens":1,"window_tokens":2,"capabilities":$capabilities}
+            """.trimIndent()
 
         fun permissionReply(
             mode: String,
