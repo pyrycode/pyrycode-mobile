@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -348,6 +349,7 @@ fun ThreadScreen(
                         resetting = resetting,
                         isCompacting = isCompacting,
                         turnOutcome = turnOutcome,
+                        agent = state.agent,
                         isThinking = isThinking,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
@@ -574,9 +576,9 @@ fun ThreadScreen(
                                                     SessionBoundaryDelimiter(boundary = item)
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
-                                                is ThreadItem.Banner -> BannerNoticeRow(item = item)
+                                                is ThreadItem.Banner -> BannerNoticeRow(item = item, agent = state.agent)
                                                 is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
-                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item)
+                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item, agent = state.agent)
                                             }
                                         // One render path for both kinds of queued row — the one the echo
                                         // correlated to and the one this device minted no echo for — so the
@@ -814,6 +816,7 @@ private fun ThreadStatusArea(
     resetting: ResetStatus?,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
+    agent: ConversationAgent,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
@@ -821,7 +824,7 @@ private fun ThreadStatusArea(
     onTasksClick: () -> Unit,
 ) {
     val reading: @Composable (Modifier) -> Unit = { modifier ->
-        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, modifier)
+        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, agent, isThinking, thinkingProgress, runningTool, modifier)
     }
     if (taskCount <= 0) {
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
@@ -856,6 +859,7 @@ private fun StatusReading(
     resetting: ResetStatus?,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
+    agent: ConversationAgent,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
@@ -865,7 +869,7 @@ private fun StatusReading(
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier)
         resetting != null -> ResettingIndicator(status = resetting, modifier = modifier)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
+        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
         else ->
             ThinkingIndicator(
                 isThinking = isThinking,

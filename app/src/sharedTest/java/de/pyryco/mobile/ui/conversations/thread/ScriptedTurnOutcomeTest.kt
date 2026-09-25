@@ -36,7 +36,8 @@ class ScriptedTurnOutcomeTest {
     private val compactingDescription: String = string(R.string.cd_thread_compacting)
 
     private val failedLabel: String =
-        string(R.string.thread_turn_outcome_failed) + string(R.string.thread_turn_outcome_claude_reports, "prompt_too_long")
+        string(R.string.thread_turn_outcome_failed) +
+            string(R.string.thread_turn_outcome_agent_reports, string(R.string.agent_name_claude), "prompt_too_long")
 
     @Before
     fun setUp() {
@@ -106,7 +107,8 @@ class ScriptedTurnOutcomeTest {
         awaitDisplayed(
             string(R.string.thread_turn_outcome_stopped) +
                 string(
-                    R.string.thread_turn_outcome_claude_reports,
+                    R.string.thread_turn_outcome_agent_reports,
+                    string(R.string.agent_name_claude),
                     "error_ [31mx  y, " + string(R.string.thread_turn_outcome_api_error, "billing_error"),
                 ),
         )

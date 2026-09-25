@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
@@ -428,6 +429,7 @@ class ThreadViewModel(
                 displayName = conv?.displayName() ?: conversationId,
                 conversationName = conv?.name,
                 isPromoted = conv?.isPromoted ?: false,
+                agent = conv?.agent ?: ConversationAgent.Claude,
                 hasMessages = content.items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = workspaceDisplayName(cwd = conv?.cwd ?: "", label = conv?.workspaceLabel),
                 workspacePickerVisible = pickerVisible,

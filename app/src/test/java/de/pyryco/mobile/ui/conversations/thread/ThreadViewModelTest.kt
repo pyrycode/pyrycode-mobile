@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
@@ -138,6 +139,37 @@ class ThreadViewModelTest {
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
             assertFalse(vm.state.value.mutationsSupported) // combine
+            collector.cancel()
+        }
+
+    // ---- #1113: the conversation's agent rides the state, for the rows that name it ----
+
+    @Test
+    fun agent_followsTheConversation() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val fake = FakeConversationRepository()
+            val repo =
+                object : ConversationRepository by fake {
+                    override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
+                        fake.observeConversations(filter).map { rows -> rows.map { it.copy(agent = ConversationAgent.Codex) } }
+                }
+            val vm = makeVm(handle, repo)
+            assertEquals(ConversationAgent.Claude, vm.state.value.agent) // initialValue: not yet known
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Codex, vm.state.value.agent)
+            collector.cancel()
+        }
+
+    @Test
+    fun agent_isClaudeForAClaudeConversation() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository())
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(ConversationAgent.Claude, vm.state.value.agent)
             collector.cancel()
         }
 
