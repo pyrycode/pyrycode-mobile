@@ -1292,6 +1292,16 @@ went stale — a daemon rejected a handshake because its pairing code outlived t
 window before the test redeemed it — instead of leaving the cause to the anonymous timeout. No pairing
 code, token or key appears in that message; a clean log leaves the failure output unchanged.
 
+On the same failed-test path, the script also scans those logs for `msg="transport: disconnected"`
+(`WSSClient`'s reconnect loop in pyrycode's `internal/transport/wssclient.go`) and prints
+`relay_link_dropped` naming each daemon whose relay link ended some way other than the teardown's own kill
+(`context canceled`), with the `time=` of each such end (#1132). A failure whose window overlaps a reported
+drop time points at the gate machine's network, not the test or the app under test — this is how the
+`InteractiveStreamE2ETest` push-alert flakes in the #1119 live gate were diagnosed: all four harness
+daemons lost their relay link within four seconds of each other during a ~30s network gap on the gate
+machine. Only the `time=` token is printed; addresses, tokens and keys in the log line are not. A clean
+log, or a run that passes, leaves the failure output unchanged.
+
 Every rung-3 run (default and `LIVE=1`) logs the revisions under test in step 3: a `mobile revision:`
 line (`git rev-parse HEAD` at the repo root) and a `daemon revision:` line (`go version -m` on the
 resolved `pyry` binary, when `go` is on PATH). Either prints `unavailable` rather than being omitted
