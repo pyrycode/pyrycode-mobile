@@ -101,6 +101,7 @@ import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
@@ -2147,6 +2148,153 @@ class InteractiveStreamE2ETest {
                 koin?.get<PairedServerCollectionStore>()?.remove(serverIdB)
             }
         }
+    }
+
+    /**
+     * A workspace added, renamed and archived from the list (#1087, rung 3). Host A's row adds a workspace
+     * in a new, run-unique folder (#904's Add workspace modal); the chat it starts is in that folder on the
+     * daemon and the workspace's row appears. The row's pencil (#905's Edit workspace modal) renames it and,
+     * after the in-place confirmation, archives it. Restoring the chat from A's Archive brings the row back
+     * under the same label: the daemon keys the label by cwd and archiving does not clear it.
+     *
+     * The workspace row is found by its pencil, whose description carries the row's shown name: the folder's
+     * name before the rename, the label after. The chat is renamed so the Archive screen can find it.
+     *
+     * **Shared host state.** The label is cleared and the chat deleted in `finally`. The folder stays under
+     * `~/pyry-workspace`, as #562's does; its run-unique name keeps repeated runs apart.
+     *
+     * **Zero real-claude turns**: folder creation, chat start, the renames, archive and restore are daemon
+     * round trips.
+     */
+    @Test
+    fun interactiveTurn_addRenameArchiveWorkspace_roundTripsThroughTheHost() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val stamp = System.currentTimeMillis()
+        val folderName = "${WORKSPACE_E2E_PREFIX}$stamp"
+        val label = "${WORKSPACE_E2E_PREFIX}label-$stamp"
+        val chatName = "${WORKSPACE_E2E_PREFIX}chat-$stamp"
+        var cwd: String? = null
+        var chatId: String? = null
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val before = hostConversationIds(serverId)
+
+            // 1. AC-1: add a workspace in a new folder from host A's row. OK starts a chat there.
+            openWorkspacePicker()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasSetTextAction()).performTextInput(folderName)
+            composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
+            clickEnabledOk()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+
+            // 2. AC-1: the chat is in that folder on the daemon. It is renamed so the Archive screen can find it.
+            renameOpenThread(chatName)
+            val id = newHostConversationId(serverId, before).also { chatId = it }
+            val path = heldConversation(serverId, id).cwd.also { cwd = it }
+            assertTrue("the chat is not in the new folder: ${path.substringAfterLast('/')}", path.endsWith("/$folderName"))
+            leaveThread()
+
+            // 3. AC-1: the workspace's row is in the tree, under the folder's name.
+            awaitWorkspaceRow(folderName)
+
+            // 4. AC-2: rename it from its pencil. The row shows the label and the daemon stores it.
+            openWorkspaceEditor(folderName)
+            composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).performTextReplacement(label)
+            clickEnabledOk()
+            awaitWorkspaceRow(label)
+            composeTestRule.onAllNodes(hasContentDescription(workspaceEditDescription(folderName))).assertCountEquals(0)
+            assertEquals("the daemon's workspace label", label, heldConversation(serverId, id).workspaceLabel)
+
+            // 5. AC-2: archive it after the in-place confirmation. The row leaves the tree and the chat the list.
+            openWorkspaceEditor(label)
+            composeTestRule.onNode(hasText(string(R.string.edit_workspace_archive)) and hasClickAction()).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule
+                    .onAllNodesWithText(string(R.string.edit_workspace_archive_confirm_title))
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            }
+            clickEnabledOk()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(hasContentDescription(workspaceEditDescription(label))) }.isFailure
+            }
+            archivedIds(serverId) { id in it }
+
+            // 6. AC-2: restore the chat from A's Archive. The snackbar wait keeps the restore coroutine from
+            //    being cancelled by the Back that follows (#551).
+            openSettings()
+            showHostSettings(serverId)
+            composeTestRule.onNodeWithText(ARCHIVED_ROW).performScrollTo().performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(chatName, substring = true)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasContentDescription(chatName, substring = true)).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+
+            // 7. AC-2: the row is back under the same label, which the daemon still holds.
+            awaitWorkspaceRow(label)
+            assertEquals("the restored workspace label", label, heldConversation(serverId, id).workspaceLabel)
+        } finally {
+            cwd?.let { path ->
+                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).renameWorkspace(path, null) } } }
+                    .onFailure { Log.w("E2E", "workspace label clear failed: ${it::class.simpleName}") }
+            }
+            chatId?.let { id ->
+                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
+                    .onFailure { Log.w("E2E", "workspace chat delete failed: ${it::class.simpleName}") }
+            }
+        }
+    }
+
+    /** The workspace row's pencil description for a workspace shown as [name]. */
+    private fun workspaceEditDescription(name: String): String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_tree_workspace_edit, name)
+
+    /** Wait until the tree scrolls to the workspace row shown as [name], found by its pencil. */
+    private fun awaitWorkspaceRow(name: String) {
+        val pencil = hasContentDescription(workspaceEditDescription(name))
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            runCatching { scrollListTo(pencil) }.isSuccess
+        }
+        composeTestRule.onAllNodes(pencil).onFirst().assertIsDisplayed()
+    }
+
+    /** Tap the pencil of the workspace row shown as [name] and wait for the Edit workspace modal's field. */
+    private fun openWorkspaceEditor(name: String) {
+        awaitWorkspaceRow(name)
+        composeTestRule.onAllNodes(hasContentDescription(workspaceEditDescription(name))).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(EDIT_WORKSPACE_NAME_FIELD_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Wait until the open modal's OK is enabled, then tap it. */
+    private fun clickEnabledOk() {
+        val ok = hasText(OK_BUTTON) and isEnabled() and hasClickAction()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(ok).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(ok).onFirst().performClick()
     }
 
     /**
@@ -6023,6 +6171,10 @@ class InteractiveStreamE2ETest {
         const val DEFAULTS_FOLDER_PREFIX = "e2e1086-"
         const val DEFAULTS_CHAT_NAME_PREFIX = "e2e1086-chat-"
         const val DEFAULT_WORKSPACE_ROW = "Default workspace"
+
+        // #1087 workspace add, rename and archive. The folder is "e2e1087-<ms>", the label "e2e1087-label-<ms>"
+        // and the chat "e2e1087-chat-<ms>": the label differs from the folder, so #905's rule keeps it.
+        const val WORKSPACE_E2E_PREFIX = "e2e1087-"
 
         // #545 settings scenarios. Run-unique names for the chats and channel each method prepares on the host,
         // none containing "ping" or another scenario's prefix.
