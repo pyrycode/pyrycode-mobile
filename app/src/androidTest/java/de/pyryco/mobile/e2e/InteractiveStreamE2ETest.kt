@@ -3,14 +3,18 @@ package de.pyryco.mobile.e2e
 import android.Manifest
 import android.app.Activity
 import android.app.Instrumentation
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
@@ -50,6 +54,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.cache.ConversationCache
@@ -84,6 +90,7 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.grantNotificationPermission
+import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
@@ -107,12 +114,18 @@ import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -120,6 +133,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
@@ -127,6 +141,7 @@ import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
 /**
@@ -2697,15 +2712,280 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A real push wakes the backgrounded app for a turn that ended while it was away, posts one alert, and
+     * the alert's tap opens that conversation's thread (#955, #685). The turn is held on a permission
+     * prompt the #950 way while the phone is in front, so the prompt's own alert is spent in the
+     * foreground. The app then goes to the background, which closes its host link. The peer allows the
+     * command, and the turn ends while the phone is absent. The daemon asks the production relay to wake
+     * the phone, and FCM delivers the data message. The wake reconnects, the missed `turn_end` replays,
+     * and the notifier posts.
+     *
+     * LIVE only: the loopback relay cannot send FCM. **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread() {
+        assumeLiveRelay()
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val ruleActivity = composeTestRule.activity
+        val peer = runningToolPeer()
+        val watch = CoroutineScope(Dispatchers.Default)
+        var held: Pair<String, String>? = null
+        try {
+            cancelAlerts()
+            // 1. A named chat with a real turn held on a permission prompt, while the phone is in front.
+            awaitChannelList()
+            awaitConnected()
+            val connectedAt = SystemClock.elapsedRealtime()
+            val (chatId, name) = answerChat(serverId, PUSH_TURN_NAME_PREFIX)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            sendFromPhone(RUNNING_TOOL_PROMPT)
+            val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            held = chatId to modalId
+            awaitPushRegistered(serverId, connectedAt)
+
+            // 2. The app goes to the background; the turn ends while the phone is absent.
+            val woke = sendAppToBackground(serverId, watch)
+            runBlocking {
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                held = null
+                peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+            }
+
+            // 3. AC-1: the push wakes the app and exactly one turn alert shows.
+            val alert = awaitAlert(string(R.string.notification_turn_completed), woke)
+
+            // 4. AC-1: the tap, the notification's own content intent, opens that conversation's thread.
+            checkNotNull(alert.notification.contentIntent) { "the alert carries no tap" }.send()
+            try {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasText(name)).fetchSemanticsNodes().isNotEmpty() &&
+                        composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
+                        composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the alert's tap did not open the conversation's thread", e)
+            }
+        } finally {
+            watch.cancel()
+            // A failure before the allow must not leave a claude turn waiting on the prompt for later scenarios.
+            held?.let { (chatId, modalId) ->
+                runBlocking {
+                    runCatching {
+                        peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                        peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                    }
+                }
+            }
+            peer.close()
+            cancelAlerts()
+            finishActivitiesBesides(ruleActivity)
+        }
+    }
+
+    /**
+     * A permission prompt that surfaces while the app is in the background is alerted exactly once, even
+     * across a second reconnect inside the push's wake window (#955, #685). The phone creates a named chat
+     * and goes to the background. The peer then starts a turn in that chat whose command waits on a
+     * permission prompt. The prompt surfaces while the phone is absent, so the daemon wakes the phone and
+     * the wake posts the alert. The test then cuts and restores the host link, and the daemon shows the
+     * still-outstanding prompt again. That repeat must not post again, so one notification stays, with
+     * the same post time. The source raises no second alert for a retained permission modal, and the
+     * notifier's ledger would drop one if it did. A second `notify` for the same tag would replace the
+     * notification and change its post time, which a count alone cannot see.
+     *
+     * LIVE only: the loopback relay cannot send FCM. **One real-claude turn**: the peer's held command.
+     */
+    @Test
+    fun interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect() {
+        assumeLiveRelay()
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val peer = runningToolPeer()
+        val watch = CoroutineScope(Dispatchers.Default)
+        var held: Pair<String, String>? = null
+        try {
+            cancelAlerts()
+            // 1. A named chat, the peer open and the push token on the daemon, while the phone is in front.
+            awaitChannelList()
+            awaitConnected()
+            val connectedAt = SystemClock.elapsedRealtime()
+            val (chatId, _) = answerChat(serverId, PUSH_PROMPT_NAME_PREFIX)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitPushRegistered(serverId, connectedAt)
+
+            // 2. The app goes to the background; the peer's turn raises a prompt while the phone is absent.
+            val woke = sendAppToBackground(serverId, watch)
+            runBlocking { peer.sendMessage(chatId, RUNNING_TOOL_PROMPT, THREAD_TIMEOUT_MS) }
+            val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            held = chatId to modalId
+
+            // 3. AC-2: the push wakes the app and exactly one prompt alert shows.
+            val first = awaitAlert(string(R.string.notification_prompt), woke)
+
+            // 4. AC-2: a second reconnect inside the wake window re-shows the prompt, and nothing is posted again.
+            // The retained permission modal emits no new alert for the re-show, so nothing observable marks its
+            // arrival: settle long enough for the daemon's `modal_shown` to reach the phone and the notifier.
+            cycleHostLink(serverId)
+            SystemClock.sleep(RECONNECT_SETTLE_MS)
+            val after = attentionAlerts()
+            assertEquals("alerts after the reconnect", 1, after.size)
+            assertEquals("the prompt's alert was posted again across the reconnect", first.postTime, after.single().postTime)
+        } finally {
+            watch.cancel()
+            held?.let { (chatId, modalId) ->
+                runBlocking {
+                    runCatching {
+                        peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                        peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                    }
+                }
+            }
+            peer.close()
+            cancelAlerts()
+        }
+    }
+
+    /** The push scenarios (#955) need the production relay, which alone can send FCM. */
+    private fun assumeLiveRelay() {
+        val relayUrl = InstrumentationRegistry.getArguments().getString(ARG_RELAY_URL).orEmpty()
+        assumeTrue("push needs the production relay (LIVE=1); the loopback relay cannot send FCM", relayUrl.startsWith("wss://"))
+    }
+
+    /**
+     * Make sure the daemon holds this phone's FCM token and can wake it now (#955). The token comes from
+     * Play services. Cycling the link then makes the #365 connect-time registration send it. The daemon
+     * sends a device no second wake within 30 s of the last one. The phone has been connected since
+     * [connectedAt], so no wake has reached it since then, and waiting out the rest of the window keeps
+     * an earlier scenario's wake from absorbing this one.
+     */
+    private fun awaitPushRegistered(
+        serverId: String,
+        connectedAt: Long,
+    ) {
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val deadline = SystemClock.elapsedRealtime() + PUSH_TOKEN_TIMEOUT_MS
+        // A fresh read each pass: a collector that starts during the first write can miss it (#968).
+        while (runBlocking { preferences.pushToken.first() }.isNullOrEmpty()) {
+            if (SystemClock.elapsedRealtime() > deadline) {
+                throw AssertionError("no FCM token — does the device image have Play services? (#955)")
+            }
+            SystemClock.sleep(POLL_MS)
+        }
+        cycleHostLink(serverId)
+        val remaining = connectedAt + PUSH_WAKE_COALESCE_MS - SystemClock.elapsedRealtime()
+        if (remaining > 0) SystemClock.sleep(remaining)
+    }
+
+    /**
+     * Go Home, as the operator does when leaving the app, and wait until the app's host link closes. The
+     * `google-atd` image has a Home activity but no Settings activity. `ActivityScenario.moveToState`
+     * would put an androidx.test activity in front, in this process, and the process would still count
+     * as started. Returns a flag that turns true once a wake reopens the link, set by a watcher launched in
+     * [watch], which the caller cancels when the scenario ends.
+     */
+    private fun sendAppToBackground(
+        serverId: String,
+        watch: CoroutineScope,
+    ): AtomicBoolean {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val home = "am start -W -a android.intent.action.MAIN -c android.intent.category.HOME"
+        val started =
+            ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(home)).use {
+                it.readBytes().decodeToString()
+            }
+        if (started.contains("Error")) throw AssertionError("Home did not start: $started")
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        // The awaited value is itself null, so the block returns a flag: withTimeoutOrNull's null means only a timeout.
+        runBlocking {
+            withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+                bundle.coordinator.currentRepository
+                    .first { it == null }
+                    .let { true }
+            }
+        }
+            ?: throw AssertionError("the app did not go to the background: its host link stayed open ($started)")
+        val woke = AtomicBoolean(false)
+        watch.launch {
+            withTimeoutOrNull(PUSH_TIMEOUT_MS + WAIT_TURN_TIMEOUT_MS) {
+                bundle.coordinator.currentRepository.first { it != null }
+                woke.set(true)
+            }
+        }
+        return woke
+    }
+
+    /** The app's posted attention alerts: `activeNotifications` lists only this app's own. */
+    private fun attentionAlerts(): List<StatusBarNotification> =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getSystemService(NotificationManager::class.java)
+            .activeNotifications
+            .filter { it.notification.channelId == ATTENTION_CHANNEL_ID }
+
+    private fun cancelAlerts() {
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getSystemService(NotificationManager::class.java)
+            .cancelAll()
+    }
+
+    /**
+     * Wait for the first alert and assert it is the only one and reads [text]. The failure says whether a
+     * wake ever reopened the host link: if it did not, the push never arrived.
+     */
+    private fun awaitAlert(
+        text: String,
+        woke: AtomicBoolean,
+    ): StatusBarNotification {
+        val deadline = SystemClock.elapsedRealtime() + PUSH_TIMEOUT_MS
+        while (attentionAlerts().isEmpty()) {
+            if (SystemClock.elapsedRealtime() > deadline) {
+                throw AssertionError(
+                    if (woke.get()) {
+                        "a push woke the app, but no alert was posted"
+                    } else {
+                        "no push woke the app: its host link never reopened (relay, FCM project or daemon older than v0.23.0?)"
+                    },
+                )
+            }
+            SystemClock.sleep(POLL_MS)
+        }
+        val alerts = attentionAlerts()
+        assertEquals("alerts posted", 1, alerts.size)
+        assertEquals(
+            "the alert's text",
+            text,
+            alerts
+                .single()
+                .notification.extras
+                .getCharSequence(Notification.EXTRA_TEXT)
+                ?.toString(),
+        )
+        return alerts.single()
+    }
+
+    /** Finish the activities a tap started. The tap's `CLEAR_TASK` replaced the rule's own, so the rule cannot. */
+    private fun finishActivitiesBesides(ruleActivity: MainActivity) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+            listOf(Stage.RESUMED, Stage.PAUSED, Stage.STOPPED)
+                .flatMap { monitor.getActivitiesInStage(it) }
+                .filter { it !== ruleActivity }
+                .forEach { it.finish() }
+        }
+    }
+
+    /**
      * Files the phone attaches reach another client with their exact bytes (#1016, rung 3). In chat X the
      * phone picks a small PNG and a ~100 KB document through the composer's **Attach files** action — the
      * system picker answered by an [ActivityIntentStub] with `MediaStore` URIs, since the app refuses any
      * authority of its own, the test APK's included — and sends one message. Then the [SecondClientPeer], the
      * desktop stand-in, sees exactly what the desktop would:
-     *  * X's history holds exactly one user message;
-     *  * `request_attachment` for each of the two ids the phone named returns bytes whose SHA-256 digests are
-     *    the two fixtures' digests. The host's history drops the ids (#1020), so they are read from the
-     *    phone's own sent row;
+     *  * X's history holds exactly one user message, naming two attachment ids;
+     *  * `request_attachment` for each of those ids returns bytes whose SHA-256 digests are the two fixtures'
+     *    digests;
      *  * chat Y on the same host gains no message.
      * The document spans three 45000-byte chunks, so the phone's chunking and the daemon's reassembly both run.
      * The turn may Read the named files; the peer allows each prompt until the turn ends.
@@ -2758,12 +3038,12 @@ class InteractiveStreamE2ETest {
             // 3. The message reaches claude, and its turn ends: the host logs the user turn on delivery.
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the attachment turn in X did not end") { it.type == "turn_end" }
 
-            // 4. AC-1: one user message in X, its two ids each fetching its fixture's exact bytes; Y gained
-            // nothing. The host's history keeps the text but not the ids (#1020), so the ids are the ones the
-            // phone minted and named, read from its own sent row.
-            assertEquals("user messages in the peer's view of X", 1, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
-            val ids = awaitCachedSentAttachmentIds(serverId, chatX)
-            assertEquals("attachment ids named by the phone's message", 2, ids.distinct().size)
+            // 4. AC-1: the peer's view of X holds one user message naming two ids, each fetching its fixture's
+            // exact bytes; Y gained nothing.
+            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
+            assertEquals("user messages in the peer's view of X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids named by X's user message", 2, ids.distinct().size)
             val digests = ids.map { id -> sha256(runBlocking { peer.retrieveAttachment(chatX, id, REPLY_TIMEOUT_MS) }.bytes) }
             assertEquals("digests of the files the peer fetched", setOf(sha256(png), sha256(document)), digests.toSet())
             assertEquals("user messages in the other conversation", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
@@ -2779,18 +3059,14 @@ class InteractiveStreamE2ETest {
      * [SecondClientPeer] uploads a ~100 KB document into chat X — three chunks, so the phone's reassembly
      * runs — and names it on a message, as the desktop does. The phone never opens X before a restart
      * ([E2eTestApplication.rebuildGraph]) with X's thread cache cleared, so X's rows can only come from
-     * history replay, whose `send_message` entry keeps the id but no name. Then:
+     * history replay, whose user `message` entry keeps the id but no name (#1020). Then:
      *  * the row shows the uploaded filename, which only retrieval supplies, exactly once;
      *  * a tap hands `ACTION_VIEW` a content URI whose bytes have the fixture's digest;
      *  * a long-press writes the same bytes to the `ACTION_CREATE_DOCUMENT` target.
      * Both system activities are answered by an [ActivityIntentStub]; the save target is a `MediaStore` entry.
      *
      * **One real-claude turn**: the peer's message.
-     *
-     * Ignored and out of the LIVE list until #1020: the host logs the peer's message as a `message` entry
-     * with no `attachment_ids`, so history replay never names the file and no row can appear.
      */
-    @Ignore("blocked on #1020 — history replay drops a user message's attachment ids")
     @Test
     fun interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload() {
         val serverId = twoHostArg(ARG_SERVER_ID)
@@ -2992,11 +3268,16 @@ class InteractiveStreamE2ETest {
      * The user messages in a history. The host logs the operator's turn as a `message` entry with role `user`
      * when it is delivered; a stored `send_message` counts too, the shape the phone's reducer also reads.
      */
-    private fun userMessages(history: List<HistoryEntryDto>): Int =
-        history.count { entry ->
-            entry.type == "send_message" ||
-                (entry.type == "message" && (entry.payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
+    private fun userMessages(history: List<HistoryEntryDto>): Int = history.count { it.isUserMessage() }
+
+    /** The `attachment_ids` of each user message in a history, in log order; empty for a message naming none. */
+    private fun userMessageAttachmentIds(history: List<HistoryEntryDto>): List<List<String>> =
+        history.filter { it.isUserMessage() }.map { entry ->
+            ((entry.payload as? JsonObject)?.get("attachment_ids") as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
         }
+
+    private fun HistoryEntryDto.isUserMessage(): Boolean =
+        type == "send_message" || (type == "message" && (payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
 
     /**
      * Fail fast, and say so, when [peer]'s open session carries no frames: one `request_history` for
@@ -3011,35 +3292,6 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.history(conversationId, THREAD_TIMEOUT_MS) }
         } catch (e: TimeoutCancellationException) {
             throw AssertionError("the peer's open session answered no request within $THREAD_TIMEOUT_MS ms: a relay or daemon fault", e)
-        }
-    }
-
-    /** The attachment ids on the phone's own sent message in [conversationId], read from its thread cache. */
-    private fun awaitCachedSentAttachmentIds(
-        serverId: String,
-        conversationId: String,
-    ): List<String> {
-        val cache = GlobalContext.get().get<ConversationCache>()
-        return try {
-            runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    var ids: List<String>? = null
-                    while (ids == null) {
-                        ids =
-                            cache
-                                .readThread(serverId, conversationId)
-                                .filterIsInstance<ThreadItem.MessageItem>()
-                                .firstOrNull { it.message.role == Role.User && it.message.attachments.isNotEmpty() }
-                                ?.message
-                                ?.attachments
-                                ?.map { it.attachmentId }
-                        if (ids == null) delay(CACHE_POLL_MS)
-                    }
-                    checkNotNull(ids)
-                }
-            }
-        } catch (e: TimeoutCancellationException) {
-            throw AssertionError("the phone's thread cache holds no sent row with attachments", e)
         }
     }
 
@@ -4560,6 +4812,20 @@ class InteractiveStreamE2ETest {
         const val RECONNECT_FOOTER_NAME_PREFIX = "e2e967-footer-"
         const val RECONNECT_COMMANDS_NAME_PREFIX = "e2e967-commands-"
         const val BACKGROUND_NAME_PREFIX = "e2e967-background-"
+
+        // #955: the push scenarios' chat names, and their waits. The daemon sends a device no second wake
+        // within 30 s of the last (pyrycode cmd/pyry/push_wake.go, pushWakeWindow); the margin covers clock
+        // skew between the phone and the daemon. The first FCM token can take a while on a fresh image.
+        const val PUSH_TURN_NAME_PREFIX = "e2e955-turn-"
+        const val PUSH_PROMPT_NAME_PREFIX = "e2e955-prompt-"
+        const val PUSH_WAKE_COALESCE_MS = 32_000L
+        const val PUSH_TOKEN_TIMEOUT_MS = 60_000L
+        const val PUSH_TIMEOUT_MS = 60_000L
+
+        // After a reconnect, the time for the daemon's re-shown `modal_shown` to reach the phone and the
+        // notifier. Nothing observable marks its arrival: the retained modal raises no second alert.
+        const val RECONNECT_SETTLE_MS = 5_000L
+        const val POLL_MS = 250L
 
         // The published row value of the inherited-default model (#972), which the model change skips.
         const val INHERITED_MODEL_VALUE = "default"

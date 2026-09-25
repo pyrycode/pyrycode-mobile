@@ -31,7 +31,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Relay transport](features/relay-ws-transport.md): WebSocket framing and connection lifecycle.
 - [Reconnect supervision](features/relay-reconnect-supervisor.md): reconnect, retry and handoff behavior.
 - [Lifecycle driver](features/lifecycle-connection-driver.md): foreground and background connection ownership, and the push-wake background window.
-- [Push messaging service](features/push-messaging-service.md): FCM token capture and the push trust boundary; no server-side sender exists yet.
+- [Push messaging service](features/push-messaging-service.md): FCM token capture and the push trust boundary; the daemon (v0.23.0+) and relay send the wake, and #955 is the live proof it reaches a backgrounded phone.
 - [Device key storage](features/device-static-keystore.md): Android Keystore wrapping and key continuity.
 
 ## Decisions
