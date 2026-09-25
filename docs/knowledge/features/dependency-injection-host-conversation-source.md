@@ -195,11 +195,18 @@ own fold treats the same way.
 - **Prompt:** emitted inside the modal/batches collector by diffing the current prompt-key set
   (the private `promptKeys(modal, batches)`) against `Held.prompts`, the previous set for that
   generation; only keys new since the last emission alert. A `StateFlow` re-publish of the same modal or
-  batch therefore emits nothing; a reconnect that hides and re-shows the same prompt *does* re-emit it —
-  suppressing that repeat is the consumer's job (see
+  batch therefore emits nothing. Whether a reconnect re-emits depends on whether the key actually left
+  `Held.prompts` in between: a question batch that a reconnect drops and then shows again *does* re-emit,
+  because its id left the held set while it was gone — suppressing that repeat is the consumer's job (see
   [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685)),
-  not this flow's. `promptKeys` drops a blank-`conversationId` modal or batch, the same way `resolve`
-  above does — its tap could never route to anything.
+  not this flow's. A **retained permission modal does not re-emit across a reconnect**: `currentModal`
+  carries the same open modal straight across the gap, so `modal:$modalId` never leaves `Held.prompts`
+  and a re-shown copy with the same id (even with different prompt text) is not a new key —
+  `HostConversationSourceAttentionTest.aPromptAlertsOncePerModalOrBatchAndABlankConversationPromptAlertsNothing`
+  pins this (`#955`) by re-publishing `open.copy(prompt = "re-shown")` for `m1` and asserting no second
+  alert. A consumer that needs to notice a reconnect's re-show of a still-open permission prompt cannot
+  rely on this flow for it. `promptKeys` drops a blank-`conversationId` modal or batch, the same way
+  `resolve` above does — its tap could never route to anything.
 - **Hot, not replayed, bounded:** `MutableSharedFlow(extraBufferCapacity = 64, onBufferOverflow = DROP_OLDEST)`,
   emitted with `tryEmit` under the same class monitor `updateAttention` already holds — no new lock and
   no suspension inside the fold. A late subscriber sees nothing emitted before it subscribed; the one

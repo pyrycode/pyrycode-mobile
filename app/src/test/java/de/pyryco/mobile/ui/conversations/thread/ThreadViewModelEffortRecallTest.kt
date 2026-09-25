@@ -292,7 +292,8 @@ class ThreadViewModelEffortRecallTest {
     fun aSuccessfulTap_survivesAnAppRestart() =
         runTest {
             val file = tmp.newFile("remembered_effort_vm.preferences_pb")
-            val scope1 = CoroutineScope(Dispatchers.IO + Job())
+            val job1 = Job()
+            val scope1 = CoroutineScope(Dispatchers.IO + job1)
             val prefs1 = AppPreferences(PreferenceDataStoreFactory.create(scope = scope1, produceFile = { file }))
             val repo = ScriptedRepo()
             val vm = collectedVm(repo, prefs1.asRememberedEffortStore(), reading(effort = "low"))
@@ -302,6 +303,7 @@ class ThreadViewModelEffortRecallTest {
                 withTimeout(5_000) { prefs1.rememberedEffort.first { it == "max" } }
             }
             scope1.cancel()
+            job1.join() // the first store releases the file only once its scope has completed
 
             val scope2 = CoroutineScope(Dispatchers.IO + Job())
             val prefs2 = AppPreferences(PreferenceDataStoreFactory.create(scope = scope2, produceFile = { file }))

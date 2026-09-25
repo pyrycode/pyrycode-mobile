@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.BackgroundTask
+import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.network.Envelope
@@ -13,7 +14,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The per-connection background-task fold (#677) and the host-lifetime finished set it shares across
+ * The per-connection background-task fold (#677, progress #1042) and the host-lifetime finished set it shares across
  * connections. Driven directly with envelopes: [BackgroundTaskProjection.apply] is synchronous.
  */
 class BackgroundTaskProjectionTest {
@@ -256,7 +257,146 @@ class BackgroundTaskProjectionTest {
         assertFalse(task("t1").isFinished)
     }
 
+    @Test
+    fun progress_joinsTheHeldTaskAndKeepsItsOwnDescriptionAndTruncation() {
+        projection.apply(started("t1", description = "the opening command", truncated = listOf("description")))
+
+        projection.apply(progress("t1", activity = "Reading alpha.txt", truncated = listOf("last_tool_name")))
+
+        val t1 = task("t1")
+        assertEquals("the opening command", t1.description)
+        assertEquals(listOf("description"), t1.truncatedFields)
+        assertEquals(
+            BackgroundTaskProgress("Reading alpha.txt", "general-purpose", "Read", 100, 2, 4000, listOf("last_tool_name")),
+            t1.progress,
+        )
+    }
+
+    @Test
+    fun laterProgress_replacesTheEarlierWhole_evenWithLowerCounters() {
+        projection.apply(started("t1"))
+        projection.apply(
+            progress(
+                "t1",
+                activity = "Reading alpha.txt",
+                tokens = 900,
+                toolUses = 6,
+                durationMs = 9000,
+                truncated = listOf("description"),
+            ),
+        )
+
+        projection.apply(progress("t1", activity = "Reading beta.txt", tokens = 50, toolUses = 1, durationMs = 200))
+
+        assertEquals(BackgroundTaskProgress("Reading beta.txt", "general-purpose", "Read", 50, 1, 200, null), task("t1").progress)
+    }
+
+    @Test
+    fun progressBeforeStart_isJoinedWhenTheStartArrives_andCreatesNoRosterAlone() {
+        projection.apply(progress("t1", activity = "Reading alpha.txt"))
+        assertNull(roster())
+
+        projection.apply(started("t1"))
+
+        assertEquals("Reading alpha.txt", task("t1").progress?.description)
+    }
+
+    @Test
+    fun progressBeforeRoster_isJoinedWhenTheRosterListsTheTask() {
+        projection.apply(progress("t1", activity = "Reading alpha.txt"))
+
+        projection.apply(rosterFrame(rows = listOf(row("t1"))))
+
+        assertEquals("Reading alpha.txt", task("t1").progress?.description)
+    }
+
+    @Test
+    fun progressForATaskTheRosterOmits_isDiscarded() {
+        projection.apply(progress("t1", activity = "Reading alpha.txt"))
+
+        projection.apply(rosterFrame(rows = listOf(row("t2"))))
+        projection.apply(started("t1"))
+
+        assertNull(task("t1").progress)
+    }
+
+    @Test
+    fun terminalUpdate_clearsProgress_andLaterProgressIsIgnored() {
+        projection.apply(started("t1"))
+        projection.apply(progress("t1"))
+
+        projection.apply(terminal("t1", "completed"))
+        assertNull(task("t1").progress)
+
+        projection.apply(progress("t1"))
+        assertNull(task("t1").progress)
+        assertTrue(task("t1").isFinished)
+    }
+
+    @Test
+    fun pendingProgressThenPendingTerminal_joinsFinishedWithNoProgress() {
+        projection.apply(progress("t1"))
+        projection.apply(terminal("t1", "completed"))
+
+        projection.apply(started("t1"))
+
+        assertTrue(task("t1").isFinished)
+        assertNull(task("t1").progress)
+    }
+
+    @Test
+    fun progressForATaskFinishedOnAnEarlierConnection_isIgnored() {
+        projection.apply(started("t1"))
+        projection.apply(terminal("t1", "completed"))
+
+        val next = BackgroundTaskProjection(finished)
+        next.apply(progress("t1"))
+        next.apply(rosterFrame(rows = listOf(row("t1"))))
+        next.apply(progress("t1"))
+
+        val t1 =
+            next.rosters.value
+                .getValue("c1")
+                .tasks
+                .single()
+        assertTrue(t1.isFinished)
+        assertNull(t1.progress)
+    }
+
+    @Test
+    fun malformedProgress_changesNothing() {
+        projection.apply(started("t1"))
+        projection.apply(progress("t1", activity = "Reading alpha.txt"))
+
+        projection.apply(envelope("background_task_progress", """{"conversation_id":"c1","task_id":"t1","description":"x"}"""))
+        projection.apply(
+            envelope(
+                "background_task_progress",
+                """{"conversation_id":"c1","task_id":"t1","description":null,""" +
+                    """"subagent_type":"s","last_tool_name":"Read","total_tokens":1,"tool_uses":1,"duration_ms":1,"truncated_fields":null}""",
+            ),
+        )
+
+        assertEquals("Reading alpha.txt", task("t1").progress?.description)
+    }
+
     companion object {
+        fun progress(
+            taskId: String,
+            conversationId: String = "c1",
+            activity: String = "Reading alpha.txt",
+            tokens: Long = 100,
+            toolUses: Long = 2,
+            durationMs: Long = 4000,
+            truncated: List<String>? = null,
+        ): Envelope =
+            envelope(
+                "background_task_progress",
+                """{"conversation_id":"$conversationId","task_id":"$taskId","description":"$activity",""" +
+                    """"subagent_type":"general-purpose","last_tool_name":"Read","total_tokens":$tokens,""" +
+                    """"tool_uses":$toolUses,"duration_ms":$durationMs,"truncated_fields":${json(truncated)}}""",
+            )
+
         fun started(
             taskId: String,
             conversationId: String = "c1",

@@ -257,6 +257,22 @@ located the hang inside `waitForIdle`). The fix is
 `NestedScrollSource.UserInput` through the nested-scroll chain, so a test
 asserting scroll-yield or auto-follow behavior is unaffected.
 
+`captureToImage()` → `forceRedraw` waits 2000 ms for a fresh frame and throws
+`ComposeTimeoutException` on a loaded emulator, independently of whether the
+layout assertions around it already passed — seen four times against
+`ScannerFrameTest` and `PairCodeScreenTest` (#1038), including once after
+`PairCodeScreenTest`'s existing leading `rule.waitForIdle()`, so waiting for idle
+first is not sufficient on its own. The screenshot PNG is a review artifact, not
+part of the contract under test, so a capture-only helper should retry
+(`ComposeTestRule.saveScreenshot` in
+`app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/ScreenshotCapture.kt`
+retries up to three times with `waitForIdle()` before each retry) and log +
+skip the PNG rather than fail the test when every attempt still times out. Catch
+only `ComposeTimeoutException`; any other exception from the capture should still
+fail the test. The retry cannot be proven on a healthy emulator because the
+timeout does not reproduce on demand — the focused device run only proves the
+PNGs are still written when capture succeeds, not that the skip path fires.
+
 ## Test scheduling and harnesses
 
 The routine UI gate excludes `de.pyryco.mobile.e2e` through the instrumentation
@@ -294,6 +310,17 @@ is waiting for, the read returns the pre-write value and the emission it needed 
 the wait times out no matter how high the timeout is. Prefer owning every coroutine the write uses and
 reading once with a plain `first()` after draining the scheduler, over racing a wall clock against
 writer code the test does not control.
+
+A test that simulates an app restart by cancelling one `DataStore`'s owner scope and immediately
+opening a second `PreferenceDataStoreFactory.create` on the same file must `join()` the first scope's
+`Job`, not merely `cancel()` it: DataStore unregisters a file from its process-wide active-file set only
+when the owning scope's job *completes*, and `cancel()` only requests that — it returns before the job
+finishes. A second store opened in the gap sees the file still registered and its first read throws
+`IllegalStateException: There are multiple DataStores active for the same file`, reproducing every time
+the affected test runs alone (#1075, mirroring the pattern `AppPreferencesTest.rememberedEffort_survivesProcessDeath`
+and `HostWorkspacePreferencesTest` — see [App preferences § Testing](app-preferences.md#testing) —
+already used correctly). Hold the first scope's `Job` in a named `val` and call `job1.join()` right after
+`scope1.cancel()`, before constructing the second store.
 
 A JVM unit test that constructs or resolves a component backed by `Dispatchers.Default` — a Koin
 singleton reached without an injected test dispatcher, for example — must stop it before that test
@@ -470,6 +497,17 @@ preview slot cannot prove CameraX binding or that the preview respects the Compo
 overlay. For relay and Noise changes, combine deterministic JVM coverage with the
 appropriate UI or post-verifier live path; do not claim the latter ran unless its
 output identifies the executed scenario and XML evidence.
+
+A device gate run (`ui`, `scripted`, `scripted-all` or `live`) copies each fresh
+per-test `logcat-*.txt` into that run's `build/dispatcher-tests/<mode>-*` artifact
+directory next to the XML it already copies (`fresh_logcats` in
+`scripts/android-test-gate.py`, the sibling of `fresh_reports`) — the next run
+overwrites AGP's originals under `androidTest-results/`, so this is the only place
+they survive (#1039). To diagnose a relay connection drop, read those
+[`RelayLog`](relay-log.md) `event=transport_end` / `event=pump_teardown` lines
+alongside the daemon's `daemon.log` by timestamp; neither side logs the other's
+cause, so correlating by time is what tells a phone-side, relay-side or network
+ending apart.
 
 ## Documentation evidence
 

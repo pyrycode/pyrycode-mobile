@@ -62,11 +62,14 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListUiState
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
+import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
+import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.QuestionBatchModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
+import de.pyryco.mobile.ui.conversations.thread.readLinkedMarkdown
 import de.pyryco.mobile.ui.onboarding.CameraPreview
 import de.pyryco.mobile.ui.onboarding.PairCodePhase
 import de.pyryco.mobile.ui.onboarding.PairCodeScreen
@@ -468,10 +471,16 @@ internal fun PyryNavHost(
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
                 val usageLimitDismissals = koinInject<UsageLimitDismissals>()
                 val dismissedUsageLimits by usageLimitDismissals.dismissed.collectAsStateWithLifecycle()
+                // #1050: composed again means the operator is back on the thread, so a linked note's reader has
+                // closed. Its reader remembered the note, so dropping it here cannot empty that reader.
+                LaunchedEffect(vm) { vm.releaseLinkedMarkdown() }
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
                         when (event) {
                             ThreadNavigation.PopBack -> navController.popBackStack()
+                            is ThreadNavigation.OpenMarkdown ->
+                                navController.navigate(Routes.markdownReader(target, event.attachmentId))
+                            ThreadNavigation.OpenLinkedMarkdown -> navController.navigate(Routes.markdownLink(target))
                         }
                     }
                 }
@@ -531,10 +540,57 @@ internal fun PyryNavHost(
                     // #1002: app-scoped, so a usage reading hidden here stays hidden in every thread.
                     dismissedUsageLimits = dismissedUsageLimits,
                     onDismissUsageLimit = usageLimitDismissals::dismiss,
+                    // #1027: a markdown attachment opens in the in-app reader, or says it could not be read.
+                    onOpenMarkdownAttachment = vm::onOpenMarkdownAttachment,
+                    markdownOpenFailures = vm.markdownOpenFailures,
+                    // #1050: a markdown link in an assistant reply, read live from the workspace.
+                    onOpenMarkdownLink = vm::onOpenMarkdownLink,
                 )
                 // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 questionModal?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent) }
+            }
+        }
+        // #1027: one markdown attachment of a thread, read in-app. The route carries ids only; the file is
+        // resolved through the host's own repository, from the store the thread just read it from.
+        composable(
+            route = Routes.MARKDOWN_READER,
+            arguments = Routes.markdownReaderArguments(),
+        ) { backStackEntry ->
+            val target = Routes.target(backStackEntry.arguments)
+            val attachmentId = Routes.attachmentId(backStackEntry.arguments)
+            HostDestination(target.serverId, destinations, navController) {
+                val repository = remember(target.serverId) { destinations.repository(target.serverId) }
+                MarkdownReaderDestination(
+                    repository = repository,
+                    conversationId = target.conversationId,
+                    attachmentId = attachmentId,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+        }
+        // #1050: a linked workspace note, read live by the thread beneath just before navigating. The route
+        // carries the thread's ids only; the note and its path come from that thread's ViewModel, in memory,
+        // never in saved state. Only the reader's Refresh (#1067) reads the path again, through this host.
+        composable(
+            route = Routes.MARKDOWN_LINK,
+            arguments = Routes.hostArguments(),
+        ) { backStackEntry ->
+            val target = Routes.target(backStackEntry.arguments)
+            HostDestination(target.serverId, destinations, navController) {
+                val threadEntry =
+                    remember(backStackEntry) {
+                        runCatching { navController.getBackStackEntry(Routes.CONVERSATION_THREAD) }.getOrNull()
+                    }
+                val threadVm = threadEntry?.let { koinViewModel<ThreadViewModel>(viewModelStoreOwner = it) }
+                // Read once: the thread releases its copy when it recomposes during the pop.
+                val note = remember(backStackEntry) { threadVm?.linkedMarkdown() }
+                val repository = remember(target.serverId) { destinations.repository(target.serverId) }
+                LinkedMarkdownReaderDestination(
+                    note = note,
+                    reread = { path -> readLinkedMarkdown(repository, target.conversationId, path) },
+                    onBack = { navController.popBackStack() },
+                )
             }
         }
         // Deliberately not wrapped in HostDestination: that guard returns an unknown host to the
@@ -765,6 +821,9 @@ internal object Routes {
     const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"
 
+    /** A thread's markdown attachment in the reader (#1027): the thread's two ids plus the attachment's. */
+    const val MARKDOWN_READER = "markdown_reader/{serverId}/{conversationId}/{attachmentId}"
+
     /**
      * Owned by a server id alone, and — unlike the two routes above — by an **optional** one (#749):
      * a path segment cannot carry the absent owner an unpaired phone opens Settings with, and this
@@ -781,6 +840,24 @@ internal object Routes {
     const val ABOUT = "about"
 
     fun thread(target: HostConversationTarget) = "conversation_thread/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
+
+    /**
+     * A linked workspace note in the reader (#1050): the thread's two ids only. The note's path never travels
+     * in the route; the thread's ViewModel holds the note it read.
+     */
+    const val MARKDOWN_LINK = "markdown_link/{serverId}/{conversationId}"
+
+    /** Per-component encoding, as [thread] uses. Ids only: never a file name, path or URI. */
+    fun markdownReader(
+        target: HostConversationTarget,
+        attachmentId: String,
+    ) = "markdown_reader/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}/${Uri.encode(attachmentId)}"
+
+    fun markdownLink(target: HostConversationTarget) = "markdown_link/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
+
+    fun markdownReaderArguments() = hostArguments() + navArgument("attachmentId") { type = NavType.StringType }
+
+    fun attachmentId(arguments: Bundle?) = arguments?.getString("attachmentId").orEmpty()
 
     /** No host to capture yields the bare route, so the argument falls to its empty default. */
     fun settings(serverId: String?) = if (serverId.isNullOrEmpty()) "settings" else "settings?serverId=${Uri.encode(serverId)}"

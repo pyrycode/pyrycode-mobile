@@ -792,8 +792,13 @@ class RemoteConversationRepository(
                 // the projection filters on the payload's conversation_id. A first offer of an id is also a
                 // thread row (#983); no stall touched.
                 attachmentOfferProjection.apply(envelope)
-            TYPE_BACKGROUND_TASK_STARTED, TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER -> {
-                // Background work claude left running past its turn (#677): see [BackgroundTaskProjection.apply].
+            TYPE_BACKGROUND_TASK_STARTED,
+            TYPE_BACKGROUND_TASK_UPDATED,
+            TYPE_BACKGROUND_TASK_ROSTER,
+            TYPE_BACKGROUND_TASK_PROGRESS,
+            -> {
+                // Background work claude left running past its turn (#677, progress #1042): see
+                // [BackgroundTaskProjection.apply].
                 // Same `interactive` gate as the question arm. Daemon state, not turn content: no thread row, and
                 // it clears no stall. Drop silently: the command lines and summaries are never logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
@@ -1118,6 +1123,12 @@ class RemoteConversationRepository(
         conversationId: String,
         attachmentId: String,
     ): AttachmentFetchResult = attachmentRetrievals.fetch(conversationId, attachmentId)
+
+    /** Read one workspace file live over `read_workspace_file` (#1049); see [AttachmentRetrievals.readWorkspaceFile]. */
+    override suspend fun readWorkspaceFile(
+        conversationId: String,
+        path: String,
+    ): AttachmentFetchResult = attachmentRetrievals.readWorkspaceFile(conversationId, path)
 
     /** Request the rendered claude screen (#375); see [MessageCommands.requestScreenSnapshot]. */
     override suspend fun requestScreenSnapshot(conversationId: String): String = messageCommands.requestScreenSnapshot(conversationId)
@@ -1650,6 +1661,12 @@ class RemoteConversationRepository(
 
         /** Capability-gated snapshot of a conversation's background tasks `{conversation_id, tasks, dropped_tasks}` (#677). */
         const val TYPE_BACKGROUND_TASK_ROSTER = "background_task_roster"
+
+        /**
+         * Capability-gated current activity of a running background task `{conversation_id, task_id, description,
+         * subagent_type, last_tool_name, total_tokens, tool_uses, duration_ms, truncated_fields}` (#1042).
+         */
+        const val TYPE_BACKGROUND_TASK_PROGRESS = "background_task_progress"
 
         /** Outbound answer to a held question batch `{question_batch_id, answer_token, answers}` (#825); no reply. */
         const val TYPE_QUESTION_ANSWER = "question_answer"

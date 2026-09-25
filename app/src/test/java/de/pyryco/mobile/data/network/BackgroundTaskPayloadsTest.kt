@@ -8,8 +8,8 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /**
- * Codec tests for the three background-task frames (#677). Wire SSOT: `../pyrycode/docs/protocol-mobile.md`
- * § `background_task_started`, § `background_task_updated`, § `background_task_roster`. The fixtures below are
+ * Codec tests for the four background-task frames (#677, #1042). Wire SSOT: `../pyrycode/docs/protocol-mobile.md`
+ * § `background_task_started`, § `background_task_updated`, § `background_task_roster`, § `background_task_progress`. The fixtures below are
  * copied verbatim from the daemon's `internal/protocol/testdata/background_task_*.json`. Every key is always
  * present on the wire (no `omitempty` upstream), so each is required here.
  */
@@ -92,6 +92,50 @@ class BackgroundTaskPayloadsTest {
         }
     }
 
+    @Test
+    fun progressFixture_decodesEveryField() {
+        val dto = decode<BackgroundTaskProgressPayloadDto>(PROGRESS)
+
+        assertEquals(
+            BackgroundTaskProgressPayloadDto(
+                conversationId = "c1",
+                taskId = "a8eec1cd5e109aa38",
+                description = "Reading beta.txt",
+                subagentType = "general-purpose",
+                lastToolName = "Read",
+                totalTokens = 16246,
+                toolUses = 2,
+                durationMs = 4546,
+                truncatedFields = null,
+            ),
+            dto,
+        )
+    }
+
+    @Test
+    fun progressMissingCounter_failsTheFrame() {
+        assertThrows(SerializationException::class.java) {
+            MobileJson.decodeFromJsonElement<BackgroundTaskProgressPayloadDto>(
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c1","task_id":"t","description":"d","subagent_type":"s","last_tool_name":"Read",""" +
+                        """"total_tokens":1,"duration_ms":1,"truncated_fields":null}""",
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun progressStringCounter_failsTheFrame() {
+        assertThrows(SerializationException::class.java) {
+            MobileJson.decodeFromJsonElement<BackgroundTaskProgressPayloadDto>(
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c1","task_id":"t","description":"d","subagent_type":"s","last_tool_name":"Read",""" +
+                        """"total_tokens":1,"tool_uses":"two","duration_ms":1,"truncated_fields":null}""",
+                ),
+            )
+        }
+    }
+
     private inline fun <reified T> decode(fixture: String): T =
         MobileJson.decodeFromJsonElement<T>(MobileJson.decodeFromString(Envelope.serializer(), fixture).payload)
 
@@ -104,6 +148,8 @@ class BackgroundTaskPayloadsTest {
             """{"id":707,"type":"background_task_updated","ts":"2026-05-08T10:33:24Z","payload":{"conversation_id":"c1","task_id":"task_01ABC","patch":"","status":"completed","summary":"cat /tmp/pyry-fifo","truncated_fields":null}}"""
         const val ROSTER =
             """{"id":707,"type":"background_task_roster","ts":"2026-05-08T10:33:20Z","payload":{"conversation_id":"c1","tasks":[{"task_id":"task_01ABC","task_type":"local_bash","description":"grep -rn 'a<b&c' .","truncated_fields":["description"]},{"task_id":"task_02DEF","task_type":"local_bash","description":"sleep 300","truncated_fields":null}],"dropped_tasks":3}}"""
+        const val PROGRESS =
+            """{"id":812,"type":"background_task_progress","ts":"2026-09-10T09:14:07Z","payload":{"conversation_id":"c1","task_id":"a8eec1cd5e109aa38","description":"Reading beta.txt","subagent_type":"general-purpose","last_tool_name":"Read","total_tokens":16246,"tool_uses":2,"duration_ms":4546,"truncated_fields":null}}"""
         const val ROSTER_EMPTY =
             """{"id":708,"type":"background_task_roster","ts":"2026-05-08T10:33:21Z","payload":{"conversation_id":"c1","tasks":[],"dropped_tasks":0}}"""
     }

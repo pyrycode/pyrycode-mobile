@@ -45,8 +45,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * the **sole** collector of [RelayTransport.inbound] for the connection's lifetime — the handshake
  * `noise_resp` then every open-state `noise_msg` share one sequential collector (steps 3 and 5 below).
  * It does **not** read `events` (that is #307's). Single-use and not resumable: a fresh connection
- * builds a fresh pump (Noise ephemerals are per-handshake). It emits **no logs** — every failure
- * surfaces only via [state] as [PumpState.Closed], whose `cause` carries a category-only message.
+ * builds a fresh pump (Noise ephemerals are per-handshake). Every failure surfaces via [state] as
+ * [PumpState.Closed], whose `cause` carries a category-only message.
+ *
+ * **Logging (#1039).** Each teardown writes exactly one [RelayLog] line,
+ * `event=pump_teardown trigger=<label>`, naming what ended the session with a fixed label (the
+ * `TRIGGER_*` constants), plus the cause's class name when there is one. Never the exception message,
+ * which can carry frame content. The pump's own `transport.close()` then shows up in the transport's
+ * line as a local 1000 close; this line is what explains it.
  */
 class NoiseSessionPump(
     private val transport: RelayTransport,
@@ -130,7 +136,7 @@ class NoiseSessionPump(
 
     /** Idempotent teardown: closes the session (wiping keys), the transport, and the pump scope. */
     override fun close() {
-        teardown(null)
+        teardown(TRIGGER_CLOSE, null)
     }
 
     /** Phone steps 3–6: drive the handshake to Open, then run the open-state dispatch loop. */
@@ -139,7 +145,7 @@ class NoiseSessionPump(
             try {
                 sessionFactory.create()
             } catch (e: NoiseSessionException) {
-                teardown(e)
+                teardown(TRIGGER_SESSION_CREATE_FAILED, e)
                 return
             }
         this.session = session
@@ -151,18 +157,23 @@ class NoiseSessionPump(
         // (null) or an early Down (inbound completes empty → NoSuchElementException) tears the session
         // down. This .first() and the step-5 .collect() are the SAME sequential consumer of the
         // single-consumer, receiveAsFlow()-backed inbound — no frame is lost in the gap.
+        var endedEarly = false
         val firstFrame =
             try {
                 withTimeoutOrNull(handshakeTimeoutMs) { transport.inbound.first() }
             } catch (e: NoSuchElementException) {
+                endedEarly = true
                 null
             }
         if (firstFrame == null) {
-            teardown(NoiseSessionException("noise_resp not received before the handshake deadline"))
+            teardown(
+                if (endedEarly) TRIGGER_HANDSHAKE_TRANSPORT_DOWN else TRIGGER_HANDSHAKE_DEADLINE,
+                NoiseSessionException("noise_resp not received before the handshake deadline"),
+            )
             return
         }
         if (firstFrame.type != TYPE_NOISE_RESP) {
-            teardown(NoiseSessionException("expected noise_resp as the first handshake frame"))
+            teardown(TRIGGER_HANDSHAKE_WRONG_FIRST_FRAME, NoiseSessionException("expected noise_resp as the first handshake frame"))
             return
         }
         val connId =
@@ -171,7 +182,7 @@ class NoiseSessionPump(
             } catch (e: Exception) {
                 // readResp throws NoiseSessionException (MAC failure / malformed hello_ack); a bad
                 // base64 throws IllegalArgumentException. Either tears the session down.
-                teardown(e)
+                teardown(TRIGGER_HANDSHAKE_RESP_REJECTED, e)
                 return
             }
         mutableState.value = PumpState.Open(connId, session.negotiatedCapabilities)
@@ -183,11 +194,14 @@ class NoiseSessionPump(
             transport.inbound.collect { frame -> onOpenFrame(frame) }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: OpenFrameFault) {
+            teardown(e.trigger, e.fault)
+            return
         } catch (e: Exception) {
-            teardown(e)
+            teardown(TRIGGER_OPEN_FRAME_FAILED, e)
             return
         }
-        teardown(null)
+        teardown(TRIGGER_TRANSPORT_DOWN, null)
     }
 
     /** Open-state frame dispatch — `noise_msg` app/control traffic + the #304 re-key `noise_resp` seam. */
@@ -196,8 +210,9 @@ class NoiseSessionPump(
             TYPE_NOISE_MSG -> {
                 val session = this.session ?: throw NoiseSessionException("session is not available")
                 // Emit only after a successful decrypt + parse — never surface an unauthenticated frame.
-                val plaintext = session.decrypt(base64StdDecode(frame.data))
-                val envelope = MobileJson.decodeFromString<Envelope>(plaintext.decodeToString())
+                val plaintext = labelled(TRIGGER_OPEN_DECRYPT_FAILED) { session.decrypt(base64StdDecode(frame.data)) }
+                val envelope =
+                    labelled(TRIGGER_OPEN_PARSE_FAILED) { MobileJson.decodeFromString<Envelope>(plaintext.decodeToString()) }
                 if (envelope.type == TYPE_REKEY_REQUEST) {
                     // A control message (the server nudging a re-key). Initiate it; never forward to the
                     // single inbound consumer (#278). Launched so the keystore re-load can't stall the
@@ -213,17 +228,45 @@ class NoiseSessionPump(
                 // The re-key handshake reply (a raw frame, not a noise_msg): complete the in-flight swap
                 // instead of tearing down. A resp with no re-key in flight is a protocol violation.
                 val session = this.session ?: throw NoiseSessionException("session is not available")
-                if (!rekeyInFlight) throw NoiseSessionException("unexpected noise_resp with no re-key in flight")
+                if (!rekeyInFlight) {
+                    throw OpenFrameFault(
+                        TRIGGER_OPEN_UNEXPECTED_NOISE_RESP,
+                        NoiseSessionException("unexpected noise_resp with no re-key in flight"),
+                    )
+                }
                 rekeyRespTimeoutJob?.cancel() // the swap is completing — disarm the response watchdog (#495)
-                session.readRekeyResp(base64StdDecode(frame.data)) // MAC failure → NoiseSessionException → teardown
+                // MAC failure → NoiseSessionException → teardown
+                labelled(TRIGGER_REKEY_RESP_REJECTED) { session.readRekeyResp(base64StdDecode(frame.data)) }
                 rekeyInFlight = false
                 rebaseRekeyTimer() // re-base the cadence from the swap moment
             }
             // The ordered encrypted stream cannot skip a frame: a genuinely unknown type tears the
             // session down rather than dropping it.
-            else -> throw NoiseSessionException("unexpected open-state frame type")
+            else -> throw OpenFrameFault(TRIGGER_OPEN_UNEXPECTED_FRAME_TYPE, NoiseSessionException("unexpected open-state frame type"))
         }
     }
+
+    /** Runs [block], rethrowing any failure as an [OpenFrameFault] that names [trigger] for the teardown line. */
+    private inline fun <T> labelled(
+        trigger: String,
+        block: () -> T,
+    ): T =
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw OpenFrameFault(trigger, e)
+        }
+
+    /**
+     * Carries an open-state fault to [drive]'s collector with its teardown trigger. [fault] is what
+     * [PumpState.Closed] reports, so consumers still see the original exception.
+     */
+    private class OpenFrameFault(
+        val trigger: String,
+        val fault: Exception,
+    ) : Exception(null, fault, false, false)
 
     /**
      * The app-too-old rejection (#1008): hands a sealed `client.update_required` error's raw
@@ -286,7 +329,7 @@ class NoiseSessionPump(
                 rekeyRespTimeoutJob =
                     scope.launch {
                         delay(rekeyRespTimeoutMs)
-                        teardown(NoiseSessionException("re-key noise_resp not received before the deadline"))
+                        teardown(TRIGGER_REKEY_DEADLINE, NoiseSessionException("re-key noise_resp not received before the deadline"))
                     }
             } catch (e: IllegalStateException) {
                 // Racing teardown closed the session, or a session-level re-key is already in flight — skip.
@@ -300,10 +343,17 @@ class NoiseSessionPump(
      * The single idempotent teardown every trigger funnels into (handshake fault, fatal open-state
      * frame, transport Down, or [close]). Synchronous up to [CoroutineScope.cancel] so the key-wipe is
      * never behind a cancellable suspension. `cause == null` ⟺ a clean Down / [close]; non-null ⟺ a
-     * protocol or crypto fault.
+     * protocol or crypto fault. [trigger] is a fixed `TRIGGER_*` label for the one teardown line.
      */
-    private fun teardown(cause: Throwable?) {
+    private fun teardown(
+        trigger: String,
+        cause: Throwable?,
+    ) {
         if (!terminated.compareAndSet(false, true)) return
+        val message = {
+            "event=pump_teardown trigger=$trigger" + (cause?.let { " cause=${it.javaClass.simpleName}" } ?: "")
+        }
+        if (cause == null) RelayLog.i(message) else RelayLog.w(message)
         mutableState.value = PumpState.Closed(cause)
         inboundChannel.close()
         session?.close() // wipes the transport ciphers (AC 5)
@@ -335,6 +385,22 @@ class NoiseSessionPump(
 
         /** The inbound control envelope by which the server nudges a re-key (`Envelope.type`). */
         const val TYPE_REKEY_REQUEST = "rekey_request"
+
+        // The fixed teardown triggers of the #1039 teardown line.
+        const val TRIGGER_SESSION_CREATE_FAILED = "session_create_failed"
+        const val TRIGGER_HANDSHAKE_DEADLINE = "handshake_deadline"
+        const val TRIGGER_HANDSHAKE_TRANSPORT_DOWN = "handshake_transport_down"
+        const val TRIGGER_HANDSHAKE_WRONG_FIRST_FRAME = "handshake_wrong_first_frame"
+        const val TRIGGER_HANDSHAKE_RESP_REJECTED = "handshake_resp_rejected"
+        const val TRIGGER_OPEN_DECRYPT_FAILED = "open_decrypt_failed"
+        const val TRIGGER_OPEN_PARSE_FAILED = "open_parse_failed"
+        const val TRIGGER_OPEN_UNEXPECTED_FRAME_TYPE = "open_unexpected_frame_type"
+        const val TRIGGER_OPEN_UNEXPECTED_NOISE_RESP = "open_unexpected_noise_resp"
+        const val TRIGGER_REKEY_RESP_REJECTED = "rekey_resp_rejected"
+        const val TRIGGER_OPEN_FRAME_FAILED = "open_frame_failed"
+        const val TRIGGER_REKEY_DEADLINE = "rekey_deadline"
+        const val TRIGGER_TRANSPORT_DOWN = "transport_down"
+        const val TRIGGER_CLOSE = "close"
     }
 }
 

@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AttachmentChunkPayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ReadWorkspaceFilePayloadDto
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RequestAttachmentPayloadDto
 import de.pyryco.mobile.data.network.attachmentDisplayName
@@ -19,6 +20,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Clock
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.encodeToJsonElement
@@ -104,15 +106,21 @@ object AttachmentRetrievalLimit {
 }
 
 /**
- * One `request_attachment` and its answer (#899). Every answer names [requestId] in `in_reply_to`, the chunks
- * and the `error` alike, so that is the route; the payload `attachment_id` is a second check that the right
- * request was not answered with the wrong file. Rules: `protocol-mobile.md` § Attachments → "Reassembly &
- * integrity". Settles once; every failure zero-fills what arrived.
+ * One `request_attachment` or `read_workspace_file` and its answer (#899, #1049). Every answer names [requestId]
+ * in `in_reply_to`, the chunks and the `error` alike, so that is the route; the payload `attachment_id` is a
+ * second check that the right request was not answered with the wrong file. A `read_workspace_file` answer
+ * carries an id the daemon minted, so [attachmentId] starts `null` and the first chunk to arrive pins it, once
+ * it has the published shape. Rules: `protocol-mobile.md` § Attachments → "Reassembly & integrity". Settles
+ * once; every failure zero-fills what arrived.
  */
 internal class AttachmentRetrievalTransfer(
     private val requestId: Long,
-    val attachmentId: String,
+    attachmentId: String?,
 ) {
+    /** The id every chunk must carry: the requested one, or the one the first chunk pinned. */
+    var attachmentId: String? = attachmentId
+        private set
+
     private val result = CompletableDeferred<AttachmentFetchResult>()
     private val mutableActivity = MutableStateFlow(0)
 
@@ -159,7 +167,13 @@ internal class AttachmentRetrievalTransfer(
             } catch (_: IllegalArgumentException) {
                 return fail(AttachmentRetrievalResult.Invalid)
             }
-        if (chunk.attachmentId != attachmentId) return fail(AttachmentRetrievalResult.Invalid)
+        val pinned = attachmentId
+        if (pinned == null) {
+            if (!isAttachmentIdShape(chunk.attachmentId)) return fail(AttachmentRetrievalResult.Invalid)
+            attachmentId = chunk.attachmentId
+        } else if (chunk.attachmentId != pinned) {
+            return fail(AttachmentRetrievalResult.Invalid)
+        }
         val claims = claims ?: return admitFirst(chunk)
         try {
             require(chunk.totalChunks == claims.totalChunks && chunk.size == claims.size && chunk.sha256 == claims.sha256)
@@ -257,18 +271,53 @@ internal class AttachmentRetrievals(
         attachmentId: String,
     ): AttachmentFetchResult {
         if (!isAttachmentIdShape(conversationId) || !isAttachmentIdShape(attachmentId)) return AttachmentRetrievalResult.NotFound
-        return lock.withLock {
-            val request =
-                Envelope(
-                    id = nextRequestId(),
-                    type = TYPE_REQUEST_ATTACHMENT,
-                    ts = Clock.System.now().toString(),
-                    payload = MobileJson.encodeToJsonElement(RequestAttachmentPayloadDto(conversationId, attachmentId)),
-                )
+        return retrieve(
+            type = TYPE_REQUEST_ATTACHMENT,
+            payload = MobileJson.encodeToJsonElement(RequestAttachmentPayloadDto(conversationId, attachmentId)),
+            attachmentId = attachmentId,
+            requestEvent = "event=attachment_request id=$attachmentId",
+            outcomeEvent = "event=attachment_retrieval id=$attachmentId",
+        )
+    }
+
+    /**
+     * Sends one `read_workspace_file` for [path] in [conversationId]'s workspace (#1049) and waits for its answer,
+     * under the same one-at-a-time rule and stall deadline as [fetch]. Every call sends a new request: nothing is
+     * cached. The conversation id must have the published shape and [path] must not be blank, else
+     * [AttachmentRetrievalResult.NotFound] with nothing sent. [path] is sent as given. Neither is ever logged.
+     */
+    suspend fun readWorkspaceFile(
+        conversationId: String,
+        path: String,
+    ): AttachmentFetchResult {
+        if (!isAttachmentIdShape(conversationId) || path.isBlank()) return AttachmentRetrievalResult.NotFound
+        return retrieve(
+            type = TYPE_READ_WORKSPACE_FILE,
+            payload = MobileJson.encodeToJsonElement(ReadWorkspaceFilePayloadDto(conversationId, path)),
+            attachmentId = null,
+            requestEvent = "event=workspace_file_request",
+            outcomeEvent = "event=workspace_file_read",
+        )
+    }
+
+    /**
+     * The exchange both requests share. The transfer is registered before the send, so a fast answer cannot be
+     * missed, and the wait fails [AttachmentRetrievalResult.Unavailable] once [stallTimeout] passes with no
+     * accepted chunk.
+     */
+    private suspend fun retrieve(
+        type: String,
+        payload: JsonElement,
+        attachmentId: String?,
+        requestEvent: String,
+        outcomeEvent: String,
+    ): AttachmentFetchResult =
+        lock.withLock {
+            val request = Envelope(id = nextRequestId(), type = type, ts = Clock.System.now().toString(), payload = payload)
             val transfer = AttachmentRetrievalTransfer(request.id, attachmentId)
             if (!begin(transfer)) return@withLock AttachmentRetrievalResult.Unavailable
             try {
-                RelayLog.d { "event=attachment_request id=$attachmentId" }
+                RelayLog.d { requestEvent }
                 val sent =
                     try {
                         send(request)
@@ -282,13 +331,12 @@ internal class AttachmentRetrievals(
                         ?: transfer.fail(AttachmentRetrievalResult.Unavailable)
                 }
                 transfer.await().also { outcome ->
-                    RelayLog.d { "event=attachment_retrieval id=$attachmentId outcome=${outcome::class.simpleName}" }
+                    RelayLog.d { "$outcomeEvent outcome=${outcome::class.simpleName}" }
                 }
             } finally {
                 finish(transfer)
             }
         }
-    }
 
     @Synchronized
     fun route(envelope: Envelope): Boolean = active?.accept(envelope) == true
@@ -317,5 +365,6 @@ internal class AttachmentRetrievals(
         val DEFAULT_STALL_TIMEOUT: Duration = 30.seconds
 
         private const val TYPE_REQUEST_ATTACHMENT = "request_attachment"
+        private const val TYPE_READ_WORKSPACE_FILE = "read_workspace_file"
     }
 }

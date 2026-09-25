@@ -13,18 +13,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The background-task arm of [RemoteConversationRepository.onInbound] (#677): the three frames reach
+ * The background-task arm of [RemoteConversationRepository.onInbound] (#677, #1042): the four frames reach
  * [RemoteConversationRepository.backgroundTasks] only behind the `interactive` gate, and a malformed frame
  * leaves the single inbound collector running. The merge rules are [BackgroundTaskProjectionTest]'s.
  */
 class RemoteConversationRepositoryBackgroundTaskTest {
     @Test
-    fun interactiveConnection_foldsAllThreeFrames() =
+    fun interactiveConnection_foldsAllFourFrames() =
         runTest {
             val (pump, repo) = newRepo(setOf(CAPABILITY_INTERACTIVE))
 
             pump.push(BackgroundTaskProjectionTest.started("t1"))
             pump.push(BackgroundTaskProjectionTest.rosterFrame(rows = listOf(BackgroundTaskProjectionTest.row("t1")), droppedTasks = 2))
+            pump.push(BackgroundTaskProjectionTest.progress("t1", activity = "Reading alpha.txt"))
+            runCurrent()
+            assertEquals(
+                "Reading alpha.txt",
+                repo.backgroundTasks.value
+                    .getValue("c1")
+                    .tasks
+                    .single()
+                    .progress
+                    ?.description,
+            )
+
             pump.push(BackgroundTaskProjectionTest.terminal("t1", "completed"))
             runCurrent()
 
@@ -39,6 +51,7 @@ class RemoteConversationRepositoryBackgroundTaskTest {
             val (pump, repo) = newRepo(emptySet())
 
             pump.push(BackgroundTaskProjectionTest.started("t1"))
+            pump.push(BackgroundTaskProjectionTest.progress("t1"))
             pump.push(BackgroundTaskProjectionTest.rosterFrame(rows = emptyList()))
             runCurrent()
 
@@ -56,6 +69,7 @@ class RemoteConversationRepositoryBackgroundTaskTest {
                     """{"conversation_id":"c1","tasks":null,"dropped_tasks":0}""",
                 ),
             )
+            pump.push(BackgroundTaskProjectionTest.envelope("background_task_progress", """{"conversation_id":"c1","task_id":"t1"}"""))
             pump.push(BackgroundTaskProjectionTest.started("t1"))
             runCurrent()
 

@@ -12,8 +12,10 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -108,6 +110,7 @@ class ThreadViewModelAttachmentRetrievalTest {
         FakeConnectionStateSource(),
         store,
         attachmentReader = reader,
+        ioDispatcher = UnconfinedTestDispatcher(),
     )
 
     private val kept = File("/kept/$ATTACHMENT")
@@ -281,6 +284,109 @@ class ThreadViewModelAttachmentRetrievalTest {
                 loads,
             )
             assertTrue(logs.none { "secret-name" in it || "content://" in it || "/kept" in it })
+        }
+
+    private fun keptMarkdown(bytes: ByteArray): File =
+        File.createTempFile("kept", null).apply { deleteOnExit() }.also { it.writeBytes(bytes) }
+
+    @Test
+    fun openMarkdown_readsTheKeptFile_thenNavigatesByIdOnly() =
+        runTest {
+            val file = keptMarkdown("# Plan".toByteArray())
+            val repository = RetrievingRepository(AttachmentRetrievalResult.Retrieved(file, "Plan.md", "text/markdown"))
+            val vm = vm(repository)
+            val navigation = mutableListOf<ThreadNavigation>()
+            val failures = mutableListOf<Unit>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.navigationEvents.collect { navigation += it } }
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.markdownOpenFailures.collect { failures += it } }
+
+            vm.onOpenMarkdownAttachment(ATTACHMENT)
+            advanceUntilIdle()
+
+            assertEquals(listOf(CONV to ATTACHMENT), repository.retrievals)
+            assertEquals(listOf<ThreadNavigation>(ThreadNavigation.OpenMarkdown(ATTACHMENT)), navigation)
+            assertTrue(failures.isEmpty())
+        }
+
+    @Test
+    fun openMarkdown_withBadUtf8OrAFailedRetrieval_staysAndSaysOpenFailed() =
+        runTest {
+            val bad = keptMarkdown(byteArrayOf(0x41, 0x80.toByte()))
+            val repository =
+                RetrievingRepository(
+                    AttachmentRetrievalResult.Retrieved(bad, "bad.md", "text/markdown"),
+                    AttachmentRetrievalResult.Unavailable,
+                )
+            val vm = vm(repository)
+            val navigation = mutableListOf<ThreadNavigation>()
+            val failures = mutableListOf<Unit>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.navigationEvents.collect { navigation += it } }
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.markdownOpenFailures.collect { failures += it } }
+
+            vm.onOpenMarkdownAttachment(ATTACHMENT)
+            advanceUntilIdle()
+            vm.onOpenMarkdownAttachment(ATTACHMENT)
+            advanceUntilIdle()
+
+            assertTrue(navigation.isEmpty())
+            assertEquals(2, failures.size)
+        }
+
+    @Test
+    fun openMarkdown_ignoresATapWhileAnOpenIsInFlight() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val file = keptMarkdown("text".toByteArray())
+            val repository =
+                object : ConversationRepository by FakeConversationRepository() {
+                    var calls = 0
+
+                    override suspend fun retrieveAttachment(
+                        conversationId: String,
+                        attachmentId: String,
+                    ): AttachmentRetrievalResult {
+                        calls++
+                        gate.await()
+                        return AttachmentRetrievalResult.Retrieved(file, "a.md", "text/markdown")
+                    }
+                }
+            val vm = vm(repository)
+            val navigation = mutableListOf<ThreadNavigation>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.navigationEvents.collect { navigation += it } }
+
+            vm.onOpenMarkdownAttachment(ATTACHMENT)
+            vm.onOpenMarkdownAttachment(ATTACHMENT)
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(1, repository.calls)
+            assertEquals(1, navigation.size)
+        }
+
+    @Test
+    fun openMarkdown_logsTheIdAndAStaticOutcome_neverTheNameOrText() =
+        runTest {
+            val file = keptMarkdown("secret body".toByteArray())
+            val repository =
+                RetrievingRepository(
+                    AttachmentRetrievalResult.Retrieved(file, "secret-name.md", "text/markdown"),
+                    AttachmentRetrievalResult.NotFound,
+                )
+            val vm = vm(repository)
+
+            vm.onOpenMarkdownAttachment(ATTACHMENT)
+            advanceUntilIdle()
+            vm.onOpenMarkdownAttachment(OTHER)
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(
+                    "event=thread_attachment_open id=$ATTACHMENT outcome=reader",
+                    "event=thread_attachment_open id=$OTHER outcome=failed",
+                ),
+                logs.filter { it.startsWith("event=thread_attachment_open") },
+            )
+            assertTrue(logs.none { "secret" in it || file.path in it })
         }
 
     private companion object {

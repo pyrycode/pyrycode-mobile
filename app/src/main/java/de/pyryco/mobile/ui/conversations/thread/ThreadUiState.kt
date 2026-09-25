@@ -53,6 +53,14 @@ sealed interface ThreadEvent {
 
 sealed interface ThreadNavigation {
     data object PopBack : ThreadNavigation
+
+    /** Open the in-app reader on a markdown attachment of this thread (#1027): its id, never a name or path. */
+    data class OpenMarkdown(
+        val attachmentId: String,
+    ) : ThreadNavigation
+
+    /** Open the reader on the workspace note a link named (#1050). It carries nothing: the ViewModel holds the note. */
+    data object OpenLinkedMarkdown : ThreadNavigation
 }
 
 data class ThreadUiState(

@@ -8,8 +8,9 @@ Uploads a file's bytes, name and declared MIME type to a conversation on **its o
 actually fill that path — see [Thread screen § Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments);
 [#830](https://github.com/pyrycode/pyrycode-mobile/issues/830) sends a
 message naming the uploaded ids; [#671](https://github.com/pyrycode/pyrycode-mobile/issues/671) reuses
-the chunk payload shape for retrieval; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)
-proves the flow live. Wire contract: `../pyrycode/docs/protocol-mobile.md` § Attachments
+the chunk payload shape for retrieval; [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016)
+(split from [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)) proves the phone's own upload
+live against a real daemon and a second client. Wire contract: `../pyrycode/docs/protocol-mobile.md` § Attachments
 (`attachment_chunk`, `attachment_stored`, "The `attachment_id` shape"). That section still says nothing
 emits `attachment_stored` — stale; the daemon has emitted it since pyrycode#1897. That correction belongs
 to the pyrycode repo, not here.
@@ -135,8 +136,9 @@ retry-keeps-earlier-ids behavior and the content-URI trust boundary
 (`ContentResolverAttachmentReader.isForeignContentUri`), and [data model §
 `Message`](data-model.md#message) for what the confirmed row does with those references.
 [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)
-landed the picker and the strip that fill this path from the UI; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)
-still owns the live proof.
+landed the picker and the strip that fill this path from the UI; [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016)
+landed the live proof: a `SecondClientPeer` retrieves what the phone attached through this path and its
+digest matches the fixture.
 
 ### `StableConversationRepository` — the one one-shot that doesn't throw
 
@@ -190,8 +192,10 @@ assertion only ever saw a result that never settled (`null`) — a repository te
 live repository (`ReconnectRequired`, or `TooLarge` if oversized even then) and that switching
 `currentRepository` mid-upload leaves an in-flight call on the repository it started on.
 
-No emulator scenario: this is a data-layer ticket with no operator-facing flow of its own — #674 proves
-it live.
+No emulator scenario of its own: this is a data-layer ticket with no operator-facing flow of its own —
+[#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016) adds the rung-3 live scenario
+(`interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`, `docs/e2e-interactive-stream.md`),
+proving the phone's own upload reaches a real second client with matching bytes.
 
 ## Related
 

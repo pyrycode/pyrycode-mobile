@@ -1,7 +1,20 @@
 package de.pyryco.mobile.e2e
 
 import android.Manifest
+import android.app.Activity
+import android.app.Instrumentation
+import android.app.Notification
+import android.app.NotificationManager
+import android.content.ClipData
+import android.content.ContentResolver
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.provider.MediaStore
+import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
@@ -34,6 +47,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
@@ -43,6 +57,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.cache.ConversationCache
@@ -51,10 +67,13 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
+import de.pyryco.mobile.data.network.AttachmentOfferedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.HistoryEntryDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
@@ -74,7 +93,9 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.grantNotificationPermission
+import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
+import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
@@ -96,12 +117,18 @@ import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -109,11 +136,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
+import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
 /**
@@ -216,6 +247,14 @@ class InteractiveStreamE2ETest {
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_permission)
     private val modalCancel: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.modal_cancel)
+
+    // #1016: the composer's attach action and the save notices, from resources.
+    private val attachFilesLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_attach_files)
+    private val savedNotice: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_saved)
+    private val saveFailedNotice: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_save_failed)
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
@@ -2620,12 +2659,16 @@ class InteractiveStreamE2ETest {
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
         cycleHostLink(serverId)
 
-        // 2. AC-2: `/` lists the published commands; picking the first completes it into the composer.
+        // 2. AC-2: `/` lists the published commands; picking the first completes it into the composer. The
+        //    menu is read off the host's live connection: the reconnect's fresh connection can drop and be
+        //    redialled within a second (#1029, #1039), and the app follows the redial, so the read does too.
         val published =
             try {
+                val live =
+                    checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
-                        hostRepository(serverId).observeSlashCommandMenu(chatId).filterNotNull().first { it.rows.isNotEmpty() }
+                        live.coordinator.currentRepository.firstOnLive({ it.observeSlashCommandMenu(chatId) }) { it.rows.isNotEmpty() }
                     }
                 }
             } catch (e: TimeoutCancellationException) {
@@ -2749,6 +2792,806 @@ class InteractiveStreamE2ETest {
             closeBackgroundTasks()
         } finally {
             peer.close()
+        }
+    }
+
+    /**
+     * A real push wakes the backgrounded app for a turn that ended while it was away, posts one alert, and
+     * the alert's tap opens that conversation's thread (#955, #685). The turn is held on a permission
+     * prompt the #950 way while the phone is in front, so the prompt's own alert is spent in the
+     * foreground. The app then goes to the background, which closes its host link. The peer allows the
+     * command, and the turn ends while the phone is absent. The daemon asks the production relay to wake
+     * the phone, and FCM delivers the data message. The wake reconnects, the missed `turn_end` replays,
+     * and the notifier posts.
+     *
+     * LIVE only: the loopback relay cannot send FCM. **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread() {
+        assumeLiveRelay()
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val ruleActivity = composeTestRule.activity
+        val peer = runningToolPeer()
+        val watch = CoroutineScope(Dispatchers.Default)
+        var held: Pair<String, String>? = null
+        try {
+            cancelAlerts()
+            // 1. A named chat with a real turn held on a permission prompt, while the phone is in front.
+            awaitChannelList()
+            awaitConnected()
+            val connectedAt = SystemClock.elapsedRealtime()
+            val (chatId, name) = answerChat(serverId, PUSH_TURN_NAME_PREFIX)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            sendFromPhone(RUNNING_TOOL_PROMPT)
+            val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            held = chatId to modalId
+            awaitPushRegistered(serverId, connectedAt)
+
+            // 2. The app goes to the background; the turn ends while the phone is absent.
+            val woke = sendAppToBackground(serverId, watch)
+            runBlocking {
+                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                held = null
+                peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+            }
+
+            // 3. AC-1: the push wakes the app and exactly one turn alert shows.
+            val alert = awaitAlert(string(R.string.notification_turn_completed), woke)
+
+            // 4. AC-1: the tap, the notification's own content intent, opens that conversation's thread.
+            checkNotNull(alert.notification.contentIntent) { "the alert carries no tap" }.send()
+            try {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasText(name)).fetchSemanticsNodes().isNotEmpty() &&
+                        composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
+                        composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the alert's tap did not open the conversation's thread", e)
+            }
+        } finally {
+            watch.cancel()
+            // A failure before the allow must not leave a claude turn waiting on the prompt for later scenarios.
+            held?.let { (chatId, modalId) ->
+                runBlocking {
+                    runCatching {
+                        peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                        peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                    }
+                }
+            }
+            peer.close()
+            cancelAlerts()
+            finishActivitiesBesides(ruleActivity)
+        }
+    }
+
+    /**
+     * A permission prompt that surfaces while the app is in the background is alerted exactly once, even
+     * across a second reconnect inside the push's wake window (#955, #685). The phone creates a named chat
+     * and goes to the background. The peer then starts a turn in that chat whose command waits on a
+     * permission prompt. The prompt surfaces while the phone is absent, so the daemon wakes the phone and
+     * the wake posts the alert. The test then cuts and restores the host link, and the daemon shows the
+     * still-outstanding prompt again. That repeat must not post again, so one notification stays, with
+     * the same post time. The source raises no second alert for a retained permission modal, and the
+     * notifier's ledger would drop one if it did. A second `notify` for the same tag would replace the
+     * notification and change its post time, which a count alone cannot see.
+     *
+     * LIVE only: the loopback relay cannot send FCM. **One real-claude turn**: the peer's held command.
+     */
+    @Test
+    fun interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect() {
+        assumeLiveRelay()
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val peer = runningToolPeer()
+        val watch = CoroutineScope(Dispatchers.Default)
+        var held: Pair<String, String>? = null
+        try {
+            cancelAlerts()
+            // 1. A named chat, the peer open and the push token on the daemon, while the phone is in front.
+            awaitChannelList()
+            awaitConnected()
+            val connectedAt = SystemClock.elapsedRealtime()
+            val (chatId, _) = answerChat(serverId, PUSH_PROMPT_NAME_PREFIX)
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitPushRegistered(serverId, connectedAt)
+
+            // 2. The app goes to the background; the peer's turn raises a prompt while the phone is absent.
+            val woke = sendAppToBackground(serverId, watch)
+            runBlocking { peer.sendMessage(chatId, RUNNING_TOOL_PROMPT, THREAD_TIMEOUT_MS) }
+            val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            held = chatId to modalId
+
+            // 3. AC-2: the push wakes the app and exactly one prompt alert shows.
+            val first = awaitAlert(string(R.string.notification_prompt), woke)
+
+            // 4. AC-2: a second reconnect inside the wake window re-shows the prompt, and nothing is posted again.
+            // The retained permission modal emits no new alert for the re-show, so nothing observable marks its
+            // arrival: settle long enough for the daemon's `modal_shown` to reach the phone and the notifier.
+            cycleHostLink(serverId)
+            SystemClock.sleep(RECONNECT_SETTLE_MS)
+            val after = attentionAlerts()
+            assertEquals("alerts after the reconnect", 1, after.size)
+            assertEquals("the prompt's alert was posted again across the reconnect", first.postTime, after.single().postTime)
+        } finally {
+            watch.cancel()
+            held?.let { (chatId, modalId) ->
+                runBlocking {
+                    runCatching {
+                        peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
+                        peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                    }
+                }
+            }
+            peer.close()
+            cancelAlerts()
+        }
+    }
+
+    /** The push scenarios (#955) need the production relay, which alone can send FCM. */
+    private fun assumeLiveRelay() {
+        val relayUrl = InstrumentationRegistry.getArguments().getString(ARG_RELAY_URL).orEmpty()
+        assumeTrue("push needs the production relay (LIVE=1); the loopback relay cannot send FCM", relayUrl.startsWith("wss://"))
+    }
+
+    /**
+     * Make sure the daemon holds this phone's FCM token and can wake it now (#955). The token comes from
+     * Play services. Cycling the link then makes the #365 connect-time registration send it. The daemon
+     * sends a device no second wake within 30 s of the last one. The phone has been connected since
+     * [connectedAt], so no wake has reached it since then, and waiting out the rest of the window keeps
+     * an earlier scenario's wake from absorbing this one.
+     */
+    private fun awaitPushRegistered(
+        serverId: String,
+        connectedAt: Long,
+    ) {
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val deadline = SystemClock.elapsedRealtime() + PUSH_TOKEN_TIMEOUT_MS
+        // A fresh read each pass: a collector that starts during the first write can miss it (#968).
+        while (runBlocking { preferences.pushToken.first() }.isNullOrEmpty()) {
+            if (SystemClock.elapsedRealtime() > deadline) {
+                throw AssertionError("no FCM token — does the device image have Play services? (#955)")
+            }
+            SystemClock.sleep(POLL_MS)
+        }
+        cycleHostLink(serverId)
+        val remaining = connectedAt + PUSH_WAKE_COALESCE_MS - SystemClock.elapsedRealtime()
+        if (remaining > 0) SystemClock.sleep(remaining)
+    }
+
+    /**
+     * Go Home, as the operator does when leaving the app, and wait until the app's host link closes. The
+     * `google-atd` image has a Home activity but no Settings activity. `ActivityScenario.moveToState`
+     * would put an androidx.test activity in front, in this process, and the process would still count
+     * as started. Returns a flag that turns true once a wake reopens the link, set by a watcher launched in
+     * [watch], which the caller cancels when the scenario ends.
+     */
+    private fun sendAppToBackground(
+        serverId: String,
+        watch: CoroutineScope,
+    ): AtomicBoolean {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val home = "am start -W -a android.intent.action.MAIN -c android.intent.category.HOME"
+        val started =
+            ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(home)).use {
+                it.readBytes().decodeToString()
+            }
+        if (started.contains("Error")) throw AssertionError("Home did not start: $started")
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        // The awaited value is itself null, so the block returns a flag: withTimeoutOrNull's null means only a timeout.
+        runBlocking {
+            withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+                bundle.coordinator.currentRepository
+                    .first { it == null }
+                    .let { true }
+            }
+        }
+            ?: throw AssertionError("the app did not go to the background: its host link stayed open ($started)")
+        val woke = AtomicBoolean(false)
+        watch.launch {
+            withTimeoutOrNull(PUSH_TIMEOUT_MS + WAIT_TURN_TIMEOUT_MS) {
+                bundle.coordinator.currentRepository.first { it != null }
+                woke.set(true)
+            }
+        }
+        return woke
+    }
+
+    /** The app's posted attention alerts: `activeNotifications` lists only this app's own. */
+    private fun attentionAlerts(): List<StatusBarNotification> =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getSystemService(NotificationManager::class.java)
+            .activeNotifications
+            .filter { it.notification.channelId == ATTENTION_CHANNEL_ID }
+
+    private fun cancelAlerts() {
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getSystemService(NotificationManager::class.java)
+            .cancelAll()
+    }
+
+    /**
+     * Wait for the first alert and assert it is the only one and reads [text]. The failure says whether a
+     * wake ever reopened the host link: if it did not, the push never arrived.
+     */
+    private fun awaitAlert(
+        text: String,
+        woke: AtomicBoolean,
+    ): StatusBarNotification {
+        val deadline = SystemClock.elapsedRealtime() + PUSH_TIMEOUT_MS
+        while (attentionAlerts().isEmpty()) {
+            if (SystemClock.elapsedRealtime() > deadline) {
+                throw AssertionError(
+                    if (woke.get()) {
+                        "a push woke the app, but no alert was posted"
+                    } else {
+                        "no push woke the app: its host link never reopened (relay, FCM project or daemon older than v0.23.0?)"
+                    },
+                )
+            }
+            SystemClock.sleep(POLL_MS)
+        }
+        val alerts = attentionAlerts()
+        assertEquals("alerts posted", 1, alerts.size)
+        assertEquals(
+            "the alert's text",
+            text,
+            alerts
+                .single()
+                .notification.extras
+                .getCharSequence(Notification.EXTRA_TEXT)
+                ?.toString(),
+        )
+        return alerts.single()
+    }
+
+    /** Finish the activities a tap started. The tap's `CLEAR_TASK` replaced the rule's own, so the rule cannot. */
+    private fun finishActivitiesBesides(ruleActivity: MainActivity) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+            listOf(Stage.RESUMED, Stage.PAUSED, Stage.STOPPED)
+                .flatMap { monitor.getActivitiesInStage(it) }
+                .filter { it !== ruleActivity }
+                .forEach { it.finish() }
+        }
+    }
+
+    /**
+     * Files the phone attaches reach another client with their exact bytes (#1016, rung 3). In chat X the
+     * phone picks a small PNG and a ~100 KB document through the composer's **Attach files** action — the
+     * system picker answered by an [ActivityIntentStub] with `MediaStore` URIs, since the app refuses any
+     * authority of its own, the test APK's included — and sends one message. Then the [SecondClientPeer], the
+     * desktop stand-in, sees exactly what the desktop would:
+     *  * X's history holds exactly one user message, naming two attachment ids;
+     *  * `request_attachment` for each of those ids returns bytes whose SHA-256 digests are the two fixtures'
+     *    digests;
+     *  * chat Y on the same host gains no message.
+     * The document spans three 45000-byte chunks, so the phone's chunking and the daemon's reassembly both run.
+     * The turn may Read the named files; the peer allows each prompt until the turn ends.
+     *
+     * The name places it last in JUnit's default order, which sorts by name hash. Peers opened on the first
+     * daemon after it stopped carrying frames in two live runs, so it runs after every other scenario on that
+     * daemon until that is explained.
+     *
+     * **One real-claude turn**: the phone's message.
+     */
+    @Test
+    fun interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        try {
+            val stamp = System.currentTimeMillis()
+            val png = pngFixture()
+            val document = documentFixture("phone-$stamp")
+            val pngName = ATTACH_FILE_PREFIX + "phone-$stamp.png"
+            val documentName = ATTACH_FILE_PREFIX + "phone-$stamp.txt"
+            val picked =
+                listOf(insertDownload(pngName, "image/png", png, inserted), insertDownload(documentName, TEXT_MIME, document, inserted))
+            stub.answer(Intent.ACTION_OPEN_DOCUMENT) {
+                val clip = ClipData.newRawUri(null, picked.first()).apply { picked.drop(1).forEach { addItem(ClipData.Item(it)) } }
+                Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { clipData = clip })
+            }
+
+            // 1. The peer records from here on; X and Y are fresh named chats, and the phone opens X.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            val (chatY, _) = answerChat(serverId, ATTACH_OTHER_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+
+            // 2. Pick both fixtures through the composer's attach action, and send them with one message.
+            composeTestRule.onNode(hasContentDescription(attachFilesLabel)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                listOf(pngName, documentName).all {
+                    composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+            sendFromPhone(PING_PROMPT)
+
+            // 3. The message reaches claude, and its turn ends: the host logs the user turn on delivery.
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the attachment turn in X did not end") { it.type == "turn_end" }
+
+            // 4. AC-1: the peer's view of X holds one user message naming two ids, each fetching its fixture's
+            // exact bytes; Y gained nothing.
+            val named = userMessageAttachmentIds(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) })
+            assertEquals("user messages in the peer's view of X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids named by X's user message", 2, ids.distinct().size)
+            val digests = ids.map { id -> sha256(runBlocking { peer.retrieveAttachment(chatX, id, REPLY_TIMEOUT_MS) }.bytes) }
+            assertEquals("digests of the files the peer fetched", setOf(sha256(png), sha256(document)), digests.toSet())
+            assertEquals("user messages in the other conversation", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+        }
+    }
+
+    /**
+     * Another client's file opens and saves on the phone after a history reload (#1016, rung 3). The
+     * [SecondClientPeer] uploads a ~100 KB document into chat X — three chunks, so the phone's reassembly
+     * runs — and names it on a message, as the desktop does. The phone never opens X before a restart
+     * ([E2eTestApplication.rebuildGraph]) with X's thread cache cleared, so X's rows can only come from
+     * history replay, whose user `message` entry keeps the id but no name (#1020). Then:
+     *  * the row shows the uploaded filename, which only retrieval supplies, exactly once;
+     *  * a tap hands `ACTION_VIEW` a content URI whose bytes have the fixture's digest;
+     *  * a long-press writes the same bytes to the `ACTION_CREATE_DOCUMENT` target.
+     * Both system activities are answered by an [ActivityIntentStub]; the save target is a `MediaStore` entry.
+     *
+     * **One real-claude turn**: the peer's message.
+     */
+    @Test
+    fun interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            val stamp = System.currentTimeMillis()
+            val document = documentFixture("peer-$stamp")
+            val documentName = ATTACH_FILE_PREFIX + "peer-$stamp.txt"
+
+            // 1. X is a fresh named chat the phone does not open; the peer uploads into it and names the file.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            runBlocking {
+                val id = peer.uploadAttachment(chatX, documentName, TEXT_MIME, document, REPLY_TIMEOUT_MS)
+                peer.sendMessage(chatX, PING_PROMPT, THREAD_TIMEOUT_MS, attachmentIds = listOf(id))
+            }
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the peer's attachment turn in X did not end") { it.type == "turn_end" }
+
+            // 2. Restart with X's thread cache cleared, so the row can only come from history replay.
+            relaunched =
+                restartApp {
+                    val cache = GlobalContext.get().get<ConversationCache>()
+                    runBlocking {
+                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
+                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                    }
+                }
+            awaitChannelList()
+            awaitConnected()
+            openChatRow(nameX)
+
+            // 3. AC-2: the retrieved name shows once, and open and save both carry the fixture's bytes.
+            awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
+            assertOpensAndSaves(stub, documentName, sha256(document), inserted)
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * A file claude offers stays on the phone across a restart (#1016, rung 3). With the phone in chat X, the
+     * phone's message has claude write a file of known content with a shell command and hand it over with
+     * the daemon's `send_file` tool (the `pyry_files` MCP server), which only takes a path inside the
+     * conversation's workspace. The [SecondClientPeer] allows each permission prompt until the turn ends.
+     *  * the peer's `attachment_offered` for X announces the file's name;
+     *  * the phone draws an attachment row with that name, and its thread cache holds it as an assistant row;
+     *  * after [E2eTestApplication.rebuildGraph] the row is still there once, and open and save both yield
+     *    the content's digest.
+     * The offer is live-only, with no replay: after the restart the row comes from the phone's own thread
+     * cache. A fresh device, or a cleared cache, would not show it, by design, and that is not asserted.
+     *
+     * The name places it before the background-task scenario in JUnit's default order, which sorts by name
+     * hash. In two live runs every peer opened before that point carried frames.
+     *
+     * **One real-claude turn**: the phone's message.
+     */
+    @Test
+    fun interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            val stamp = System.currentTimeMillis()
+            val content = OFFER_CONTENT_PREFIX + stamp
+            val fileName = ATTACH_FILE_PREFIX + "offer-$stamp.txt"
+
+            // 1. The phone is attached to X when claude calls the tool: the offer is never replayed.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+            sendFromPhone(offerPrompt(content, fileName))
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the send_file turn in X did not end") { it.type == "turn_end" }
+
+            // 2. AC-3: the offer names the file, and the phone draws it as an assistant-side row it caches.
+            val offer =
+                peer.recorded(chatX).firstOrNull { it.type == "attachment_offered" }?.let {
+                    MobileJson.decodeFromJsonElement(AttachmentOfferedPayloadDto.serializer(), it.payload)
+                }
+            checkNotNull(offer) { "claude's turn in X offered no file" }
+            assertTrue("the offer announced another file name", offer.filename == fileName)
+            awaitReadyAttachmentRow(fileName, REPLY_TIMEOUT_MS)
+            awaitCachedOffer(serverId, chatX, offer.attachmentId)
+
+            // 3. AC-3: after a restart the cached row is still there once, and open and save carry the content.
+            leaveThread()
+            relaunched = restartApp()
+            awaitChannelList()
+            awaitConnected()
+            openChatRow(nameX)
+            awaitReadyAttachmentRow(fileName, REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(readyAttachmentRow(fileName)).assertCountEquals(1)
+            assertOpensAndSaves(stub, fileName, sha256(content.toByteArray()), inserted)
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * A markdown link in claude's reply opens the note in the in-app reader, read live (#1050, rung 3). Claude
+     * writes a markdown note in its workspace with one `printf` and replies with a link to it. A tap on the
+     * link shows the note's heading and its file name in the reader, with the thread's composer gone. While the
+     * reader stays open, the peer has claude rewrite the note, and the reader's Refresh (#1067) shows the new
+     * heading and not the old one. Back returns to the thread, and the same link shows the new heading too:
+     * the reader reads the host's file on every open and keeps nothing between opens.
+     *
+     * **Two real-claude turns**: the note and the rewrite.
+     */
+    @Test
+    fun interactiveTurn_markdownLink_opensLiveNoteInReader() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        try {
+            val stamp = System.currentTimeMillis()
+            val fileName = NOTE_FILE_PREFIX + "$stamp.md"
+            val linkText = NOTE_LINK_PREFIX + stamp
+            val first = NOTE_MARKER_PREFIX + "$stamp-first"
+            val second = NOTE_MARKER_PREFIX + "$stamp-second"
+            val allowed = mutableSetOf<String>()
+
+            // 1. A fresh chat X; claude writes the note and replies with a link to it.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, NOTE_CHAT_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+            sendFromPhone(notePrompt(first, fileName, "reply with exactly this markdown link and nothing else: [$linkText]($fileName)"))
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the note turn in X did not end", allowed) { it.type == "turn_end" }
+
+            // 2. AC-1, AC-3: the tap opens the reader on the note as it is now, named by its file.
+            assertLinkOpensNote(linkText, fileName, first, stale = null)
+
+            // 3. #1067: with the reader still open, the peer has claude rewrite the note; Refresh shows it.
+            runBlocking { peer.sendMessage(chatX, notePrompt(second, fileName, "reply with a single short word"), THREAD_TIMEOUT_MS) }
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the rewrite turn in X did not end", allowed) {
+                it.type == "turn_end" && peer.recorded(chatX).count { frame -> frame.type == "turn_end" } >= 2
+            }
+            assertRefreshShowsNote(second, stale = first)
+
+            // 4. AC-3: back returns to the same thread.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitThreadComposer()
+
+            // 5. AC-2, AC-5: the same link now shows the new content only.
+            assertLinkOpensNote(linkText, fileName, second, stale = first)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitThreadComposer()
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * The #1050 note prompt: write a one-heading markdown note [marker] to [fileName] in the workspace with one
+     * shell command, then [reply]. `printf` with a quoted literal keeps the bytes exactly as written.
+     */
+    private fun notePrompt(
+        marker: String,
+        fileName: String,
+        reply: String,
+    ): String =
+        "Run this exact shell command with your tools: `printf '# $marker\\n' > $fileName`. " +
+            "Do not use Write or Edit, and do not create any other file. After the command returns, $reply."
+
+    /**
+     * Tap the first [linkText] link in claude's reply and wait for the reader: the note's [marker] heading
+     * under a bar named [fileName], the composer gone, and never the [stale] heading.
+     */
+    private fun assertLinkOpensNote(
+        linkText: String,
+        fileName: String,
+        marker: String,
+        stale: String?,
+    ) {
+        val link = hasText(linkText, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                runCatching {
+                    scrollListTo(link)
+                    composeTestRule.onAllNodes(link, useUnmergedTree = true).onFirst().performFirstLinkClick()
+                }.isSuccess
+            }
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(marker)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("tapping the link to $fileName did not show the note $marker in the reader", e)
+        }
+        // Past the navigation transition, so the thread beneath (whose prompts name both markers) is gone.
+        composeTestRule.waitForIdle()
+        composeTestRule.onNode(hasText(marker)).assertIsDisplayed()
+        composeTestRule.onNode(hasText(fileName)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).assertCountEquals(0)
+        stale?.let { composeTestRule.onAllNodes(hasText(it)).assertCountEquals(0) }
+    }
+
+    /**
+     * Choose Refresh from the open reader's overflow (#1067) and wait for the note's [marker] heading, read
+     * again from the host: never the [stale] heading, and no could-not-open notice.
+     */
+    private fun assertRefreshShowsNote(
+        marker: String,
+        stale: String,
+    ) {
+        val openFailed = string(R.string.thread_attachment_open_failed)
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.onNode(hasText(string(R.string.markdown_reader_refresh))).performClick()
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(openFailed)).fetchSemanticsNodes().isNotEmpty() ||
+                    composeTestRule.onAllNodes(hasText(marker)).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("Refresh in the reader did not show the rewritten note $marker", e)
+        }
+        composeTestRule.onAllNodes(hasText(openFailed)).assertCountEquals(0)
+        composeTestRule.onNode(hasText(marker)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(stale)).assertCountEquals(0)
+    }
+
+    /** Wait until the open thread's composer is back. */
+    private fun awaitThreadComposer() {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * The #1016 offer prompt: write [content] to [fileName] in the workspace with one shell command, then hand
+     * it over with `send_file`. The file must be in the workspace, since `send_file` refuses any other path,
+     * and `printf` with a quoted literal and no newline keeps its bytes exactly [content].
+     */
+    private fun offerPrompt(
+        content: String,
+        fileName: String,
+    ): String =
+        "Run this exact shell command with your tools: `printf '$content' > $fileName`. " +
+            "Then hand that file to the operator by calling the send_file tool from the pyry_files MCP server, " +
+            "passing path $fileName. Do not use Write or Edit, and do not change the file. " +
+            "After the tool returns, reply with a single short word."
+
+    /** A 4 × 4 PNG in one flat colour: generated, a few dozen bytes. */
+    private fun pngFixture(): ByteArray {
+        val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(FIXTURE_COLOR)
+        return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+    }
+
+    /** A generated text document of [DOCUMENT_BYTES] or a little more, so it spans more than one chunk. */
+    private fun documentFixture(label: String): ByteArray {
+        val text = StringBuilder()
+        var line = 0
+        while (text.length < DOCUMENT_BYTES) {
+            text
+                .append("e2e1016 ")
+                .append(label)
+                .append(" line ")
+                .append(line++)
+                .append('\n')
+        }
+        return text.toString().toByteArray().also { check(it.size > ATTACHMENT_CHUNK_BYTES) { "the document fixture fits one chunk" } }
+    }
+
+    /**
+     * A `MediaStore` download named [name] holding [bytes], or empty when [bytes] is null, recorded in
+     * [inserted] for [deleteFixtures]. This app owns it, so it reads and writes it without a permission, and
+     * its `media` authority is another app's, which is what the picker and the upload read accept.
+     */
+    private fun insertDownload(
+        name: String,
+        mimeType: String,
+        bytes: ByteArray?,
+        inserted: MutableList<Uri>,
+    ): Uri {
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        val values =
+            ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+            }
+        val uri = checkNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)) { "MediaStore refused a fixture" }
+        inserted += uri
+        if (bytes != null) checkNotNull(resolver.openOutputStream(uri, "wt")) { "a fixture is not writable" }.use { it.write(bytes) }
+        return uri
+    }
+
+    /** Delete the `MediaStore` entries [insertDownload] made; one already gone is ignored. */
+    private fun deleteFixtures(inserted: List<Uri>) {
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        inserted.forEach { runCatching { resolver.delete(it, null, null) } }
+    }
+
+    /** All the bytes behind [uri], read through this app's own resolver. */
+    private fun readUri(uri: Uri): ByteArray =
+        checkNotNull(
+            InstrumentationRegistry
+                .getInstrumentation()
+                .targetContext.contentResolver
+                .openInputStream(uri),
+        ) {
+            "a content URI opened no stream"
+        }.use { it.readBytes() }
+
+    /** Lowercase hex SHA-256 of [bytes]. */
+    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /**
+     * The user messages in a history. The host logs the operator's turn as a `message` entry with role `user`
+     * when it is delivered; a stored `send_message` counts too, the shape the phone's reducer also reads.
+     */
+    private fun userMessages(history: List<HistoryEntryDto>): Int = history.count { it.isUserMessage() }
+
+    /** The `attachment_ids` of each user message in a history, in log order; empty for a message naming none. */
+    private fun userMessageAttachmentIds(history: List<HistoryEntryDto>): List<List<String>> =
+        history.filter { it.isUserMessage() }.map { entry ->
+            ((entry.payload as? JsonObject)?.get("attachment_ids") as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
+        }
+
+    private fun HistoryEntryDto.isUserMessage(): Boolean =
+        type == "send_message" || (type == "message" && (payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
+
+    /**
+     * Fail fast, and say so, when [peer]'s open session carries no frames: one `request_history` for
+     * [conversationId] must be answered. Two live runs had peers whose handshake the daemon accepted and which
+     * then saw nothing, so a permission prompt went unanswered until the turn timed out as a feature failure.
+     */
+    private fun assertPeerAnswers(
+        peer: SecondClientPeer,
+        conversationId: String,
+    ) {
+        try {
+            runBlocking { peer.history(conversationId, THREAD_TIMEOUT_MS) }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("the peer's open session answered no request within $THREAD_TIMEOUT_MS ms: a relay or daemon fault", e)
+        }
+    }
+
+    /** A message attachment's file row named [name] that is ready to act: tap opens, long-press saves. */
+    private fun readyAttachmentRow(name: String): SemanticsMatcher =
+        hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG) and hasText(name) and hasClickAction()
+
+    /** Scroll the thread until [readyAttachmentRow] for [name] is on screen. The name is a fixture's. */
+    private fun awaitReadyAttachmentRow(
+        name: String,
+        timeoutMs: Long,
+    ) {
+        try {
+            composeTestRule.waitUntil(timeoutMs) { runCatching { scrollListTo(readyAttachmentRow(name)) }.isSuccess }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("no ready attachment row named $name within $timeoutMs ms", e)
+        }
+    }
+
+    /**
+     * Tap the ready row named [name] and read what `ACTION_VIEW` was handed; then long-press it and read what
+     * was written to the `ACTION_CREATE_DOCUMENT` target. Both must have [digest]. [stub] answers both.
+     */
+    private fun assertOpensAndSaves(
+        stub: ActivityIntentStub,
+        name: String,
+        digest: String,
+        inserted: MutableList<Uri>,
+    ) {
+        stub.answer(Intent.ACTION_VIEW) { Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null) }
+        val views = stub.answered.count { it.action == Intent.ACTION_VIEW }
+        composeTestRule.onNode(readyAttachmentRow(name)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { stub.answered.count { it.action == Intent.ACTION_VIEW } > views }
+        val view = stub.answered.last { it.action == Intent.ACTION_VIEW }
+        val opened = checkNotNull(view.data) { "ACTION_VIEW carried no URI" }
+        assertEquals("the scheme of the URI handed to the viewer", ContentResolver.SCHEME_CONTENT, opened.scheme)
+        assertTrue("the viewer got no read grant", (view.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0)
+        assertEquals("digest of the opened file", digest, sha256(readUri(opened)))
+
+        val target = insertDownload(ATTACH_FILE_PREFIX + "saved-${System.nanoTime()}.bin", "application/octet-stream", null, inserted)
+        stub.answer(Intent.ACTION_CREATE_DOCUMENT) { Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(target)) }
+        composeTestRule.onNode(readyAttachmentRow(name)).performTouchInput { longClick() }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            listOf(savedNotice, saveFailedNotice).any { composeTestRule.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty() }
+        }
+        composeTestRule.onAllNodesWithText(saveFailedNotice).assertCountEquals(0)
+        assertEquals("digest of the saved file", digest, sha256(readUri(target)))
+    }
+
+    /**
+     * Restart the app as [E2eTestApplication.rebuildGraph] can (#1016, after #847): the rule's activity goes
+     * first, since no activity may outlive the graph it resolved; [beforeLaunch] runs on the new graph before
+     * the relaunch. Close the returned scenario in the test's `finally`.
+     */
+    private fun restartApp(beforeLaunch: () -> Unit = {}): ActivityScenario<MainActivity> {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+        instrumentation.runOnMainSync {
+            (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+        }
+        beforeLaunch()
+        return ActivityScenario.launch(MainActivity::class.java)
+    }
+
+    /** Wait until the phone's thread cache for [conversationId] holds an assistant row carrying [attachmentId]. */
+    private fun awaitCachedOffer(
+        serverId: String,
+        conversationId: String,
+        attachmentId: String,
+    ) {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        try {
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    while (cache.readThread(serverId, conversationId).none { item ->
+                            item is ThreadItem.MessageItem &&
+                                item.message.role == Role.Assistant &&
+                                item.message.attachments.any { it.attachmentId == attachmentId }
+                        }
+                    ) {
+                        delay(CACHE_POLL_MS)
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("the phone's thread cache holds no assistant row with the offered file", e)
         }
     }
 
@@ -2936,14 +3779,23 @@ class InteractiveStreamE2ETest {
         pairHostByCode(answerArg(ARG_ANSWER_PAIR_CODE), ANSWER_HOST_NAME)
     }
 
-    /** A new chat on [serverId] with a run-unique name starting [prefix]: its id and name. */
+    /**
+     * A new chat on [serverId] with a run-unique name starting [prefix]: its id and name. A connection that
+     * drops mid-request is retried on the host's redial (#1029); that can leave one unnamed stray chat, which
+     * no scenario finds, because each finds its chat by this name.
+     */
     private fun answerChat(
         serverId: String,
         prefix: String,
     ): Pair<String, String> {
         val name = prefix + System.currentTimeMillis()
-        val repository = hostRepository(serverId)
-        val chat = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.rename(repository.createDiscussion().id, name) } }
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        val chat =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    bundle.coordinator.currentRepository.callOnLive(REDIAL_WAIT_MS) { it.rename(it.createDiscussion().id, name) }
+                }
+            }
         return chat.id to name
     }
 
@@ -4139,6 +4991,22 @@ class InteractiveStreamE2ETest {
         const val ANSWER_HOST_NAME = "Answer e2e host"
         const val ANSWER_CHAT_NAME_PREFIX = "e2e966-"
 
+        // #1016: the attachment exchange. Fixture names are plain ASCII, which the daemon stores unchanged, and
+        // run-unique, so MediaStore never renames one. The document is about 100 KB: three 45000-byte chunks.
+        const val ATTACH_CHAT_NAME_PREFIX = "e2e1016-"
+        const val ATTACH_OTHER_NAME_PREFIX = "e2e1016-other-"
+        const val ATTACH_FILE_PREFIX = "e2e1016-"
+        const val OFFER_CONTENT_PREFIX = "pyrycode-mobile-offer-"
+        const val TEXT_MIME = "text/plain"
+        const val DOCUMENT_BYTES = 100_000
+        const val FIXTURE_COLOR = 0xFF2A6FDB.toInt()
+
+        // #1050: the live-note link. Run-unique names; the markers are what the note's heading renders as.
+        const val NOTE_CHAT_NAME_PREFIX = "e2e1050-"
+        const val NOTE_FILE_PREFIX = "e2e1050-note-"
+        const val NOTE_LINK_PREFIX = "e2e1050-open-"
+        const val NOTE_MARKER_PREFIX = "pyrycode-mobile-note-"
+
         // A `python3` command, so it needs permission (see WAIT_PROMPT). The token is its output, which no
         // prompt contains; claude could still compute it, so the tests prove the run by a successful Bash
         // tool_result (assertBashRan) and the token only shows the reply reports it.
@@ -4168,6 +5036,20 @@ class InteractiveStreamE2ETest {
         const val RECONNECT_FOOTER_NAME_PREFIX = "e2e967-footer-"
         const val RECONNECT_COMMANDS_NAME_PREFIX = "e2e967-commands-"
         const val BACKGROUND_NAME_PREFIX = "e2e967-background-"
+
+        // #955: the push scenarios' chat names, and their waits. The daemon sends a device no second wake
+        // within 30 s of the last (pyrycode cmd/pyry/push_wake.go, pushWakeWindow); the margin covers clock
+        // skew between the phone and the daemon. The first FCM token can take a while on a fresh image.
+        const val PUSH_TURN_NAME_PREFIX = "e2e955-turn-"
+        const val PUSH_PROMPT_NAME_PREFIX = "e2e955-prompt-"
+        const val PUSH_WAKE_COALESCE_MS = 32_000L
+        const val PUSH_TOKEN_TIMEOUT_MS = 60_000L
+        const val PUSH_TIMEOUT_MS = 60_000L
+
+        // After a reconnect, the time for the daemon's re-shown `modal_shown` to reach the phone and the
+        // notifier. Nothing observable marks its arrival: the retained modal raises no second alert.
+        const val RECONNECT_SETTLE_MS = 5_000L
+        const val POLL_MS = 250L
 
         // The published row value of the inherited-default model (#972), which the model change skips.
         const val INHERITED_MODEL_VALUE = "default"
@@ -4222,6 +5104,10 @@ class InteractiveStreamE2ETest {
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
+
+        // How long a failed one-shot waits for the host's redial (#1029): the supervisor's first three
+        // backoffs are at most 1.2 + 2.4 + 4.8 s, plus a dial.
+        const val REDIAL_WAIT_MS = 10_000L
 
         // How often the #850 cut re-reads the thread cache while it waits for the settled reply.
         const val CACHE_POLL_MS = 200L
