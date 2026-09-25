@@ -86,7 +86,7 @@ internal const val CHANNEL_LIST_TEST_TAG: String = "channel-list"
 
 /**
  * Where an update-required host's control sends the operator (#1009): the release listing, as an
- * app-authored literal. Not built from `BuildConfig.APPLICATION_ID`, whose debug suffix names no listing.
+ * app-authored literal pinned to the published listing, independent of the build's configuration.
  */
 internal const val PLAY_STORE_URL: String = "https://play.google.com/store/apps/details?id=de.pyryco.mobile"
 

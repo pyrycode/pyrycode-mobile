@@ -96,3 +96,7 @@ The ticket names no documentation requirement. Pending for the documentation sta
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-25
+
+## Revisions
+
+- **2026-09-25, rationale only.** The Design section gave a debug `applicationIdSuffix` as the reason `PLAY_STORE_URL` is not built from `BuildConfig.APPLICATION_ID`. `app/build.gradle.kts` sets no suffix. The constant stays a literal because it is an app-authored value pinned to the published listing, not derived from build configuration. The contract is unchanged, and the KDoc on `PLAY_STORE_URL` now says this.
