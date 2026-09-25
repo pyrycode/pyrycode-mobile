@@ -40,6 +40,8 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1021 adds the Edit channel mute round trip.
 LIVE_MINIMUM += 1
+# #1017 adds the interrupted-upload, interrupted-retrieval and cross-host attachment methods.
+LIVE_MINIMUM += 3
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 
