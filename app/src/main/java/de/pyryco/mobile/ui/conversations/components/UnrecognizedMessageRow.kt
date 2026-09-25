@@ -215,6 +215,8 @@ private fun siteLabel(site: UnrecognizedSite): String =
         UnrecognizedSite.AssistantBlock -> stringResource(R.string.thread_unrecognized_site_assistant_block)
         UnrecognizedSite.UserBlock -> stringResource(R.string.thread_unrecognized_site_user_block)
         UnrecognizedSite.Undecodable -> stringResource(R.string.thread_unrecognized_site_undecodable)
+        UnrecognizedSite.CodexMethod -> stringResource(R.string.thread_unrecognized_site_codex_method)
+        UnrecognizedSite.CodexItem -> stringResource(R.string.thread_unrecognized_site_codex_item)
     }
 
 @Composable
