@@ -56,6 +56,10 @@ data class ConversationResponseDto(
     @Serializable(with = InstantIso8601Serializer::class)
     val lastUsedAt: Instant,
     @SerialName("workspace_label") val workspaceLabel: String? = null,
+    // Kept raw so an absent key stays distinguishable: an older daemon omits it on `conversation_updated`,
+    // and [de.pyryco.mobile.data.repository.ConversationListProjection.upsertConversation] then keeps the
+    // stored agent instead of reading Claude.
+    val agent: String? = null,
 )
 
 /**
@@ -83,4 +87,5 @@ fun ConversationResponseDto.toConversation(): Conversation =
         isSleeping = false,
         archived = isArchived,
         muted = isMuted,
+        agent = conversationAgentOf(agent),
     )

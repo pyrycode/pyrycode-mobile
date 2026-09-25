@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import kotlinx.datetime.Instant
 import kotlinx.datetime.serializers.InstantIso8601Serializer
 import kotlinx.serialization.SerialName
@@ -53,6 +54,8 @@ data class ConversationSummaryDto(
     // Defaulted so a row from a daemon without mute support reads as not muted and keeps notifying.
     @SerialName("is_muted") val isMuted: Boolean = false,
     @SerialName("workspace_label") val workspaceLabel: String? = null,
+    // Raw and defaulted: only a `multi_agent` client is sent the key; [conversationAgentOf] reads it.
+    val agent: String? = null,
 )
 
 /**
@@ -82,4 +85,15 @@ private fun ConversationSummaryDto.toConversation(): Conversation =
         isSleeping = false,
         archived = isArchived,
         muted = isMuted,
+        agent = conversationAgentOf(agent),
     )
+
+/**
+ * The daemon's `agent` string as a [ConversationAgent]: exactly `codex` is Codex, and any other value or an
+ * absent key is Claude, which is what a daemon that does not report the agent runs.
+ */
+internal fun conversationAgentOf(wire: String?): ConversationAgent =
+    when (wire) {
+        "codex" -> ConversationAgent.Codex
+        else -> ConversationAgent.Claude
+    }

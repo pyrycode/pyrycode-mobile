@@ -2,9 +2,11 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -139,17 +141,27 @@ internal class ConversationListProjection {
      * append — so a concurrent authoritative `conversations` snapshot retry-merges rather than being
      * lost, and a re-delivered create is idempotent. Folding into the `null` (pre-first-snapshot)
      * projection yields a single-element list, which [observe] then emits (AC #2).
+     *
+     * Takes the decoded record rather than its [Conversation] because the record's `agent` may be absent
+     * (#1108): an older daemon omits it on `conversation_updated`, so a record without it keeps the stored
+     * row's [Conversation.agent] instead of resetting a Codex conversation to Claude. Returns the row as
+     * stored, so a caller that hands the conversation back returns the kept agent too.
      */
-    fun upsertConversation(conversation: Conversation) {
+    fun upsertConversation(record: ConversationResponseDto): Conversation {
+        val incoming = record.toConversation()
+        var stored = incoming
         projection.update { current ->
             val existing = current.orEmpty()
-            val index = existing.indexOfFirst { it.id == conversation.id }
+            val index = existing.indexOfFirst { it.id == incoming.id }
             if (index >= 0) {
-                existing.toMutableList().apply { this[index] = conversation }
+                stored = if (record.agent == null) incoming.copy(agent = existing[index].agent) else incoming
+                existing.toMutableList().apply { this[index] = stored }
             } else {
-                existing + conversation
+                stored = incoming
+                existing + incoming
             }
         }
+        return stored
     }
 
     /**

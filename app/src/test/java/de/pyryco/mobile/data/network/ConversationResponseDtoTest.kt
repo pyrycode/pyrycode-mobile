@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerializationException
@@ -100,6 +101,18 @@ class ConversationResponseDtoTest {
         assertEquals("", mapped.currentSessionId)
         assertEquals(emptyList<String>(), mapped.sessionHistory)
         assertFalse(mapped.isSleeping)
+    }
+
+    @Test
+    fun agent_carriedCodexMapsToCodexAndAnAbsentKeyToClaude() {
+        val codex = MobileJson.parseToJsonElement(updatedFixture).jsonObject + ("agent" to JsonPrimitive("codex"))
+        val record = MobileJson.decodeFromJsonElement<ConversationResponseDto>(JsonObject(codex))
+        assertEquals("codex", record.agent)
+        assertEquals(ConversationAgent.Codex, record.toConversation().agent)
+
+        val absent = MobileJson.decodeFromJsonElement<ConversationResponseDto>(MobileJson.parseToJsonElement(updatedFixture))
+        assertNull(absent.agent)
+        assertEquals(ConversationAgent.Claude, absent.toConversation().agent)
     }
 
     @Test
