@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
@@ -45,12 +46,13 @@ enum class QuestionSendPhase { Idle, Sending, Sent, Failed }
 /**
  * The question modal for the open conversation's held batch (#661). [selections] is index-aligned with
  * [QuestionBatch.questions]. Once a send is in flight or has succeeded the modal is [locked] until the
- * daemon's `question_dismissed` removes the batch.
+ * daemon's `question_dismissed` removes the batch. [agent] is the conversation's, for the title (#1116).
  */
 data class QuestionModalState(
     val batch: QuestionBatch,
     val selections: List<QuestionSelection> = List(batch.questions.size) { QuestionSelection() },
     val phase: QuestionSendPhase = QuestionSendPhase.Idle,
+    val agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     val locked: Boolean get() = phase == QuestionSendPhase.Sending || phase == QuestionSendPhase.Sent
 

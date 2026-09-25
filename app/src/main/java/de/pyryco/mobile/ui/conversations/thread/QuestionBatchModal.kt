@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.QuestionOption
@@ -51,7 +52,13 @@ internal fun QuestionBatchModal(
     modifier: Modifier = Modifier,
 ) {
     MobileGateModal(
-        title = stringResource(R.string.question_modal_title),
+        title =
+            stringResource(
+                when (state.agent) {
+                    ConversationAgent.Claude -> R.string.question_modal_title
+                    ConversationAgent.Codex -> R.string.question_modal_title_codex
+                },
+            ),
         modifier = modifier,
         cancelLabel = stringResource(R.string.modal_cancel),
         onCancel = { onEvent(QuestionModalEvent.Cancel) },

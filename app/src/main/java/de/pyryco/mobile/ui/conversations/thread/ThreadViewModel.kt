@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
@@ -729,23 +730,35 @@ class ThreadViewModel(
      * The clarification batch held for this conversation with the operator's picks (#661), or null. The
      * picks belong to one batch: a dismissal (null) discards them, and any batch other than the one held
      * — a replacement, or the same id re-sent after a reconnect's empty reconcile — starts fresh.
+     * It names the conversation's agent (#1116), read from the list only while a batch is held.
      */
     val questionModal: StateFlow<QuestionModalState?> = mutableQuestionModal
 
     init {
         viewModelScope.launch {
-            questionBatch(conversationId).collect { batch ->
-                val own = batch?.takeIf { it.conversationId == conversationId }
-                mutableQuestionModal.update { held ->
-                    when {
-                        own == null -> null
-                        held?.batch == own -> held
-                        else -> QuestionModalState(own)
-                    }
+            heldQuestionBatch(questionBatch(conversationId)).collect { held ->
+                mutableQuestionModal.update { current ->
+                    val (own, agent) = held ?: return@update null
+                    if (current?.batch == own) current.copy(agent = agent) else QuestionModalState(own, agent = agent)
                 }
             }
         }
     }
+
+    /** This conversation's held batch with its agent; the list is subscribed only while a batch is held. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun heldQuestionBatch(batches: Flow<QuestionBatch?>): Flow<Pair<QuestionBatch, ConversationAgent>?> =
+        batches
+            .map { batch -> batch?.takeIf { it.conversationId == conversationId } }
+            .flatMapLatest { own -> if (own == null) flowOf(null) else conversationAgent().map { own to it } }
+
+    /** This conversation's agent, Claude until the list names it: a cold list must not hold the modal back. */
+    private fun conversationAgent(): Flow<ConversationAgent> =
+        repository
+            .observeConversations(ConversationFilter.All)
+            .map { rows -> rows.firstOrNull { it.id == conversationId }?.agent ?: ConversationAgent.Claude }
+            .onStart { emit(ConversationAgent.Claude) }
+            .distinctUntilChanged()
 
     fun onQuestionEvent(event: QuestionModalEvent) {
         val held = mutableQuestionModal.value ?: return

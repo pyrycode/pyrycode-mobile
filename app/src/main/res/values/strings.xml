@@ -254,6 +254,8 @@
     <string name="modal_always_allow_label">Don\'t ask again this session for:</string>
     <string name="modal_send_failed">Couldn\'t send your answer. Try again.</string>
     <string name="question_modal_title">Claude has questions</string>
+    <!-- #1116: the questions dialog of a Codex conversation. -->
+    <string name="question_modal_title_codex">Codex has questions</string>
     <string name="question_other">Other</string>
     <string name="question_other_placeholder">Type your answer</string>
     <string name="question_continue">Continue</string>
@@ -374,9 +376,14 @@
     <string name="markdown_task_mark_unchecked">Task not done</string>
     <!-- #685: alert copy is fixed app text; no conversation name or daemon text ever reaches the shade. -->
     <string name="notification_channel_attention">Replies and prompts</string>
-    <string name="notification_channel_attention_description">When claude finishes a reply or needs your answer</string>
+    <string name="notification_channel_attention_description">When a reply finishes or an answer is needed</string>
     <string name="notification_turn_completed">claude finished a reply</string>
     <string name="notification_prompt">claude is waiting for your answer</string>
+    <!-- #1116: the alert names its conversation's agent; neutral when the host's list lacks the conversation. -->
+    <string name="notification_turn_completed_codex">Codex finished a reply</string>
+    <string name="notification_prompt_codex">Codex is waiting for your answer</string>
+    <string name="notification_turn_completed_neutral">A reply finished</string>
+    <string name="notification_prompt_neutral">An answer is needed</string>
     <!-- #933: the composer's attachment picker and strip. -->
     <string name="cd_attach_files">Attach files</string>
     <string name="cd_remove_attachment">Remove %1$s</string>
