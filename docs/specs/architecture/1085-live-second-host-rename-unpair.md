@@ -79,3 +79,29 @@ Pending for the documentation stage:
 ## Open questions
 
 - Does the editor's name field accept `performTextReplacement` while the dialog is in its own window? `EditHostModalTest` drives it the same way under Robolectric; confirm by compiling and via the live gate.
+
+## Revisions
+
+- **Build, 2026-09-25.** `assertFirstHostUntouched` takes one `FirstHost` holder (server id, label, bundle, conversation ids, conversation name) instead of five parameters. Added `editorClosed(context)`: every wait that follows a modal action first requires both the editor title and the confirmation title to be gone, so a list check cannot pass while the modal is still drawn and the modal's own scrollable cannot answer a list scroll. B's removal is checked as absence from the whole tree (scrolling to B's Edit control and to `nameB`'s row must both fail), not as absence from the composed nodes, which an off-screen section would satisfy trivially. The open question on `performTextReplacement` inside the dialog stays open until the live gate runs the scenario.
+- **Security review, 2026-09-25.** The ticket is `security-sensitive`; the first plan commit went out without the § Security review pass. The pass below ran before any implementation was committed, against the plan as revised above. It changed nothing in the design.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The only external inputs are the harness's instrumentation arguments, read through `twoHostArg` (whose failure message names the key, never the value), and the pair code, which enters the app only through the existing `PairCodeScreen` parser that `pairHostByCode` drives. The rename value is test-authored and short; `HostEditorController.submitName` trims and clamps any name at the write, and that bound is proven by the `HostEditor` unit tests, not here.
+- [Tokens] No findings in the new code. `ARG_PAIR_CODE_B` carries B's pairing token. The scenario passes it only to `pairHostByCode`, which types it into the pair-code field. No log, assertion message or `requireNotNull` message includes it. Every assertion in the scenario runs after `PairCodeScreen` has left composition, so a Compose failure that prints matched nodes cannot print the code field. The confirmed unpair asserts `PairedServerCollectionStore.loadById(serverIdB) == null`, so the Keystore-wrapped record holding B's device token is proven gone from the phone, not only hidden from the list.
+- [Tokens — revocation] OUT OF SCOPE. Unpair is phone-local by #745's design. B's device token stays valid on the daemon, which is what lets #847 pair the same code again in the same run. Revoking on the daemon when the phone unpairs would be a product change across both repositories. No ticket exists for it, and this test-only ticket should not open one.
+- [Tokens — harness] OUT OF SCOPE, and unchanged. `scripts/e2e-emulator.sh` passes the pair code as a Gradle instrumentation argument, which already happens for #847. This ticket adds no new echo or log of `PAIR_CODE_B`; the script diff only adds comments and a method name.
+- [File / storage] No findings. No filesystem path is built. The `finally` removal is id-exact (`PairedServerCollectionStore.remove(serverIdB)`), as in #847. A red run before the confirmed unpair leaves B's default-workspace preference, if one was set. This scenario never sets one, and `HostEditorController.confirmUnpair` documents a leftover key as inert.
+- [Android surface] No findings. No component, intent, deep link or pending intent is added. The CAMERA grant goes to the app under test only, exactly as #847 grants it.
+- [Crypto] No findings. No primitive is touched. The scenario checks that A's `RelayConnectionBundle` is the same instance before and after, so a rebuilt Noise session on A would fail the test rather than pass it silently.
+- [Network & I/O] No findings. No endpoint is added. B's relay URL is the one the script already re-points for #847.
+- [Errors / logs] No findings. The assertion messages are static text. Host names appear in `assertEquals` diffs, and they are run-unique test strings, not secrets.
+- [Concurrency] No findings. `runBlocking` appears only in test code, bounded by `withTimeout` as the surrounding helpers are. Shared app state is the risk #847 names: a newly paired host becomes the registry's selection. The `finally` block removes B on whichever graph is current, so a later scenario's `awaitConnected` follows A again.
+- [Threat model] The scenario proves the phone-side half of "managing one host cannot disturb another": the registry keys bundles by record, and removing B closes only B's bundle. A hostile relay or daemon is not exercised; both are out of scope for a UI-management proof.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-25
