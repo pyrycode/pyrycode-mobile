@@ -576,9 +576,9 @@ fun ThreadScreen(
                                                     SessionBoundaryDelimiter(boundary = item, agent = state.agent)
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
-                                                is ThreadItem.Banner -> BannerNoticeRow(item = item)
+                                                is ThreadItem.Banner -> BannerNoticeRow(item = item, agent = state.agent)
                                                 is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
-                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item)
+                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item, agent = state.agent)
                                             }
                                         // One render path for both kinds of queued row — the one the echo
                                         // correlated to and the one this device minted no echo for — so the
@@ -869,7 +869,7 @@ private fun StatusReading(
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
+        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
         else ->
             ThinkingIndicator(
                 isThinking = isThinking,
