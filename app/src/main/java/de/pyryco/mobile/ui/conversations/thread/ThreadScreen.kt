@@ -198,6 +198,13 @@ fun ThreadScreen(
     attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
     onAttachmentShown: (String) -> Unit = {},
     onRetryAttachment: (String) -> Unit = {},
+    // #1027: a ready markdown attachment's tap, and the one-shot signal that it could not be read. Bound by
+    // MainActivity → vm::onOpenMarkdownAttachment / vm.markdownOpenFailures.
+    onOpenMarkdownAttachment: (String) -> Unit = {},
+    markdownOpenFailures: Flow<Unit> = emptyFlow(),
+    // #1050: a tapped link to a workspace markdown note in an assistant reply, by its path. Bound by
+    // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
+    onOpenMarkdownLink: (String) -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -257,9 +264,13 @@ fun ThreadScreen(
     // user should hear about is one static sentence, never a name, URI or path.
     val noticeScope = rememberCoroutineScope()
     val attachmentActions =
-        rememberAttachmentActions(attachmentStates) { notice ->
+        rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
             noticeScope.launch { snackbarHostState.showSnackbar(resources.getString(notice.message)) }
         }
+    // #1027: a markdown file that cannot be read says what any failed open says.
+    LaunchedEffect(markdownOpenFailures, snackbarHostState) {
+        markdownOpenFailures.collect { snackbarHostState.showSnackbar(resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
+    }
     // #934: a pasted image joins the chat's strip through the same sink as a picked one.
     val onImagesPasted = rememberPastedImageReceiver(onAttachmentsPicked)
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
@@ -549,6 +560,7 @@ fun ThreadScreen(
                                                         onRetryAttachment = onRetryAttachment,
                                                         onOpenAttachment = attachmentActions.open,
                                                         onSaveAttachment = attachmentActions.save,
+                                                        onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
                                                     SessionBoundaryDelimiter(boundary = item)

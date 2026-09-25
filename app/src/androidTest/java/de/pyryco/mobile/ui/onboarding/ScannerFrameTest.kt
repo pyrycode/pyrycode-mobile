@@ -1,6 +1,5 @@
 package de.pyryco.mobile.ui.onboarding
 
-import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -14,14 +13,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -36,7 +33,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
-import java.io.File
 
 @OptIn(ExperimentalTestApi::class)
 class ScannerFrameTest {
@@ -112,13 +108,6 @@ class ScannerFrameTest {
         val dir =
             InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
                 ?: instrumentation.targetContext.getExternalFilesDir(null)?.path ?: error("Missing screenshot directory")
-        File(dir).mkdirs()
-        File(dir, "$name.png").outputStream().use {
-            rule
-                .onNodeWithTag("scanner_frame")
-                .captureToImage()
-                .asAndroidBitmap()
-                .compress(Bitmap.CompressFormat.PNG, 100, it)
-        }
+        rule.saveScreenshot(dir, name) { rule.onNodeWithTag("scanner_frame") }
     }
 }

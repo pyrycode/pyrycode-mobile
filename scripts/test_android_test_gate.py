@@ -261,8 +261,11 @@ class AndroidGateTest(unittest.TestCase):
             home.mkdir(parents=True)
             with patch.dict(os.environ, {"ANDROID_USER_HOME": tmp}):
                 self.assertIsNone(gate.managed_avd("pixel2Api33Atd"))
+                # #955: the AVD left from the aosp-atd image has no Play services, so it is never booted.
                 (home / "dev33_aosp_atd_arm64-v8a_Pixel_2.ini").write_text("")
-                self.assertEqual(gate.managed_avd("pixel2Api33Atd"), (home, "dev33_aosp_atd_arm64-v8a_Pixel_2"))
+                self.assertIsNone(gate.managed_avd("pixel2Api33Atd"))
+                (home / "dev33_google_atd_arm64-v8a_Pixel_2.ini").write_text("")
+                self.assertEqual(gate.managed_avd("pixel2Api33Atd"), (home, "dev33_google_atd_arm64-v8a_Pixel_2"))
                 self.assertIsNone(gate.managed_avd("otherDevice"))
 
     def test_free_emulator_port_skips_a_busy_pair(self):
@@ -331,6 +334,54 @@ class AndroidGateTest(unittest.TestCase):
             with patch.object(gate, "ROOT", root):
                 self.assertEqual(gate.changed_paths(), ["docs/new.md", "edited.kt", "untracked.kt"])
                 self.assertIsNone(gate.changed_paths("no-such-branch"))
+
+    def test_live_tests_accepts_only_live_class_methods(self):
+        method = gate.LIVE_CLASS + "#interactiveTurn_a"
+        self.assertEqual(gate.parse_live_tests(f"{method}, {method},{gate.LIVE_CLASS}#b"), [method, gate.LIVE_CLASS + "#b"])
+        for bad in ("", ",", "Other#a", gate.LIVE_CLASS, gate.LIVE_CLASS + "#a[0]", gate.LIVE_CLASS + "#a b",
+                    f"{method},Other#a"):
+            with self.subTest(bad=bad):
+                self.assertIsNone(gate.parse_live_tests(bad))
+
+    def test_live_tests_runs_the_subset_with_a_floor_of_one(self):
+        method = gate.LIVE_CLASS + "#interactiveTurn_ping"
+        seen = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd"
+            started = 2_000_000_000
+
+            def run(command, **kwargs):
+                seen.update(kwargs["env"])
+                directory.mkdir(parents=True)
+                path = self.report(directory, f'<testsuite tests="1"><testcase classname="{gate.LIVE_CLASS}" '
+                                              'name="interactiveTurn_ping"/></testsuite>')
+                os.utime(path, ns=(started + 1, started + 1))
+                return subprocess.CompletedProcess(command, 0)
+
+            stdout = io.StringIO()
+            with patch.object(gate, "ROOT", root), \
+                    patch.dict(os.environ, {"LIVE_TESTS": "stale"}, clear=True), \
+                    patch("sys.argv", ["android-test-gate.py", "live", "--tests", method]), \
+                    patch.object(gate, "claude_authenticated", return_value=True), \
+                    patch.object(gate.time, "time_ns", return_value=started), \
+                    patch.object(gate.subprocess, "run", side_effect=run), \
+                    contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(gate.main(), 0)
+        self.assertEqual(seen["LIVE_TESTS"], method)
+        self.assertEqual(len(ET.fromstring(stdout.getvalue()).findall(".//testcase")), 1)
+
+    def test_live_tests_is_refused_outside_live_and_when_malformed(self):
+        for argv in (["ui", "--tests", gate.LIVE_CLASS + "#a"], ["live", "--tests", "Other#a"]):
+            with self.subTest(argv=argv), patch("sys.argv", ["android-test-gate.py", *argv]), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                gate.main()
+
+    def test_emulator_script_runs_live_tests_in_place_of_the_curated_list(self):
+        script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
+        live = script[script.index('elif [ -n "${LIVE}" ]; then\n  # LIVE curates'):]
+        branch = live[: live.index("\nelse\n")]
+        self.assertTrue(branch.rstrip().endswith('if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi'))
 
     def test_live_floor_and_expected_class_are_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:

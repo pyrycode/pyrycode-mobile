@@ -115,6 +115,70 @@ class HistoryPageReducerTest {
         assertEquals(expected, explicitNull)
     }
 
+    // ---- #1020: a stored user message's attachment_ids become references too -----------------------
+
+    @Test
+    fun reduce_storedUserMessageNamingAttachments_carriesOneReferencePerIdInWireOrder_withNoHints() {
+        val rows =
+            reduceHistoryPage(
+                listOf(entry(1, "message", messagePayload("m1", "user", "look", ids = listOf(ID_B, ID_A)))),
+                interactive = true,
+            )
+
+        val row = rows.messageRow("m1")
+        assertEquals(Role.User, row?.role)
+        assertEquals("look", row?.content)
+        assertEquals(listOf(MessageAttachment(ID_B), MessageAttachment(ID_A)), row?.attachments)
+    }
+
+    @Test
+    fun reduce_storedUserMessageIds_areFilteredDeduplicatedAndCappedAsASend() {
+        val bad = listOf(ID_A, ID_A.uppercase(), "../etc/passwd", "", ID_B, ID_A)
+        val over = (0..40).map { "00000000-0000-4000-8000-%012d".format(it) }
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "message", messagePayload("m2", "user", "many", ids = over)),
+                    entry(1, "message", messagePayload("m1", "user", "hi", ids = bad)),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf(MessageAttachment(ID_A), MessageAttachment(ID_B)), rows.messageRow("m1")?.attachments)
+        assertEquals(over.take(32).map { MessageAttachment(it) }, rows.messageRow("m2")?.attachments)
+    }
+
+    @Test
+    fun reduce_storedUserMessageWithoutIds_reducesAsBefore() {
+        val plain = reduceHistoryPage(listOf(entry(1, "message", messagePayload("m1", "user", "hi"))), interactive = true)
+        val explicitNull =
+            reduceHistoryPage(
+                listOf(
+                    entry(
+                        1,
+                        "message",
+                        """{"conversation_id":"$CONVERSATION","message_id":"m1","role":"user","text":"hi","attachment_ids":null}""",
+                    ),
+                ),
+                interactive = true,
+            )
+
+        val expected = listOf(messageItem("m1", content = "hi"))
+        assertEquals(expected, plain)
+        assertEquals(expected, explicitNull)
+    }
+
+    @Test
+    fun reduce_storedAssistantMessageNamingIds_carriesNoReferences() {
+        val rows =
+            reduceHistoryPage(
+                listOf(entry(1, "message", messagePayload("m1", "assistant", "hi", ids = listOf(ID_A)))),
+                interactive = true,
+            )
+
+        assertEquals(listOf(messageItem("m1", content = "hi", role = Role.Assistant)), rows)
+    }
+
     @Test
     fun merge_aHistoryTwinFillsTheMissingHintsOfTheRowKept_inPlace() {
         val named = MessageAttachment(ID_A, "photo.jpg", "image/jpeg")
@@ -1091,16 +1155,17 @@ class HistoryPageReducerTest {
         messageId: String,
         role: String,
         text: String,
-    ): String = """{"conversation_id":"$CONVERSATION","message_id":"$messageId","role":"$role","text":"$text"}"""
+        ids: List<String>? = null,
+    ): String = """{"conversation_id":"$CONVERSATION","message_id":"$messageId","role":"$role","text":"$text"${attachmentIdsField(ids)}}"""
+
+    private fun attachmentIdsField(ids: List<String>?): String =
+        ids?.let { list -> ""","attachment_ids":[${list.joinToString(",") { "\"$it\"" }}]""" }.orEmpty()
 
     private fun sendMessagePayload(
         messageId: String,
         text: String,
         ids: List<String>? = null,
-    ): String {
-        val attachmentIds = ids?.let { list -> ""","attachment_ids":[${list.joinToString(",") { "\"$it\"" }}]""" }.orEmpty()
-        return """{"conversation_id":"$CONVERSATION","message_id":"$messageId","text":"$text"$attachmentIds}"""
-    }
+    ): String = """{"conversation_id":"$CONVERSATION","message_id":"$messageId","text":"$text"${attachmentIdsField(ids)}}"""
 
     private fun toolUsePayload(
         toolUseId: String,

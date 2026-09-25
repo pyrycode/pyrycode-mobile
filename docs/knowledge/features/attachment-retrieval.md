@@ -11,6 +11,15 @@ unpair — see [§ Removal](#host-store--datacacheattachmentstorekt) below. Wire
 section still says nothing answers `request_attachment` — stale; the daemon answers it through
 `handleRequestAttachment` (`cmd/pyry/relay.go`). That correction belongs to the pyrycode repo, not here.
 
+`ConversationRepository.readWorkspaceFile` ([#1049](https://github.com/pyrycode/pyrycode-mobile/issues/1049))
+is a connection-level sibling that reuses this same reassembly to answer a *live* read of one markdown file
+from a conversation's workspace, named by path rather than by attachment id. It shares every rule below —
+the driver, the stall deadline, the one-retrieval-per-connection lock, the `Failed` outcomes — but touches
+neither `AttachmentStore` nor disk: the operator decided on 2026-09-24 that opening a workspace file always
+shows it as it is on disk right now, so nothing is cached and two reads of the same path send two requests.
+Wire contract: `../pyrycode/docs/protocol-mobile.md` § Attachments → `read_workspace_file`. There is no UI in
+the ticket that added it; the link tap that opens a workspace file this way is a sibling ticket.
+
 This is the retrieval-leg sibling of [Attachment upload](attachment-upload.md) (#829): same chunk shape
 (`AttachmentChunkPayloadDto`, `ATTACHMENT_CHUNK_BYTES = 45_000`), opposite correlation. Upload correlates
 by the chunk's own envelope id, because the daemon's one success reply doesn't need to; retrieval
@@ -35,6 +44,12 @@ correlates by **the request's own envelope id**, because every answering frame �
 sent, both checked with `isAttachmentIdShape` before one is built. There is no request-id key on the
 wire; the answer names the request's own envelope id instead. Chunks decode through the existing
 `AttachmentChunkPayloadDto` unchanged; its retrieval-leg `conversation_id` is empty and ignored.
+
+`internal data class ReadWorkspaceFilePayloadDto(conversation_id, path)` ([#1049](https://github.com/pyrycode/pyrycode-mobile/issues/1049))
+sits beside it. Both keys are always sent too, but neither is shape-checked by the DTO itself:
+`conversation_id` is checked by the driver before the DTO is built (§ Per-connection driver below), and
+`path` is sent exactly as given — the phone does not interpret it, the daemon owns confinement. `toString`
+is overridden to name neither field, since the path and the conversation id must never reach a log.
 
 ## Result types — `data/repository/AttachmentRetrieval.kt`
 
@@ -77,13 +92,25 @@ One request, settled once, `@Synchronized` like [`DebugBundleTransfer`](relay-de
 `accept(envelope)` claims only frames whose `inReplyTo` equals the request's own envelope id; everything
 else returns `false` and flows on to the ordinary demux.
 
+For `request_attachment` the requested id is fixed at construction, exactly as before. For
+`read_workspace_file` ([#1049](https://github.com/pyrycode/pyrycode-mobile/issues/1049)) the daemon mints
+the answer's id, so the constructor's `attachmentId` is `String?`, `null` until pinned: the first chunk to
+arrive pins it, once that id passes `isAttachmentIdShape`, and every later chunk must repeat the pinned
+value exactly. The pin happens in `acceptChunk` before `admitFirst`, so "first chunk" means first to
+arrive (possibly out of order), matching how the other first-chunk claims (`size`, `total_chunks`,
+`sha256`, `filename`, `mime_type`) are fixed. `toString` and the per-chunk log carry the pinned id, never
+a path.
+
 - `error` → `attachment.not_found` settles `NotFound`; any other code (including
   `attachment.stream_aborted`), or a payload without a readable `code`, settles `Unavailable` — the
   transfer reads only the `code` string, not the full `ErrorPayload`, so a refusal missing `message` or
   `retryable` still classifies.
 - `attachment_chunk` → one validation chain; any violation settles `Invalid` or `TooLarge`:
-  - decode fails, or `attachment_id` doesn't equal the requested one → `Invalid` (a chunk that names the
-    right request but the wrong attachment fails the retrieval, per the acceptance criteria);
+  - decode fails → `Invalid`; the id check comes next — with a fixed id (`request_attachment`), an
+    `attachment_id` that doesn't equal the requested one → `Invalid` (a chunk that names the right request
+    but the wrong attachment fails the retrieval, per the acceptance criteria); with no id pinned yet
+    (`read_workspace_file`), a first-arrival id that fails `isAttachmentIdShape` → `Invalid`, and once
+    pinned, a later chunk naming a different id → `Invalid`;
   - **first chunk fixes the claims**: `size`, `total_chunks`, `sha256`, `filename`, `mime_type`.
     `size < 0` → `Invalid`; `size > MAX_BYTES` → `TooLarge`, checked **before** the per-index slot array
     is allocated; `total_chunks != max(1, ceil(size / 45000))` → `Invalid`;
@@ -104,38 +131,61 @@ else returns `false` and flows on to the ordinary demux.
 
 Built by `RemoteConversationRepository` with `nextRequestId`, `send = pump::send`, and
 `stallTimeout = 30.seconds` (`DEFAULT_STALL_TIMEOUT` — the same figure desktop's reassembler uses and the
-relay's pong timeout). `fetch(conversationId, attachmentId)`:
+relay's pong timeout). `fetch(conversationId, attachmentId)` and
+`readWorkspaceFile(conversationId, path)` ([#1049](https://github.com/pyrycode/pyrycode-mobile/issues/1049))
+share one private `retrieve(type, payload, attachmentId: String?, requestEvent, outcomeEvent)`, taken
+under the same `lock`:
 
-1. Both ids must pass `isAttachmentIdShape` or return `NotFound` without sending anything.
-2. Takes a `Mutex` — **one retrieval per connection**, which is what bounds memory to one
+1. `fetch` requires both `conversationId` and `attachmentId` to pass `isAttachmentIdShape`.
+   `readWorkspaceFile` requires `conversationId` to pass it and `path` to be non-blank. Either check
+   failing returns `NotFound` without sending anything, before `retrieve` is ever entered.
+2. `retrieve` takes a `Mutex` — **one retrieval per connection**, so a workspace read and a `fetch` on
+   the same connection still run one at a time. That is what bounds memory to one
    `AttachmentRetrievalLimit.MAX_BYTES` buffer per host, mirroring the upload leg's one-upload-per-
    connection `uploadLock`.
 3. Registers the transfer **before** sending — a refused registration (inbound already ended) returns
    `Unavailable` with nothing sent; a fast answer can never be missed.
-4. Sends one `request_attachment`; a thrown exception or a `false` return fails the transfer
-   `Unavailable`.
+4. Sends one envelope (`request_attachment` or `read_workspace_file`); a thrown exception or a `false`
+   return fails the transfer `Unavailable`.
 5. Waits: each `stallTimeout` window with no change on `activity` fails the transfer `Unavailable`.
-6. Unregisters in `finally`, and logs `event=attachment_request id=<A>`, per-chunk
+6. Unregisters in `finally`. `fetch` logs `event=attachment_request id=<A>`, per-chunk
    `event=attachment_chunk_in id=<A> index=<i> total=<n>`, and
-   `event=attachment_retrieval id=<A> outcome=<Class>` at settle. Never bytes, filename, digest, or path.
+   `event=attachment_retrieval id=<A> outcome=<Class>` at settle. `readWorkspaceFile` logs
+   `event=workspace_file_request` and `event=workspace_file_read outcome=<Class>` — neither carries the
+   path or the conversation id, unlike `fetch`'s events, which carry the daemon-minted attachment id (not
+   sensitive) rather than anything caller-chosen. Never bytes, filename, digest, or path, on either
+   request type.
+
+`readWorkspaceFile` builds its transfer with `attachmentId = null` — the id is unknown until the daemon
+answers; see the first-arrival pin in § Reassembly above. Every call is a fresh request, so nothing is
+cached: two calls for the same path send two requests.
 
 `route(envelope)` (`@Synchronized`) offers to the active transfer; `end()` (`@Synchronized`, called from
 the inbound collector's `finally`, beside `endAttachmentUploads()`) marks inbound ended and fails the
 active transfer `Unavailable` — a stream cannot outlive its connection, and a retrieval started after
-teardown is refused rather than orphaned.
+teardown is refused rather than orphaned. This applies equally to a `readWorkspaceFile` in flight.
 
 `RemoteConversationRepository` builds `attachmentRetrievals` as a `private val`, routes it in
 `onInbound` right after `routeAttachmentUpload` (ahead of the general demux), calls `end()` in the
 `init` collector's `finally` next to `endAttachmentUploads()`, and
-`override suspend fun fetchAttachment(...) = attachmentRetrievals.fetch(...)`.
+`override suspend fun fetchAttachment(...) = attachmentRetrievals.fetch(...)` and
+`override suspend fun readWorkspaceFile(...) = attachmentRetrievals.readWorkspaceFile(...)`.
 
-## Facade — `StableConversationRepository.fetchAttachment`
+## Facade — `StableConversationRepository.fetchAttachment` / `readWorkspaceFile`
 
 Snapshots `currentRepository.value` and delegates, exactly like `uploadAttachment`'s [snapshot-or-result
 posture](stable-conversation-repository.md#uploads--snapshot-or-result-829): with no live repository it
 returns `AttachmentRetrievalResult.Unavailable`, a value in the same `Failed` set the connected path can
 also produce, not an `IllegalStateException`. A connection change mid-fetch never moves a fetch already
 in flight — it keeps running (or fails) against the connection it started on.
+
+`readWorkspaceFile` ([#1049](https://github.com/pyrycode/pyrycode-mobile/issues/1049)) follows the same
+posture with its own explicit override. **This facade overrides every `ConversationRepository` verb
+explicitly** rather than inheriting the interface's default-throw, so a new interface method needs an
+override added here too, or it throws through the facade ViewModels actually hold — `FakeConversationRepository`
+and other test doubles staying on the default is invisible until something calls through the live facade.
+The plan for #1049 had budgeted only the interface and `RemoteConversationRepository`; the missing
+override here was caught during implementation, not planning.
 
 ## Host store — `data/cache/AttachmentStore.kt`
 
@@ -225,11 +275,17 @@ and passed `if (useRelay) get() else null` from `hostConversationModule`, mirror
 
 ### `ConversationRepository` interface
 
-Two new default-throwing members, the same idiom as `requestSystemPrompt`:
+Default-throwing members, the same idiom as `requestSystemPrompt`:
 
 - `fetchAttachment(conversationId, attachmentId): AttachmentFetchResult` — connection-level, host-blind.
   Screens don't call this directly; it exists so `StableConversationRepository` and
   `RemoteConversationRepository` have something to override.
+- `readWorkspaceFile(conversationId, path): AttachmentFetchResult`
+  ([#1049](https://github.com/pyrycode/pyrycode-mobile/issues/1049)) — connection-level, host-blind live
+  read of a workspace file, never cached. `RemoteConversationRepository` and `StableConversationRepository`
+  override it (see § Facade above); `CachingConversationRepository` forwards it through `by delegate`
+  unchanged, so it never reaches `AttachmentStore`; `FakeConversationRepository` and other test doubles
+  keep the default throw.
 - `retrieveAttachment(conversationId, attachmentId): AttachmentRetrievalResult` — the kept file on this
   repository's host. Only `CachingConversationRepository` actually keeps files; every other repository
   either doesn't override it (default-throws) or, on `StableConversationRepository`, doesn't need to
@@ -271,8 +327,12 @@ Two new default-throwing members, the same idiom as `requestSystemPrompt`:
 
 `RelayLog.d` only (debug-gated): `event=attachment_request id=<A>`, `event=attachment_chunk_in id=<A>
 index=<i> total=<n>`, `event=attachment_retrieval id=<A> outcome=<Class>` from the connection layer, and
-`event=attachment_store_failed id=<A>` from the store on a write failure. Never the bytes, the filename,
-the digest, the MIME type, the daemon's error code text, an exception message, or a local path.
+`event=attachment_store_failed id=<A>` from the store on a write failure. `readWorkspaceFile`
+([#1049](https://github.com/pyrycode/pyrycode-mobile/issues/1049)) adds `event=workspace_file_request`
+and `event=workspace_file_read outcome=<Class>` from the same connection layer — unlike the attachment
+events above, neither carries an id, since the path and the conversation id must never appear in a log.
+Never the bytes, the filename, the digest, the MIME type, the daemon's error code text, an exception
+message, or a local path.
 
 ## Testing
 
@@ -283,12 +343,26 @@ the digest, the MIME type, the daemon's error code text, an exception message, o
   digest mismatch at completion; an uppercase digest rejected (lowercase-hex only); `not_found` →
   `NotFound`; `stream_aborted` after partial chunks → `Unavailable` with the partial state discarded (a
   chunk arriving after the abort is claimed but changes nothing); another or malformed `error` →
-  `Unavailable`; a foreign `in_reply_to` not claimed; first outcome wins once settled.
+  `Unavailable`; a foreign `in_reply_to` not claimed; first outcome wins once settled. #1049 added: an
+  unpinned transfer (`attachmentId = null`) accepts a stream under any well-shaped id and completes
+  `Fetched`, with the id pinned from the first chunk to arrive even out of order; an unpinned transfer's
+  first chunk with a malformed id → `Invalid`; an unpinned transfer whose second chunk names a different
+  id than the one its first chunk pinned → `Invalid`. The existing
+  `chunkNamingTheRequestButAnotherAttachment_failsTheRetrieval` keeps proving the fixed-id rule for
+  `request_attachment` is unchanged.
 - `RemoteConversationRepositoryAttachmentRetrievalTest` (fake pump, the sibling-test-class pattern
   `RemoteConversationRepositoryAttachmentTest` established) — one `request_attachment` naming the right
   conversation and attachment; success end to end; an invalid id shape sends nothing; a refused send; a
   dropped connection (pump closes) → `Unavailable`; a stall after `stallTimeout` of virtual time →
-  `Unavailable`; a retry after a failure sends a fresh request; logs carry no filename or digest.
+  `Unavailable`; a retry after a failure sends a fresh request; logs carry no filename or digest. #1049
+  extended this class for `readWorkspaceFile`: one call sends exactly one `read_workspace_file` whose
+  payload has exactly `conversation_id` and `path` with the given values (a path with spaces and `../`
+  sent verbatim); two calls for the same path send two requests; a malformed conversation id or a blank
+  path → `NotFound` with nothing sent; `attachment.not_found` → `NotFound`; `attachment.stream_aborted`
+  and an unknown code → `Unavailable`; a refused send, a dropped connection mid-stream, and a stall each
+  → `Unavailable`; a workspace read and a `fetchAttachment` on one connection run one at a time; no
+  captured log line, and neither the payload DTO's nor the transfer's `toString`, contains the path or
+  the conversation id.
 - `AttachmentStoreTest` (`TemporaryFolder`) — success writes exact bytes under the host directory with no
   `.part` left behind; a kept file is returned with no fetch call; concurrent retrievals of the same key
   produce one fetch and one shared outcome; a failure leaves no file under the attachment's id; a later
@@ -296,14 +370,18 @@ the digest, the MIME type, the daemon's error code text, an exception message, o
   separate trees. `removeHost` (#900): deleting host A's directory removes every file kept for A across
   two conversations and leaves host B's kept file readable with no fetch; an unknown host is a successful
   no-op; a host directory that cannot be deleted (root made read-only) reports failure without throwing.
-- `StableConversationRepositoryTest` — `fetchAttachment` with no live repository returns `Unavailable`.
+- `StableConversationRepositoryTest` — `fetchAttachment` with no live repository returns `Unavailable`;
+  #1049 added the same case for `readWorkspaceFile`.
 - `CachingConversationRepositoryTest` — `retrieveAttachment` goes through the store with this wrapper's
   own `serverId` and the delegate's `fetchAttachment` as the fetch function.
 - Under `testDebugUnitTest`, `RelayLog.enabled` is `true` and the default sink calls `android.util.Log`,
   which throws on plain JVM with no Robolectric — the same capturing-sink requirement documented at
   [Relay diagnostic log § Testing](relay-log.md#testing) and [Attachment upload §
   Testing](attachment-upload.md#testing) applies to every test here that reaches a `RelayLog.d` call.
-- No Compose surface and no operator-facing flow of its own — the UI is [#984](message-bubble-attachment-slot.md#attachment-slot-since-984), which maps this leg's four failure members onto `AttachmentViewState` (`Retrieved → Ready`, `NotFound → NotFound`, `TooLarge`/`Invalid`/`Unavailable` → `Failed`) — so no rung-3/4 scenario here either; #674 proves the live exchange.
+- `readWorkspaceFile` ([#1049](https://github.com/pyrycode/pyrycode-mobile/issues/1049)) has no rung-3
+  scenario for the same reason: it is not operator-facing until the sibling UI ticket wires the link tap
+  that opens a workspace file this way.
+- No Compose surface and no operator-facing flow of its own — the UI is [#984](message-bubble-attachment-slot.md#attachment-slot-since-984), which maps this leg's four failure members onto `AttachmentViewState` (`Retrieved → Ready`, `NotFound → NotFound`, `TooLarge`/`Invalid`/`Unavailable` → `Failed`) — so no rung-3/4 scenario here either; [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016) (split from #674) proves `request_attachment` live from the peer's side (retrieving the phone's own upload) and from the phone's side (retrieving a file claude offers with `send_file`), each matching the fixture's SHA-256; see `docs/e2e-interactive-stream.md`. The remaining leg — another client's upload, named on a message, retrieved after a history reload — was blocked on the daemon dropping a `message` entry's `attachment_ids` from history entirely, so `request_attachment` being answered said nothing about whether a client could ever learn the id to ask for after a reload; [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020) closed that gap (see [Remote conversation repository — reads and the thread store — history paging](remote-conversation-repository-reads-and-thread-store-history-paging.md) for the reducer change) and the live scenario proving this leg, `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`, is now in `docs/e2e-interactive-stream.md`'s LIVE list.
 
 ## Related
 
