@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import kotlinx.serialization.SerialName
@@ -109,7 +110,23 @@ internal data class ModelListRowDto(
     @SerialName("effort_levels") val effortLevels: List<String>,
     @SerialName("supports_auto_mode") val supportsAutoMode: Boolean = false,
     @SerialName("truncated_fields") val truncatedFields: List<String>? = null,
+    val agent: String? = null,
+    val family: String? = null,
 )
+
+/**
+ * A `model_list` row's `agent` tag (#1110) as the conversation agent whose menu lists it. The tag is
+ * present only for a `multi_agent` client, and an absent one is Claude's, which is all such a client is
+ * ever sent. Exactly `claude` and `codex` name an agent; any other value — a case variant included —
+ * is `null`, a row that belongs to neither conversation. This deliberately differs from
+ * [conversationAgentOf], where an unknown conversation agent reads Claude.
+ */
+internal fun modelRowAgentOf(wire: String?): ConversationAgent? =
+    when (wire) {
+        null, "claude" -> ConversationAgent.Claude
+        "codex" -> ConversationAgent.Codex
+        else -> null
+    }
 
 /**
  * Map a decoded `model_list` payload to its domain [ModelMenu] (#791).
@@ -135,6 +152,8 @@ internal fun ModelListPayloadDto.toMenu(): ModelMenu =
                     effortLevels = row.effortLevels,
                     supportsAutoMode = row.supportsAutoMode,
                     truncatedFields = row.truncatedFields,
+                    agent = modelRowAgentOf(row.agent),
+                    family = row.family,
                 )
             },
         droppedModels = droppedModels,
