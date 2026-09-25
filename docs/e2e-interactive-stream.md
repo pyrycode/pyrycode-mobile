@@ -913,6 +913,33 @@ then drops the task from the panel before the label is ever read. The assertion 
 or "No background tasks" and still rejects "No background-task report yet" — the live run showed the
 empty-roster reading win. One real claude turn: the prompt that starts the task.
 
+The **background-task-progress** scenario (#1076 —
+`interactiveTurn_backgroundAgentProgress_showsOnRunningCard`) extends the #967 background-task proof to
+the running card's progress block (#1044): it has claude start a `general-purpose` subagent — a
+`local_agent` task the daemon reports through the same `background_task_started` /
+`background_task_progress` frames — then, while the task is still running, asserts one panel card
+carries both an activity line (a prefix of a recorded progress description) and a meta line with a tools
+segment, since only the progress block draws the tools segment and the task's opening description cannot
+pass for it. It holds the task open with work, not a permission prompt: on this daemon a prompt draws as
+a dialog over the composer that would cover the Actions footer, and a *backgrounded* subagent risks ending
+before a frame arrives and costs a second turn on its finish notice. So the subagent runs in the
+**foreground** (as in the daemon's one measured `task_progress` capture) and is given a run of `Read`
+calls, one per message, on missing files inside the chat's working directory — the daemon's claude has no
+`Glob` tool, found when the first live attempt asked for it and the subagent made no call at all. One real
+claude turn: the prompt that starts the subagent.
+
+**`@Ignore`d, blocked on pyrycode/pyrycode#2658, a daemon parser gap — not added to the `LIVE=1` list.**
+The scenario's own steps passed live at both attempts: the progress frame arrived and the card drew both
+lines. The class's `UnrecognizedRowSentinel` (#586) then failed the run each time: a foreground subagent's
+first sidechain entry echoes the prompt claude gave it as a `user` text block, and the daemon's
+`(*Parser).emitUser` surfaces that echo as `unrecognized_message` (`site=user_block`,
+`message_type=text`). Any foreground subagent hits this, whatever the prompt says, so it is a daemon
+parser gap rather than something this scenario's prompt can route around — filed as
+[pyrycode/pyrycode#2658](https://github.com/pyrycode/pyrycode/issues/2658). To un-ignore once that lands:
+remove the `@Ignore` annotation, restore the method's entry on the `LIVE=1` list in
+`scripts/e2e-emulator.sh`, and raise `LIVE_MINIMUM` in `scripts/android-test-gate.py` — the AC #2 shape
+(#481 / #482), a documented manual case rather than an always-on red.
+
 No rung-4 twin: the scripted `fakeclaude` backend carries no `compacting`, `slash_command_list` or
 `background_task_*` frames (#946 records the same gap for `context_usage`). Two cases in this family stay
 proven only deterministically, and are not part of this ticket's own methods: banner notices
