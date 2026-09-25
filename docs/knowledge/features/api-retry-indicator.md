@@ -112,7 +112,7 @@ when {
     apiRetry != ApiRetryStatus.NotRetrying ->
         ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth(), agent = agent) // agent: #1114
     resetting != null ->
-        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth())
+        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth(), agent = agent) // #1112
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth(), agent = agent) // #1114
     turnOutcome != null ->
@@ -122,8 +122,9 @@ when {
 }
 ```
 
-`resetting` and `turnOutcome` did not gain `agent` in #1114 — see [Thinking indicator § Edge
-cases](thinking-indicator.md#edge-cases--limitations) for the partial-rollout note.
+`resetting` gained `agent` in #1112 — see [Resetting indicator § The agent
+name](resetting-indicator.md#the-agent-name-1112). `turnOutcome` still has not — see [Thinking indicator §
+Edge cases](thinking-indicator.md#edge-cases--limitations) for the remaining partial-rollout note.
 
 (Shown here at its current, post-[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) shape —
 `resetting` landed between api-retry and compaction in #872; the ladder also carried a `usageLimit` arm

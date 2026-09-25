@@ -11,10 +11,11 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/p
 fun SessionBoundaryDelimiter(
     boundary: ThreadItem.SessionBoundary,
     modifier: Modifier = Modifier,
+    agent: ConversationAgent = ConversationAgent.Claude,
 )
 ```
 
-Two params, no defaults on the load-bearing one. Stateless — no `remember`, no `LaunchedEffect`, no coroutine scope. The public composable resolves `TimeZone.currentSystemDefault()`, default `Locale`, and `LocalUriHandler.current`, then delegates to the file-internal `SessionBoundaryDelimiterContent(boundary, uriHandler, modifier)` worker. The injectable-`UriHandler` split mirrors [`MarkdownText`](./markdown-text.md)'s pattern and lets the androidTest exercise the click → URL side effect without `LocalUriHandler` mocking gymnastics.
+Three params; `boundary` is the only one without a default. Stateless — no `remember`, no `LaunchedEffect`, no coroutine scope. The public composable resolves `TimeZone.currentSystemDefault()`, default `Locale`, and `LocalUriHandler.current`, then delegates to the file-internal `SessionBoundaryDelimiterContent(boundary, uriHandler, modifier, agent)` worker. The injectable-`UriHandler` split mirrors [`MarkdownText`](./markdown-text.md)'s pattern and lets the androidTest exercise the click → URL side effect without `LocalUriHandler` mocking gymnastics. `agent` ([#1112](https://github.com/pyrycode/pyrycode-mobile/issues/1112)) defaults to `Claude`, so every pre-#1112 call site and preview keeps compiling and rendering unchanged.
 
 ## What it does
 
@@ -25,9 +26,9 @@ A `Column(fillMaxWidth().padding(start = MessageContentGutter, end = MessageCont
 1. **A centred `Row(horizontalArrangement = Arrangement.spacedBy(RuleLabelSpacing = 12.dp), verticalAlignment = CenterVertically)`** of a `weight(1f)` hairline rule, the reason label (`bodySmall`, `colorScheme.primary`, centred), and a second `weight(1f)` rule. Each rule is a `Box(Modifier.height(1.dp).background(outlineVariant.copy(alpha = 0.60f)))`. The design names `Schemes/inverse-primary` at 60% for the rules — #643 mapped that same token at that same alpha onto `outlineVariant` for the header rule, and this restyle reuses the mapping verbatim (M3's divider role, contrast-correct in both schemes, rather than only against the dark reference frame).
 
    The label is deliberately **unweighted**: `Row` measures a non-weighted child against the full available width before the weighted rules claim any, so a long `Workspace changed to …` label wraps (centred) and squeezes the rules toward zero instead of pushing anything past the viewport edge. Confirmed by the narrow preview and by `SessionBoundaryDelimiterTest` staying green unchanged across the restyle — no `Modifier.weight(1f, fill = false)` fallback was needed.
-2. **8.dp `Spacer(ExplanationTopSpacing)`, unchanged in kind from before #644** (previously 4.dp — widened alongside the rest of the restyle) **+ `FlowRow(horizontalArrangement = Arrangement.Center)`** — explanatory sentence and the `Install` `TextButton` on the same flow line so the button reads as inline within the sentence; `FlowRow` (not `Row`) is the load-bearing choice so the sentence wraps cleanly at narrow widths and the button reflows with the trailing text. The text is `"Claude doesn't remember messages above this line. Install a memory plugin to preserve context. "` (`bodySmall` / `onSurfaceVariant` / centered), trailed by `TextButton(onClick = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) }, contentPadding = PaddingValues(0.dp)) { Text("Install") }`.
+2. **8.dp `Spacer(ExplanationTopSpacing)`, unchanged in kind from before #644** (previously 4.dp — widened alongside the rest of the restyle) **+ `FlowRow(horizontalArrangement = Arrangement.Center)`** — explanatory sentence and the `Install` `TextButton` on the same flow line so the button reads as inline within the sentence; `FlowRow` (not `Row`) is the load-bearing choice so the sentence wraps cleanly at narrow widths and the button reflows with the trailing text. The text is `"${agentDisplayName(agent)} doesn't remember messages above this line. Install a memory plugin to preserve context. "` (`bodySmall` / `onSurfaceVariant` / centered), trailed by `TextButton(onClick = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) }, contentPadding = PaddingValues(0.dp)) { Text("Install") }`. Before [#1112](https://github.com/pyrycode/pyrycode-mobile/issues/1112) the sentence hardcoded `"Claude"`; `internal fun agentDisplayName(agent: ConversationAgent): String` (file-scope, beside `boundaryLabel`) now resolves it to `"Claude"` or `"Codex"` — a plain literal per value, not a string resource, matching this component's existing no-`stringResource` posture (see [Configuration](#configuration)).
 
-**The design draws neither the explanation nor the `Install` affordance, and both stay.** `CLAUDE.md` requires the explanatory line and the memory-plugin install affordance under every delimiter variant, this document's own record said so before #644, and `ScriptedSessionBoundaryTest` asserts the explanation string. #644 restyled only the rule-and-label arrangement above them; the explanation `FlowRow` and its `Install` button are otherwise untouched, and all five of `SessionBoundaryDelimiterTest`'s pre-#644 assertions (explanation, the three label prefixes, the Install tap) pass unchanged as the proof.
+**The design draws neither the explanation nor the `Install` affordance, and both stay.** `CLAUDE.md` requires the explanatory line and the memory-plugin install affordance under every delimiter variant, this document's own record said so before #644, and `ScriptedSessionBoundaryTest` asserts the explanation string. #644 restyled only the rule-and-label arrangement above them; #1112 named the agent inside that same sentence without touching its shape. All five of `SessionBoundaryDelimiterTest`'s pre-#644 assertions (explanation, the three label prefixes, the Install tap) and `SessionBoundaryDelimiterScreenTest`'s existing Claude assertions pass unchanged, run against the `agent` parameter's `Claude` default — the proof neither restyle changed a Claude conversation's rendering.
 
 The above-delimiter opacity treatment (de-emphasizing messages above the line) is **not** in this component — it's the surface responsibility of [#136](../codebase/136.md). [`ThreadScreen`](thread-screen.md) wraps each `LazyColumn` row in `Box(Modifier.alpha(rowAlpha))` against the most-recent-`SessionBoundary` cutoff, so when this delimiter happens to be an older boundary (not the most recent) it inherits the wrapper's `0.55f` alpha end-to-end — both rules, the label `Text`, explanatory `Text`, and the `Install` `TextButton`'s ripple all dim uniformly. This component holds no opacity state of its own; the `Modifier.alpha(...)` is render-only and passes through every child.
 
@@ -90,7 +91,7 @@ plus the file-private `RULE_ALPHA = 0.60f` the two rules paint `outlineVariant` 
 ## Configuration
 
 - **No new dependencies.** `kotlinx-datetime` was already on the classpath (its `.toJavaLocalTime()` interop extension is what reaches `java.time`); `java.time.format.DateTimeFormatter` / `FormatStyle` ship with the JDK on min SDK 33.
-- **No new string resources.** Literals only — same posture as the rest of `ui/conversations/components/` today.
+- **No new string resources.** Literals only — same posture as the rest of `ui/conversations/components/` today, including `agentDisplayName`'s two-value mapping (#1112).
 - **Theme tokens, updated by #644's restyle.** The two rules paint `MaterialTheme.colorScheme.outlineVariant` at 60% alpha (previously the single `HorizontalDivider` used it at full opacity); the reason label moved from `labelSmall` / `onSurfaceVariant` to `bodySmall` / `colorScheme.primary`, matching the design's named `Schemes/primary` role, which reads correctly in both schemes as-is. The explanatory sentence and `Install` button are untouched: `bodySmall` / `onSurfaceVariant`.
 
 ## Preview
@@ -111,6 +112,13 @@ Fixtures use a fixed `Instant.parse("2026-05-17T14:32:00Z")` so previews are det
 - **`Install` button is always present, on every variant.** Even when the explanatory copy could feel redundant (e.g. user just did `/clear` deliberately), the AC requires the line under every variant. Showing/hiding by reason was considered and explicitly out of scope. #644's restyle reconfirmed this — the design itself draws neither the explanation nor the button, and both were kept anyway per `CLAUDE.md`.
 - **No animation.** The delimiter appears/disappears with the underlying list update; no `AnimatedVisibility`. Acceptable for Phase 0.
 - **No a11y review.** The `Install` button inherits `TextButton`'s default semantics (`role = Role.Button`); no `onClickLabel` is set on the `TextButton`. Same open thread as [`ConnectionBanner`](./connection-banner.md)'s retry affordance — tracked there.
+- **Names the conversation's own agent since #1112.** [`ThreadScreen`](thread-screen.md) passes its
+  `state.agent` straight through at the `SessionBoundary` row dispatch; the wiring is a defaulted param,
+  not a `ThreadUiState` change to this component, sourced the same way as [Resetting indicator § The agent
+  name](resetting-indicator.md#the-agent-name-1112). `SessionBoundaryDelimiterScreenTest`'s
+  `a_Codex_conversation_names_Codex_and_keeps_the_install_button` pins the Codex sentence and the Install
+  button's continued presence; the pre-existing Claude assertions keep passing against the `Claude`
+  default unchanged.
 - **Unbounded `workspaceCwd` can still drive a layout-cost DoS — pre-existing, not addressed by #644.** The label interpolates `boundary.workspaceCwd` with no length bound on the inbound path; it renders into an unweighted `Text` in a `Row` since the restyle, which wraps identically to the pre-#644 centred `Text`. #644's security review named this rather than fixing it: the right home is a content-length bound in the decode layer, which would cover every render surface (this label and [`MessageBubble`](./message-bubble.md)'s `Message.content`) rather than each component defending itself.
 
 ## CompactionBoundaryDivider (#874)
@@ -172,10 +180,12 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
 ## Related
 
 - Ticket notes: [`../codebase/135.md`](../codebase/135.md), [`../codebase/644.md`](../codebase/644.md).
-  #874 (`CompactionBoundaryDivider`) postdates the frozen codebase archive (closed 2026-09-05); its spec
-  is the only ticket-level record.
+  #874 (`CompactionBoundaryDivider`) and [#1112](https://github.com/pyrycode/pyrycode-mobile/issues/1112)
+  (the `agent` param) postdate the frozen codebase archive (closed 2026-09-05); their specs are the only
+  ticket-level record.
 - Spec: `docs/specs/architecture/135-session-boundary-delimiter.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`,
-  `docs/specs/architecture/874-compaction-boundary-divider.md`
+  `docs/specs/architecture/874-compaction-boundary-divider.md`,
+  `docs/specs/architecture/1112-agent-name-reset-and-boundary.md`
 - Upstream:
   - [`#3`](../codebase/3.md) — `ThreadItem` / `SessionBoundary` / `BoundaryReason` definitions; the input contract this component consumes.
   - [`#9`](../codebase/9.md) — `buildThreadItems` projection that emits `SessionBoundary` markers between session-id deltas (the **Fake** producer, derived from full in-memory history).
