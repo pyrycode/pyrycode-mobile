@@ -274,13 +274,32 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 - **Dependency:** `androidx.navigation:navigation-compose`, pinned via `navigationCompose` in `gradle/libs.versions.toml`. Compose BOM does **not** cover this artifact group — it needs its own version pin.
 - **Back-stack policy:** ordinary `navigate(route)` creates destination entries. Thread navigation suppresses only an identical current host/conversation target. Camera success pops the scanner inclusively; manual pairing success clears the graph's previous entries. Invalid-host rejection returns to the channel list and clears the invalid entries. Those list transitions use `launchSingleTop`; host-qualified thread navigation does not.
 - **Start-destination gating:** `NavHost` composition waits for the full saved-host read and successful workspace migration described [above](#how-it-works). Only then does snapshot emptiness choose the initial destination. Later pairing uses explicit navigation; it does not rewrite the back stack.
-- **Insets:** the outer `Scaffold` in `MainActivity` owns system-bar insets and passes them down via the NavHost's `Modifier.padding(innerPadding)`. Screens may apply their own `systemBarsPadding()` on top (harmless double-padding); don't refactor existing screens to drop it.
+- **Insets:** the outer `Scaffold` in `MainActivity` reserves system-bar space once
+  at `PyryNavHost` with `Modifier.padding(innerPadding).consumeWindowInsets(innerPadding)`.
+  Padding reserves the space; consumption tells descendants it is already handled.
+  Screen-level `systemBarsPadding()` and nested M3 scaffolds receive only remaining
+  insets, so they add no second system-bar gap. Keep screen inset handling for
+  standalone hosts. Descendant `imePadding()` reserves only keyboard height beyond
+  the consumed bottom inset; no fixed or negative spacing compensation is needed.
+  See the [inset correction](../../specs/architecture/1149-consume-system-bar-insets.md).
 
 ## Edge cases / limitations
 
 - **No type-safe routes yet.** The first parameterized route (`conversation_thread/{conversationId}`, #15; VM-backed since #126) landed on string constants by design — partially migrating one route while siblings stay as `String` is worse than either end-state. A full migration of `Routes` to `@Serializable` data classes remains a separate, larger future ticket; do not bundle it with a feature ticket.
 - **No deep links, no animations.** `composable(Routes.X) { ... }` only — no `deepLinks = listOf(...)`, no custom `enterTransition` / `exitTransition`.
 ## Testing
+
+[`MainActivityInsetsTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/MainActivityInsetsTest.kt)
+launches the production Activity and varies injected nonzero bars, checking the
+Welcome title at one top inset + 300 dp (168 dp logo offset + 104 dp height + 28 dp
+gap) and its footer at one bottom inset + 16 dp above the window bottom. A test
+hosting only a screen or `PyryNavHost` misses the outer Scaffold and can pass while
+production doubles the padding. Varying insets also catches fixed compensation.
+[`MainActivityInsetsDeviceTest`](../../../app/src/androidTest/java/de/pyryco/mobile/MainActivityInsetsDeviceTest.kt)
+covers that boundary across onboarding, list, thread and settings at 412×892 and
+360×800 dp, including pair fields/actions above a visibly open test IME. See
+[Compose evidence](development-verification.md#compose-evidence) for the distinction
+between synthetic-bar geometry and real-bar screenshots.
 
 `PairCodeScreenTest.cancelToolbarAndAndroidBackReturnToCallerWithoutSaving`
 mounts the production graph and opens `pair_code` over both Welcome and the
