@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -271,6 +272,7 @@ private fun HostNameField(
 private fun UnpairAction(onClick: () -> Unit) {
     Column(modifier = Modifier.padding(top = UnpairTopPadding)) {
         OutlinedButton(
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
             onClick = onClick,
             modifier = Modifier.heightIn(min = ActionMinHeight),
             shape = MaterialTheme.shapes.small,

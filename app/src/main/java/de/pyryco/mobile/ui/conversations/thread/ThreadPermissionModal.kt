@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
@@ -227,6 +228,7 @@ private fun ModalOptionButton(
         isDefault -> Button(onClick = onClick, modifier = modifier, shape = shape) { Text(label) }
         else ->
             OutlinedButton(
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
                 onClick = onClick,
                 modifier = modifier,
                 shape = shape,
