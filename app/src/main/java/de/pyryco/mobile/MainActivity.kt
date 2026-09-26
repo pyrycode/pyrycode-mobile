@@ -15,6 +15,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -146,7 +147,7 @@ class MainActivity : ComponentActivity() {
                         else ->
                             PyryNavHost(
                                 startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
-                                modifier = Modifier.padding(innerPadding),
+                                modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
                                 openTarget = openTarget.takeIf { v },
                             )
                     }

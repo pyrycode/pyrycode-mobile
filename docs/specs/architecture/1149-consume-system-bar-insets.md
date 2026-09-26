@@ -54,3 +54,15 @@ Pending for documentation stage: Replace “harmless double-padding” in `docs/
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-27
+
+## Revisions
+
+- 2026-09-27: The focused API 33 ATD run reports zero physical system bars. Keep that routine gate useful by injecting 24 dp status/navigation bars only when the image reports none, preserving incoming IME insets and recording the synthetic source in capture metadata. Add `pixel8Api35` in `app/build.gradle.kts` using the already installed full `google_apis_playstore` image for the required captures with real system chrome; its focused test is additional to the API 33 gate. This explicit source is supported by [ManagedVirtualDevice](https://developer.android.com/reference/tools/gradle-api/8.10/com/android/build/api/dsl/ManagedVirtualDevice). No production design change; still one production Kotlin file, one build configuration and under 500 written lines.
+- 2026-09-27: ATD framebuffer captures are black despite valid layout assertions. Record geometry metadata only there; save PNGs on the full image, reject blank captures, and use `requireRealSystemBars=true` for the evidence run. Wait for display configuration to settle before activity launch. The shared test varies 16/24 dp bars so its existing Welcome content fits the 731 dp managed device; its final RED result without consumption is title top 332 versus expected 316 dp, then GREEN with consumption.
+
+## Verification evidence
+
+- `MainActivityInsetsTest`: one JVM case passed. The API 33 focused run selected `MainActivityInsetsDeviceTest,MainActivityInsetsTest`: three cases passed, none failed/skipped. The API 35 run selected `MainActivityInsetsDeviceTest` with `requireRealSystemBars=true`: two cases passed, none failed/skipped. Both device commands used `--rerun`; all exited 0.
+- `spotlessApply`, scoped `testDebugUnitTest`, `lint`, `assembleDebug` and `compileDebugAndroidTestKotlin` passed. Lint reports 98 existing warnings and no errors or findings in the new test sources.
+- Fresh full-activity PNGs, per-image measurements and both device XML reports are committed under `app/src/androidTest/assets/insets-1149/`. Both display sizes use density 1.0 (160 dpi), measured 24 px top/bottom bars, and a visible 240 px test IME on the keyboard captures. All 20 PNGs were visually reviewed against the three Figma references and the control-clearance contract. Welcome logo top is 192 dp; scanner/pair Back top is 42 dp and title box top is 52 dp. No new visual deviation is introduced by the inset change.
+- The full suite remains the dispatcher's gate. Documentation handoff remains pending as specified above; no live daemon flow was added or claimed tested.
