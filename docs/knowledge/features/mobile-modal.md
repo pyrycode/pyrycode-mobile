@@ -200,6 +200,15 @@ uses `PyrycodeMobileTheme` with these deliberate adaptations:
 | 44 dp shell / 6 dp action corners | `MaterialTheme.shapes.extraLarge` / `small` | Reuse theme shapes; custom reference shapes are not configured. |
 | Smaller action geometry | At least 48 dp action targets | Keep Close, Cancel and OK accessible to touch. |
 
+Outlined actions explicitly set
+`ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)`:
+a primary border alone leaves the default text grey (#1156). This covers shared
+Cancel/Close, Unpair, Archive chat/channel/workspace, Add workspace's new-folder
+text and icon, and unarmed non-default permission choices. Let content inherit
+the button colour so Material's disabled content colour still applies; keep the
+existing borders, shapes and 48 dp targets. Permission default and armed choices
+retain their filled treatments.
+
 Editing fields use two more shared roles from
 [`ModalColors`](../../../app/src/main/java/de/pyryco/mobile/ui/theme/ModalColors.kt)
 ([#1155](../../specs/architecture/1155-editing-field-colours.md)):
@@ -223,6 +232,12 @@ The exported close vector uses `primary` over `onPrimary`. The shell retains
 previews are defined at 412 × 892 dp.
 
 ## Focus and verification
+
+[`MobileModalFillTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/components/MobileModalFillTest.kt)
+checks Cancel's `TextLayoutResult.layoutInput.style.color` against primary in both
+themes, then toggles gate `sending` and checks native disabled content colour and
+the 48 dp minimum height. Enabled-state or border assertions alone miss the grey
+text regression; inspect the composed text's colour.
 
 [`ModalFieldPaletteTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/components/ModalFieldPaletteTest.kt)
 renders both `ChannelFormFields` wells inside `MobileModal` in dark and light themes,

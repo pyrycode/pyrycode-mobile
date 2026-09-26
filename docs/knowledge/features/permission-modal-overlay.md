@@ -147,7 +147,7 @@ extended from #446's 2-way by [#452](../codebase/452.md):
 |---|---|---|
 | `isArmed` — the VM's armed non-default, awaiting its second confirm (#452) | `FilledTonalButton` (kept **below** the default's filled emphasis so the safe default stays dominant) | `stateDescription = modal_armed_option_desc` ("Tap again to confirm") |
 | `isDefault` — the fail-safe-deny default | high-emphasis filled `Button` | `stateDescription = modal_default_option_desc` ("Default") |
-| neither — a resting non-default | `OutlinedButton`, with the shell's primary 1 dp border since #815 (matching the footer Cancel) | none (a first tap arms it via the VM) |
+| neither — a resting non-default | `OutlinedButton`, with primary text and a primary 1 dp border, matching [the shared action palette](mobile-modal.md#layout-and-theme) and footer Cancel | none (a first tap arms it via the VM) |
 
 All three states have shared the shell's `MaterialTheme.shapes.small` and 48 dp minimum action height since
 [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), when the overlay moved into `MobileGateModal`.
