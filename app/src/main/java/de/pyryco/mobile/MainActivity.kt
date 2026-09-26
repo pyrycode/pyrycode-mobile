@@ -109,7 +109,7 @@ class MainActivity : ComponentActivity() {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
             val themeMode by appPreferences.themeMode
-                .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
+                .collectAsStateWithLifecycle(initialValue = ThemeMode.DARK)
             val useWallpaperColors by appPreferences.useWallpaperColors
                 .collectAsStateWithLifecycle(initialValue = false)
             val darkTheme =

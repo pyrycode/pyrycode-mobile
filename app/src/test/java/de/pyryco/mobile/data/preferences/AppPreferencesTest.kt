@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -51,9 +52,9 @@ class AppPreferencesTest {
     }
 
     @Test
-    fun themeMode_defaultsToSystem() =
+    fun themeMode_defaultsToDark() =
         runBlocking {
-            assertEquals(ThemeMode.SYSTEM, prefs.themeMode.first())
+            assertEquals(ThemeMode.DARK, prefs.themeMode.first())
         }
 
     @Test
@@ -66,10 +67,33 @@ class AppPreferencesTest {
         }
 
     @Test
-    fun themeMode_unparseableStoredValue_fallsBackToSystem() =
+    fun themeMode_unparseableStoredValue_fallsBackToDark() =
         runBlocking {
             dataStore.edit { it[stringPreferencesKey("theme_mode")] = "PURPLE" }
-            assertEquals(ThemeMode.SYSTEM, prefs.themeMode.first())
+            assertEquals(ThemeMode.DARK, prefs.themeMode.first())
+        }
+
+    @Test
+    fun themeMode_existingStoredNames_surviveRestart() =
+        runBlocking {
+            val existingChoices = listOf("SYSTEM" to ThemeMode.SYSTEM, "LIGHT" to ThemeMode.LIGHT, "DARK" to ThemeMode.DARK)
+            for ((stored, expected) in existingChoices) {
+                val file = tmp.newFile("$stored.preferences_pb")
+                val writerJob = Job()
+                val writer =
+                    PreferenceDataStoreFactory.create(
+                        scope = CoroutineScope(Dispatchers.IO + writerJob),
+                        produceFile = { file },
+                    )
+                try {
+                    writer.edit { it[stringPreferencesKey("theme_mode")] = stored }
+                } finally {
+                    writerJob.cancelAndJoin()
+                }
+                val reopened = PreferenceDataStoreFactory.create(scope = scope, produceFile = { file })
+                assertEquals(expected, AppPreferences(reopened).themeMode.first())
+                assertEquals(stored, reopened.data.first()[stringPreferencesKey("theme_mode")])
+            }
         }
 
     @Test
