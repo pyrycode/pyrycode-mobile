@@ -33,25 +33,20 @@ adding scrolling alone did not keep both fields reachable.
 
 The outer `Column` applies `systemBarsPadding()` before `imePadding()` (#1141),
 matching [`ScannerViewport`](scanner-screen.md#scannerviewport--the-locked-viewport-body):
-the `surface` background still fills the window edge to edge, but the header
-sits below the status bar and Cancel/the footer sit above the navigation bar.
-`imePadding()` after it then adds only the keyboard height beyond the
-navigation bar `systemBarsPadding()` already consumed. The toolbar Back
-`IconButton` is explicitly sized `Modifier.size(48.dp)`, the same as the
+the `surface` background precedes inset padding, while the header sits below the
+status bar and Cancel/the footer sit above the navigation bar. In production,
+the activity applies and consumes its Scaffold padding at `PyryNavHost`, so the
+screen's `systemBarsPadding()` receives no remaining system-bar space to add.
+When hosted alone, that modifier reserves and consumes the bars itself.
+`imePadding()` then adds only keyboard height beyond the bottom inset already
+consumed by the activity or the screen. See
+[navigation § Insets](navigation.md#configuration) for once-only ownership.
+The toolbar Back `IconButton` is explicitly sized `Modifier.size(48.dp)`, the same as the
 scanner's — M3's default `IconButton` is 40 dp centred in a 48 dp touch
 target, so two headers with identical row padding can otherwise report Back
 tops several dp apart even though their arrows sit in the same place. The
 `Confirming` phase returns `ScannerScreen` before this `Column` is composed,
 so it does not gain a second system-bar inset.
-
-Like every other screen, this one sits under the root `Scaffold`'s own
-`innerPadding` (see [navigation § Insets](navigation.md#configuration)), which
-already reserves the system-bar space; the screen's own `systemBarsPadding()`
-pads a second time in production. That is the existing, accepted
-"harmless double-padding" pattern navigation.md describes, not something new
-this ticket introduced — the ticket's goal was parity with the scanner's
-existing inset handling, and both screens now carry the same double inset
-rather than one carrying it and the other not.
 
 ## Draft and fingerprint gate
 
@@ -229,8 +224,9 @@ across the content switch — without that read, the listener detaches and a
 fresh `requestApplyInsets` puts the real zero insets back, and the test would
 pass vacuously. The fixture hosts each screen without the production outer
 `Scaffold` padding described above, so it proves the composables' own insets,
-not the full production stack; parity between the two screens still holds in
-production because both sit under the same `NavHost` padding.
+not once-only ownership across the full production stack. The
+[activity inset regressions](navigation.md#testing) cover that boundary and
+pair/scanner header parity through the production routes.
 Two (#842) additions: `targetedRouteNamesItsHostAndBackReturnsWithoutSaving` navigates through
 `Routes.PAIR_CODE_ROUTE` with a `serverId` argument via a real `NavHostController`, asserts the
 disabled Host name field shows the target's name, and Back returns to `Routes.WELCOME` without a
