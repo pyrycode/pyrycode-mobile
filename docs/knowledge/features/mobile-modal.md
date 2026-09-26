@@ -200,12 +200,37 @@ uses `PyrycodeMobileTheme` with these deliberate adaptations:
 | 44 dp shell / 6 dp action corners | `MaterialTheme.shapes.extraLarge` / `small` | Reuse theme shapes; custom reference shapes are not configured. |
 | Smaller action geometry | At least 48 dp action targets | Keep Close, Cancel and OK accessible to touch. |
 
+Editing fields use two more shared roles from
+[`ModalColors`](../../../app/src/main/java/de/pyryco/mobile/ui/theme/ModalColors.kt)
+([#1155](../../specs/architecture/1155-editing-field-colours.md)):
+
+| Role | Dark | Light (unchanged) |
+| --- | --- | --- |
+| `colorScheme.modalFieldContainer` | `onPrimary` at 41% | `onPrimaryContainer` at 12% |
+| `colorScheme.modalFieldText` | `onBackground` | `onPrimaryContainer` |
+
+`PyrycodeMobileTheme` derives these field roles from the active colour scheme,
+including wallpaper colours. `EditHostModal`, `EditChatModal`, `EditWorkspaceModal`
+and `ChannelFormFields` (Edit channel, Create channel and Save as channel) use them
+for focused and unfocused fields. Their existing disabled-container overrides,
+and workspace/channel error-container overrides, use the same well; error and
+disabled text retain Material defaults. Labels keep `onPrimaryContainer`, and
+cursor, indicators, validation and keyboard handling retain their existing behaviour.
+
 The exported close vector uses `primary` over `onPrimary`. The shell retains
 28 dp horizontal / 24 dp vertical padding, 20 dp section/action gaps,
 `titleLarge` and an `inversePrimary` divider at 60% opacity. Light and dark
 previews are defined at 412 × 892 dp.
 
 ## Focus and verification
+
+[`ModalFieldPaletteTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/components/ModalFieldPaletteTest.kt)
+renders both `ChannelFormFields` wells inside `MobileModal` in dark and light themes,
+checks entered-text layout colour, and samples well pixels before and after focus
+moves between fields. Checking theme roles alone would miss a field that never
+consumes them. Like `MobileModalFillTest`, it uses native Robolectric graphics and
+draws the dialog's own view into a bitmap: `captureToImage` does not redraw that
+dialog window under Robolectric.
 
 The dialog provides its own focus window and restores the launching control's
 focus on dismissal. The shell makes no focus requests on recomposition. If a
@@ -319,11 +344,13 @@ caller that pre-fills an editable field inside this shell:
   typed input); keying on a clamped value risks two different edited entities
   collapsing onto one buffer if their unclamped identities happen to share a long
   prefix.
-- **A dark-only Figma frame can hide a scheme-inverting fill token.** `on-primary` at
-  low alpha reads as a recessed well only because the reference frame never renders
-  in light, where that token turns white and the fill would vanish — composite the
-  candidate colour against the real light and dark `Color.kt` values before
-  committing to an alpha, rather than eyeballing a single dark preview.
+- **Field colours need an explicit light/dark mapping.** The reference's `onPrimary`
+  at 41% works over the dark navy shell, but turns white in light. Applying the light
+  fallback (`onPrimaryContainer` at 12%) to both themes made dark wells too light
+  after the navy shell fix. Use the [shared field roles](#layout-and-theme): dark
+  keeps the reference well and `onBackground` entered text; light keeps its previous
+  tint and foreground. Check the composited well in both themes when changing either
+  the field or its shell.
 - **Proving a row is read-only means asserting the absence of field semantics**
   (`EditableText`, `SetText`, `Focused`), not asserting that its text is displayed —
   the latter passes identically against a real editable field seeded with the same
