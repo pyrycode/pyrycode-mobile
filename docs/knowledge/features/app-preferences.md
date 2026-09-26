@@ -6,7 +6,18 @@ Typed wrapper around a single shared `DataStore<Preferences>` for non-secret set
 
 Exposes preferences as typed `Flow<T>` reads + `suspend fun` writes, covering appearance, defaults for new conversations and notifications:
 
-- `themeMode: Flow<ThemeMode>` — `ThemeMode.SYSTEM` by default (#86); persisted as the enum's `name` under `stringPreferencesKey("theme_mode")`. Both "key absent" and "stored string not in `ThemeMode.entries`" fall through to `SYSTEM` via `ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM` — no throw, no `runCatching`. Read at two surfaces: at `MainActivity.setContent`'s root, an `appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)` resolves `darkTheme: Boolean` for `PyrycodeMobileTheme(...)` (preserving `isSystemInDarkTheme()` on `SYSTEM`); since #87 the Settings route reads it via `koinViewModel<SettingsViewModel>().themeMode.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The matching `suspend fun setThemeMode(mode: ThemeMode)` is wired in #87 by `SettingsViewModel.onSelectTheme(...)`, called from the Settings → Theme picker dialog's confirm button; one write fans out to both collectors above.
+- `themeMode: Flow<ThemeMode>` — `ThemeMode.DARK` by default
+  ([#1147](../../specs/architecture/1147-default-dark-mode.md)); both a missing
+  `theme_mode` key and an unknown stored name read as Dark. Saved `SYSTEM`, `LIGHT`
+  and `DARK` names retain their meaning across restart and upgrade; the key,
+  enum names and setter are unchanged, so no migration is needed. System follows
+  the phone, Light stays light, and Dark stays dark even on a light-mode phone.
+  The root theme and [Settings ViewModel](settings-viewmodel.md) both start at
+  Dark before the saved value loads. Settings uses the collected value for its
+  Theme subtitle and picker selection, keeping all three choices. The matching
+  `suspend fun setThemeMode(mode: ThemeMode)` is called through
+  `SettingsViewModel.onSelectTheme(...)` when the picker is confirmed; one write
+  updates both collectors.
 - `useWallpaperColors: Flow<Boolean>` — `false` by default (#88); `booleanPreferencesKey("use_wallpaper_colors")`. Read at two surfaces: at `MainActivity.setContent`'s root as a sibling to the `themeMode` collector, then forwarded into `PyrycodeMobileTheme(darkTheme = …, dynamicColor = useWallpaperColors)`; and since #89 inside `composable(Routes.SETTINGS)` via `koinViewModel<SettingsViewModel>().useWallpaperColors.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The theme's pre-existing SDK gate (`dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S` at `Theme.kt:275`) handles the "Android < 12 OR preference false → brand palette" branch internally, so no composition-root version check is needed. Matching `suspend fun setUseWallpaperColors(enabled: Boolean)` is wired in #89 by `SettingsViewModel.onToggleUseWallpaperColors(...)`, called from the Settings → Appearance "Use Material You dynamic color" switch row's `onCheckedChange` (headline updated from the prior "Use wallpaper colors" in #163 to match Figma `17:2`); one write fans out to both collectors above.
 
 "Defaults for new conversations" preferences:
@@ -88,6 +99,14 @@ Two Koin singletons:
 1. A `DataStore<Preferences>` bound to the on-disk file `<filesDir>/datastore/app_prefs.preferences_pb` (filename `app_prefs`; DataStore appends `.preferences_pb`).
 2. `AppPreferences`, which takes the `DataStore<Preferences>` in its constructor and exposes typed accessors.
 
+`MainActivity` collects `themeMode` with
+`collectAsStateWithLifecycle(initialValue = ThemeMode.DARK)`;
+`SettingsViewModel.themeMode` uses `stateIn` with the same initial value, and the
+Settings route collects that `StateFlow`. Keep both initial values aligned with
+the reader's missing/unknown fallback so an unsaved preference starts consistently
+at Dark. A saved choice takes over when DataStore emits; reading it does not
+rewrite the stored name.
+
 ```kotlin
 // de/pyryco/mobile/data/preferences/AppPreferences.kt (app-wide accessor excerpt)
 class AppPreferences(private val dataStore: DataStore<Preferences>) {
@@ -95,7 +114,7 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
     val themeMode: Flow<ThemeMode> =
         dataStore.data.map { prefs ->
             val stored = prefs[THEME_MODE]
-            ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM
+            ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.DARK
         }
 
     suspend fun setThemeMode(mode: ThemeMode) {
@@ -270,10 +289,12 @@ sendHostDiscussion(serverId, workspace)
 Collecting reactively is the right shape when a screen genuinely needs live re-composition on flag flips. `collectAsStateWithLifecycle` is on the classpath today via `lifecycle-runtime-compose` (pulled in by a prior ticket; earlier revisions of this doc called it absent — that caveat is stale as of #86):
 
 ```kotlin
-val themeMode by appPrefs.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
+val themeMode by appPrefs.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.DARK)
 ```
 
-Pass the enum's neutral default (the same value the cold flow would emit first on a fresh DataStore) as `initialValue` — that closes the one-frame gap between activity start and the first DataStore emission, so the UI never flashes the wrong scheme / wrong subtitle.
+Pass the fresh-store default as `initialValue` so the unsaved theme and subtitle
+are Dark from the first frame. A saved System or Light choice takes effect after
+the first DataStore emission.
 
 ## State + concurrency
 
@@ -284,6 +305,14 @@ Pass the enum's neutral default (the same value the cold flow would emit first o
 - **Default-on-miss.** `prefs[KEY] ?: <default>` handles cold start without a sentinel write — the first launch reads `false` without writing anything to disk.
 
 ## Testing
+
+`AppPreferencesTest` covers missing and unknown theme names, setter round trips,
+and `themeMode_existingStoredNames_surviveRestart`, which reopens temporary stores
+seeded with each literal `SYSTEM` / `LIGHT` / `DARK` name and verifies that reads
+preserve the serialized value. Literal seeds exercise the existing storage
+contract independently of the current setter. The Settings initial-value check
+runs both before collection and after loading; see
+[SettingsViewModel testing](settings-viewmodel-testing.md).
 
 [HostWorkspacePreferencesTest](../../../app/src/test/java/de/pyryco/mobile/data/preferences/HostWorkspacePreferencesTest.kt)
 reopens real temporary DataStore files after cancelling and joining the previous
