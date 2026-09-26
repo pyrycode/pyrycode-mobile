@@ -289,7 +289,7 @@ fun SettingsScreen(
             )
             SettingsRow(
                 headline = "Default YOLO",
-                supporting = "off",
+                supporting = if (defaultYolo) "on" else "off",
                 trailing = {
                     Switch(checked = defaultYolo, onCheckedChange = onToggleDefaultYolo)
                 },
