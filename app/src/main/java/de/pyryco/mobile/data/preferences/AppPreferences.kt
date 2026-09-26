@@ -18,7 +18,7 @@ class AppPreferences(
     val themeMode: Flow<ThemeMode> =
         dataStore.data.map { prefs ->
             val stored = prefs[THEME_MODE]
-            ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM
+            ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.DARK
         }
 
     suspend fun setThemeMode(mode: ThemeMode) {

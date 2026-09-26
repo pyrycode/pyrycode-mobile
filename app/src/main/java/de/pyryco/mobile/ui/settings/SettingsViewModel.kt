@@ -178,7 +178,7 @@ class SettingsViewModel(
         appPreferences.themeMode.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-            initialValue = ThemeMode.SYSTEM,
+            initialValue = ThemeMode.DARK,
         )
 
     val useWallpaperColors: StateFlow<Boolean> =

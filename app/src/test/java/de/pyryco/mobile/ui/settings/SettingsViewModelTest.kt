@@ -150,13 +150,14 @@ class SettingsViewModelTest {
     ) = SettingsHost(serverId, displayName, relayUrl, status)
 
     @Test
-    fun initialState_emitsSystem_whenNoStoredValue() =
+    fun initialState_emitsDark_whenNoStoredValue() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
             val vm = makeVm(prefs)
+            assertEquals(ThemeMode.DARK, vm.themeMode.value)
             val collector = launch { vm.themeMode.collect { } }
             advanceUntilIdle()
-            assertEquals(ThemeMode.SYSTEM, vm.themeMode.value)
+            assertEquals(ThemeMode.DARK, vm.themeMode.value)
             collector.cancel()
         }
 

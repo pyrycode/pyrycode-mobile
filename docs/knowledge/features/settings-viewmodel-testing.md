@@ -14,9 +14,9 @@ Since #714 the class also swaps `RelayLog.sink` for an in-memory `logs: MutableL
 
 Coverage:
 
-- `initialState_emitsSystem_whenNoStoredValue` — fresh datastore.
+- `initialState_emitsDark_whenNoStoredValue` — fresh datastore; asserts Dark before collection and again after loading.
 - `initialState_mirrorsPersistedValue` — pre-write `DARK`, construct VM, assert `vm.themeMode.value == DARK`.
-- `onSelectTheme_persistsLight` / `_persistsDark` / `_persistsSystem` — round-trip each `ThemeMode` (the SYSTEM case starts from a pre-written DARK to exercise the round-trip-from-non-default path).
+- `onSelectTheme_persistsLight` / `_persistsDark` / `_persistsSystem` — round-trip each `ThemeMode` (the SYSTEM case starts from a pre-written DARK to exercise a change from the Dark default).
 - `themeMode_flowReEmits_afterOnSelectTheme` — two consecutive `onSelectTheme` calls, assert `vm.themeMode.value` reaches each in turn.
 - `useWallpaperColors_initialState_emitsFalse_whenNoStoredValue` — fresh datastore boolean default (#89).
 - `useWallpaperColors_initialState_mirrorsPersistedTrue` — pre-write `true`, construct VM, assert `vm.useWallpaperColors.value == true` (#89).
@@ -70,7 +70,7 @@ Coverage:
 - `hostEditor_aFailedRenameKeepsTheEditorOpenWithoutReopeningIt` (#751) — AC3: `failWrite` leaves `failed` set, `saving` cleared, and nothing written to `store.renames`.
 - `hostEditor_dismissClosesItWithoutWriting` (#751) — dismissal from mid-confirmation writes nothing to either `store.removals` or `store.renames`.
 
-Tests that read `vm.themeMode.value` / `vm.useWallpaperColors.value` / `vm.defaultModel.value` / `vm.defaultEffort.value` / `vm.defaultYolo.value` / `vm.pushNotifications.value` / `vm.archivedDiscussionCount.value` / `vm.defaultWorkspaceLabel.value` `launch` a no-op collector and `advanceUntilIdle()` first to keep the `WhileSubscribed(5_000L)` upstream subscribed; otherwise `.value` stays at the `initialValue` literal (`ThemeMode.SYSTEM` / `false` / `Model.OPUS_4_7` / `Effort.HIGH` / `false` / **`true`** for `pushNotifications` / `0` / `null` for `defaultWorkspaceLabel`) and the test asserts the wrong thing — note `pushNotifications`'s initial is `true`, so a missing collector would make `pushNotifications_initialState_mirrorsPersistedFalse` *pass for the wrong reason* (it would read the `true` literal instead of the persisted `false`), which is exactly why that test launches the collector. Tests that read through `prefs.themeMode.first()` / `prefs.useWallpaperColors.first()` / `prefs.defaultModel.first()` / `prefs.defaultEffort.first()` / `prefs.defaultYolo.first()` / `prefs.notificationsEnabled.first()` directly don't need the collector — they bypass the VM's `stateIn` projection.
+Tests that read `vm.themeMode.value` / `vm.useWallpaperColors.value` / `vm.defaultModel.value` / `vm.defaultEffort.value` / `vm.defaultYolo.value` / `vm.pushNotifications.value` / `vm.archivedDiscussionCount.value` / `vm.defaultWorkspaceLabel.value` `launch` a no-op collector and `advanceUntilIdle()` first to keep the `WhileSubscribed(5_000L)` upstream subscribed; otherwise `.value` stays at the `initialValue` literal (`ThemeMode.DARK` / `false` / `Model.OPUS_4_7` / `Effort.HIGH` / `false` / **`true`** for `pushNotifications` / `0` / `null` for `defaultWorkspaceLabel`) and the test asserts the wrong thing — note `pushNotifications`'s initial is `true`, so a missing collector would make `pushNotifications_initialState_mirrorsPersistedFalse` *pass for the wrong reason* (it would read the `true` literal instead of the persisted `false`), which is exactly why that test launches the collector. Tests that read through `prefs.themeMode.first()` / `prefs.useWallpaperColors.first()` / `prefs.defaultModel.first()` / `prefs.defaultEffort.first()` / `prefs.defaultYolo.first()` / `prefs.notificationsEnabled.first()` directly don't need the collector — they bypass the VM's `stateIn` projection.
 
 ## Related
 
