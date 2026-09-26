@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalFieldContainer
+import de.pyryco.mobile.ui.theme.modalFieldText
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 
 /** The device suites' handle for the name field, which the design draws without a built-in label. */
@@ -53,14 +55,6 @@ private val UnpairTopPadding = 8.dp
 // The shell's recorded floor for its own Close, Cancel and OK, applied to this component's one
 // action for the same reason.
 private val ActionMinHeight = 48.dp
-
-// The design fills the name field with `on-primary` at 41%, which reads as a recessed well only
-// because the frame is dark-only and that token is a near-black there. `onPrimary` is white in our
-// light scheme and the fill would vanish — the trap `SELECTED_FILL_ALPHA` records on the tree rows.
-// Tinting with the shell's own content colour instead recesses in light and lifts in dark, which is
-// what M3's filled field already does across schemes, at a far lower alpha because
-// `onPrimaryContainer` is a high-contrast colour where the reference token is not.
-private const val FIELD_FILL_ALPHA = 0.12f
 
 /**
  * The Edit host frame, drawn through [MobileModal] and driven entirely by its caller.
@@ -235,7 +229,7 @@ private fun HostNameField(
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
         )
-        val fill = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = FIELD_FILL_ALPHA)
+        val fill = MaterialTheme.colorScheme.modalFieldContainer
         TextField(
             value = value,
             onValueChange = onValueChange,
@@ -256,8 +250,8 @@ private fun HostNameField(
                     focusedContainerColor = fill,
                     unfocusedContainerColor = fill,
                     disabledContainerColor = fill,
-                    focusedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    focusedTextColor = MaterialTheme.colorScheme.modalFieldText,
+                    unfocusedTextColor = MaterialTheme.colorScheme.modalFieldText,
                     cursorColor = MaterialTheme.colorScheme.primary,
                     focusedIndicatorColor = Color.Transparent,
                     unfocusedIndicatorColor = Color.Transparent,

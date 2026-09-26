@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalFieldContainer
+import de.pyryco.mobile.ui.theme.modalFieldText
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_BYTES
 import de.pyryco.mobile.ui.workspace.clampWorkspaceText
 import de.pyryco.mobile.ui.workspace.isWorkspaceLabelTooLong
@@ -50,10 +52,6 @@ private val ArchiveTopPadding = 8.dp
 
 // The shell's touch floor for its own actions, applied to this component's one action.
 private val ActionMinHeight = 48.dp
-
-// `EditHostModal`'s `FIELD_FILL_ALPHA` records why the shell's content colour at a low alpha replaces
-// the frame's `on-primary` 41% fill.
-private const val FIELD_FILL_ALPHA = 0.12f
 
 /**
  * The Edit workspace frame, drawn through [MobileModal] and driven entirely by its caller — desktop's
@@ -154,7 +152,7 @@ private fun WorkspaceNameField(
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
         )
-        val fill = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = FIELD_FILL_ALPHA)
+        val fill = MaterialTheme.colorScheme.modalFieldContainer
         TextField(
             value = value,
             onValueChange = onValueChange,
@@ -173,8 +171,8 @@ private fun WorkspaceNameField(
                     unfocusedContainerColor = fill,
                     disabledContainerColor = fill,
                     errorContainerColor = fill,
-                    focusedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    focusedTextColor = MaterialTheme.colorScheme.modalFieldText,
+                    unfocusedTextColor = MaterialTheme.colorScheme.modalFieldText,
                     cursorColor = MaterialTheme.colorScheme.primary,
                     focusedIndicatorColor = Color.Transparent,
                     unfocusedIndicatorColor = Color.Transparent,
