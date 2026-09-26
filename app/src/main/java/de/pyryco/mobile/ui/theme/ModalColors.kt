@@ -11,6 +11,8 @@ import androidx.compose.ui.graphics.Color
 @Immutable
 data class ModalColors(
     val container: Color,
+    val fieldContainer: Color,
+    val fieldText: Color,
 )
 
 internal val LocalModalColors: ProvidableCompositionLocal<ModalColors> =
@@ -22,3 +24,13 @@ val ColorScheme.modalContainer: Color
     @Composable
     @ReadOnlyComposable
     get() = LocalModalColors.current.container
+
+val ColorScheme.modalFieldContainer: Color
+    @Composable
+    @ReadOnlyComposable
+    get() = LocalModalColors.current.fieldContainer
+
+val ColorScheme.modalFieldText: Color
+    @Composable
+    @ReadOnlyComposable
+    get() = LocalModalColors.current.fieldText

@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalFieldContainer
+import de.pyryco.mobile.ui.theme.modalFieldText
 
 /** The device suites' handles for the two fields, which the design draws without built-in labels. */
 internal const val CHANNEL_NAME_FIELD_TAG: String = "channel-form-name"
@@ -41,9 +43,6 @@ private val FieldGap = 12.dp
 
 // The prompt well opens tall enough to read as a paragraph box; the shell scrolls beyond that.
 private const val PROMPT_MIN_LINES = 4
-
-// `EditChatModal`'s fill: the frame's `on-primary` 41% well, drawn as the shell's content colour at a low alpha.
-private const val FIELD_FILL_ALPHA = 0.12f
 
 /**
  * A channel's name and optional system prompt as one form, drawn inside a [MobileModal] — desktop's
@@ -141,14 +140,14 @@ private fun LabelledField(
 /** A plain filled well with no underline, as the design draws both fields. */
 @Composable
 private fun wellColors(): TextFieldColors {
-    val fill = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = FIELD_FILL_ALPHA)
+    val fill = MaterialTheme.colorScheme.modalFieldContainer
     return TextFieldDefaults.colors(
         focusedContainerColor = fill,
         unfocusedContainerColor = fill,
         disabledContainerColor = fill,
         errorContainerColor = fill,
-        focusedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        unfocusedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        focusedTextColor = MaterialTheme.colorScheme.modalFieldText,
+        unfocusedTextColor = MaterialTheme.colorScheme.modalFieldText,
         cursorColor = MaterialTheme.colorScheme.primary,
         focusedIndicatorColor = Color.Transparent,
         unfocusedIndicatorColor = Color.Transparent,
