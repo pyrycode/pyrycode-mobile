@@ -2056,6 +2056,15 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #1052 (2026-09-26):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/1052` at `32ac5ec892` merged with
+  `origin/main` at `4da08dc28b` (0 commits behind before the merge) — 45 executed, 45 passed, no
+  failures or skips, exit 0, wall clock 478.6s. `LIVE_MINIMUM` stayed at 45; this ticket added no new
+  curated method. This is the first clean run of
+  `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` — no nondeterministic
+  same-tree re-run needed — since #1029 first tracked its flake, consistent with
+  pyrycode/pyrycode-relay#154 being live on the production relay.
+
 - **LIVE verified for #1087 (2026-09-25):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/1087` at `5c425313ad` merged with
   `origin/main` at `6c5ca75e28` (5 commits behind before the merge) — 41 executed, 41 passed, no
