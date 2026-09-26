@@ -13,7 +13,8 @@ The private `LazyListScope.treeSection(section, hostState, onEvent)` emits one s
 workspace group a `TreeWorkspaceRow` and (unless *its* key is collapsed) one `TreeConversationRow` per
 conversation — and `ConversationTree` calls it once for `ConversationTreeSection.Channels`, emits a
 `HorizontalDivider` item (`outlineVariant @ 0.60f`, `TreeSectionRuleGap = 28.dp` above / `TreeSectionRuleBottomGap
-= 16.dp` below, matching the Figma rule between sections), then once more for `Chats` — all three into the
+= 14.dp` below, plus the centred header's 14dp inner slack for 28dp to the label at normal font size;
+see [section-label spacing](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737)), then once more for `Chats` — all three into the
 *same* `LazyColumn`, so the whole tree scrolls as one container and `performScrollToNode` can reach the last
 row of either section. `TreeFirstHostGap = 8.dp` / `TreeHostGap = 16.dp` space the header-to-first-host and
 host-to-host gaps.
