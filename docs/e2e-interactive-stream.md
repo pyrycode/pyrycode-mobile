@@ -2056,6 +2056,15 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #1078 (2026-09-26):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/1078` at `8d13a8d849` merged with
+  `origin/main` at `c76a483330` (0 commits behind before the merge) — 45 executed, 45 passed, no
+  failures or skips, exit 0, wall clock 466.4s. `LIVE_MINIMUM` stayed at 45; this ticket added no new
+  curated method. This is the first clean run of
+  `interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile` — no nondeterministic
+  same-tree re-run needed — since #1017 first tracked its flake, consistent with
+  pyrycode/pyrycode-relay#154 being live on the production relay.
+
 - **LIVE verified for #1052 (2026-09-26):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/1052` at `32ac5ec892` merged with
   `origin/main` at `4da08dc28b` (0 commits behind before the merge) — 45 executed, 45 passed, no
