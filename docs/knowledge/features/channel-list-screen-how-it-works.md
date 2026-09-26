@@ -34,7 +34,7 @@ being touched. This is what makes the "bar on every draw" requirement fall out o
 needing to be re-proven per state.
 
 **Geometry.** Figma's glyphs are 24dp with centres 32dp and 84dp from the screen edge, a rule 20dp below them
-and 28dp of air above the first section header. Touch needs 48dp (the same minimum `TreeRowMinHeight` holds
+and 28dp of air above the first section label. Touch needs 48dp (the same minimum `TreeRowMinHeight` holds
 the tree rows to), and wrapping a 24dp glyph in a 48dp `IconButton` adds `BarTouchSlack = (48dp − 24dp) / 2 =
 12dp` of slack on every side of it — so each of the design's offsets is taken *less that slack*
 (`BarTopGap = 24dp − 12dp`, `BarRuleGap = 20dp − 12dp`), which lands both glyph centres exactly where the
@@ -43,12 +43,13 @@ BarTouchSlack` and its two entries spaced by `BarEntryGap = 4.dp` (52dp between 
 targets). A 48dp target does not have to move a 24dp glyph off its design position — for a glyph in a
 fixed-size target this is arithmetic, not the trade-off the tree rows' 28/28/24 → 48dp note describes.
 
-**Known spacing gap (verifier SHOULD-FIX, not blocking, unresolved at merge).** `BarBottomGap`, the
-`HorizontalDivider`'s bottom padding, is `28.dp` — but `TreeSectionHeader` carries its own `padding(top =
-12.dp)`, so the first `Channels` header actually sits **40dp** below the rule, not the design's 28dp. The file
-already solves this same relationship correctly for the *between-sections* rule (`TreeSectionRuleBottomGap =
-16.dp` + the header's own 12dp = 28dp) — the fix here is the same shape, `BarBottomGap = 16.dp`. Worth taking
-before #738 builds more chrome on this same rule.
+**Section-label spacing (gap resolved by [#1157](../../specs/architecture/1157-section-label-spacing.md)).**
+`TreeSectionHeader` centres its 20dp `labelLarge` line in a minimum 48dp row, adding
+`(48 − 20) / 2 = 14dp` above the label at normal font size. `BarBottomGap` aliases
+`TreeSectionRuleBottomGap = 14.dp`, so both the top-bar rule and the between-sections rule leave
+`14 + 14 = 28dp` to the next label. Measure the label box rather than the row boundary: the old
+12dp-padding arithmetic predates the header's 48dp add control. The header keeps `heightIn(min = 48.dp)`
+and can grow for larger text; the add target stays 48dp. The 28dp measurement applies at normal font size.
 
 **Insets.** No window insets of its own, unlike the `TopAppBar` it replaced. M3's `Scaffold` gives the body a
 top padding equal to the measured `topBar` height and leaves the window inset to the bar itself; the retired

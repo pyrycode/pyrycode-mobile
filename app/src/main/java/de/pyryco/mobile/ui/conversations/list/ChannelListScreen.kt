@@ -100,7 +100,9 @@ private val TreeGutter = 20.dp
 private val TreeFirstHostGap = 8.dp
 private val TreeHostGap = 16.dp
 private val TreeSectionRuleGap = 28.dp
-private val TreeSectionRuleBottomGap = 16.dp
+
+// TreeSectionHeader centres a 20dp label in 48dp: 14dp inner slack + 14dp here = 28dp.
+private val TreeSectionRuleBottomGap = 14.dp
 
 // The 88dp that kept the floating action button off the tree's last row went with the button (#738). What
 // remains is the air the last row needs not to sit flush against the screen's bottom edge — the outer
@@ -117,7 +119,7 @@ private val BarTouchSize = 48.dp
 private val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
 private val BarTopGap = 24.dp - BarTouchSlack
 private val BarRuleGap = 20.dp - BarTouchSlack
-private val BarBottomGap = 28.dp
+private val BarBottomGap = TreeSectionRuleBottomGap
 
 // 52dp between the glyph centres, less the two 48dp targets they sit in.
 private val BarEntryGap = 4.dp
