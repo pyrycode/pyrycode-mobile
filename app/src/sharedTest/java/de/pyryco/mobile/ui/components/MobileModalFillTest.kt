@@ -3,11 +3,21 @@ package de.pyryco.mobile.ui.components
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -69,5 +79,50 @@ class MobileModalFillTest {
         assertEquals(Color(0xFFCFE4FF), sheetCentre())
         assertEquals(expectedContentColor, contentColor)
         assertEquals(Color(0xFF134A74), contentColor)
+    }
+
+    @Test
+    fun darkCancelUsesPrimaryAndKeepsNativeDisabledColour() {
+        assertCancelColours(darkTheme = true)
+    }
+
+    @Test
+    fun lightCancelUsesPrimaryAndKeepsNativeDisabledColour() {
+        assertCancelColours(darkTheme = false)
+    }
+
+    private fun assertCancelColours(darkTheme: Boolean) {
+        val sending = mutableStateOf(false)
+        var primary = Color.Unspecified
+        var disabled = Color.Unspecified
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = darkTheme) {
+                primary = MaterialTheme.colorScheme.primary
+                disabled = ButtonDefaults.outlinedButtonColors().disabledContentColor
+                MobileGateModal(
+                    title = title,
+                    cancelLabel = "Cancel",
+                    onCancel = {},
+                    sending = sending.value,
+                ) {
+                    dialogView = LocalView.current
+                }
+            }
+        }
+        val cancel = rule.onNodeWithText("Cancel")
+        cancel.assertIsEnabled().assertHeightIsAtLeast(48.dp)
+        assertEquals(primary, cancelTextColour())
+
+        rule.runOnIdle { sending.value = true }
+        cancel.assertIsNotEnabled().assertHeightIsAtLeast(48.dp)
+        assertEquals(disabled, cancelTextColour())
+    }
+
+    private fun cancelTextColour(): Color {
+        val results = mutableListOf<TextLayoutResult>()
+        rule.onNodeWithText("Cancel").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        return results
+            .single()
+            .layoutInput.style.color
     }
 }

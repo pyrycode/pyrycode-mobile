@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -180,6 +181,7 @@ private fun CreateFolderAction(
     onClick: () -> Unit,
 ) {
     OutlinedButton(
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
         onClick = onClick,
         modifier = Modifier.padding(top = SectionLabelGap).heightIn(min = ActionMinHeight),
         enabled = enabled,

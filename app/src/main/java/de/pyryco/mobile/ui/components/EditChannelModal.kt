@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
@@ -159,6 +160,7 @@ private fun ArchiveChannelAction(
 ) {
     Column(modifier = Modifier.padding(top = ArchiveTopPadding)) {
         OutlinedButton(
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
             onClick = onClick,
             modifier = Modifier.heightIn(min = ActionMinHeight),
             enabled = enabled,
