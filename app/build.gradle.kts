@@ -170,6 +170,12 @@ android {
                     apiLevel = 33
                     systemImageSource = "google-atd"
                 }
+                // Full system chrome for the activity inset captures; ATD omits system bars.
+                create("pixel8Api35") {
+                    device = "Pixel 8"
+                    apiLevel = 35
+                    systemImageSource = "google_apis_playstore"
+                }
             }
         }
     }

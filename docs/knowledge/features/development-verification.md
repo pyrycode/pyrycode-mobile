@@ -195,6 +195,18 @@ on Kotlin/Compose libraries supplied only by the target APK during
 instrumentation. The service declaration requires `BIND_INPUT_METHOD` and remains
 under `app/src/androidTest`.
 
+ATD can also report zero physical system-bar insets and return black framebuffer
+captures while geometry assertions pass. `MainActivityInsetsDeviceTest` injects
+24 dp bars only when both reported bars are zero, preserves incoming IME insets,
+and records `syntheticBars` with density and measured insets. That path supplies
+geometry metadata only. For visual evidence, run the same class on the full
+`pixel8Api35` (`google_apis_playstore`) image with
+`-Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true`;
+it requires nonzero real bars and rejects blank PNGs. Let display configuration
+settle before launching the Activity. The
+[committed captures and measurements](../../../app/src/androidTest/assets/insets-1149/)
+show 412×892 and 360×800 dp; synthetic geometry alone cannot prove pixels.
+
 Selecting an IME after the Compose rule launches its activity can recreate that
 activity and dispose content installed with `setContent`. `MobileModalTest` uses
 an outer rule (`order = 0`, selected by `@WithTestIme`) to select the IME and drain
@@ -549,8 +561,10 @@ falls back to the managed device per scenario. Measured 2026-09-23: 61 seconds
 against 152 for seven separate runs. `scripted <scenario>` stays the focused
 command for one scenario.
 
-The current required profile is managed `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP
-ATD arm64; API 35 is deferred (2026-09-20 decision). See the
+The current required gate profile is managed `pixel2Api33Atd`, Pixel 2 / API 33 /
+AOSP ATD arm64. The full `pixel8Api35` image supplements it for real-system-bar
+screenshots ([Compose evidence](#compose-evidence)); it does not replace the
+required gate profile. See the
 [revision-linked live baseline](../../e2e-interactive-stream.md#verification-status).
 A configured profile name alone does not establish the runtime image. Capture ADB
 properties during execution and record the SDK image revision, Claude version,

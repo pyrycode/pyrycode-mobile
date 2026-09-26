@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="3" failures="0" errors="0" skipped="0" time="30.528" timestamp="2026-09-26T22:27:49" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.MainActivityInsetsDeviceTest" tests="2" failures="0" errors="0" skipped="0" time="27.273" timestamp="2026-09-26T22:27:49" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="activityAt360By800" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="16.566" />
+    <testcase name="activityAt412By892" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="10.707" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.MainActivityInsetsTest" tests="1" failures="0" errors="0" skipped="0" time="1.304" timestamp="2026-09-26T22:27:49" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="welcomeConsumesChangingSystemBarsExactlyOnce" classname="de.pyryco.mobile.MainActivityInsetsTest" time="1.304" />
+  </testsuite>
+</testsuites>
