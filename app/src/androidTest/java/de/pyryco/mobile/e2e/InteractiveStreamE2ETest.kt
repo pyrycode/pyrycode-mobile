@@ -2417,7 +2417,9 @@ class InteractiveStreamE2ETest {
      * under its new name.
      *
      * A throwaway unpromoted chat created with omitted `cwd` supplies the daemon's actual default folder for
-     * comparison. **Shared host state.** Both conversations are deleted and the app's saved default is restored in `finally`.
+     * comparison. The live harness seeds a promoted collision row, so this test temporarily archives the
+     * host's existing channels to exercise an empty section. **Shared host state.** Those channels are restored,
+     * both new conversations are deleted and the app's saved default is restored in `finally`.
      *
      * **Two real-claude turns**: the two pings. Reset session also runs the daemon's wrap-up turn.
      */
@@ -2433,9 +2435,18 @@ class InteractiveStreamE2ETest {
         val appOnlyDefault = "/app-only-default-$stamp"
         var channelId: String? = null
         var defaultProbeId: String? = null
+        val archivedFixtureIds = mutableListOf<String>()
         try {
             awaitChannelList()
             awaitConnected()
+            val originalChannelIds =
+                hostConversationIds(serverId, "the harness's seeded channel", ConversationFilter.Channels) {
+                    twoHostArg(ARG_COLLISION_CONVERSATION_ID) in it
+                }
+            originalChannelIds.forEach { id ->
+                runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).archive(id) } }
+                archivedFixtureIds.add(id)
+            }
             hostConversationIds(serverId, "an empty Channels section", ConversationFilter.Channels) { it.isEmpty() }
             runBlocking { preferences.setDefaultWorkspace(serverId, appOnlyDefault).getOrThrow() }
             val daemonDefault = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).createDiscussion(null) } }
@@ -2446,6 +2457,9 @@ class InteractiveStreamE2ETest {
             val plus = hasTestTag(treeHostChannelAddTestTag(serverId))
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 runCatching { scrollListTo(plus) }.isSuccess
+            }
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).fetchSemanticsNodes().isEmpty()
             }
             composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).assertCountEquals(0)
             composeTestRule.onNode(plus).performClick()
@@ -2549,6 +2563,10 @@ class InteractiveStreamE2ETest {
             listOfNotNull(channelId, defaultProbeId).forEach { id ->
                 runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
                     .onFailure { Log.w("E2E", "channel cleanup failed: ${it::class.simpleName}") }
+            }
+            archivedFixtureIds.forEach { id ->
+                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).unarchive(id) } } }
+                    .onFailure { Log.w("E2E", "channel fixture restore failed: ${it::class.simpleName}") }
             }
         }
     }
