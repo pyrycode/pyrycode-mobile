@@ -90,6 +90,7 @@ import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
+import de.pyryco.mobile.ui.theme.threadColors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -313,6 +314,8 @@ fun ThreadScreen(
     ) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
+            containerColor = MaterialTheme.colorScheme.threadColors.background,
+            contentColor = MaterialTheme.colorScheme.onBackground,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 ThreadTopAppBar(
@@ -337,7 +340,7 @@ fun ThreadScreen(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface)
+                            .background(MaterialTheme.colorScheme.threadColors.surface)
                             .imePadding()
                             .padding(top = ComposerTopGap, bottom = ComposerBottomGap),
                     verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
