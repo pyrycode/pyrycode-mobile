@@ -9,6 +9,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalContext
@@ -56,6 +57,7 @@ private val darkScheme =
     darkColorScheme(
         primary = primaryDark,
         onPrimary = onPrimaryDark,
+        onPrimaryFixed = onPrimaryFixedDark,
         primaryContainer = primaryContainerDark,
         onPrimaryContainer = onPrimaryContainerDark,
         secondary = secondaryDark,
@@ -63,6 +65,7 @@ private val darkScheme =
         secondaryContainer = secondaryContainerDark,
         onSecondaryContainer = onSecondaryContainerDark,
         tertiary = tertiaryDark,
+        tertiaryFixedDim = tertiaryDark,
         onTertiary = onTertiaryDark,
         tertiaryContainer = tertiaryContainerDark,
         onTertiaryContainer = onTertiaryContainerDark,
@@ -251,6 +254,8 @@ private val lightWarningColors = WarningColors(warningLight)
 private val darkWarningColors = WarningColors(warningDark)
 private val lightSuccessColors = SuccessColors(successLight)
 private val darkSuccessColors = SuccessColors(successDark)
+private val dynamicDarkSuccessColors = SuccessColors(successDarkDynamic)
+internal val LocalStaticDarkPalette = staticCompositionLocalOf { false }
 private val mediumContrastLightWarningColors = WarningColors(warningLightMediumContrast)
 private val highContrastLightWarningColors = WarningColors(warningLightHighContrast)
 private val mediumContrastDarkWarningColors = WarningColors(warningDarkMediumContrast)
@@ -295,7 +300,12 @@ fun PyrycodeMobileTheme(
             darkTheme -> darkScheme to darkWarningColors
             else -> lightScheme to lightWarningColors
         }
-    val successColors = if (darkTheme) darkSuccessColors else lightSuccessColors
+    val successColors =
+        when {
+            darkTheme && !dynamicColor -> darkSuccessColors
+            darkTheme -> dynamicDarkSuccessColors
+            else -> lightSuccessColors
+        }
     // Figma's thread/reader Content layer: 30% black over Surface, only in static dark.
     val threadCanvas = if (darkTheme && !dynamicColor) colorScheme.scrim.copy(alpha = 0.3f).compositeOver(colorScheme.surface) else null
     val threadColors =
@@ -319,6 +329,7 @@ fun PyrycodeMobileTheme(
         )
 
     CompositionLocalProvider(
+        LocalStaticDarkPalette provides (darkTheme && !dynamicColor),
         LocalWarningColors provides warningColors,
         LocalSuccessColors provides successColors,
         LocalModalColors provides modalColors,

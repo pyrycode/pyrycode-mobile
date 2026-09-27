@@ -63,6 +63,7 @@ import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.ConversationAttention
+import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.success
 import de.pyryco.mobile.ui.theme.warning
@@ -425,7 +426,11 @@ fun TreeConversationRow(
     val bounded = boundedRowText(conversationName)
     val fill =
         if (selected) {
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = SELECTED_FILL_ALPHA)
+            if (LocalStaticDarkPalette.current) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = SELECTED_FILL_ALPHA)
+            }
         } else {
             Color.Transparent
         }

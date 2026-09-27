@@ -31,30 +31,29 @@ mirrors `WarningColors` **one-for-one** — a deliberate sibling, not an additiv
 
 Wired through the same three sites as `WarningColors`:
 
-- `ui/theme/Color.kt` — two palette literals beside the `warning*` ones: `successLight =
-  Color(0xFF316B2B)` and `successDark = Color(0xFFA6D388)`.
-- `ui/theme/Theme.kt` — `private val lightSuccessColors = SuccessColors(successLight)` /
-  `darkSuccessColors`, a `val successColors = if (darkTheme) darkSuccessColors else
-  lightSuccessColors` selected after the existing `when`, and `LocalSuccessColors provides
-  successColors` added to the existing `CompositionLocalProvider` (vararg) alongside
-  `LocalWarningColors`. `PyrycodeMobileTheme`'s signature is unchanged.
+- `ui/theme/Color.kt` — `successLight = Color(0xFF316B2B)`, `successDark =
+  Color(0xFF2FC038)` and `successDarkDynamic = Color(0xFFA6D388)` beside the `warning*` values.
+- `ui/theme/Theme.kt` — `PyrycodeMobileTheme` selects static dark, dynamic dark or light
+  `SuccessColors` before providing `LocalSuccessColors` alongside `LocalWarningColors`.
+  Its public signature is unchanged.
 
 ## Authoritative values
 
-**Placeholders, design-owed.** Unlike [`warning`](warning-color.md) (sourced from a locked Figma
-`Schemes/Warning` variable), `success` was conceived as a live-testing diagnostic affordance
-*after* the design lock — no Figma `Schemes/Success` variable exists yet. The two values are chosen
-for adequate light/dark contrast and will be reconciled when the design draws the connection-status
-line under Settings frame `17-2` (same design-later resolution as [#343](../codebase/343.md)).
+The static dark value follows the live Figma `Schemes/Success` binding (`#2FC038`) on
+sidebar node [`132:3902`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=132-3902),
+inspected on 2026-09-28. Light and dynamic dark retain their earlier values; the
+sidebar binding does not redefine those palette paths.
 
 | Mode | `val` name | Hex | Rationale |
 |---|---|---|---|
-| Light | `successLight` | `#316B2B` | medium-dark green (≈green tone 40); contrast on `surfaceLight` `#F8F9FF`. Mirrors `warningLight` being a *dark* amber for the light scheme. |
-| Dark | `successDark` | `#A6D388` | light green (≈green tone 80); contrast on `surfaceDark` `#101418`. Mirrors `warningDark` being a *light* amber for the dark scheme. |
+| Light | `successLight` | `#316B2B` | Existing light value. |
+| Static dark | `successDark` | `#2FC038` | Live sidebar `Schemes/Success` binding. |
+| Dynamic dark | `successDarkDynamic` | `#A6D388` | Existing wallpaper-colour-path value. |
 
 No medium/high-contrast variants — `PyrycodeMobileTheme` only selects light/dark for `WarningColors`
-(the contrast holders there are defined-but-dead), so `success` matches that scope. The two literals
-are isolated in `Color.kt`, so a design reconciliation is a two-line edit.
+(the contrast holders there are defined-but-dead), so `success` matches that scope.
+`SharedDarkColourRolesTest` checks all three success paths, preventing a static-dark
+design update from silently changing wallpaper colours.
 
 ## Why a sibling, not a `WarningColors` field
 
@@ -92,4 +91,5 @@ Since #878, `ConversationStatusDot`'s `Unread` fill reads it too (see
   and the tree row's [Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878) (#878).
 - Implementation notes: [`codebase/397.md`](../codebase/397.md).
 - Theme primitive: `app/src/main/java/de/pyryco/mobile/ui/theme/Theme.kt` — `PyrycodeMobileTheme`,
-  the two `SuccessColors` instances. Palette: `…/ui/theme/Color.kt` — `successLight` / `successDark`.
+  the three `SuccessColors` instances. Palette: `…/ui/theme/Color.kt` — `successLight` /
+  `successDark` / `successDarkDynamic`.
