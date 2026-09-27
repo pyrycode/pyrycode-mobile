@@ -1271,13 +1271,19 @@ class ChannelListScreenTest {
     fun emptyState_rendersPlaceholder_whenThereAreNoHosts() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                ChannelListScreen(hostState = HostChannelListState(), onEvent = {})
+                ChannelListScreen(hostState = HostChannelListState(), onEvent = { events += it })
             }
         }
 
         composeTestRule
-            .onNode(hasText(string(R.string.channel_list_empty)))
+            .onNode(hasText("To pair a host, open Settings and choose Pair another server."))
             .assertIsDisplayed()
+        composeTestRule.onNode(hasText("Tap + to start a conversation")).assertDoesNotExist()
+        composeTestRule
+            .onNode(hasContentDescription(string(R.string.cd_open_settings)))
+            .assertIsDisplayed()
+            .performClick()
+        assertEquals(listOf(ChannelListEvent.SettingsTapped), events)
     }
 
     /**

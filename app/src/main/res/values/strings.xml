@@ -2,7 +2,7 @@
     <string name="app_name">Pyrycode Mobile</string>
     <string name="cd_open_settings">Open settings</string>
     <string name="cd_open_archive">Open archive</string>
-    <string name="channel_list_empty">Tap + to start a conversation</string>
+    <string name="channel_list_empty">To pair a host, open Settings and choose Pair another server.</string>
     <string name="discussion_list_title">Recent discussions</string>
     <string name="discussion_list_empty">No discussions yet</string>
     <string name="cd_back">Back</string>
