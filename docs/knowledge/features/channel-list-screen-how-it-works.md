@@ -17,13 +17,22 @@ canonical CLAUDE.md shape (hoist state to the ViewModel; UI receives state + `on
 
 Replaced the M3 `TopAppBar` #21 gave the screen — the design retires the app's generic top app bar (with it,
 the app name and the Pyry logo, #68) and gives the list its own chrome: a settings entry at the leading
-content edge, an archive entry beside it, and a one-pixel rule closing the bar. The screen still owns its own
+content edge, an archive entry beside it, and (since #1186) one “Pair another host” plus at the right,
+with a 1dp rule closing the titleless bar. The screen still owns its own
 chrome rather than relying on a shared `TopAppBar` slot threaded through the NavHost; the outer `Scaffold` in
 `MainActivity` carries system-bar insets only.
 
-The file-private `ChannelListTopBar(onEvent)` is a `Column`: a `Row` of two 48dp `IconButton`s (`Icons.Default.Settings`
-emitting `SettingsTapped`, `Icons.Default.Archive` emitting `ArchiveTapped`, each a 24dp `Icon` tinted
-`colorScheme.primary` with its own `contentDescription`), then a `HorizontalDivider`. Both this divider and
+The file-private `ChannelListTopBar(onEvent)` is a `Column`: a full-width `Row` keeps Settings and Archive
+together at the left and pairing at the right, followed by a `HorizontalDivider`. Each control is a
+48dp `IconButton` with a 24dp Material `Icon` tinted `colorScheme.primary`:
+
+| Icon | TalkBack name | Event |
+| --- | --- | --- |
+| `Settings` | Open settings | `SettingsTapped` |
+| `Archive` | Open archive | `ArchiveTapped` |
+| `Add` | Pair another host | `PairHostTapped` |
+
+The existing Material icons remain the approximation of Figma's FontAwesome artwork. Both this divider and
 the tree's between-sections rule use the private `sidebarRuleColor()` helper: `inversePrimary` for a dark
 surface, `outlineVariant` for a light surface, each at `SECTION_RULE_ALPHA = 0.60f`.
 
@@ -43,23 +52,18 @@ assembled tree (four before #738 retired the flat state's loading and error text
 being touched. This is what makes the "bar on every draw" requirement fall out of the structure rather than
 needing to be re-proven per state.
 
-**Geometry.** Figma's glyphs are 24dp with centres 32dp and 84dp from the screen edge, a rule 20dp below them
-and 28dp of air above the first section label. Touch needs 48dp (the same minimum `TreeRowMinHeight` holds
-the tree rows to), and wrapping a 24dp glyph in a 48dp `IconButton` adds `BarTouchSlack = (48dp − 24dp) / 2 =
-12dp` of slack on every side of it — so each of the design's offsets is taken *less that slack*
-(`BarTopGap = 24dp − 12dp`, `BarRuleGap = 20dp − 12dp`), which lands both glyph centres exactly where the
-design puts them while giving each entry a full 48dp touch target. The row is inset by `TreeGutter -
-BarTouchSlack` and its two entries spaced by `BarEntryGap = 4.dp` (52dp between centres, less the two 48dp
-targets). A 48dp target does not have to move a 24dp glyph off its design position — for a glyph in a
-fixed-size target this is arithmetic, not the trade-off the tree rows' 28/28/24 → 48dp note describes.
+**Geometry ([#1186](../../specs/architecture/1186-sidebar-pairing-toolbar.md)).** Figma's 24dp top inset
+and 4dp inside its 28dp wrapper put each 24dp glyph's top at 28dp relative to the panel. A 48dp target
+adds `BarTouchSlack = 12.dp` around the glyph, so `BarTopGap = 28dp − 12dp = 16dp`. Targets end at 64dp;
+`BarRuleGap = 16dp − 12dp = 4dp` places the 1dp divider at 68dp. Horizontal target padding is
+`TreeGutter − BarTouchSlack = 8dp` on both sides, placing the outer glyph edges at the 20dp content gutters.
+The two left targets have a 4dp gap, giving 52dp between centres. Copying the design's 44dp centre spacing
+would overlap 48dp targets; keep this deliberate spacing adaptation.
 
-**Section-label spacing (gap resolved by [#1157](../../specs/architecture/1157-section-label-spacing.md)).**
-`TreeSectionHeader` centres its 20dp `labelLarge` line in a minimum 48dp row, adding
-`(48 − 20) / 2 = 14dp` above the label at normal font size. `BarBottomGap` aliases
-`TreeSectionRuleBottomGap = 14.dp`, so both the top-bar rule and the between-sections rule leave
-`14 + 14 = 28dp` to the next label. Measure the label box rather than the row boundary: the old
-12dp-padding arithmetic predates the header's 48dp add control. The header keeps `heightIn(min = 48.dp)`
-and can grow for larger text; the add target stays 48dp. The 28dp measurement applies at normal font size.
+**First-row spacing.** The global Channels/Chats headers are no longer emitted. `BarBottomGap = 24.dp`
+is the entire gap from the divider's bottom to the first host row: both list-top padding and first-host
+padding are zero. Do not carry forward the old section header's inner-label slack calculation. The
+between-groups divider has 28dp padding on each side; see [conversation tree](channel-list-screen-tree-and-controls.md#conversation-tree-731).
 
 **Insets.** No window insets of its own, unlike the `TopAppBar` it replaced. M3's `Scaffold` gives the body a
 top padding equal to the measured `topBar` height and leaves the window inset to the bar itself; the retired
@@ -93,11 +97,11 @@ see [WorkspacePicker § Consumers](workspace-picker.md#consumers).
 
 ## Tree rows (#730)
 
-`ui/conversations/components/ConversationTreeRows.kt` supplies the four stateless composables this screen
-assembles: `TreeSectionHeader`, `TreeHostRow`, `TreeWorkspaceRow` and `TreeConversationRow`, plus the
-file-private `TreeAddControl` the first two now draw (#738, see [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738) above).
-\#731 is their first and, as of this writing, only consumer — this screen's `treeSection` (above) is the call
-site. The rows remain stateless and resolve nothing about which host or workspace they belong to; every
+`ui/conversations/components/ConversationTreeRows.kt` supplies the three stateless composables this screen
+assembles: `TreeHostRow`, `TreeWorkspaceRow` and `TreeConversationRow`, plus their shared file-private
+`TreeRowControl` (see [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)).
+`TreeSectionHeader` and its resources remain available as a shared component, but this screen no longer
+emits it since #1186. The rows remain stateless and resolve nothing about which host or workspace they belong to; every
 parameter is display text, a flag or a callback the caller (this screen) already resolved — `TreeHostRow`'s
 new `serverId` parameter is the one exception, used only to name its own add control for the device suites,
 never to resolve anything the row draws. Row-level clamping, truncation, selection-fill and
@@ -209,10 +213,14 @@ own `serverId` at the press, never the selected host) and the close (`dismissCha
   `InteractiveStreamE2ETest`'s `CD_OPEN_SETTINGS` mirror keeps matching), `channel_list_empty`,
   `channels_section_header`, `untitled_discussion` (reused by both the tree's conversation fallback and the
   pre-existing discussion-row fallback).
-- **Strings added in #738:** `R.string.cd_tree_section_pair_host` ("Pair another host, %1$s"),
+- **Toolbar pairing string (#1186):** `R.string.cd_pair_another_host` ("Pair another host") names the
+  single toolbar control. `channel_list_empty` points to it at the top right without claiming no hosts
+  are paired while snapshots are pending. Global Channels/Chats title rows are no longer rendered.
+- **Strings added in #738:** `R.string.cd_tree_section_pair_host` ("Pair another host, %1$s", retained
+  for the shared `TreeSectionHeader`, no longer used by this screen),
   `cd_tree_host_new_chat` ("New chat on %1$s") and `cd_tree_host_pick_workspace` ("Pick a workspace for the
-  new chat on %1$s") — the two add controls' content descriptions, each formatted with the section title or
-  the row's already-clamped host name. **Strings retired in #738:** `cd_new_discussion` and
+  new chat on %1$s") — the shared header uses its section title; host controls use the row's
+  already-clamped host name. **Strings retired in #738:** `cd_new_discussion` and
   `cd_long_press_fab_pick_workspace` — the retired button's two labels; nothing else in `res/values/strings.xml`
   referenced them.
 - **Strings added in #744:** `R.string.cd_tree_host_edit` ("Edit host %1$s") — the edit control's content
