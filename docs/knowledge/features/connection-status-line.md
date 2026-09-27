@@ -121,10 +121,13 @@ fun ConnectionStatusLine(status: ConnectionStatus, modifier: Modifier = Modifier
 
 - **Stateless** — takes an immutable `ConnectionStatus`, holds no state, runs no coroutine/side
   effect. The live flow is sourced and collected by the consumer (#398), never here.
-- A `Row` (`Arrangement.spacedBy(24.dp)`, `CenterVertically`) of two private
-  `StatusLeg(name, visual)` children — "Relay" from `status.relay.toLegVisual()`, "Pyrycode" from
-  `status.pyrycode.toLegVisual()`.
-- Each `StatusLeg` is a `Row` of **[8.dp coloured dot] [name] [state label]**:
+- A `FlowRow` with 24dp horizontal spacing, centred items and 6dp between wrapped lines contains
+  two private `StatusLeg(name, visual)` children — "Relay" from `status.relay.toLegVisual()`, "Pyrycode" from
+  `status.pyrycode.toLegVisual()`. Each group is measured against the available line width and
+  wraps as a whole when both cannot fit. In Settings at 412dp, connected groups stay horizontal
+  at 100% text and stack at 200%. The previous fixed outer `Row` squeezed the second group's
+  state label into fragments; wrapping must happen between groups ([#1183](../../specs/architecture/1183-readable-connection-statuses.md)).
+- Each `StatusLeg` is a `Row` of **[8.dp coloured dot] [name] [state label]**, with 6dp internal spacing:
   - the dot is `Box(Modifier.size(8.dp).background(visual.category.color(), CircleShape))` — colour
     is **redundant** with the text, never the only signal;
   - **name** (`Text`, `labelMedium`/`onSurface`) and **state label** (`Text`, `labelSmall`/
@@ -137,8 +140,8 @@ fun ConnectionStatusLine(status: ConnectionStatus, modifier: Modifier = Modifier
 
 ### Previews
 
-A private `ConnectionStatusLinePreviewMatrix` renders the four meaningful combinations, wrapped by a
-Light + Dark `@Preview` pair at `widthDp = 412` (the `ConnectionBanner` idiom):
+A private `ConnectionStatusLinePreviewMatrix` renders the four meaningful combinations, wrapped by
+Light + Dark `@Preview`s at `widthDp = 412`, each at 100% and 200% text:
 
 1. both up — `ConnectionStatus(Connected, Connected)`
 2. **relay up / pyrycode down** — `ConnectionStatus(DaemonAbsent, Down)` (green relay + red pyrycode;
@@ -148,7 +151,7 @@ Light + Dark `@Preview` pair at `widthDp = 412` (the `ConnectionBanner` idiom):
 
 ## Testing
 
-Unit-only (`./gradlew test`, JVM, no device), `ConnectionStatusLineTest.kt` — plain `org.junit` +
+`ConnectionStatusLineTest.kt` covers the pure mappings (`./gradlew test`, JVM, no device) — plain `org.junit` +
 `assertEquals`, the [`ThreadScreenMapperTest`](thread-screen.md) idiom. One `@Test` per sealed case
 (all 11 — the 8 relay cases incl. #499's `Idle`, #841's `PairingRejected` and #1008's `UpdateRequired`,
 plus the 3 pyrycode cases), each asserting the **full triple** so a copy change is caught and moved
@@ -157,9 +160,22 @@ is `relayIdle_mapsToDown_notConnected`, #841's is the direct `PairingRejected` c
 `Down`/"Pairing rejected"/"Relay: pairing rejected", and #1008's
 (`relayUpdateRequired_mapsToDown_withOrWithoutAMinimum`) asserts the same
 `Down`/"Update required"/"Relay: update required" triple for **both** `UpdateRequired(null)` and
-`UpdateRequired("1.4.0")` — proving the mapper reads only the case, never the minimum field. The trivial
-category→token resolver and the layout are **preview-verified**, not instrumented — matching
-`ConnectionBanner` (no unit test there either). The pure mapper carries the test weight.
+`UpdateRequired("1.4.0")` — proving the mapper reads only the case, never the minimum field.
+The category→token resolver remains visually checked through previews.
+
+[`ConnectionStatusLineLayoutTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/ConnectionStatusLineLayoutTest.kt)
+adds geometry coverage using the real Settings `HostIdentityRow`, a forced and asserted 412dp
+width, 100%/200% text, and static light/dark themes. Native graphics supplies real font metrics
+(see [shared screen tests](development-verification.md#where-a-screen-test-goes)). Its two tests
+cover connected groups and the remaining status mappings, comparing each semantic group's
+width and height with independently measured unwrapped name/state text plus the dot and gaps.
+They also check containment, the 16dp Settings start inset, ordinary 24dp spacing and centred
+alignment, non-overlap at enlarged text, and stacking for the enlarged connected pair.
+
+Finding a displayed content description alone cannot prove readability: the old fragmented
+label still had its complete spoken description. These bounds assertions reject that failure;
+the mapping tests independently pin the description strings. Match each leg by its combined
+`contentDescription`, since `clearAndSetSemantics` hides the child text from text matchers.
 
 ## Live wiring (#398)
 
