@@ -19,7 +19,7 @@ menu's last item writes the note's text into a document the operator picks — s
 
 The reader draws the thread's own top bar — 24dp back arrow, the file name in `titleLarge` /
 `onPrimaryContainer` on one ellipsised line, a three-dot overflow button at the end (since #1067, see below), a
-60%-alpha `outlineVariant` rule — with no title tap. Below it, the file
+60%-alpha header rule — with no title tap. Below it, the file
 renders through [`MarkdownText`](markdown-text.md), the same renderer [assistant replies](message-bubble.md)
 use, in a `weight(1f)` `verticalScroll` column under the fixed bar. The back arrow and system back both pop
 the destination and return to the same thread. A file that cannot be read, or is not valid UTF-8, never opens
@@ -28,6 +28,15 @@ snackbar (see [Load and navigate from the thread](#load-and-navigate-from-the-th
 is open, the same "could not be read" notice can recur as a snackbar *inside* the reader — see
 [Copy and refresh menu](#copy-and-refresh-menu-since-1067) — because Refresh can fail after the first read
 already succeeded.
+
+With app dark mode selected and wallpaper colours off, the full-size reader `Surface` uses
+`#0B0E11` (30% black over `#101418`), including the transparent header's background and blank space
+below short notes or around scrolling content. The existing 1dp rule, inset 20dp, uses `inversePrimary`
+(`#32628D`) at 60% alpha. Static light and wallpaper light/dark retain the `surface` canvas and an
+`outlineVariant` rule at 60%. This is the shared screen-local `ThreadColors` mapping from `PyrycodeMobileTheme`, following
+the app's resolved mode even when it differs from the system; global Material roles stay unchanged.
+See [thread canvas and header](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome)
+and the [palette plan](../../specs/architecture/1162-thread-reader-canvas.md).
 
 ## Routing a tap to the reader
 
@@ -106,8 +115,9 @@ cheaply). The document is held in composition only, never `rememberSaveable`, so
 the saved-state bundle.
 
 `MarkdownReaderScreen(document, onBack, modifier, onRefresh, snackbarHostState)` is the stateless render: a
-`Surface` (not a bare `Column` with a background — `Surface` is what makes `MaterialTheme.colorScheme.onSurface`
-the content colour `MarkdownText`'s text draws in) holding `MarkdownReaderTopBar` then the scrolling body, with
+`Surface` with explicit `contentColor = MaterialTheme.colorScheme.onSurface`, holding `MarkdownReaderTopBar`
+then the scrolling body. The custom canvas is not a global Material role, so automatic content-colour lookup
+cannot select its foreground; retaining `onSurface` explicitly keeps `MarkdownText`'s text colour intact. It has
 a `SnackbarHost` docked to the bottom for a failed refresh. `onRefresh` and `snackbarHostState` both default to
 inert values, so every existing caller and preview still compiles; `RefreshableMarkdownReader` is the one real
 caller. `MarkdownReaderTopBar` reuses `ThreadTopAppBar`'s bar-metric constants (`BarGlyphSize`, `BarTouchSize`,
@@ -408,6 +418,10 @@ notice and that no file exists at the destination.
 \#1069) `event=markdown_reader_save outcome=saved|failed|cancelled chars=<length, or -1 when lost>`.
 
 ## Testing
+
+`ThreadCanvasPaletteTest` uses native-graphics pixel checks for both screens' canvases and inset rules,
+including short and scrolled reader content. It exercises all four theme mappings with system/app modes
+opposed and switches themes after composition; its 320dp fixtures prove colour, not full 412dp layout parity.
 
 - `MarkdownReaderLoadTest` (`app/src/test/…/thread/`, 8 tests): `isMarkdownAttachmentName` across case and
   near-miss names (`notes.txt`, `notes.md.txt`, bare `md`, `null`); `decodeUtf8Strictly` round-trips valid
