@@ -8,11 +8,9 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -175,19 +173,15 @@ fun TreeSectionHeader(
 
 /**
  * One host in the tree: a server glyph, the host's name, a fold control, the two connection legs shown
- * separately, the edit control that opens the Edit host modal for **this** host (#744), and the add
- * control that starts a chat on it (#738).
+ * separately, and the edit control that opens the Edit host modal for **this** host (#744).
  *
  * Stateless — [hostName] is display text the caller resolved (a nameless host reads as whatever
  * #731 decides), [expanded] is the caller's flag, and the row reports a fold request back through
  * [onToggleExpanded]. The row resolves nothing: [serverId] is reported straight back through
- * [onAddTapped] / [onAddLongPressed] / [onEditTapped] and is otherwise used only to name the two
- * controls for the device suites, so those handles stay unambiguous once a second host is paired.
+ * [onEditTapped] and is otherwise used only to name the host's test controls.
  * Keeping the indicator pair accurate as hosts fail live is #668.
  *
- * The design's hover treatment swaps the leg dots for the pencil and the plus, in that order. The phone
- * has no hover, so both are drawn persistently in the same order, outboard of the dots the design would
- * have hidden.
+ * The phone has no hover, so the edit pencil stays visible beside the connection dots.
  *
  * A host whose relay leg [isDisconnected] draws the design's disconnected treatment (#840): glyph and
  * name in the error colour, and a plug control inboard of the dots that reports through
@@ -207,8 +201,6 @@ fun TreeHostRow(
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
     onEditTapped: () -> Unit,
-    onAddTapped: () -> Unit,
-    onAddLongPressed: () -> Unit,
     modifier: Modifier = Modifier,
     onReconnectTapped: () -> Unit = {},
 ) {
@@ -254,14 +246,6 @@ fun TreeHostRow(
                 onClick = onEditTapped,
                 modifier = Modifier.testTag(treeHostEditTestTag(serverId)),
             )
-            TreeRowControl(
-                icon = Icons.Filled.Add,
-                contentDescription = stringResource(R.string.cd_tree_host_new_chat, bounded),
-                onClick = onAddTapped,
-                onLongClickLabel = stringResource(R.string.cd_tree_host_pick_workspace, bounded),
-                onLongClick = onAddLongPressed,
-                modifier = Modifier.testTag(treeHostAddTestTag(serverId)),
-            )
         }
         if (update != null) {
             // Inside the host's own item, so folding the host, which drops only the rows below it, keeps it.
@@ -283,18 +267,15 @@ fun TreeHostRow(
 }
 
 /**
- * The device suites' handles for one host's two controls — an app-authored prefix, the host's own id, and
+ * The device suites' handles for host controls — an app-authored prefix, the host's own id, and
  * nothing drawn on the row (#736's convention, per-host because the controls repeat).
  *
  * The id comes from the saved `PairedServer` record the operator scanned, not from a daemon frame, but a
  * hostile QR could still make it enormous and a `testTag` is re-evaluated on every recomposition of the
  * row. So it is clamped exactly as `treeItemKey` clamps its parts — truncated with the original length
  * appended, which keeps two ids sharing a prefix from collapsing onto one tag. `testTag` is invisible to
- * accessibility services, so this carries the id no further than the test tree. Both tags share one
- * clamp so the two cannot drift apart.
+ * accessibility services.
  */
-fun treeHostAddTestTag(serverId: String): String = "tree-host-add:${boundedTagId(serverId)}"
-
 fun treeHostEditTestTag(serverId: String): String = "tree-host-edit:${boundedTagId(serverId)}"
 
 fun treeHostReconnectTestTag(serverId: String): String = "tree-host-reconnect:${boundedTagId(serverId)}"
@@ -303,7 +284,12 @@ fun treeHostUpdateTestTag(serverId: String): String = "tree-host-update:${bounde
 
 fun treeHostChannelAddTestTag(serverId: String): String = "tree-host-channel-add:${boundedTagId(serverId)}"
 
-/** Fixed Channels or Chats section under one host; only Channels offers creation. */
+fun treeHostChatAddTestTag(serverId: String): String = "tree-host-chat-add:${boundedTagId(serverId)}"
+
+/**
+ * Fixed Channels or Chats section under one host, each with its own create control. The supplied sidebar
+ * frame shows only Channels' plus; #1190's later product decision gives Chats the matching control.
+ */
 @Composable
 fun TreeHostSectionRow(
     serverId: String,
@@ -311,7 +297,8 @@ fun TreeHostSectionRow(
     sectionName: String,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
-    onAddTapped: (() -> Unit)?,
+    onAddTapped: () -> Unit,
+    isChat: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val boundedHost = boundedRowText(hostName)
@@ -325,14 +312,13 @@ fun TreeHostSectionRow(
         onToggleExpanded = onToggleExpanded,
         modifier = modifier,
     ) {
-        if (onAddTapped != null) {
-            TreeRowControl(
-                icon = Icons.Filled.Add,
-                contentDescription = stringResource(R.string.cd_tree_host_new_channel, boundedHost),
-                onClick = onAddTapped,
-                modifier = Modifier.testTag(treeHostChannelAddTestTag(serverId)),
-            )
-        }
+        TreeRowControl(
+            icon = Icons.Filled.Add,
+            contentDescription =
+                stringResource(if (isChat) R.string.cd_tree_host_new_chat else R.string.cd_tree_host_new_channel, boundedHost),
+            onClick = onAddTapped,
+            modifier = Modifier.testTag(if (isChat) treeHostChatAddTestTag(serverId) else treeHostChannelAddTestTag(serverId)),
+        )
     }
 }
 
@@ -563,16 +549,13 @@ private fun FoldableTreeRow(
 }
 
 /**
- * The trailing row control: the section header's and the host row's plus (#738), the host row's
- * pencil (#744), a disconnected host's plug (#840), an update-required host's update control (#1009), a chat row's pencil (#827) and a workspace row's pencil
+ * The trailing row control: each section header's plus, the host row's pencil (#744), a disconnected
+ * host's plug (#840), an update-required host's update control (#1009), a chat row's pencil (#827) and a workspace row's pencil
  * (#905) and plus (#958). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
  * differs between them.
  *
  * [contentDescription] is the whole accessible name, because the controls repeat down the screen and two
  * of them sit on one row, so each has to say which section or host it acts on and what it does there.
- * Callers that want a long-press path supply both [onLongClickLabel] and [onLongClick]; the pair is what
- * keeps the retired button's second path — pick a workspace first — reachable, and it is built the same
- * way the button built it. The pencil passes neither: it has one action.
  *
  * **The 48dp trade.** The design pins a [TreeGlyphSize] glyph with its centre 10dp from the content edge.
  * Touch needs [TreeAddTouchSize] and the glyph centres in that box, so behind the rows' own
@@ -583,26 +566,21 @@ private fun FoldableTreeRow(
  * Adjacent to the row's fold or open target, so this stays its own node with its own name, tag and
  * click action and a tap on it never reaches the row's main action.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TreeRowControl(
     icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onLongClickLabel: String? = null,
-    onLongClick: (() -> Unit)? = null,
 ) {
     Box(
         modifier =
             modifier
                 .size(TreeAddTouchSize)
                 .clip(CircleShape)
-                .combinedClickable(
+                .clickable(
                     onClick = onClick,
                     onClickLabel = contentDescription,
-                    onLongClick = onLongClick,
-                    onLongClickLabel = onLongClickLabel,
                     role = Role.Button,
                 ).semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
@@ -732,8 +710,6 @@ private fun TreeRowsPreviewMatrix() {
                 expanded = true,
                 onToggleExpanded = {},
                 onEditTapped = {},
-                onAddTapped = {},
-                onAddLongPressed = {},
             )
             TreeWorkspaceRow(
                 workspaceName = "Second Brain",
@@ -763,8 +739,6 @@ private fun TreeRowsPreviewMatrix() {
                 expanded = false,
                 onToggleExpanded = {},
                 onEditTapped = {},
-                onAddTapped = {},
-                onAddLongPressed = {},
             )
             listOf("1.4.0", null).forEach { minimum ->
                 TreeHostRow(
@@ -775,8 +749,6 @@ private fun TreeRowsPreviewMatrix() {
                     expanded = false,
                     onToggleExpanded = {},
                     onEditTapped = {},
-                    onAddTapped = {},
-                    onAddLongPressed = {},
                 )
             }
         }

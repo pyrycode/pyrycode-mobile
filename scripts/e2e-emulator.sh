@@ -1180,22 +1180,19 @@ elif [ -n "${LIVE}" ]; then
   # #1086: each host's default workspace and Archive stay its own with both hosts paired. It joins at no turn
   # cost (folder creation, chat creation, rename, archive and restore), so the list holds 40 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost"
-  # #1087: a workspace added from host A's row, renamed and archived from its pencil, and restored from
-  # Archive. It joins at no turn cost, so the list holds 41 methods and 39 turns.
-  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_addRenameArchiveWorkspace_roundTripsThroughTheHost"
   # #1088: a channel created from a workspace row's plus, renamed and re-prompted from Edit channel, read
   # back before and after a new session, archived and restored. Two pings (Reset session also runs the
-  # daemon's wrap-up turn), so the list holds 42 methods and 41 turns.
+  # daemon's wrap-up turn), so the list holds 41 methods and 41 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_createEditArchiveChannel_readsPromptBack"
   # #1089: a workspace label set and cleared from the second client reaches host A's chip, tree row and
   # Settings row live, and never host B's workspace at the same folder. It joins at no turn cost, so the
-  # list holds 43 methods and 41 turns.
+  # list holds 42 methods and 41 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost"
   # #1090: a conversation's attention dot follows a real turn on the answer daemon: Unread after the peer's
   # ping, Idle once opened, Waiting while the peer holds a prompt. It adds one method and two turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attentionDot_followsARealTurn"
   # #1107: #1076's background-task progress method joins now that the daemon drops a subagent's prompt echo
-  # (pyrycode/pyrycode#2658). One turn, so the list holds 45 methods and 44 turns.
+  # (pyrycode/pyrycode#2658). One turn, so the list holds 44 methods and 44 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.

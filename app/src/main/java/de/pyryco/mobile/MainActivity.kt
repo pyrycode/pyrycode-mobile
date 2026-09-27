@@ -371,11 +371,9 @@ internal fun PyryNavHost(
                         // onto this very entry, the paste-code path pops the graph.
                         ChannelListEvent.PairHostTapped ->
                             navController.navigate(Routes.SCANNER)
-                        // Same rule as a row tap, now for creation: the control's own host, never the
-                        // selected-host adapter the retired button resolved through (#738).
-                        is ChannelListEvent.TreeHostAddTapped -> vm.createHostDiscussion(event.serverId)
-                        // Held, the same control opens Add workspace on its own host (#904).
-                        is ChannelListEvent.TreeHostAddLongPressed -> vm.openAddWorkspace(event.serverId)
+                        is ChannelListEvent.TreeHostChatAddTapped -> vm.openCreateChat(event.serverId)
+                        ChannelListEvent.CreateChatSubmitted -> vm.submitCreateChat()
+                        ChannelListEvent.CreateChatDismissed -> vm.dismissCreateChat()
                         // Same rule again for editing (#744): the control's own host. The view model
                         // reads that host's stored record and owns the modal's target and flags.
                         is ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)

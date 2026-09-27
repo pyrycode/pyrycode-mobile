@@ -73,3 +73,9 @@ Pending for the documentation stage: update `docs/knowledge/features/channel-lis
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-27
+
+## Revisions
+
+- 2026-09-27: The live `interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost` scenario also depended on the removed host-row plus using saved app defaults. Keep its two-host Settings and Archive isolation proof, and change its chat assertions to require the daemon default independently of each saved app folder. The fake repository represents null `cwd` as an empty string, so its Koin wiring test asserts that representation while the ViewModel test asserts the actual `null` request argument.
+- 2026-09-27: Resolved the picker question through the existing `ThreadScreen` overflow action `Change workspace…`. It remains reachable after the empty-thread chip disappears, so the folder-use scenario uses that route for both picker openings.
+- 2026-09-27: `scripts/e2e-emulator.sh` explicitly selected the retired host-row workspace scenario. Remove that selection with the method and lower `scripts/android-test-gate.py`'s executed-test floor by one, so the dispatcher live gate neither requests a nonexistent method nor expects its count.

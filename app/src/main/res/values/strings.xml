@@ -22,7 +22,10 @@
     <string name="cd_tree_section_pair_host">Pair another host, %1$s</string>
     <string name="cd_tree_host_edit">Edit host %1$s</string>
     <string name="cd_tree_host_new_chat">New chat on %1$s</string>
-    <string name="cd_tree_host_pick_workspace">Pick a workspace for the new chat on %1$s</string>
+    <string name="create_chat_title">Create chat</string>
+    <string name="create_chat_action">Create</string>
+    <string name="create_chat_host">Create a new chat on %1$s in that host’s default folder?</string>
+    <string name="create_chat_failed">Couldn’t create the chat. Try again.</string>
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <string name="cd_tree_host_update">Update Pyrycode to use %1$s</string>
     <string name="cd_tree_host_leg_idle">Pyrycode: idle</string>

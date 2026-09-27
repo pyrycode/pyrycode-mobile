@@ -25,7 +25,6 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -33,7 +32,6 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
-import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -51,8 +49,8 @@ import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_CHAT_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
-import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostReconnectTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostUpdateTestTag
@@ -121,16 +119,41 @@ class ChannelListScreenTest {
         selected: HostConversationTarget? = null,
         hostEditor: HostEditorState? = null,
         chatEditor: ChatEditorState? = null,
+        createChat: CreateChatState? = null,
     ) {
         composeTestRule.setContent {
             var hostState by remember {
-                mutableStateOf(HostChannelListState(hosts.toList(), selected = selected, hostEditor = hostEditor, chatEditor = chatEditor))
+                mutableStateOf(
+                    HostChannelListState(
+                        hosts.toList(),
+                        selected = selected,
+                        hostEditor = hostEditor,
+                        chatEditor = chatEditor,
+                        createChat = createChat,
+                    ),
+                )
             }
             PyrycodeMobileTheme {
                 ChannelListScreen(
                     hostState = hostState,
                     onEvent = { event ->
                         events += event
+                        when (event) {
+                            is ChannelListEvent.TreeHostChatAddTapped ->
+                                hostState =
+                                    hostState.copy(
+                                        createChat =
+                                            CreateChatState(
+                                                event.serverId,
+                                                hostState.hosts
+                                                    .first { it.host.serverId == event.serverId }
+                                                    .host.displayName,
+                                            ),
+                                    )
+
+                            ChannelListEvent.CreateChatDismissed -> hostState = hostState.copy(createChat = null)
+                            else -> Unit
+                        }
                         if (event is ChannelListEvent.TreeFoldToggled) {
                             val collapsed = hostState.collapsed
                             hostState =
@@ -163,6 +186,42 @@ class ChannelListScreenTest {
         resId: Int,
         vararg formatArgs: Any,
     ): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId, *formatArgs)
+
+    @Test
+    fun emptySecondHostHasItsOwnChatsCreateControlWithoutFolding() {
+        setTree(
+            entry("first", "First", chats = listOf(conversation("same", "First chat", "/a", false))),
+            entry("second", "Second"),
+        )
+
+        val create = composeTestRule.onNodeWithTag(treeHostChatAddTestTag("second"))
+        create
+            .assertExists()
+            .assertHeightIsAtLeast(48.dp)
+            .assertWidthIsAtLeast(48.dp)
+            .performClick()
+        assertEquals(listOf(ChannelListEvent.TreeHostChatAddTapped("second")), events)
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Chats on Second"))).assertExists()
+        composeTestRule.onNode(hasText(string(R.string.create_chat_host, "Second"))).assertExists()
+        composeTestRule.onNode(hasText(string(R.string.create_chat_action))).performClick()
+        assertEquals(ChannelListEvent.CreateChatSubmitted, events.last())
+        composeTestRule.onNode(hasText(string(android.R.string.cancel))).performClick()
+        assertEquals(ChannelListEvent.CreateChatDismissed, events.last())
+    }
+
+    @Test
+    fun failedCreateDialogKeepsGenericErrorAndDisablesCreateWhileHostIsOffline() {
+        setTree(
+            entry("first", "First", relay = RelayLinkStatus.Offline),
+            createChat = CreateChatState("first", "First", failed = true),
+        )
+
+        composeTestRule.onNode(hasText(string(R.string.create_chat_host, "First"))).assertExists()
+        composeTestRule.onNode(hasText(string(R.string.create_chat_failed))).assertExists()
+        composeTestRule.onNode(hasText(string(R.string.create_chat_action))).assertIsNotEnabled()
+        composeTestRule.onNode(hasText(string(android.R.string.cancel))).performClick()
+        assertEquals(listOf(ChannelListEvent.CreateChatDismissed), events)
+    }
 
     @Test
     fun hostsContainOrderedChannelsAndChatsWithAnEmptyChannelsAddAction() {
@@ -239,10 +298,7 @@ class ChannelListScreenTest {
             composeTestRule.onNode(hasText("Second")).getUnclippedBoundsInRoot().right <=
                 composeTestRule.onNodeWithTag(treeHostReconnectTestTag("second")).getUnclippedBoundsInRoot().left,
         )
-        assertTrue(
-            composeTestRule.onNodeWithTag(treeHostEditTestTag("second")).getUnclippedBoundsInRoot().right <=
-                composeTestRule.onNodeWithTag(treeHostAddTestTag("second")).getUnclippedBoundsInRoot().left,
-        )
+        composeTestRule.onNodeWithTag(treeHostEditTestTag("second")).assertExists()
         list.performScrollToNode(hasText("First"))
         composeTestRule.onNode(hasText("First")).performClick()
         list.performScrollToNode(hasText("Selected channel"))
@@ -573,41 +629,33 @@ class ChannelListScreenTest {
      * and its name is asserted distinct from the other host's, since both repeat down the screen.
      */
     @Test
-    fun hostRowAddControl_targetsItsOwnHost_onTapAndOnLongPress() {
+    fun chatsSectionAddControl_targetsItsOwnHost() {
         setTree(
-            entry(serverId = "pyrybox", displayName = "Pyrybox"),
-            entry(serverId = "macbook", displayName = "Macbook"),
+            entry(serverId = "pyrybox", displayName = "Pyrybox", chats = listOf(conversation("same", "A chat", "/a", false))),
+            entry(serverId = "macbook", displayName = "Macbook", chats = listOf(conversation("same", "B chat", "/b", false))),
         )
 
         assertNotEquals(
             string(R.string.cd_tree_host_new_chat, "Pyrybox"),
             string(R.string.cd_tree_host_new_chat, "Macbook"),
         )
-        // The Chats section draws the same host again, so the tag matches twice; either instance is the
-        // same control on the same host, which is the point — tap the one the suites would reach first.
-        val macbook = composeTestRule.onAllNodes(hasTestTag(treeHostAddTestTag("macbook"))).onFirst()
+        val macbook = composeTestRule.onNodeWithTag(treeHostChatAddTestTag("macbook"))
         macbook.assert(hasContentDescription(string(R.string.cd_tree_host_new_chat, "Macbook")))
+        composeTestRule.onAllNodes(hasTestTag("tree-host-add:macbook")).assertCountEquals(0)
 
         macbook.performClick()
-        macbook.performTouchInput { longClick() }
-
-        assertEquals(
-            listOf(
-                ChannelListEvent.TreeHostAddTapped("macbook"),
-                ChannelListEvent.TreeHostAddLongPressed("macbook"),
-            ),
-            events,
-        )
+        assertEquals(listOf(ChannelListEvent.TreeHostChatAddTapped("macbook")), events)
+        composeTestRule.onNode(hasText(string(R.string.create_chat_host, "Macbook"))).assertExists()
     }
 
     /**
-     * The add control sits inside the host row, whose whole surface is the fold control. Compose stops
+     * The add control sits inside the Chats header, whose whole surface is the fold control. Compose stops
      * merging semantics at a descendant that merges too, so the control keeps its own click action — but
      * that is an inherited guarantee, and this asserts it rather than assuming it: a tap on the plus must
      * not also fold the row it sits in.
      */
     @Test
-    fun hostRowAddControl_doesNotFoldTheRowItSitsIn() {
+    fun chatsSectionAddControl_doesNotFoldTheRowItSitsIn() {
         setTree(
             entry(
                 serverId = "pyrybox",
@@ -617,12 +665,11 @@ class ChannelListScreenTest {
         )
 
         composeTestRule
-            .onAllNodes(hasTestTag(treeHostAddTestTag("pyrybox")))
-            .onFirst()
+            .onNodeWithTag(treeHostChatAddTestTag("pyrybox"))
             .performClick()
 
         composeTestRule.onNode(hasText("alpha channel")).assertExists()
-        assertEquals(listOf(ChannelListEvent.TreeHostAddTapped("pyrybox")), events)
+        assertEquals(listOf(ChannelListEvent.TreeHostChatAddTapped("pyrybox")), events)
     }
 
     @Test
