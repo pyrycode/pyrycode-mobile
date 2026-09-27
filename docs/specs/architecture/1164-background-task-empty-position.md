@@ -29,3 +29,7 @@ Add `BackgroundTaskPanelLayoutTest` under sharedTest. First observe the content-
 ## Documentation handoff
 
 No documentation-only acceptance criteria or explicit handoff appears in the ticket. Pending for the documentation stage: update `docs/knowledge/features/mobile-modal.md`, “Callers” / `BackgroundTaskPanel`, to describe the 160dp empty-state inset and retained short-height scrolling.
+
+## Revisions
+
+- 2026-09-27: The width assertion showed that `ForcedSize` outside a dialog leaves Robolectric's window at 320dp. The native-graphics layout fixture sets a 412dp Robolectric window (no editable fields) and supplies `requiredSize` through the planned modifier. The content-relative offset and both short-height modes pass. Native light/dark renders place the ring at 265dp from the shell top: the reference's 249dp plus the retained accessible header geometry, as anticipated above.

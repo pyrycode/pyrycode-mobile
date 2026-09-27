@@ -96,6 +96,7 @@ private const val META_SEPARATOR = " · "
 internal fun BackgroundTaskPanel(
     roster: BackgroundTaskRoster?,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     LaunchedEffect(Unit) {
         val reading =
@@ -116,6 +117,7 @@ internal fun BackgroundTaskPanel(
         title = stringResource(R.string.background_tasks_title),
         closeLabel = stringResource(R.string.background_tasks_close),
         onDismissRequest = onDismiss,
+        modifier = modifier,
     ) {
         // `> 0`, so a nonsense negative count shows no notice rather than a negative one.
         val dropped = if (roster != null && roster.droppedTasks > 0) roster.droppedTasks else 0
@@ -140,9 +142,8 @@ internal fun BackgroundTaskPanel(
                 else -> TaskGroups(roster.tasks, partial = dropped > 0)
             }
         }
-        // The shell centres its content; a list starts at the top, so the slack goes below it. Zero once
-        // the list outgrows the viewport, since a weight only shares the space the other children leave.
-        if (roster != null && roster.tasks.isNotEmpty()) Spacer(Modifier.weight(1f))
+        // Keep every reading anchored to the content start; overflow remains in the shell's scroll area.
+        Spacer(Modifier.weight(1f))
     }
 }
 
@@ -392,7 +393,8 @@ private fun EmptyReading(
 ) {
     val ringColor = MaterialTheme.colorScheme.outline
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        // Figma's content-relative inset; the shared modal retains its accessible header and footer.
+        modifier = Modifier.fillMaxWidth().padding(top = 160.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
