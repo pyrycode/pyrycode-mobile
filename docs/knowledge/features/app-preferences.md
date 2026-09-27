@@ -90,6 +90,11 @@ Remembered effort key ([#686](https://github.com/pyrycode/pyrycode-mobile/issues
 - Read and written through an adapter, not directly: `AppPreferences.asRememberedEffortStore()` (`ui/conversations/thread/EffortRecall.kt`) exposes these two members as `RememberedEffortStore`, the interface `ThreadViewModel` depends on (`RememberedEffortStore.None` by default, so the demo path and pre-#686 tests stay inert). The `EffortRecall` collaborator decides once per thread opening whether to write the remembered level through the normal effort write path, and remembers a level only after any effort write — a tap or a recall — is acknowledged. See [Thread composer footer — remembered effort recall](thread-composer-footer-effort-recall.md#remembered-effort-recall-686) for the decision and isolation rules.
 - `suspend fun clearRememberedEffort(): Result<Unit>` ([#545](https://github.com/pyrycode/pyrycode-mobile/issues/545)) — removes the `REMEMBERED_EFFORT` key outright, mirroring `setRememberedEffort`'s try/catch-`IOException` shape and logging `event=remembered_effort_cleared outcome=success|io_failure`, never the level. `defaultEffort` is untouched. The only caller is the live e2e suite's `restoreSettings` cleanup, so each of [#545](https://github.com/pyrycode/pyrycode-mobile/issues/545)'s `interactiveTurn_*` methods leaves no remembered level behind for a later method in the same curated run — see [e2e coverage](../../e2e-interactive-stream.md).
 
+Remembered model key ([#1222](../../specs/architecture/1222-remember-acknowledged-model.md)):
+
+- `rememberedModel: Flow<String?>` reads the app-wide `remembered_model` key as the exact daemon-published model string, or `null` before any acknowledged choice. It does not parse through the fixed `Model` enum or fall back to `defaultModel`. The Settings default and this choice remain independent; changing either does not write the other. Unlike remembered effort, opening an existing thread does not read or apply this value. It is stored for the new-chat consumer.
+- `setRememberedModel(value: String): Result<Unit>` writes that string verbatim after a thread's model change is acknowledged. A DataStore `IOException` returns failure and leaves the prior value intact; logs record only `event=remembered_model_set outcome=success|io_failure`, never the value. See [Thread composer footer § Remembered model choice](thread-composer-footer.md#remembered-model-choice-1222) for the success-only write boundary.
+
 Secrets (the pairing token / device static key) are explicitly **not** stored here — those live Keystore-wrapped under `data/crypto/` (the device X25519 static keypair, the paired-server key store). `AppPreferences` is for non-secret booleans/strings/ints. **The FCM `pushToken` is deliberately on this non-secret side, not a contradiction:** an FCM registration token is a device-scoped wake *address*, not a credential — possessing it is insufficient to push a notification (an attacker also needs the project's FCM server key, held only on the daemon/backend), it rotates, and it is overwrite-only. Classified by value × revocability (mirroring KitchenClaw ADR-007's DataStore-for-non-sensitive / encrypted-store-for-auth-tokens split), it belongs in plain `DataStore<Preferences>`. Do **not** "upgrade" it to Keystore — that would miscategorise it against the existing trust boundary. See [#364](../codebase/364.md) for the full security rationale.
 
 ## How it works
@@ -308,6 +313,11 @@ preserve the serialized value. Literal seeds exercise the existing storage
 contract independently of the current setter. The Settings initial-value check
 runs both before collection and after loading; see
 [SettingsViewModel testing](settings-viewmodel-testing.md).
+
+The remembered-model tests cover absence after changing the Settings default,
+an out-of-enum value that leaves that default intact, and verbatim persistence
+after closing and reopening an on-disk DataStore. A successful setter alone
+would not prove the restart requirement.
 
 [HostWorkspacePreferencesTest](../../../app/src/test/java/de/pyryco/mobile/data/preferences/HostWorkspacePreferencesTest.kt)
 reopens real temporary DataStore files after cancelling and joining the previous
