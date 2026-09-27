@@ -1,85 +1,135 @@
 # Scanner Denied screen
 
-State surface for the camera-permission-denied branch of the pairing flow. Pre-built (#61) ahead of integration so visual fidelity to Figma node `32:2` was settled first; **wired live in #326** as the `Denied` render of the stateful [Scanner screen](scanner-screen.md)'s `when(state)` — reused as-is, no top bar added.
+Camera-permission-denied surface inside the [Scanner screen](scanner-screen.md).
+It follows [Figma node 32:2](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=32-2)
+at 412×892 dp. The header, Back callback and exported illustration were restored
+in #1151; the denied state uses the existing scanner route.
 
 ## What it does
 
-- Renders a vertical column on `colorScheme.surface`: a 120dp camera-with-diagonal-strike `Canvas` illustration near the top, a centered headline ("Camera permission required"), and a `bodyMedium` explainer paragraph capped at 300dp width.
-- Pins two full-width actions to the bottom of the safe area: filled `Button` ("Open settings") above `TextButton` ("Paste code instead"). Both invoke caller-owned lambdas.
-- The screen itself launches no intents and performs no navigation. The future caller owns `ACTION_APPLICATION_DETAILS_SETTINGS` construction and the back-stack hop to the paste-code destination.
+- Shows “Pair with pyrycode” and a Back arrow announced as “Back”, with an explicit
+  48×48 dp target that returns to the invoking screen without saving a pairing.
+- Shows the reference camera illustration, “Camera permission required” heading
+  and centered explanation of camera access and the manual pairing alternative.
+- Offers “Open settings” for this app's Android settings and “Paste code instead”
+  for the existing full-page [pair-with-code form](paste-code-dialog.md).
+  Cancelling the untouched form returns to the denied screen without saving.
 
 ## How it works
 
-Stateless Composable; no `ViewModel`, no `remember`, no `LaunchedEffect`, no `Context` usage.
+`ScannerDeniedScreen` is stateless. The required callbacks are forwarded by
+`ScannerScreen`'s `Denied` branch:
 
 ```kotlin
 @Composable
 fun ScannerDeniedScreen(
+    onNavigateBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onPasteCode: () -> Unit,
     modifier: Modifier = Modifier,
 )
 ```
 
-Composition shape mirrors `ScannerScreen.kt` and `WelcomeScreen.kt`: outer `Surface(color = colorScheme.surface, fillMaxSize)` wraps an inner `Column(fillMaxSize().systemBarsPadding().padding(horizontal = 32.dp, vertical = 32.dp), horizontalAlignment = CenterHorizontally)`. Vertical distribution is `Spacer(32.dp) → illustration → Spacer(32.dp) → headline → Spacer(16.dp) → body → Spacer(weight = 1f) → primary Button → Spacer(8.dp) → TextButton`. The `weight(1f)` spacer is what pushes the action stack to the bottom and reads more obviously than `Arrangement.SpaceBetween` for two top-clustered + two bottom-pinned children.
+The root `Surface` receives `modifier`. Its column applies `systemBarsPadding()`
+and 4 dp top padding, then a 64 dp header row with 4 dp start padding. The 48 dp
+Back button is vertically centered; the `titleLarge` title starts at x=52 dp.
+The header belongs to this state surface: the host supplies navigation callbacks,
+not an additional top bar.
+
+The body has 32 dp side margins. A 64 dp gap below the header precedes the 120 dp
+illustration; 32 dp separates it from the `headlineSmall` heading, then 16 dp
+leads to the `bodyMedium` explanation capped at 300 dp width. A weighted spacer
+pins the full-width actions toward the bottom.
+
+The filled action is 48 dp high. The text action is visibly 40 dp high, centered
+in a 48 dp slot to preserve its accessible touch area. A 4 dp spacer before that
+slot gives an 8 dp visible gap between actions; 80 dp bottom padding gives an
+84 dp margin below the visible text action. Measure visible and touch bounds
+separately when changing this layout.
+
+The activity applies and consumes Scaffold insets before the screen, so its
+`systemBarsPadding()` adds only any remaining insets. When hosted alone, the
+screen handles them itself. See [navigation insets](navigation.md#configuration).
 
 ### Illustration — private `DeniedCameraIllustration`
 
-Drawn with `Canvas`, not an `ImageVector` drawable. The illustration is small (rect + 2 ellipses + viewfinder bridge path + diagonal line) and self-contained, so a few `drawRoundRect` / `drawCircle` / `drawPath` / `drawLine` calls cost less than adding a vector under `res/drawable/`. Coordinates are expressed as fractions of the canvas `size`, so the silhouette stays proportional at any `Modifier.size(...)`.
+The packaged [SVG source](../../../app/src/main/res/raw/scanner_denied_source.svg)
+is the export of node `32:8`. Its geometry is mechanically translated into
+[outline](../../../app/src/main/res/drawable/scanner_denied_outline.xml) and
+[strike](../../../app/src/main/res/drawable/scanner_denied_strike.xml) vector
+layers, overlaid in a 120 dp square. Both icons are decorative
+(`contentDescription = null`); the heading conveys the meaning.
 
-Draw order within the 120dp square (`ScannerDeniedScreen.kt:90-145`):
+Keep the exported curves, coordinates and stroke widths. The outline uses a
+2.5-unit stroke; the 3.5-unit rounded strike runs from `(20,20)` to `(100,100)`,
+upper-left to lower-right. The former fractional-coordinate Canvas approximation
+made the camera too wide and reversed the strike. Matching the general camera
+silhouette alone is insufficient for this reference asset.
 
-1. **Camera body** — `drawRoundRect`, stroked, centered vertically (`10%–90%` width band, `30%–75%` height band), corner radius `8.dp`.
-2. **Viewfinder bridge** — `Path` of three `lineTo` segments (the implicit `close` happens via the closing `lineTo` back to the body's top edge), narrower at the top, sitting on top of the camera body.
-3. **Outer lens** — stroked `drawCircle` centered on the body, radius ~13% of canvas width.
-4. **Inner lens** — *filled* `drawCircle` (no `style` argument), radius ~4.5% of canvas width. A filled dot reads cleaner than a stroked circle at this scale; matches the Figma render.
-5. **Strike line** — `drawLine` from top-right (~82%, 18%) to bottom-left (~18%, 86%), `StrokeCap.Round`, `colorScheme.error`. Crosses the lens center.
-
-Stroke width is `2.dp.toPx()` everywhere except the filled inner dot. All outline strokes share a single `Stroke(width = strokePx, cap = StrokeCap.Round)` instance.
+The layers are split only for independent theme tints. White paint in the vector
+resources is a tint mask; the SVG's exported colors do not set the runtime palette.
 
 ## Color binding
 
 | Element | Slot |
-|---|---|
-| Root `Surface` background | `colorScheme.surface` |
-| Camera outline (rect, ellipses, bridge), inner-lens fill | `colorScheme.onSurfaceVariant` |
-| Strike line | `colorScheme.error` |
-| Headline | `colorScheme.onSurface` |
-| Body | `colorScheme.onSurfaceVariant` |
-| Filled `Button` container / label | M3 default (`primary` / `onPrimary`) — not overridden |
-| `TextButton` label | M3 default (`primary`) — not overridden |
+| --- | --- |
+| Root background | `colorScheme.surface` |
+| Header title, Back arrow and heading | `colorScheme.onSurface` |
+| Camera outline and inner-lens fill | `colorScheme.onSurfaceVariant` |
+| Strike | `colorScheme.error` |
+| Explanation | `colorScheme.onSurfaceVariant` |
+| Filled action container / label | M3 defaults: `primary` / `onPrimary` |
+| Text action label | M3 default: `primary` |
 
-No `Color(0x…)` literals anywhere in the file. Typography binds to M3 roles (`headlineSmall`, `bodyMedium`); button labels use M3 defaults — no `TextStyle(...)` overrides.
+Light and dark previews use the same layout and theme roles at 412×892 dp.
 
 ## Configuration / usage
 
-Rendered **in-route**, not at its own route. Since #326 the stateful `ScannerScreen`'s `when(state)` dispatches `ScannerUiState.Denied → ScannerDeniedScreen(onOpenSettings, onPasteCode, modifier)` inside `composable(Routes.SCANNER)` — there is no `Routes.ScannerDenied` (AC2: "no new denied screen is invented"). The route owns both lambdas: `onOpenSettings` fires the `ACTION_APPLICATION_DETAILS_SETTINGS` intent (`context.startActivity` with `Uri.fromParts("package", packageName, null)`), and `onPasteCode` is the shared `stubPairAndNavigate` (the #295 stub-pair persist + navigate), so onboarding still completes from the denied state.
+`PyryNavHost` owns all three destinations: Back calls `popBackStack()`, settings
+uses `ACTION_APPLICATION_DETAILS_SETTINGS` with
+`Uri.fromParts("package", context.packageName, null)`, and paste navigates to
+`Routes.PAIR_CODE`. The screen performs no permission request, parsing or
+persistence. Debug builds log only static action names (`back`, `settings`,
+`paste`) before invoking the callback.
 
-`modifier` is forwarded to the root `Surface` so a host can constrain the screen in tests.
+Permission state remains in `ScannerViewModel`. Its existing process-death and
+return-from-settings limitations are described in
+[Scanner screen edge cases](scanner-screen.md#edge-cases--limitations); restoring
+the header does not add an on-resume permission check.
 
-## Why no top bar
+## Testing
 
-The Figma frame shows a "Pair with pyrycode" `TopAppBar` with a back affordance. The screen intentionally omits it — `ScannerScreen.kt` doesn't render one either, and the top bar is a NavHost-level concern that arrives with Phase 4's permission flow wiring. The AC mentions no `onBack` lambda.
+The shared tests live under `app/src/sharedTest/.../ui/onboarding/`.
+`ScannerScreenTest.denied_backReturnsToCaller` renders `ScannerScreen(Denied)`,
+asserts the title, Back description and minimum 48×48 dp bounds, then verifies
+exactly one Back callback. Testing only `ScannerDeniedScreen` would miss a
+callback dropped by its parent renderer.
 
-## State + concurrency
+`ScannerDeniedScreenTest` checks the heading and independently clicks settings
+and paste, asserting that only the corresponding callback fires. It checks the
+filled action's 48 dp height and the text action's 40 dp visible / 48 dp touch
+height. Merely asserting `hasClickAction()` with no-op callbacks cannot prove
+correct dispatch.
 
-None. Pure function from `(onOpenSettings, onPasteCode)` to UI. The screen owns no state and produces no side effects beyond invoking the two caller-supplied lambdas.
+`ScannerDeniedRouteDeviceTest.realDenial_backSettingsAndPaste_preserveUnpairedState`
+uses a fresh unpaired `MainActivity` on full API 35+, enters from Welcome and
+denies the real Android camera request. It captures the dark surface, opens
+app-specific settings, returns, opens and cancels the untouched manual form,
+then uses Back to reach Welcome. Store assertions prove no pairing was saved.
+The test runs settings and paste/cancel before leaving the denied route; it does
+not depend on Android showing a second permission prompt after reentry.
 
-## Error handling
-
-N/A. The screen *is* the camera-permission-denied error state; there is no I/O, no permission API call, and no parse step to fail. Recovery is delegated to the two lambdas, both caller-owned.
-
-## Edge cases / limitations
-
-- **Hosted as-is, still no top bar.** #326 wired the screen into the runtime permission flow without modifying it — no `TopAppBar` / `onBack` was added (the denied state has no back affordance in the Figma frame either). Its sole role remains the visual surface for the denied state; the camera-engine slice consumes it unchanged. Process-death caveat lives on the host: after process death while `Denied`, the route falls back to the viewport shell (the resolved state lives only in the VM) — see [Scanner screen](scanner-screen.md) Edge cases.
-- **Pixel-perfect not required.** Canvas coordinates are tuned by visual side-by-side against the Figma screenshot, not measured. The silhouette must read as "camera with a strike through it"; sub-pixel fidelity is explicitly out of scope.
-- **Two `@Preview` composables plus a three-method instrumented test class since #101.** `app/src/androidTest/.../onboarding/ScannerDeniedScreenTest.kt` covers `heading_rendersCameraPermissionRequired` (exact match), `openSettingsButton_hasClickAction` (`"Open settings"` carries a click action), and `pasteCodeButton_hasClickAction` (`"Paste code instead"` carries a click action). Structure only — callback wiring intentionally unasserted; the screen's two lambdas are passed as `{}` no-ops at the test site.
+[Retained evidence and reproduction command](../../../app/src/androidTest/assets/scanner-denied-1151/README.md)
+include the actual activity screenshot, reference, build/device/density/inset
+context and one executed test with no failures or skips. Both images are
+412×892 at density 1; the actual display has 24 dp top and bottom bars. Compare
+top-anchored content shifted down 24 dp and bottom actions shifted up 24 dp,
+accounting for bars once. A forced denied-state preview cannot prove the real
+permission route, and an API 33 ATD skip cannot substitute for this API 35 run.
+See [Compose evidence](development-verification.md#compose-evidence).
 
 ## Related
 
-- Issues: https://github.com/pyrycode/pyrycode-mobile/issues/61 (this screen), https://github.com/pyrycode/pyrycode-mobile/issues/326 (wired into the permission flow)
-- Specs: `docs/specs/architecture/61-scanner-denied-screen.md`, `docs/specs/architecture/326-stateful-scanner-permission-flow.md`
-- Ticket notes: `../codebase/61.md`, `../codebase/326.md`
-- Figma node: `32:2`
-- Sibling docs: [Scanner screen](scanner-screen.md), [Welcome screen](welcome-screen.md)
-- Consumer: #326 renders this as the `Denied` state inside `composable(Routes.SCANNER)`; the camera-engine slice consumes it unchanged.
+- [Restoration plan and revisions](../../specs/architecture/1151-scanner-denied-surface.md)
+- [Scanner screen](scanner-screen.md), [pair with code](paste-code-dialog.md),
+  [navigation](navigation.md) and [Welcome](welcome-screen.md)

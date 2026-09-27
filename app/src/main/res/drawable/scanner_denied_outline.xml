@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exact geometry from Figma node 32:8; source: res/raw/scanner_denied_source.svg. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp" android:height="120dp"
+    android:viewportWidth="120" android:viewportHeight="120">
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.5"
+        android:pathData="M32,39.25 H88 A8.75,8.75 0,0 1,96.75,48 V84 A8.75,8.75 0,0 1,88,92.75 H32 A8.75,8.75 0,0 1,23.25,84 V48 A8.75,8.75 0,0 1,32,39.25 Z" />
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.5"
+        android:pathData="M47.25,66 A12.75,12.75 0,1 1,72.75,66 A12.75,12.75 0,1 1,47.25,66 Z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M54,66 A6,6 0,1 1,66,66 A6,6 0,1 1,54,66 Z" />
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.5"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M40,38 L48,28 H72 L80,38" />
+</vector>

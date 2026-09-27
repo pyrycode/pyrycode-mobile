@@ -7,6 +7,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
@@ -18,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -116,6 +118,29 @@ class ScannerScreenTest {
         composeTestRule
             .onNode(hasText("Camera permission required"))
             .assertExists()
+    }
+
+    @Test
+    fun denied_backReturnsToCaller() {
+        val actions = mutableListOf<String>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = ScannerUiState.Denied,
+                    onNavigateBack = { actions.add("back") },
+                    onOpenSettings = { actions.add("settings") },
+                    onPasteCode = { actions.add("paste") },
+                )
+            }
+        }
+        composeTestRule.onNode(hasText("Pair with pyrycode")).assertExists()
+        composeTestRule
+            .onNode(hasContentDescription("Back"))
+            .assertHasClickAction()
+            .assertHeightIsAtLeast(48.dp)
+            .assertWidthIsAtLeast(48.dp)
+            .performClick()
+        composeTestRule.runOnIdle { assertEquals(listOf("back"), actions) }
     }
 
     @Test
