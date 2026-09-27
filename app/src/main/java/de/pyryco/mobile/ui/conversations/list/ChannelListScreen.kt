@@ -25,6 +25,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -370,9 +373,16 @@ fun ChannelListScreen(
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val colors = MaterialTheme.colorScheme
     Scaffold(
         // The arrival marker goes on the root, above the branch below, so both draws carry it (#736).
         modifier = modifier.testTag(CHANNEL_LIST_TEST_TAG),
+        containerColor =
+            if (colors.surface.luminance() < 0.5f) {
+                colors.scrim.copy(alpha = 0.30f).compositeOver(colors.surface)
+            } else {
+                colors.surface
+            },
         topBar = { ChannelListTopBar(onEvent) },
     ) { inner ->
         val bodyModifier = Modifier.padding(inner)
@@ -607,9 +617,16 @@ private fun ChannelListTopBar(onEvent: (ChannelListEvent) -> Unit) {
                     top = BarRuleGap,
                     bottom = BarBottomGap,
                 ),
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = SECTION_RULE_ALPHA),
+            color = sidebarRuleColor(),
         )
     }
+}
+
+@Composable
+private fun sidebarRuleColor(): Color {
+    val colors = MaterialTheme.colorScheme
+    return (if (colors.surface.luminance() < 0.5f) colors.inversePrimary else colors.outlineVariant)
+        .copy(alpha = SECTION_RULE_ALPHA)
 }
 
 /** One bar entry: the design's 24dp glyph centred in a target touch can actually hit. */
@@ -644,7 +661,7 @@ private fun ConversationTree(
         item(key = "tree-section-rule") {
             HorizontalDivider(
                 modifier = Modifier.padding(top = TreeSectionRuleGap, bottom = TreeSectionRuleBottomGap),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = SECTION_RULE_ALPHA),
+                color = sidebarRuleColor(),
             )
         }
         treeSection(ConversationTreeSection.Chats, hostState, onEvent)
