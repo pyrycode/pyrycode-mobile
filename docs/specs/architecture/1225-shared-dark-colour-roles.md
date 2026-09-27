@@ -6,6 +6,7 @@
 - `app/src/main/java/de/pyryco/mobile/ui/theme/Theme.kt` → `darkScheme`, `PyrycodeMobileTheme` — Material role wiring and the distinct static, dynamic and light paths.
 - `app/src/main/java/de/pyryco/mobile/ui/theme/SuccessColors.kt` → `ColorScheme.success` — the sidebar attention dot reads this custom role.
 - `app/src/main/java/de/pyryco/mobile/ui/theme/ThreadColors.kt`, `BubbleColors.kt`, `ComposerColors.kt`, `ModalColors.kt` → scoped colour locals — existing screen-specific fills must retain their own behaviour.
+- `app/src/main/java/de/pyryco/mobile/ui/components/MobileModal.kt` → `MobileModal` — the modal's scoped container intentionally differs in light mode.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/components/ConversationTreeRows.kt` → `TreeConversationRow`, `ConversationStatusDot` — selected fill and unread-success consumer.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/components/OptionsOverlay.kt` → `OptionsColumn` — menu background and selected/unselected row mapping.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/list/ChannelListColoursTest.kt` → `darkPanelAndBarMatchTheReferenceWithOneBlueGreyRule` — pixel-level sidebar precedent.
@@ -39,7 +40,7 @@ Palette selection is synchronous composition-local state from `PyrycodeMobileThe
 
 ## Error handling
 
-These are compile-time colour values and UI rendering choices; no I/O or new failure result is introduced. The device capture may be absent if the emulator lacks physical system bars; the focused run will report that as an evidence gap instead of claiming a match.
+These are compile-time colour values and UI rendering choices; no I/O or new failure result is introduced. A failed device render or missing capture must be reported as an evidence gap instead of claiming a match.
 
 ## Testing strategy
 
@@ -49,9 +50,16 @@ These are compile-time colour values and UI rendering choices; no I/O or new fai
 
 ## Documentation handoff
 
-Pending documentation stage: update `docs/knowledge/features/options-overlay.md` § Colour deviation from the design to describe the exact static-dark role mapping, and `docs/knowledge/features/success-color.md` § Authoritative values to replace the placeholder dark-success rationale with the live `Schemes/Success` binding. Record the role choice for the sidebar in `docs/knowledge/features/channel-list-screen-tree-and-controls.md` § Selection. Do not change those shared documents in the builder stage.
+Pending documentation stage: update `docs/knowledge/features/options-overlay.md` § Colour deviation from the design to describe the exact static-dark role mapping, and `docs/knowledge/features/success-color.md` § Authoritative values to replace the placeholder dark-success rationale with the live `Schemes/Success` binding. Record the role choice for the sidebar in `docs/knowledge/features/channel-list-screen-tree-and-controls.md` § Conversation tree (#731). Do not change those shared documents in the builder stage.
 
 ## Open questions
 
 - Confirm the installed Material 3 `ColorScheme` exposes `onPrimaryFixed` to Kotlin; if not, keep the same semantic mapping through a custom role with a revision entry.
 - Confirm the managed API 35 device can render a true density-1 412 × 892 capture with content suitable for comparison; record any seed-data or system-bar gap in the evidence and PR.
+
+## Revisions
+
+- 2026-09-28: The sidebar variable audit also exposed `material-theme/sys/dark-high-contrast/tertiary-fixed-dim = #ffb59f`. `darkScheme` now maps `tertiaryFixedDim` to the already-matching `tertiaryDark` value; the new assertion failed against Material's default before this mapping. No high-contrast palette or scoped component was changed.
+- 2026-09-28: The managed device rendered the requested 412 × 892 content, but `UiAutomation.takeScreenshot()` returned a blank app region. The capture test now saves `decorView.draw` from that same emulator and asserts the selected and unread colours exist in the bitmap. The retained comparison records fixture and component-presentation gaps. `ColorScheme.onPrimaryFixed` compiled and resolved as expected.
+- 2026-09-28: Corrected the documentation handoff's sidebar section name to the actual `Conversation tree (#731)` heading.
+- 2026-09-28: Updated the capture failure description after moving to `decorView.draw`; physical system bars are no longer a precondition for this evidence.

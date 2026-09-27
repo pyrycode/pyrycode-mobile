@@ -193,8 +193,7 @@ private fun MobileModalShell(
             val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
             SideEffect { dialogWindow?.decorView?.filterTouchesWhenObscured = true }
         }
-        // Figma fills the sheet with onPrimaryFixed, which cannot differ between themes and is unreadable
-        // behind the light content colour, so the fill is the modalContainer slot: the frame's navy in dark,
+        // The sheet keeps its scoped modalContainer fill: Figma's On Primary Fixed navy in dark,
         // primaryContainer in light (#1142). Keep the reference corners local to this shell and its actions.
         Surface(
             modifier =
