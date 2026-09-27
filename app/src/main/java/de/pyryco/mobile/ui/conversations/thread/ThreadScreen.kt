@@ -718,9 +718,10 @@ fun ThreadScreen(
             running = state.runConfig.running,
             contextPercent = state.runConfig.contextPercent,
             permissionMode = state.runConfig.permissionMode,
-            permissionChoices = PermissionModeOption.entries
-                .filter { state.runConfig.offersPermission(it) }
-                .map { it.wire to it.label },
+            permissionChoices =
+                PermissionModeOption.entries
+                    .filter { state.runConfig.offersPermission(it) }
+                    .map { it.wire to it.label },
             onPermissionSelected = { value ->
                 onPermissionModeSelected(value)
                 sheetVisible = false

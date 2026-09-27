@@ -2700,6 +2700,162 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun onModelSelected_acknowledgedChoiceRemembersExactPublishedValue() =
+        runTest {
+            val remembered = mutableListOf<String>()
+            val repo = FakeConversationRepository()
+            val published = "claude-published-model[1m]"
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus"), row(published, "Published")))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus"))
+            val vm = makeVm(runConfigHandle(), repo, rememberModel = { remembered += it })
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertTrue(remembered.isEmpty())
+
+            vm.onModelSelected(published)
+            advanceUntilIdle()
+
+            assertEquals(listOf(published), remembered)
+            assertEquals(published, repo.setSessionSettingsCalls.single().model)
+            collector.cancel()
+        }
+
+    @Test
+    fun onModelSelected_passiveReadingAndNoChangeLeaveRememberedChoiceIntact() =
+        runTest {
+            val remembered = mutableListOf<String>()
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus"), row("haiku", "Haiku")))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus"))
+            val vm = makeVm(runConfigHandle(), repo, rememberModel = { remembered += it })
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "haiku"))
+            advanceUntilIdle()
+            vm.onModelSelected("haiku")
+            advanceUntilIdle()
+
+            assertTrue(remembered.isEmpty())
+            assertTrue(repo.setSessionSettingsCalls.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun onModelSelected_rejectedChoiceDoesNotReplaceRememberedChoice() =
+        runTest {
+            var remembered = "previous-model"
+            val backing = FakeConversationRepository()
+            backing.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus"), row("haiku", "Haiku")))
+            backing.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus"))
+            val repo =
+                object : ConversationRepository by backing {
+                    override suspend fun setSessionSettings(
+                        sessionId: String,
+                        model: String?,
+                        effort: String?,
+                        yolo: Boolean?,
+                        permissionMode: String?,
+                    ): Unit = throw RelayErrorException(code = "session.not_found", retryable = false, message = "secret")
+                }
+            val vm = makeVm(runConfigHandle(), repo, rememberModel = { remembered = it })
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onModelSelected("haiku")
+            advanceUntilIdle()
+
+            assertEquals("previous-model", remembered)
+            collector.cancel()
+        }
+
+    @Test
+    fun onModelSelected_connectionFailureDoesNotReplaceRememberedChoice() =
+        runTest {
+            var remembered = "previous-model"
+            val backing = FakeConversationRepository()
+            backing.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus"), row("haiku", "Haiku")))
+            backing.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus"))
+            val repo =
+                object : ConversationRepository by backing {
+                    override suspend fun setSessionSettings(
+                        sessionId: String,
+                        model: String?,
+                        effort: String?,
+                        yolo: Boolean?,
+                        permissionMode: String?,
+                    ): Unit = throw IllegalStateException("not connected")
+                }
+            val vm = makeVm(runConfigHandle(), repo, rememberModel = { remembered = it })
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onModelSelected("haiku")
+            advanceUntilIdle()
+
+            assertEquals("previous-model", remembered)
+            assertEquals("opus", vm.state.value.runConfig.selectedModel)
+            collector.cancel()
+        }
+
+    @Test
+    fun onEffortSelected_acknowledgedEffortDoesNotReplaceRememberedModel() =
+        runTest {
+            var remembered = "previous-model"
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus", effortLevels = listOf("low", "max"))))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus", effort = "low"))
+            val vm = makeVm(runConfigHandle(), repo, rememberModel = { remembered = it })
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onEffortSelected("max")
+            advanceUntilIdle()
+
+            assertEquals("previous-model", remembered)
+            val call = repo.setSessionSettingsCalls.single()
+            assertEquals("max", call.effort)
+            assertNull(call.model)
+            collector.cancel()
+        }
+
+    @Test
+    fun onModelSelected_cancelledBeforeAcknowledgementDoesNotReplaceRememberedChoice() =
+        runTest {
+            var remembered = "previous-model"
+            val entered = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val backing = FakeConversationRepository()
+            backing.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus"), row("haiku", "Haiku")))
+            backing.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus"))
+            val repo =
+                object : ConversationRepository by backing {
+                    override suspend fun setSessionSettings(
+                        sessionId: String,
+                        model: String?,
+                        effort: String?,
+                        yolo: Boolean?,
+                        permissionMode: String?,
+                    ) {
+                        entered.complete(Unit)
+                        gate.await()
+                    }
+                }
+            val vm = makeVm(runConfigHandle(), repo, rememberModel = { remembered = it })
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            val owner = ViewModelStore().apply { put("vm", vm) }
+
+            vm.onModelSelected("haiku")
+            advanceUntilIdle()
+            assertTrue(entered.isCompleted)
+            owner.clear()
+            advanceUntilIdle()
+
+            assertEquals("previous-model", remembered)
+            collector.cancel()
+        }
+
+    @Test
     fun onEffortSelected_whenConnected_sendsOnlyEffortFieldVerbatim() =
         runTest {
             val repo = FakeConversationRepository()
@@ -4525,6 +4681,7 @@ class ThreadViewModelTest {
         // #861: whether the host's live repository is published. Available from the start by default, as
         // the demo path's fake is.
         repositoryAvailable: Flow<Boolean> = flowOf(true),
+        rememberModel: suspend (String) -> Unit = {},
     ): ThreadViewModel =
         ThreadViewModel(
             handle,
@@ -4537,6 +4694,7 @@ class ThreadViewModelTest {
             cancelModal,
             interrupt,
             repositoryAvailable = repositoryAvailable,
+            rememberModel = rememberModel,
         )
 
     /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */

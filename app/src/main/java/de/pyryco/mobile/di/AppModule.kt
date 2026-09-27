@@ -395,6 +395,7 @@ internal class ThreadDestinationFactory(
             pairingRejected = pairingRejected(registry.hostConnections, serverId),
             attachmentReader = attachmentReader.value,
             rememberedEffort = preferences.asRememberedEffortStore(),
+            rememberModel = { model -> preferences.setRememberedModel(model) },
         )
     }
 

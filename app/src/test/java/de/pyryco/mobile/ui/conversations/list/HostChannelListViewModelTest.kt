@@ -390,9 +390,10 @@ class HostChannelListViewModelTest {
     @Test
     fun chatTapCreatesImmediatelyOnClickedHostInDaemonDefaultFolder() =
         runTest(dispatcher) {
-            val f = fixture(
-                flowOf(preferencesOf(stringPreferencesKey("default_workspace_host:Host") to "chosen-default")),
-            )
+            val f =
+                fixture(
+                    flowOf(preferencesOf(stringPreferencesKey("default_workspace_host:Host") to "chosen-default")),
+                )
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
             f.selected.value = f.b.repo
@@ -402,8 +403,14 @@ class HostChannelListViewModelTest {
             f.vm.createChat("Host")
             runCurrent()
             assertEquals(listOf<String?>(null), replacement.workspaces)
-            assertTrue(f.a.repo.workspaces.isEmpty())
-            assertTrue(f.b.repo.workspaces.isEmpty())
+            assertTrue(
+                f.a.repo.workspaces
+                    .isEmpty(),
+            )
+            assertTrue(
+                f.b.repo.workspaces
+                    .isEmpty(),
+            )
             assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
             assertNull(f.vm.hostState.value.createChat)
 
@@ -656,8 +663,14 @@ class HostChannelListViewModelTest {
             f.vm.createChat("Host")
             runCurrent()
             assertTrue(requireNotNull(f.vm.hostState.value.createChat).failed)
-            assertTrue(f.a.repo.workspaces.isEmpty())
-            assertTrue(f.b.repo.workspaces.isEmpty())
+            assertTrue(
+                f.a.repo.workspaces
+                    .isEmpty(),
+            )
+            assertTrue(
+                f.b.repo.workspaces
+                    .isEmpty(),
+            )
             assertTrue(f.nav.isEmpty())
         }
 

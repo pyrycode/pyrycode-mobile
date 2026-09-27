@@ -5748,18 +5748,28 @@ class InteractiveStreamE2ETest {
     ) {
         val section = runConfigSection(clickLabel)
         openRunConfiguration()
-        val selected = SemanticsMatcher("selected run setting '$label'") { node ->
-            node.config.getOrNull(SemanticsProperties.Selected) == true &&
-                node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == label }
-        }
+        val selected =
+            SemanticsMatcher("selected run setting '$label'") { node ->
+                node.config.getOrNull(SemanticsProperties.Selected) == true &&
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .any { it.text == label }
+            }
         try {
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 val hasSelection = label == "Effort" || composeTestRule.onAllNodes(selected).fetchSemanticsNodes().isNotEmpty()
                 val pending = composeTestRule.onAllNodesWithText("$section · applying…").fetchSemanticsNodes().isNotEmpty()
                 val texts =
-                    composeTestRule.onAllNodes(SemanticsMatcher("text") { it.config.getOrNull(SemanticsProperties.Text) != null })
+                    composeTestRule
+                        .onAllNodes(SemanticsMatcher("text") { it.config.getOrNull(SemanticsProperties.Text) != null })
                         .fetchSemanticsNodes()
-                        .flatMap { it.config.getOrNull(SemanticsProperties.Text).orEmpty().map { text -> text.text } }
+                        .flatMap {
+                            it.config
+                                .getOrNull(SemanticsProperties.Text)
+                                .orEmpty()
+                                .map { text -> text.text }
+                        }
                 val descriptions = listOf<String?>(if (pending) footerPending else null) + texts
                 hasSelection && descriptions.any(state)
             }
@@ -5771,12 +5781,19 @@ class InteractiveStreamE2ETest {
     }
 
     /** Open the run configuration sheet and choose its published value. */
-    private fun pickFooterOption(clickLabel: String, optionLabel: String) {
+    private fun pickFooterOption(
+        clickLabel: String,
+        optionLabel: String,
+    ) {
         runConfigSection(clickLabel)
         openRunConfiguration()
         val option = hasText(optionLabel) and hasClickAction() and isEnabled()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(option).fetchSemanticsNodes().isNotEmpty() }
-        composeTestRule.onAllNodes(option).onFirst().performScrollTo().performClick()
+        composeTestRule
+            .onAllNodes(option)
+            .onFirst()
+            .performScrollTo()
+            .performClick()
     }
 
     private fun runConfigSection(clickLabel: String): String =
