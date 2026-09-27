@@ -132,7 +132,6 @@ Public composable at `app/src/main/java/de/pyryco/mobile/ui/conversations/compon
 Row(fillMaxWidth, padding(horizontal = 16.dp, vertical = 12.dp),
     verticalAlignment = CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-    ConversationAvatar(conversation)                                   // 40dp leading
     Column(Modifier.weight(1f), Arrangement.spacedBy(2.dp)) {
         Text(displayName, titleMedium, onSurface, maxLines=1, Ellipsis)
         Text("Archived ${formatRelativeTime(lastUsedAt)}",
@@ -140,7 +139,7 @@ Row(fillMaxWidth, padding(horizontal = 16.dp, vertical = 12.dp),
              Modifier.alpha(0.75f), maxLines=1, Ellipsis)
     }
     IconButton(onClick = onRestore, Modifier.size(40.dp)) {             // 40dp tap target
-        Icon(Icons.Filled.Refresh, "Restore $displayName",
+        Icon(painterResource(R.drawable.ic_archive_restore), "Restore $displayName",
              Modifier.size(22.dp), tint = onSurfaceVariant)             // 22dp glyph
     }
 }
@@ -148,12 +147,13 @@ Row(fillMaxWidth, padding(horizontal = 16.dp, vertical = 12.dp),
 
 Notes:
 
+- **Avatar-free in both tabs since #1159.** The title and archived subtitle start at the 16dp leading gutter. The text column keeps its 2dp vertical gap, with 12dp between the column and restore button; the owning-host line remains above the tabs.
 - **No row-level `alpha(0.65f)` dimming.** Figma 18:2 renders archived rows at full opacity; the only alpha modulation in the row is the `0.75f` on the subtitle text per spec. The pre-#177 row-level dimming (carried from #94's "secondary-tier signal" reuse from #69) is gone.
 - **Row itself is not clickable.** Only the trailing `IconButton` is interactive — no `clickable` / `combinedClickable` on the outer `Row`. Long-press affordance is removed entirely.
 - **`displayName` is a parameter, not derived inside.** The caller (`LoadedBody`) computes the fallback once and passes the same string into `ArchiveRow`'s `displayName`, the `RestoreRequested(id, displayName)` event payload, and (transitively) the `Restored <name>` snackbar text. Single source of truth for the fallback resolution; the row never re-derives it.
 - **Subtitle text is `stringResource(R.string.archived_relative_subtitle, formatRelativeTime(conversation.lastUsedAt))`.** `Conversation.lastUsedAt` is the timestamp source — there's still no `archivedAt: Instant?` field on `Conversation`, and adding one is the 30-day auto-archive worker's job, not this row's.
 - **`IconButton.contentDescription` interpolates the row's `displayName`** via `stringResource(R.string.cd_restore_archive, displayName)` — e.g. `"Restore old-project-experiments"` or `"Restore Untitled discussion"`. Visible label and the screen-reader announcement stay in lockstep even for nameless conversations.
-- **Restore icon is `Icons.Filled.Refresh`** (the circular-arrow glyph in `material-icons-core`). The spec drafted `Icons.Filled.Restore` with `Replay` / `History` / `Undo` as fallbacks; all four ship only in `material-icons-extended`, which is banned project-wide ([Settings screen](settings-screen.md) rule). `Refresh` is in `core` and reads as "restore" in context. See [`codebase/177.md`](../codebase/177.md) § Lessons learned for the cross-check rule when a spec recommends an icon constant.
+- **Restore icon is the exported counter-clockwise outline arrow** in `app/src/main/res/drawable/ic_archive_restore.xml`, converted from Figma node `18:24` with its 22-unit geometry intact (#1159). `painterResource` renders it at 22dp inside the 40dp `IconButton`; `onSurfaceVariant` supplies the theme tint, so the drawable's white strokes are a tint mask. The old clockwise `Icons.Filled.Refresh` substitution did not match the reference. A local vector matches the design without adding `material-icons-extended` (see [Settings screen](settings-screen.md)).
 - **Two `@Preview`s** (`ArchiveRowLightPreview`, `ArchiveRowDarkPreview`) seeded from a private `previewArchivedConversation()` helper using `Clock.System.now() - 14.days` so the subtitle reads `"Archived 2w ago"`. Both `widthDp = 412`.
 
 ### Settings row + nav graph
