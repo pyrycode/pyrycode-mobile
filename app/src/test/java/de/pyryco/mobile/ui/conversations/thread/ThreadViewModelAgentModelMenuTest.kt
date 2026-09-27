@@ -121,6 +121,18 @@ class ThreadViewModelAgentModelMenuTest {
         }
 
     @Test
+    fun longClaudeFamilyIsBoundedWithoutChangingTheWriteValue() =
+        runTest {
+            val rawValue = "claude-" + "a".repeat(200)
+            val menu = ModelMenu(listOf(row(rawValue, ConversationAgent.Claude)), 0)
+
+            val choice = runConfigFor(ConversationAgent.Claude, menu).choices.single()
+            assertEquals(rawValue, choice.value)
+            assertEquals(128, choice.label.length)
+            assertEquals("A" + "a".repeat(127), choice.label)
+        }
+
+    @Test
     fun codexConversation_leavesOutClaudesDroppedModels() =
         runTest {
             assertEquals(0, runConfigFor(ConversationAgent.Codex).droppedModels)

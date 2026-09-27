@@ -2296,8 +2296,8 @@ internal fun ModelMenuRow.dropdownLabel(agent: ConversationAgent): String =
 /** Desktop's dropdown family rule over the raw published value; used only for display. */
 private fun String.modelFamily(): String {
     val bare = removePrefix("claude-")
-    val head = bare.takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
-    return head.replaceFirstChar { it.uppercaseChar() }
+    val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
+    return head.replaceFirstChar { it.uppercaseChar() }.inert()
 }
 
 private fun Conversation.displayName(): String =
