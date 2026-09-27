@@ -6,7 +6,13 @@ Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryc
 
 ## What it does
 
-Mounted by [`ThreadScreen`](thread-screen.md) as the middle child of its `bottomBar` composer column (see "`ThreadScreen` mount point" below), between the status area above and the model/effort footer below. The user types into a `BasicTextField` inside a 6dp-cornered, 52dp-tall field (`surfaceContainerHigh`); at its trailing edge a 48dp message-input button carries one of two actions — send when the field holds text, stop the running turn when it's blank and a turn is in flight, disabled-send when it's blank and idle (see [Shape](#shape) below). The IME `Send` action fires the same send path as the button. There is no mic control any more; voice input remains a Phase 6 feature with no interim stub.
+Mounted by [`ThreadScreen`](thread-screen.md) as the middle child of its `bottomBar` composer column (see "`ThreadScreen` mount point" below), between the status area above and the model/effort footer below. The user types into a `BasicTextField` inside a 6dp-cornered field with a 52dp minimum height; at its trailing edge a 48dp message-input button carries one of two actions — send when the field holds text, stop the running turn when it's blank and a turn is in flight, disabled-send when it's blank and idle (see [Shape](#shape) below). The IME `Send` action fires the same send path as the button. There is no mic control any more; voice input remains a Phase 6 feature with no interim stub.
+
+The composer-specific fill is `#003355` at 41% opacity when the app resolves to dark
+mode with wallpaper colours off, in empty, focused and typed states. Light mode
+and both wallpaper palettes retain their selected scheme's `surfaceContainerHigh`.
+Placeholder and entered text use `bodyMedium` (14sp/20sp) across themes; multiline
+input grows to five visible lines before scrolling internally.
 
 ## Shape
 
@@ -73,7 +79,19 @@ Both states draw the same filled-circle silhouette so the control reads as one b
 
 ### Root — `Surface(shape = RoundedCornerShape(6.dp))`, no divider, no background of its own
 
-[#643](../codebase/643.md) replaced the composable's own outer `Column` (divider + surface + `imePadding()`) with a bare `Surface(shape = FieldCorner /* 6.dp */, color = surfaceContainerHigh, modifier = modifier.fillMaxWidth().heightIn(min = FieldMinHeight /* 52.dp */))` — the design's `Input large` field, sized and positioned by its caller. The divider, the surface background and `imePadding()` all moved up to the composer column `ThreadScreen` owns (see "`ThreadScreen` mount point" and "IME handling" below); the design draws no rule above the input area, so there is nothing left here to replace the old divider.
+The root is a bare `Surface(shape = FieldCorner /* 6.dp */, color = MaterialTheme.colorScheme.composerFieldContainer, modifier = modifier.fillMaxWidth().heightIn(min = FieldMinHeight /* 52.dp */))` — the design's `Input large` field, sized and positioned by its caller. [#643](../codebase/643.md) removed the composable's outer `Column`; the divider, the surface background and `imePadding()` all moved up to the composer column `ThreadScreen` owns (see "`ThreadScreen` mount point" and "IME handling" below); the design draws no rule above the input area, so there is nothing left here to replace the old divider.
+
+[`composerFieldContainer`](../../../app/src/main/java/de/pyryco/mobile/ui/theme/ComposerColors.kt)
+is a `ColorScheme` extension backed by `LocalComposerFieldContainer`.
+`PyrycodeMobileTheme` provides `onPrimaryDark.copy(alpha = 0.41f)` only when
+`darkTheme && !dynamicColor`; otherwise it provides the selected scheme's
+`surfaceContainerHigh`. Resolve this from the effective app theme, not a fresh
+system-theme check in the field: a user-selected Dark or Light mode must win over
+the opposite system setting. Keep the role separate from
+[modal field colours](mobile-modal.md#layout-and-theme), which derive their tint
+from the active palette even with wallpaper colours enabled. Shared Material
+palette and typography tokens retain their values. See the
+[#1160 design plan](../../specs/architecture/1160-dark-composer-field.md).
 
 Inside, a `Row` (padding `start = FieldLeadingInset /* 16.dp */, end = FieldTrailingInset /* 4.dp */`, vertical-center alignment) holds the text field on the left and the message-input button on the right. The asymmetric end inset is the design's overlap: the field's own padding stops 4dp short of the trailing edge, and the 48dp button sits in that remaining space — not the old pill-plus-tap-target arithmetic.
 
@@ -82,11 +100,11 @@ Inside, a `Row` (padding `start = FieldLeadingInset /* 16.dp */, end = FieldTrai
 `BasicTextField` is the right primitive here because the field `Surface` already supplies the container styling (color, shape, height). A material `TextField` would have to override `TextFieldDefaults.colors` to transparent on every container slot, which is more code than the `BasicTextField + decorator` variant. [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934) moved the field from the `value`/`onValueChange` overload to the `state: TextFieldState` overload — the only one that can receive pasted content, see [§ Image paste into the field](#image-paste-into-the-field-934) — so several of these settings changed name without changing behaviour. Configuration:
 
 - `state = fieldState` (a heap-only `TextFieldState`, not the `text`/`onTextChange` pair directly — see [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934)), `inputTransformation = reportEdits`, `Modifier.weight(1f).padding(vertical = FieldTextVerticalInset /* 12.dp */).then(if (onImagesReceived != null) Modifier.contentReceiver(imageReceiver) else Modifier)` — the design's `Text area` `py-12`; keeps wrapped text off the container's edge as the field grows.
-- `textStyle = MaterialTheme.typography.bodyLarge.copy(color = onSurface)`.
+- `textStyle = MaterialTheme.typography.bodyMedium.copy(color = onSurface)` — 14sp size and 20sp line height across themes.
 - `cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)` — `BasicTextField`'s default cursor is solid black, which fails against dark theme. Explicit `cursorBrush` mapped to `primary` matches the M3 `TextField` baseline.
 - `lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5)` — multi-line, capped at 5 visible lines so the field never overruns the screen on long pastes. Renamed from `singleLine = false, maxLines = 5` by the #934 field migration; same cap.
 - `keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send)` + `onKeyboardAction = { onSend() }` — the IME `Send` action invokes the same path as the message-input button, so the user can submit without leaving the keyboard. Renamed from `KeyboardActions(onSend = ...)` by the #934 migration; same trigger.
-- `decorator = { innerTextField -> Box { if (fieldState.text.isEmpty()) Text("Message", color = onSurfaceVariant.copy(alpha = 0.6f)); innerTextField() } }` — the placeholder renders behind `innerTextField` when the field is empty. `fieldState.text.isEmpty()` (not `isBlank()`) is intentional — a leading space shouldn't clobber the placeholder visually mid-typing, and reading the field's own text (rather than the hoisted `text`) keeps the placeholder correct immediately after an undo, before the draft has caught up. Renamed from `decorationBox` by the #934 migration.
+- `decorator = { innerTextField -> Box { if (fieldState.text.isEmpty()) Text("Message", style = MaterialTheme.typography.bodyMedium, color = onSurfaceVariant.copy(alpha = 0.6f)); innerTextField() } }` — the placeholder renders behind `innerTextField` when the field is empty. `fieldState.text.isEmpty()` (not `isBlank()`) is intentional — a leading space shouldn't clobber the placeholder visually mid-typing, and reading the field's own text (rather than the hoisted `text`) keeps the placeholder correct immediately after an undo, before the draft has caught up. Renamed from `decorationBox` by the #934 migration.
 
 ### Draft binding — cursor-at-end, undo and redo (#885, #934)
 
@@ -367,7 +385,17 @@ composable(
 
 ## Testing
 
-Unit tests only — `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt`. The Compose UI surface for the input bar will be seeded in a separate ticket; the codebase has no thread-screen `androidTest` infrastructure yet.
+`ThreadInputBarStyleTest` (`app/src/sharedTest`, native graphics) samples the rendered
+fill in empty, focused and typed states for static and wallpaper palettes, with
+app and system themes deliberately opposed. Compare the translucent fill after
+compositing over the host background, not the raw navy RGB value. Check both
+placeholder and entered `TextLayoutResult` styles for 14sp/20sp; a correct theme
+token alone does not prove the field uses it. The suite also checks the 52dp
+minimum, 48dp send target, wrapping and unchanged height between five and six
+lines. Send/stop, draft and paste coverage below protects the existing behaviour.
+
+ViewModel unit tests live in
+`app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt`.
 
 Two new test methods (the file already had seven from #126/#139):
 

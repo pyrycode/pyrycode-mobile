@@ -295,6 +295,8 @@ fun PyrycodeMobileTheme(
             else -> lightScheme to lightWarningColors
         }
     val successColors = if (darkTheme) darkSuccessColors else lightSuccessColors
+    val composerFieldContainer =
+        if (darkTheme && !dynamicColor) onPrimaryDark.copy(alpha = 0.41f) else colorScheme.surfaceContainerHigh
     val modalColors =
         ModalColors(
             container = if (darkTheme) modalContainerDark else primaryContainerLight,
@@ -308,6 +310,7 @@ fun PyrycodeMobileTheme(
         LocalWarningColors provides warningColors,
         LocalSuccessColors provides successColors,
         LocalModalColors provides modalColors,
+        LocalComposerFieldContainer provides composerFieldContainer,
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
