@@ -22,6 +22,8 @@ gone, the flat `ChannelListUiState` compatibility model (loading/error/empty pla
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `ChannelListScreen.kt`.
 
+Tree labels use the [shared type ramp](shared-typography.md) checked against Figma sidebar `15:8`.
+
 ## What it does
 
 Wraps its body in a `Scaffold` whose `topBar` is the file-private `ChannelListTopBar` (rendered in **every**

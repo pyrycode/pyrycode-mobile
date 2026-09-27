@@ -104,9 +104,9 @@ class SettingsDensityDeviceTest {
                 val measurements = StringBuilder()
                 for ((label, expected) in listOf(
                     "Pair another server" to 48,
-                    "Theme" to 62,
+                    "Theme" to 55,
                     "Use Material You dynamic color" to 52,
-                    "Default YOLO" to 62,
+                    "Default YOLO" to 55,
                 )) {
                     val bounds =
                         rule
@@ -136,7 +136,7 @@ class SettingsDensityDeviceTest {
                 assertFalse(layouts.single().hasVisualOverflow)
                 assertTrue("long About link wraps", layouts.single().lineCount > 1)
                 for ((label, expected) in listOf(
-                    "Version ${BuildConfig.VERSION_NAME}" to 62,
+                    "Version ${BuildConfig.VERSION_NAME}" to 55,
                     "Privacy policy" to 48,
                     "License: MIT" to 44,
                 )) {
