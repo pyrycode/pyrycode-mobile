@@ -120,11 +120,9 @@ Settings destinations that still wrap it. The event `when` maps the two tree
 events straight to the VM: `is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)` and
 `is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)` — no adapter, no `selectedServerId()`
 lookup, because the row already carries its own host. This is the wrong-host fix #731 landed with the render;
-\#738 carried the same discipline into creation: `is ChannelListEvent.TreeHostAddTapped ->
-vm.createHostDiscussion(event.serverId)`, against the control's own row, never
-`destinations.selectedServerId()`. Since #904, `is ChannelListEvent.TreeHostAddLongPressed ->
-vm.openAddWorkspace(event.serverId)` follows the same rule to open the Add workspace modal in place of the
-retired `openHostWorkspacePicker`. #744 carries the same discipline into editing: `is
+\#1190 carries the same discipline into creation: `TreeHostChatAddTapped(serverId)` opens the
+Chats-section confirmation for that host, and Create sends `createDiscussion(null)` through the held host's
+repository, never `destinations.selectedServerId()`. #744 carries the same discipline into editing: `is
 ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)`,
 `is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)` and
 `ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()`. #745 adds three more, none carrying a

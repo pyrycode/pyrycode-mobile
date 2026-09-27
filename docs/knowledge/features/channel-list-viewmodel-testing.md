@@ -190,17 +190,16 @@ owning a migrated legacy default, then checks scratch and an explicit `demo`
 default on the existing fake singleton. These are deterministic contract tests.
 The [live regression gate](../../e2e-interactive-stream.md#pre-ship-gate) proves
 different defaults on two live hosts with
-`interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost` (#1086): each host's default
-is set from that host's own Settings, and a chat created from that host's row lands
-in it, compared against the daemon's own reported `cwd` rather than the string the
-phone sent.
+`interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost` (#1086, revised #1190): each host's
+default is set from its own Settings, while a chat created through its Chats-section confirmation
+uses the daemon default independently of that saved app folder; Archive stays host-isolated.
 
 `rowTapsAndCreationTargetTheirNamedHostRegardlessOfTheSelectedAdapter` (#738,
 reshaped from the pre-existing `rowTargetsAndLegacySelectedProjectionAndActionsUseSeparateNavigationStreams`)
 is the test that proves the retirement rather than merely asserting it: it moves
 the sibling [selected-host compatibility adapter](navigation.md#temporary-flat-list-compatibility)
 to a second host (`f.selected.value = f.b.repo`) and asserts a row tap and a
-`createHostDiscussion` call still land on their own named hosts, never following
+`submitCreateChat` call still land on their own named hosts, never following
 the adapter. Reshaping the existing fixture this way — rather than deleting the
 test — is positive proof the dependency was actually cut, where a deletion would
 have proven nothing.

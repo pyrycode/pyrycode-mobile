@@ -276,15 +276,10 @@ The threshold is crossed but the split stays deferred. Workspace keys and migrat
 ## Usage
 
 The [composition-root gate](navigation.md#how-it-works) owns workspace migration;
-callers must not infer legacy ownership from the current selection. A host-owned
-creation action reads its captured identity's default once, then resolves that
-host's current repository before sending:
-
-```kotlin
-// ChannelListViewModel.createHostDiscussion, inside launchGuardedRepoCall
-val workspace = appPreferences.defaultWorkspace(serverId).first()
-sendHostDiscussion(serverId, workspace)
-```
+callers must not infer legacy ownership from the current selection. The Chats-section
+Create confirmation holds the clicked host and sends `createDiscussion(null)` through
+that host's repository; the daemon chooses the folder regardless of this saved preference.
+Settings still reads and writes per-host defaults for its own controls.
 
 Collecting reactively is the right shape when a screen genuinely needs live re-composition on flag flips. `collectAsStateWithLifecycle` is on the classpath today via `lifecycle-runtime-compose` (pulled in by a prior ticket; earlier revisions of this doc called it absent — that caveat is stale as of #86):
 
