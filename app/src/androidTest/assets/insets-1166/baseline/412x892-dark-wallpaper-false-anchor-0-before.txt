@@ -1,0 +1,1 @@
+activity=MainActivity sizeDp=412x892 density=1.0 syntheticBars=false systemBarsPx=Insets{left=0, top=24, right=0, bottom=63} imePx=Insets{left=0, top=0, right=0, bottom=0}

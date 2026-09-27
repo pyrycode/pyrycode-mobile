@@ -52,3 +52,9 @@ Pending documentation stage: update `docs/knowledge/features/thread-input-bar.md
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-27
+
+## Revisions
+
+- 2026-09-27: The existing demo's last message has an animated streaming presentation. The regression now populates a temporary channel with 30 fixed messages through `FakeConversationRepository` before launching the activity, then deletes it after the test. No messages are sent or changed during keyboard/anchor checks. Both newest and older anchors are explicitly established; actual touch scrolling is tested only after preservation checks.
+- 2026-09-27: API 33 exposed the known Bluetooth crash dialog stealing focus. `openKeyboard` reuses `MobileModalTest`'s close-system-dialogs recovery before requesting the real test IME. Full-image display setup waits for a shorter idle interval because unrelated system events can prevent a continuous one-second interval. Neither adjustment changes production behavior.
+- 2026-09-27: Controlled device runs confirmed `adjustResize` alone fixes the observed pan; `MainActivity.onCreate` and `ThreadScreen` remain unchanged. Both fixed-message tests fail against the original unspecified policy on base `dfcb3a8a` and pass with the setting. Six API 33 activity/modal checks and both API 35 real-bar regressions passed without skips; captures and XML are retained in `app/src/androidTest/assets/insets-1166/`, with the intentional failures under `baseline/`. Scoped `MainActivityInsetsTest`, lint, debug assembly, androidTest compilation and Spotless checks passed. No new visual tokens or assets were needed.
