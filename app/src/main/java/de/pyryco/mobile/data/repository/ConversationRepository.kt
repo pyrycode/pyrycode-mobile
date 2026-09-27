@@ -230,8 +230,8 @@ interface ConversationRepository {
 
     /**
      * Create a named, promoted channel in [workspace] in one step (#956), rather than a discussion that is
-     * promoted afterwards. [name] and [workspace] are sent **verbatim**: trimming the name is the caller's
-     * job, and the daemon re-validates both.
+     * promoted afterwards. Null [workspace] uses the daemon's default folder. Values are sent verbatim:
+     * trimming the name is the caller's job, and the daemon re-validates both.
      *
      * Returns the daemon's confirmed conversation — its values, not the request's — which then appears as a
      * promoted row in [observeConversations]. A server `error`, a disconnected session or a malformed reply
@@ -242,7 +242,7 @@ interface ConversationRepository {
      */
     suspend fun createChannel(
         name: String,
-        workspace: String,
+        workspace: String?,
     ): Conversation = error("createChannel is not implemented for this ConversationRepository")
 
     suspend fun promote(

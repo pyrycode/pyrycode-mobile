@@ -83,7 +83,7 @@ data class HostChannelListState(
     val chatEditor: ChatEditorState? = null,
     /** The workspace whose Edit workspace modal is open, or null when none is (#905). */
     val workspaceEditor: WorkspaceEditorState? = null,
-    /** The Channels-section workspace whose Create channel modal is open, or null when none is (#958). */
+    /** The host whose Channels-section Create channel modal is open, or null when none is. */
     val createChannel: CreateChannelState? = null,
     /** The channel whose Edit channel modal is open, or null when none is (#667). */
     val channelEditor: ChannelEditorState? = null,
@@ -175,8 +175,8 @@ data class AddWorkspaceState(
 /**
  * The Create channel modal's target and flags (#958), shaped like [AddWorkspaceState].
  *
- * The target is the ([serverId], [cwd]) pair a Channels-section workspace row is keyed on — never its shown
- * name. [createdConversationId] is set once the daemon confirmed the create, so a retry after a failed
+ * The target is [serverId]; null [cwd] asks the daemon to use its default folder. The optional `cwd`
+ * remains part of the modal identity for callers that supply a folder. [createdConversationId] is set once the daemon confirmed the create, so a retry after a failed
  * prompt write addresses that conversation and never creates a second channel. [saving] covers either
  * write in flight; [createFailed] and [promptFailed] are flags so the failure string resolves on screen and
  * no daemon message can reach the shell's live region. The typed name and prompt are the modal's own
@@ -184,7 +184,7 @@ data class AddWorkspaceState(
  */
 data class CreateChannelState(
     val serverId: String,
-    val cwd: String,
+    val cwd: String? = null,
     val saving: Boolean = false,
     val createdConversationId: String? = null,
     val createFailed: Boolean = false,
@@ -239,24 +239,19 @@ data class ChannelEditorState(
     val savedMuted: Boolean = false,
 )
 
-/** The tree's two tiers. The same host draws a row in each, and the two fold independently. */
+/** The tree's foldable node kinds. */
 enum class ConversationTreeSection {
+    Host,
     Channels,
     Chats,
 }
 
 /**
- * One foldable node: a host row when [cwd] is null, one of that host's workspace rows otherwise.
- *
- * The identity is the ([section], [serverId], [cwd]) triple — [HostWorkspaceGroup]'s own key plus the
- * section, because the design draws each host in both sections and folding one must not fold the other.
- * `cwd` is compared exactly, as the projection produced it. No display name is ever part of a key: a
- * rename must fold and unfold nothing.
+ * One foldable node identified by its host and kind. Display names and folders never affect folding.
  */
 data class TreeFoldKey(
     val section: ConversationTreeSection,
     val serverId: String,
-    val cwd: String? = null,
 )
 
 data class HostConversationTarget(
@@ -374,7 +369,7 @@ class ChannelListViewModel(
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
 
     /**
-     * Folds or unfolds one host or workspace row.
+     * Folds or unfolds one host or fixed section row.
      *
      * The collapsed set is never pruned against an incoming snapshot: a host that momentarily disappears
      * during a reconnect must come back folded exactly as the operator left it.
@@ -802,31 +797,18 @@ class ChannelListViewModel(
         RelayLog.d { "event=workspace_editor_dismissed" }
     }
 
-    /**
-     * Opens the Create channel modal on a Channels-section workspace row's own host and exact `cwd` (#958).
-     *
-     * A host the list does not hold, or a path that host holds no active channel at — so no Channels row to
-     * press — opens nothing. Selection and navigation are left alone until a channel is created.
-     */
-    fun openCreateChannel(
-        serverId: String,
-        cwd: String,
-    ) {
-        val known =
-            hostSource.snapshots.value
-                .firstOrNull { it.serverId == serverId }
-                ?.channels
-                ?.any { it.cwd == cwd } == true
-        if (!known) {
-            RelayLog.d { "event=create_channel_open_rejected code=unknown_workspace" }
+    /** Opens Create channel for this host even when its Channels section is empty. */
+    fun openCreateChannel(serverId: String) {
+        if (hostSource.snapshots.value.none { it.serverId == serverId }) {
+            RelayLog.d { "event=create_channel_open_rejected code=unknown_host" }
             return
         }
-        createChannel.value = CreateChannelState(serverId, cwd)
+        createChannel.value = CreateChannelState(serverId)
         RelayLog.d { "event=create_channel_opened" }
     }
 
     /**
-     * OK: creates a channel named [name] at the modal's exact `cwd` on the modal's own host, writes a
+     * OK: creates a channel named [name] in the daemon host's default folder, writes a
      * non-blank [systemPrompt] verbatim to the **created** conversation, then closes the modal and opens
      * the channel (#958).
      *

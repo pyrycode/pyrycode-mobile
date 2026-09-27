@@ -16,7 +16,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 /**
  * Create channel on the phone (#958): [ChannelFormFields] in a [MobileModal], driven entirely by its caller —
- * desktop's `CreateChannelDialog`, opened from a Channels-section workspace row's plus.
+ * desktop's `CreateChannelDialog`, opened from a host's Channels-section plus.
  *
  * Presentation only. It reports the trimmed name and the verbatim prompt through [onSubmit] and every
  * dismissal route through [onDismissRequest]; neither closes it — the caller removes it from composition.
@@ -32,7 +32,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 @Composable
 internal fun CreateChannelModal(
     serverId: String,
-    cwd: String,
+    cwd: String?,
     onSubmit: (name: String, systemPrompt: String) -> Unit,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,

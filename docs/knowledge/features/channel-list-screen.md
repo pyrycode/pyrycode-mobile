@@ -3,9 +3,9 @@
 Stateless `(hostState, onEvent)` composable that renders a Material 3 `Scaffold` with the list's own
 top bar (Settings and Archive at the left, one “Pair another host” plus at the right, above a rule — see
 [The list's own top bar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) below) above a single-`LazyColumn` conversation tree
-(#731): Channels and Chats groups without global title rows (#1186), each holding host rows, their workspace rows and those
-workspaces' conversation rows, drawn from `hostState` (#729's `HostChannelListEntry.channelGroups` /
-`chatGroups`) using the row composables from `ui/conversations/components/ConversationTreeRows.kt` (#730,
+(#731, #1189): each host appears once, with fixed Channels and Chats sections and their direct conversation
+rows, drawn from `hostState` in host and source-list order using the row composables from
+`ui/conversations/components/ConversationTreeRows.kt` (#730,
 see [Tree rows](channel-list-screen-how-it-works.md#tree-rows-730) below). The flat `ConversationRow` list and the inline "Recent discussions"
 section with its "See all" link into `Routes.DISCUSSION_LIST` are gone — #731 replaced both. Row taps carry
 their own `serverId`, so a tree drawing rows from several hosts opens each on the host that owns it, never
@@ -43,9 +43,10 @@ The body branches on `hostState.hosts` — the only model the screen is fed:
   content, not a blank screen. The `Loading` / `Error(message)` compatibility placeholders #738 removed drew
   from the retired flat state; a cold start or an upstream failure now renders this same empty copy rather
   than a distinct message — see [Edge cases](#edge-cases--limitations).
-- **Otherwise** — a private `ConversationTree(hostState, onEvent, modifier)` composable renders the full
-  two-group tree and its separator, without global Channels/Chats title rows or list-level pairing controls.
-  Host-row add controls still create chats on their own hosts; folds and workspace/conversation actions remain. See
+- **Otherwise** — a private `ConversationTree(hostState, onEvent, modifier)` composable renders each host
+  with its Channels and Chats sections. It draws no global tier divider or workspace rows.
+  Host-row add controls still create chats on their own hosts; the Channels section's plus creates a
+  channel in that host's daemon-default folder. See
   [Conversation tree (#731)](#conversation-tree-731) and [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
 `Routes.DISCUSSION_LIST` / `DiscussionListScreen` stay in the graph, unreachable — removing them was out of
@@ -102,10 +103,11 @@ sealed interface ChannelListEvent {
     data object AddWorkspaceSubmitted : ChannelListEvent
     /** The Add workspace modal's Cancel, Close and Back. */
     data object AddWorkspaceDismissed : ChannelListEvent
-    /** A workspace row's edit control, in either section: open the Edit workspace modal for **that**
-     *  row's own host and exact `cwd` (#905). Never the shown name, which two workspaces can share. */
+    /** A host's Channels section plus opens Create channel for that host, even when empty (#1189). */
+    data class TreeHostChannelAddTapped(val serverId: String) : ChannelListEvent
+    /** Retained for the workspace editor; no sidebar workspace row emits this after #1189. */
     data class TreeWorkspaceEditTapped(val serverId: String, val cwd: String) : ChannelListEvent
-    /** The open Edit workspace modal's OK, already trimmed. No ids, for the reason
+    /** The retained Edit workspace modal's OK, already trimmed. No ids, for the reason
      *  [HostEditNameSubmitted] carries none: the target is the open editor's. */
     data class WorkspaceEditNameSubmitted(val name: String) : ChannelListEvent
     /** The Edit workspace modal's Cancel, Close and Back from the editor. */
@@ -173,10 +175,9 @@ Three `@Preview` composables (re-cut in #731 from the prior six flat/discussion 
 `widthDp = 412`:
 
 - `ChannelListScreenTreePreview` (`@Preview(name = "Tree — Light", heightDp = 900, …)`) — a private
-  `previewHostState(now)` builds two hosts (`"pyrybox"` / named, `"macbook"` / nameless) each with three-ish
-  channels and chats across two workspace `cwd`s, one collapsed key
-  (`TreeFoldKey(Channels, "macbook")`) and one selected target. Canonical "matches Figma `133-259`" preview:
-  two sections, host containers, workspace rows, one collapsed host, one selected conversation row.
+  `previewHostState(now)` builds two hosts (`"pyrybox"` / named, `"macbook"` / nameless) with channels
+  and chats, one collapsed host (`TreeFoldKey(Host, "macbook")`) and one selected conversation.
+  It shows the host-first hierarchy, direct rows and Channels plus.
 - `ChannelListScreenTreeDarkPreview` — same data, dark theme (`uiMode = Configuration.UI_MODE_NIGHT_YES`).
 - `ChannelListScreenEmptyPreview` (`@Preview(name = "No hosts — Light", …)`) — `hostState = HostChannelListState()`
   (no hosts). Renders the list's own bar above the centred empty-state copy — the tree's one blank state,
@@ -184,6 +185,8 @@ Three `@Preview` composables (re-cut in #731 from the prior six flat/discussion 
 
 All three previews render the list's own bar since #737 and were compared against the Figma screenshot of
 node `133-259` before that PR.
+The separate `TreeRowsPreviewMatrix` in `ConversationTreeRows.kt` still shows the old global header and
+workspace row; use the screen previews for the current hierarchy until that component preview is updated.
 
 The `Loading` / `Error` previews #45's rationale used to justify skipping stayed unpreviewed through their
 whole life and retired with the flat state itself (#738); the screen's transient states now have no visual
@@ -192,7 +195,7 @@ distinction from the tree's own blank at all — see the next section.
 ## Edge cases / limitations
 
 - **The tree's only blank state is zero hosts.** A host with a snapshot but no channels or chats still draws
-  its own `TreeHostRow` and no workspaces underneath — that is content, not an empty screen. Only
+  its own `TreeHostRow` and empty Channels and Chats sections — that is content, not an empty screen. Only
   `hostState.hosts.isEmpty()` falls back to the empty placeholder — the same copy for a cold start (no
   snapshot yet) and an upstream failure, now that #738 retired the flat state's distinct `Loading` /
   `Error(message)` texts. No acceptance criterion named this collapse; it falls directly out of AC-4's
@@ -222,9 +225,9 @@ distinction from the tree's own blank at all — see the next section.
   `TreeRowControl` inherits (#221, #738, #744) — unchanged; the `combinedClickable` default ripple covers
   the feedback gap.
 - **Screen test coverage.** `ChannelListScreenTest` (`app/src/sharedTest/.../list/ChannelListScreenTest.kt`)
-  builds a hand-crafted `HostChannelListState` and asserts, among others: both sections render their host,
-  workspace and conversation rows with nothing folded on first show; folding a host hides its workspaces and
-  their conversations while folding a workspace hides only its own rows; a conversation row emits
+  builds a hand-crafted multi-host `HostChannelListState` and asserts, among others: each host appears once
+  with direct, source-ordered conversation rows; folding a host hides its sections and descendants, while
+  folding one section hides only its own rows; a conversation row emits
   `TreeRowTapped` carrying *its own* host's `serverId`, not a selected one (the wrong-host regression,
   expressed as a failing assertion first); exactly the row matching `selected` asserts selected via
   `assertIsSelected` / `assertIsNotSelected` (a semantics read, not a colour read); each row carries its
@@ -236,7 +239,7 @@ distinction from the tree's own blank at all — see the next section.
   glyphs and outer 20dp gutters, plus absence of the global titles and old section-qualified pairing names.
   A loaded-state-only assertion could miss a toolbar disappearing on the placeholder; the tall-tree test
   also compares toolbar bounds and taps all three controls after scrolling to the final chat.
-  `ChannelListColoursTest` measures the rendered divider in light and dark themes: 1dp thickness, 20dp
+  `ChannelListColoursTest` measures the sole toolbar divider in light and dark themes: 1dp thickness, 20dp
   gutters and 24dp to the first host, including list padding. Measuring only a padding constant would
   miss extra space contributed by the list or row.
   `emptyState_rendersPlaceholder_whenThereAreNoHosts` checks the literal pairing guidance, absence of the
@@ -342,14 +345,14 @@ distinction from the tree's own blank at all — see the next section.
   `requestWorkspaceArchive`, `confirmWorkspaceArchive`, `declineWorkspaceArchive`,
   `dismissWorkspaceEditor`; the compatibility `state` producer, `onEvent`
   reducer and `navigationEvents` this screen once also consumed retired with the button in #738), [Tree
-  rows](channel-list-screen-how-it-works.md#tree-rows-730) (`TreeHostRow` / `TreeWorkspaceRow` / `TreeConversationRow`,
+  rows](channel-list-screen-how-it-works.md#tree-rows-730) (`TreeHostRow` / `TreeHostSectionRow` / `TreeConversationRow`,
   #730; `TreeRowControl` since #738, renamed from `TreeAddControl` in #744), [`EditHostModal`](mobile-modal.md#callers)
   (#743's shell content, driven by this screen since #744), [`EditChatModal`](mobile-modal.md#callers)
   (#826's shell content, driven by this screen since #827), [`AddWorkspaceModal`](mobile-modal.md#callers)
   (#904's shell content, replacing this screen's own use of [WorkspacePicker](./workspace-picker.md#consumers)),
-  [`EditWorkspaceModal`](mobile-modal.md#callers) (#905's shell content, driven by every workspace row's own
-  pencil in both sections), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
-  (#729's workspace projection this screen iterates), [ConversationAvatar](./conversation-avatar.md),
+  [`EditWorkspaceModal`](mobile-modal.md#callers) (#905's retained folder editor, no longer opened from a
+  tree row), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
+  (#729's workspace projection, still available to other consumers), [ConversationAvatar](./conversation-avatar.md),
   [Navigation](./navigation.md), [Dependency injection](./dependency-injection.md)
 - Downstream: #737 (done — draws the list's own settings + archive bar in the `topBar` slot this section
   describes; #740, done, added the rung-3 scenario reaching Archived through the list's own archive entry

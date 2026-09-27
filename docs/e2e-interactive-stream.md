@@ -1503,7 +1503,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Forty-four curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Forty-five curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -1548,9 +1548,13 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` (#1088), and
 `InteractiveStreamE2ETest#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost` (#1089), and
 `InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` (#1090), and
-`InteractiveStreamE2ETest#interactiveTurn_backgroundAgentProgress_showsOnRunningCard` (#1076/#1107),
-so exactly
-**forty-four real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
+`InteractiveStreamE2ETest#interactiveTurn_backgroundAgentProgress_showsOnRunningCard` (#1076/#1107).
+#1189 revises three existing methods: Create channel opens from an initially empty host Channels
+section and uses the daemon default; the peer workspace-label method checks the thread, Settings and
+cross-host state without a deleted tree-row assertion; the folder-settings method keeps the repository
+rename/archive and Archive restore round trip without a tree-row pencil. The create-channel test archives
+the harness's seeded promoted channel for the empty-section check and restores it in `finally`.
+The suite spends **forty-four real claude turns** per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
 ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, #891's own
 ping, #946's own ping, the inherited-effort and chosen-effort scenarios' own turns and the
@@ -1940,7 +1944,20 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live baseline — 2026-09-25 (#680).** The dispatcher's real-claude gate ran
+**Current live verification — 2026-09-27 (#1189).** The dispatcher ran
+`python3 scripts/android-test-gate.py live` against `feature/1189` at `e9b1d0339e`, merged with
+`origin/main` at `5ffcb50541` in a detached worktree: 45 executed, 45 passed, zero failures or
+skips, exit 0. The run included `InteractiveStreamE2ETest`'s revised
+`interactiveTurn_createEditArchiveChannel_readsPromptBack`,
+`interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost`, and
+`interactiveTurn_addRenameArchiveWorkspace_roundTripsThroughTheHost`. The create-channel method proves
+the Channels-section plus works with zero active channels and uses the daemon default folder even when
+the app has a different saved default. The label method retains its thread, Settings and cross-host
+checks; the folder-settings method retains the daemon rename/archive and Archive restore round trip.
+The earlier #1189 live run failed its empty-section precondition because the harness had seeded a
+promoted channel. The scenario now archives and restores that fixture around its empty-section proof.
+
+**Earlier parity baseline — 2026-09-25 (#680).** The dispatcher's real-claude gate ran
 `python3 scripts/android-test-gate.py live` against `feature/680` at `b4da42eb70` merged with
 `origin/main` at `87b6ca3241` (6 commits behind before the merge) in a detached worktree — 45
 executed, 45 passed, no failures or skips, exit 0, wall clock 463.9s. `LIVE_MINIMUM` is 45 and this

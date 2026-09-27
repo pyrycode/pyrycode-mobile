@@ -826,14 +826,20 @@ class HostChannelListViewModelTest {
                     .isEmpty(),
             )
 
+            val hostKey = TreeFoldKey(ConversationTreeSection.Host, "Host")
             val channelsHost = TreeFoldKey(ConversationTreeSection.Channels, "Host")
-            f.vm.onFoldToggled(channelsHost)
+            f.vm.onFoldToggled(hostKey)
             runCurrent()
-            assertEquals(setOf(channelsHost), f.vm.hostState.value.collapsed)
-            // The same host's row in the other section, and every other host, stay open.
+            assertEquals(setOf(hostKey), f.vm.hostState.value.collapsed)
+            // Section folds and other hosts are independent of the host fold.
             assertFalse(TreeFoldKey(ConversationTreeSection.Chats, "Host") in f.vm.hostState.value.collapsed)
             assertFalse(TreeFoldKey(ConversationTreeSection.Channels, "host") in f.vm.hostState.value.collapsed)
-
+            f.vm.onFoldToggled(channelsHost)
+            runCurrent()
+            assertEquals(setOf(hostKey, channelsHost), f.vm.hostState.value.collapsed)
+            f.vm.onFoldToggled(hostKey)
+            runCurrent()
+            assertEquals(setOf(channelsHost), f.vm.hostState.value.collapsed)
             f.vm.onFoldToggled(channelsHost)
             runCurrent()
             assertTrue(
@@ -843,7 +849,7 @@ class HostChannelListViewModelTest {
         }
 
     @Test
-    fun foldStateKeysOnServerIdAndExactCwdAndSurvivesARelabelAndAListUpdate() =
+    fun foldStateKeysOnServerIdAndSectionAndSurvivesARelabelAndAListUpdate() =
         runTest(dispatcher) {
             val f = fixture()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
@@ -864,11 +870,11 @@ class HostChannelListViewModelTest {
                     .single()
                     .cwd,
             )
-            val workspace = TreeFoldKey(ConversationTreeSection.Channels, "Host", shared)
-            f.vm.onFoldToggled(workspace)
+            val channels = TreeFoldKey(ConversationTreeSection.Channels, "Host")
+            f.vm.onFoldToggled(channels)
             runCurrent()
-            assertEquals(setOf(workspace), f.vm.hostState.value.collapsed)
-            assertFalse(TreeFoldKey(ConversationTreeSection.Channels, "host", shared) in f.vm.hostState.value.collapsed)
+            assertEquals(setOf(channels), f.vm.hostState.value.collapsed)
+            assertFalse(TreeFoldKey(ConversationTreeSection.Channels, "host") in f.vm.hostState.value.collapsed)
 
             // A relabel moves display text only, and the added row is an incoming list update: the fold holds.
             f.a.repo.rows.value = listOf(row("a-1", promoted = true, label = "Renamed"), row("a-2", promoted = true))
@@ -881,7 +887,7 @@ class HostChannelListViewModelTest {
                     .single()
                     .displayName,
             )
-            assertEquals(setOf(workspace), f.vm.hostState.value.collapsed)
+            assertEquals(setOf(channels), f.vm.hostState.value.collapsed)
         }
 
     @Test
@@ -2083,29 +2089,28 @@ class HostChannelListViewModelTest {
     private fun Fixture.promptWrites() = a.repo.promptWrites + b.repo.promptWrites
 
     @Test
-    fun createChannelOpensOnlyOnTheRowsOwnHostAndAChannelCwd() =
+    fun createChannelOpensOnTheRowsOwnHostEvenWithAnEmptyChannelsSection() =
         runTest(dispatcher) {
             val f = fixture()
             f.seedCollidingChannels()
+            f.a.repo.rows.value = emptyList()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
             runCurrent()
 
-            f.vm.openCreateChannel("Host", sharedCwd)
+            f.vm.openCreateChannel("Host")
             runCurrent()
-            assertEquals(CreateChannelState("Host", sharedCwd), f.vm.hostState.value.createChannel)
+            assertEquals(CreateChannelState("Host"), f.vm.hostState.value.createChannel)
 
-            f.vm.openCreateChannel("host", sharedCwd)
+            f.vm.openCreateChannel("host")
             runCurrent()
-            assertEquals(CreateChannelState("host", sharedCwd), f.vm.hostState.value.createChannel)
+            assertEquals(CreateChannelState("host"), f.vm.hostState.value.createChannel)
 
-            // A chat-only path, an inexact path or a host the list does not hold opens nothing.
+            // A host the list does not hold opens nothing.
             f.vm.dismissCreateChannel()
-            for ((serverId, cwd) in listOf("Host" to "/chat-only", "Host" to "/same/../Path", "gone" to sharedCwd)) {
-                f.vm.openCreateChannel(serverId, cwd)
-                runCurrent()
-                assertNull(f.vm.hostState.value.createChannel)
-            }
+            f.vm.openCreateChannel("gone")
+            runCurrent()
+            assertNull(f.vm.hostState.value.createChannel)
 
             assertNull(f.vm.hostState.value.selected)
             assertTrue(f.nav.isEmpty())
@@ -2113,7 +2118,7 @@ class HostChannelListViewModelTest {
         }
 
     @Test
-    fun createChannelCreatesOnlyOnTheModalsHostAtItsCwdWritesAPromptToTheCreatedOneAndOpensIt() =
+    fun createChannelCreatesOnlyOnTheModalsHostDefaultWritesAPromptToTheCreatedOneAndOpensIt() =
         runTest(dispatcher) {
             val f = fixture()
             f.seedCollidingChannels()
@@ -2124,10 +2129,10 @@ class HostChannelListViewModelTest {
             runCurrent()
 
             // A blank or whitespace-only prompt sends no write.
-            f.vm.openCreateChannel("host", sharedCwd)
+            f.vm.openCreateChannel("host")
             f.vm.submitCreateChannel("  New channel  ", "  \n\t ")
             runCurrent()
-            assertEquals(listOf("New channel" to sharedCwd), f.b.repo.channelCreates)
+            assertEquals(listOf("New channel" to null), f.b.repo.channelCreates)
             assertTrue(
                 f.a.repo.channelCreates
                     .isEmpty(),
@@ -2138,10 +2143,10 @@ class HostChannelListViewModelTest {
             assertEquals(HostConversationTarget("host", "host-created-1"), f.vm.hostState.value.selected)
 
             // Other text is written verbatim, after the create, to the created conversation on the same host.
-            f.vm.openCreateChannel("Host", sharedCwd)
+            f.vm.openCreateChannel("Host")
             f.vm.submitCreateChannel("Other", "  Keep my spaces  ")
             runCurrent()
-            assertEquals(listOf("Other" to sharedCwd), f.a.repo.channelCreates)
+            assertEquals(listOf("Other" to null), f.a.repo.channelCreates)
             assertEquals(listOf<Pair<String, String?>>("Host-created-1" to "  Keep my spaces  "), f.a.repo.promptWrites)
             assertEquals(listOf("create", "prompt"), f.a.repo.channelCalls)
             assertTrue(
@@ -2159,14 +2164,14 @@ class HostChannelListViewModelTest {
             f.seedCollidingChannels()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-            f.vm.openCreateChannel("Host", sharedCwd)
+            f.vm.openCreateChannel("Host")
             runCurrent()
 
             // A failed create keeps the modal with a static flag, and OK creates again.
             f.a.repo.createChannelFailures = 1
             f.vm.submitCreateChannel("Named", "Prompt text")
             runCurrent()
-            assertEquals(CreateChannelState("Host", sharedCwd, createFailed = true), f.vm.hostState.value.createChannel)
+            assertEquals(CreateChannelState("Host", createFailed = true), f.vm.hostState.value.createChannel)
             assertTrue(f.channelCreates().isEmpty())
             assertTrue(f.promptWrites().isEmpty())
 
@@ -2175,16 +2180,16 @@ class HostChannelListViewModelTest {
             f.vm.submitCreateChannel("Named", "Prompt text")
             runCurrent()
             assertEquals(
-                CreateChannelState("Host", sharedCwd, createdConversationId = "Host-created-1", promptFailed = true),
+                CreateChannelState("Host", createdConversationId = "Host-created-1", promptFailed = true),
                 f.vm.hostState.value.createChannel,
             )
-            assertEquals(listOf("Named" to sharedCwd), f.a.repo.channelCreates)
+            assertEquals(listOf("Named" to null), f.a.repo.channelCreates)
             assertTrue(f.nav.isEmpty())
 
             // OK retries only the prompt write, to the created conversation — never a second create.
             f.vm.submitCreateChannel("Changed", "Prompt again")
             runCurrent()
-            assertEquals(listOf("Named" to sharedCwd), f.channelCreates())
+            assertEquals(listOf("Named" to null), f.channelCreates())
             assertEquals(listOf<Pair<String, String?>>("Host-created-1" to "Prompt again"), f.promptWrites())
             assertNull(f.vm.hostState.value.createChannel)
             assertEquals(listOf(HostConversationTarget("Host", "Host-created-1")), f.nav)
@@ -2211,17 +2216,17 @@ class HostChannelListViewModelTest {
             runCurrent()
 
             // Cancel, Close and Back before OK send nothing.
-            f.vm.openCreateChannel("Host", sharedCwd)
+            f.vm.openCreateChannel("Host")
             f.vm.dismissCreateChannel()
             runCurrent()
             assertNull(f.vm.hostState.value.createChannel)
 
             // Lost between the last status and the press: a static flag, nothing sent.
-            f.vm.openCreateChannel("Host", sharedCwd)
+            f.vm.openCreateChannel("Host")
             f.a.available = false
             f.vm.submitCreateChannel("Named", "")
             runCurrent()
-            assertEquals(CreateChannelState("Host", sharedCwd, createFailed = true), f.vm.hostState.value.createChannel)
+            assertEquals(CreateChannelState("Host", createFailed = true), f.vm.hostState.value.createChannel)
             f.a.available = true
 
             // A blank name or a prompt over the byte limit is ignored outright.
@@ -2243,7 +2248,7 @@ class HostChannelListViewModelTest {
             gate.complete(Unit)
             runCurrent()
             assertNull(f.vm.hostState.value.createChannel)
-            assertEquals(listOf("Late" to sharedCwd), f.channelCreates())
+            assertEquals(listOf("Late" to null), f.channelCreates())
             // The operator pressed OK before dismissing, so the chain still finishes its prompt write.
             assertEquals(listOf<Pair<String, String?>>("Host-created-1" to "Late prompt"), f.promptWrites())
             assertTrue(f.nav.isEmpty())
@@ -2989,7 +2994,7 @@ class HostChannelListViewModelTest {
         // at its cwd and returns an id naming this host, so a write to the wrong host's id cannot pass.
         override suspend fun createChannel(
             name: String,
-            workspace: String,
+            workspace: String?,
         ): Conversation {
             channelGate?.await()
             if (createChannelFailures > 0) {
@@ -2998,7 +3003,7 @@ class HostChannelListViewModelTest {
             }
             channelCreates += name to workspace
             channelCalls += "create"
-            val created = row("$hostId-created-${channelCreates.size}", promoted = true, cwd = workspace).copy(name = name)
+            val created = row("$hostId-created-${channelCreates.size}", promoted = true, cwd = workspace ?: "").copy(name = name)
             rows.value = rows.value.orEmpty() + created
             return created
         }
@@ -3049,7 +3054,7 @@ class HostChannelListViewModelTest {
         val mutes = mutableListOf<Pair<String, Boolean>>()
         var muteFailures = 0
 
-        val channelCreates = mutableListOf<Pair<String, String>>()
+        val channelCreates = mutableListOf<Pair<String, String?>>()
         val promptWrites = mutableListOf<Pair<String, String?>>()
         val channelCalls = mutableListOf<String>()
         var createChannelFailures = 0

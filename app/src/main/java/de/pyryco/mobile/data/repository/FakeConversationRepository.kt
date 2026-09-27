@@ -132,8 +132,8 @@ class FakeConversationRepository(
 
     override suspend fun createChannel(
         name: String,
-        workspace: String,
-    ): Conversation = insertNew(name = name, cwd = workspace, isPromoted = true)
+        workspace: String?,
+    ): Conversation = insertNew(name = name, cwd = workspace ?: "", isPromoted = true)
 
     private fun insertNew(
         name: String?,

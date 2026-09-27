@@ -105,11 +105,11 @@ import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
-import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
@@ -2157,12 +2157,8 @@ class InteractiveStreamE2ETest {
     /**
      * A workspace added, renamed and archived from the list (#1087, rung 3). Host A's row adds a workspace
      * in a new, run-unique folder (#904's Add workspace modal); the chat it starts is in that folder on the
-     * daemon and the workspace's row appears. The row's pencil (#905's Edit workspace modal) renames it and,
-     * after the in-place confirmation, archives it. Restoring the chat from A's Archive brings the row back
-     * under the same label: the daemon keys the label by cwd and archiving does not clear it.
-     *
-     * The workspace row is found by its pencil, whose description carries the row's shown name: the folder's
-     * name before the rename, the label after. The chat is renamed so the Archive screen can find it.
+     * daemon. The repository renames and archives that folder, preserving the folder-settings contract
+     * after the tree stops drawing folder rows. Restoring the chat from A's Archive keeps its label.
      *
      * **Shared host state.** The label is cleared and the chat deleted in `finally`. The folder stays under
      * `~/pyry-workspace`, as #562's does; its run-unique name keeps repeated runs apart.
@@ -2207,33 +2203,15 @@ class InteractiveStreamE2ETest {
             assertTrue("the chat is not in the new folder: ${path.substringAfterLast('/')}", path.endsWith("/$folderName"))
             leaveThread()
 
-            // 3. AC-1: the workspace's row is in the tree, under the folder's name.
-            awaitWorkspaceRow(folderName)
-
-            // 4. AC-2: rename it from its pencil. The row shows the label and the daemon stores it.
-            openWorkspaceEditor(folderName)
-            composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).performTextReplacement(label)
-            clickEnabledOk()
-            awaitWorkspaceRow(label)
-            composeTestRule.onAllNodes(hasContentDescription(workspaceEditDescription(folderName))).assertCountEquals(0)
+            // 3. Folder settings remain daemon-owned, even though no folder row is shown in the tree.
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).renameWorkspace(path, label) } }
             assertEquals("the daemon's workspace label", label, heldConversation(serverId, id).workspaceLabel)
 
-            // 5. AC-2: archive it after the in-place confirmation. The row leaves the tree and the chat the list.
-            openWorkspaceEditor(label)
-            composeTestRule.onNode(hasText(string(R.string.edit_workspace_archive)) and hasClickAction()).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule
-                    .onAllNodesWithText(string(R.string.edit_workspace_archive_confirm_title))
-                    .fetchSemanticsNodes()
-                    .isNotEmpty()
-            }
-            clickEnabledOk()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                runCatching { scrollListTo(hasContentDescription(workspaceEditDescription(label))) }.isFailure
-            }
+            // 4. Archive the folder and restore its chat from Archive.
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).archiveWorkspace(path) } }
             archivedIds(serverId) { id in it }
 
-            // 6. AC-2: restore the chat from A's Archive. The snackbar wait keeps the restore coroutine from
+            // 5. Restore the chat from A's Archive. The snackbar wait keeps the restore coroutine from
             //    being cancelled by the Back that follows (#551).
             openSettings()
             showHostSettings(serverId)
@@ -2255,8 +2233,10 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
 
-            // 7. AC-2: the row is back under the same label, which the daemon still holds.
-            awaitWorkspaceRow(label)
+            // 6. The chat returns under the same folder label.
+            val restored = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(chatName)
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(restored) }.isSuccess }
+            composeTestRule.onNode(restored).assertIsDisplayed()
             assertEquals("the restored workspace label", label, heldConversation(serverId, id).workspaceLabel)
         } finally {
             cwd?.let { path ->
@@ -2267,28 +2247,6 @@ class InteractiveStreamE2ETest {
                 runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
                     .onFailure { Log.w("E2E", "workspace chat delete failed: ${it::class.simpleName}") }
             }
-        }
-    }
-
-    /** The workspace row's pencil description for a workspace shown as [name]. */
-    private fun workspaceEditDescription(name: String): String =
-        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_tree_workspace_edit, name)
-
-    /** Wait until the tree scrolls to the workspace row shown as [name], found by its pencil. */
-    private fun awaitWorkspaceRow(name: String) {
-        val pencil = hasContentDescription(workspaceEditDescription(name))
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            runCatching { scrollListTo(pencil) }.isSuccess
-        }
-        composeTestRule.onAllNodes(pencil).onFirst().assertIsDisplayed()
-    }
-
-    /** Tap the pencil of the workspace row shown as [name] and wait for the Edit workspace modal's field. */
-    private fun openWorkspaceEditor(name: String) {
-        awaitWorkspaceRow(name)
-        composeTestRule.onAllNodes(hasContentDescription(workspaceEditDescription(name))).onFirst().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasTestTag(EDIT_WORKSPACE_NAME_FIELD_TAG)).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
@@ -2305,7 +2263,7 @@ class InteractiveStreamE2ETest {
      * A workspace label set from another client reaches every open surface, for its host only (#1089, rung 3).
      * The daemon pushes `workspace_updated` to every connection but the requester's, so the label is set and
      * cleared by the [SecondClientPeer] on host A while each surface is open in turn: an empty discussion's
-     * workspace chip, the tree's workspace row, and A's Default workspace row in Settings. Each shows the
+     * workspace chip and A's Default workspace row in Settings. Each shows the
      * label and then the folder's name again without navigating away. Each surface gets its own label, so
      * only that round's push can satisfy its wait.
      *
@@ -2371,22 +2329,7 @@ class InteractiveStreamE2ETest {
             assertWorkspaceLabels(labels, null)
             leaveThread()
 
-            // 5. AC-1 + AC-2, tree row: A's row takes the label while B's row at the same folder keeps its name.
-            awaitWorkspaceRow(folder)
-            val treeLabel = "${LABEL_E2E_PREFIX}tree-$stamp"
-            peerStep(peer, "set the tree label") { peer.renameWorkspace(shared, treeLabel, THREAD_TIMEOUT_MS) }
-            awaitWorkspaceRow(treeLabel)
-            // A's row now shows the label, so a pencil still named after the folder is B's.
-            awaitWorkspaceRow(folder)
-            assertWorkspaceLabels(labels, treeLabel)
-            peerStep(peer, "clear the tree label") { peer.renameWorkspace(shared, null, THREAD_TIMEOUT_MS) }
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                runCatching { scrollListTo(hasContentDescription(workspaceEditDescription(treeLabel))) }.isFailure
-            }
-            awaitWorkspaceRow(folder)
-            assertWorkspaceLabels(labels, null)
-
-            // 6. AC-1 + AC-2, Settings: A's Default workspace row takes the label and gives it back.
+            // 5. AC-1 + AC-2, Settings: A's Default workspace row takes the label and gives it back.
             openSettings()
             showHostSettings(serverIdA)
             awaitDefaultWorkspaceRowShows(folder)
@@ -2400,7 +2343,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
 
-            // 7. AC-2: no label change moved a stored default or the discussion's folder.
+            // 6. AC-2: no label change moved a stored default or the discussion's folder.
             assertEquals("A's stored default moved", shared, runBlocking { preferences.defaultWorkspace(serverIdA).first() })
             assertEquals("B's stored default moved", originalB, runBlocking { preferences.defaultWorkspace(serverIdB).first() })
             assertEquals("A's discussion changed folder", shared, heldConversation(serverIdA, idA).cwd)
@@ -2465,7 +2408,7 @@ class InteractiveStreamE2ETest {
 
     /**
      * A channel created, edited and archived from the list, with its prompt read back (#1088, rung 3). A
-     * Channels-section workspace row's plus opens #958's Create channel, whose OK creates the channel with a
+     * host's initially empty Channels-section plus opens Create channel, whose OK creates the channel with a
      * name and a prompt and opens it. One ping starts its session with that prompt. The row's pen opens #667's
      * Edit channel, which renames it and changes the prompt; reopened, it reads both back from the host and
      * says the prompt applies from the next session, since the running one was spawned with the old prompt.
@@ -2473,11 +2416,10 @@ class InteractiveStreamE2ETest {
      * drops that line. Archive channel moves it to host A's Archive, and restoring it returns it to Channels
      * under its new name.
      *
-     * The plus is drawn only where the host already holds an active channel, so an anchor channel is seeded
-     * on the host in a new, run-unique folder, whose name the workspace row shows.
-     *
-     * **Shared host state.** The channel and the anchor are deleted in `finally`. The anchor's folder stays
-     * under `~/pyry-workspace`, as #1087's does.
+     * A throwaway unpromoted chat created with omitted `cwd` supplies the daemon's actual default folder for
+     * comparison. The live harness seeds a promoted collision row, so this test temporarily archives the
+     * host's existing channels to exercise an empty section. **Shared host state.** Those channels are restored,
+     * both new conversations are deleted and the app's saved default is restored in `finally`.
      *
      * **Two real-claude turns**: the two pings. Reset session also runs the daemon's wrap-up turn.
      */
@@ -2485,37 +2427,42 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_createEditArchiveChannel_readsPromptBack() {
         val serverId = twoHostArg(ARG_SERVER_ID)
         val stamp = System.currentTimeMillis()
-        val folderName = "${CHANNEL_E2E_PREFIX}$stamp"
         val firstName = "${CHANNEL_E2E_PREFIX}$stamp-a"
         val newName = "${CHANNEL_E2E_PREFIX}$stamp-b"
         val nextSessionLine = string(R.string.edit_channel_prompt_next_session)
-        var anchorId: String? = null
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val originalDefault = runBlocking { preferences.defaultWorkspace(serverId).first() }
+        val appOnlyDefault = "/app-only-default-$stamp"
         var channelId: String? = null
+        var defaultProbeId: String? = null
+        val archivedFixtureIds = mutableListOf<String>()
         try {
             awaitChannelList()
             awaitConnected()
-            val repository = hostRepository(serverId)
-            anchorId =
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        val path = repository.createWorkspaceFolder(folderName)
-                        repository.createChannel("${CHANNEL_E2E_PREFIX}anchor-$stamp", path).id
-                    }
+            val originalChannelIds =
+                hostConversationIds(serverId, "the harness's seeded channel", ConversationFilter.Channels) {
+                    twoHostArg(ARG_COLLISION_CONVERSATION_ID) in it
                 }
-            val before = hostConversationIds(serverId)
+            originalChannelIds.forEach { id ->
+                runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).archive(id) } }
+                archivedFixtureIds.add(id)
+            }
+            hostConversationIds(serverId, "an empty Channels section", ConversationFilter.Channels) { it.isEmpty() }
+            runBlocking { preferences.setDefaultWorkspace(serverId, appOnlyDefault).getOrThrow() }
+            val daemonDefault = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).createDiscussion(null) } }
+            defaultProbeId = daemonDefault.id
+            val before = hostConversationIds(serverId, "the default-folder probe") { daemonDefault.id in it }
 
-            // 1. AC-1: create a channel with a name and a prompt from the workspace row's plus. OK opens it.
-            val plus =
-                hasContentDescription(
-                    InstrumentationRegistry.getInstrumentation().targetContext.getString(
-                        R.string.cd_tree_workspace_new_channel,
-                        folderName,
-                    ),
-                )
+            // 1. AC-4: the empty Channels section creates in the daemon default, ignoring the app default.
+            val plus = hasTestTag(treeHostChannelAddTestTag(serverId))
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 runCatching { scrollListTo(plus) }.isSuccess
             }
-            composeTestRule.onAllNodes(plus).onFirst().performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).fetchSemanticsNodes().isEmpty()
+            }
+            composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).assertCountEquals(0)
+            composeTestRule.onNode(plus).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(string(R.string.create_channel_title)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2526,6 +2473,9 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
             val id = newHostConversationId(serverId, before).also { channelId = it }
+            val createdCwd = heldConversation(serverId, id).cwd
+            assertEquals("the channel did not use the daemon default", daemonDefault.cwd, createdCwd)
+            assertNotEquals("the channel used the app's saved default", appOnlyDefault, createdCwd)
 
             // 2. AC-1: one ping starts the channel's session with the first prompt.
             sendFromPhone(PING_PROMPT)
@@ -2608,9 +2558,15 @@ class InteractiveStreamE2ETest {
             awaitChannelRow(newName)
             composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
         } finally {
-            listOfNotNull(channelId, anchorId).forEach { id ->
+            runCatching { runBlocking { preferences.setDefaultWorkspace(serverId, originalDefault).getOrThrow() } }
+                .onFailure { Log.w("E2E", "channel default restore failed: ${it::class.simpleName}") }
+            listOfNotNull(channelId, defaultProbeId).forEach { id ->
                 runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
                     .onFailure { Log.w("E2E", "channel cleanup failed: ${it::class.simpleName}") }
+            }
+            archivedFixtureIds.forEach { id ->
+                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).unarchive(id) } } }
+                    .onFailure { Log.w("E2E", "channel fixture restore failed: ${it::class.simpleName}") }
             }
         }
     }
@@ -6507,9 +6463,8 @@ class InteractiveStreamE2ETest {
      * The floating button's single fixed content description is gone; each host row's control carries a
      * per-host name instead, so the durable handle is the per-host test tag keyed on the `serverId` the
      * harness itself passed in — unambiguous the moment a second host is paired, which a name-based or
-     * position-based match would not be. The tree draws the same host in both sections, so the tag matches
-     * twice; either node is the same control on the same host. [serverId] defaults to that first host;
-     * #1086 passes the second.
+     * position-based match would not be. The tree draws each host once, so the tag matches once.
+     * [serverId] defaults to the first host; #1086 passes the second.
      */
     private fun awaitHostAddControl(
         serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),

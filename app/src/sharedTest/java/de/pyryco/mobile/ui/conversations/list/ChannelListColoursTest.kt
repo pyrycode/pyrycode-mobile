@@ -37,20 +37,20 @@ class ChannelListColoursTest {
     private var rootView: View? = null
 
     @Test
-    fun darkPanelAndBarMatchTheReferenceWithTwoBlueGreyRules() {
+    fun darkPanelAndBarMatchTheReferenceWithOneBlueGreyRule() {
         show(dark = true)
         val bitmap = draw()
         assertPanel(bitmap, Color.rgb(11, 14, 17))
-        assertTwoRules(bitmap, Color.rgb(34, 65, 92))
+        assertToolbarRule(bitmap, Color.rgb(34, 65, 92))
         assertSelectedRowContrasts(bitmap)
     }
 
     @Test
-    fun lightPanelAndRulesKeepTheirExistingColours() {
+    fun lightPanelAndRuleKeepTheirExistingColours() {
         show(dark = false)
         val bitmap = draw()
         assertPanel(bitmap, Color.rgb(248, 249, 255))
-        assertTwoRules(bitmap, Color.rgb(216, 219, 226))
+        assertToolbarRule(bitmap, Color.rgb(216, 219, 226))
         assertSelectedRowContrasts(bitmap)
     }
 
@@ -121,11 +121,11 @@ class ChannelListColoursTest {
         assertEquals("List background", expected, bitmap.getPixel(x, bounds.bottom.roundToInt() - 2))
     }
 
-    private fun assertTwoRules(
+    private fun assertToolbarRule(
         bitmap: Bitmap,
         expected: Int,
     ) {
-        // Both rules span the panel; text and selected rows cannot fill this entire horizontal band.
+        // The toolbar rule spans the panel; text and selected rows cannot fill this entire horizontal band.
         val left = (bitmap.width * 0.1f).roundToInt()
         val right = (bitmap.width * 0.9f).roundToInt()
         val matchingRows =
@@ -133,7 +133,7 @@ class ChannelListColoursTest {
                 (left..right).all { x -> closeColour(expected, bitmap.getPixel(x, y)) }
             }
         val bands = matchingRows.filterIndexed { index, y -> index == 0 || y > matchingRows[index - 1] + 1 }
-        assertEquals("Two separate full-width rules", 2, bands.size)
+        assertEquals("One full-width toolbar rule", 1, bands.size)
         val density = checkNotNull(rootView).resources.displayMetrics.density
         val panel = rule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).fetchSemanticsNode().boundsInRoot
         val host =
@@ -150,7 +150,7 @@ class ChannelListColoursTest {
         assertEquals("Divider left gutter", 20f, (rulePixels.first() - panel.left) / density, 0.5f)
         assertEquals("Divider right gutter", 20f, (panel.right - rulePixels.last() - 1) / density, 0.5f)
         // The runner's temp directory survives Robolectric's per-test sandbox cleanup for visual review.
-        val file = File(System.getProperty("java.io.tmpdir"), "sidebar-1186-$expected.png")
+        val file = File(System.getProperty("java.io.tmpdir"), "sidebar-1189-$expected.png")
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         println("Sidebar render: ${file.absolutePath}")
     }

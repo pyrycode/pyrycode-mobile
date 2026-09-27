@@ -256,13 +256,14 @@ afterwards. It is `createDiscussion` with two deltas, reusing the same `create(p
 
 ```kotlin
 // ConversationCommands
-suspend fun createChannel(name: String, workspace: String): Conversation =
+suspend fun createChannel(name: String, workspace: String?): Conversation =
     create(CreateConversationPayloadDto(isPromoted = true, name = name, cwd = workspace))
 ```
 
-- **`isPromoted = true` and `name` are both set** — `createDiscussion` never sets either. `name` and
-  `workspace` are sent **verbatim** (no trim); trimming is the caller's job (the follow-up Create channel
-  modal), and the daemon re-validates both, the same posture as `rename`'s name.
+- **`isPromoted = true` and `name` are both set** — `createDiscussion` never sets either. A non-null
+  `workspace` is sent verbatim (no trim); null omits `cwd` so the daemon selects its default. The
+  Channels-section modal uses null even if the app has a saved per-host default. Trimming the name is
+  the caller's job, and the daemon re-validates it, the same posture as `rename`'s name.
 - **`CreateConversationPayloadDto.name` exists only for this caller.** Before #956 the DTO's KDoc forbade
   modelling `name` ("discussions are server-auto-named, so the create flow never sends a `name`") because
   no consumer needed it; `createChannel` is that consumer, so the field was added (declared between
