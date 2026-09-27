@@ -1,0 +1,21 @@
+<!-- Restore glyph exported from Figma node 18:24; tint supplied by the theme. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp"
+    android:height="22dp"
+    android:viewportWidth="22"
+    android:viewportHeight="22">
+  <path
+      android:pathData="M0.917,3.667V9.167H6.417"
+      android:strokeLineJoin="round"
+      android:strokeWidth="1.83333"
+      android:fillColor="#00000000"
+      android:strokeColor="@android:color/white"
+      android:strokeLineCap="round"/>
+  <path
+      android:pathData="M3.217,13.75C3.812,15.437 4.938,16.885 6.427,17.876C7.916,18.867 9.687,19.348 11.473,19.245C13.258,19.142 14.962,18.462 16.328,17.306C17.693,16.151 18.646,14.583 19.043,12.839C19.44,11.095 19.259,9.269 18.528,7.637C17.797,6.004 16.556,4.654 14.99,3.788C13.425,2.923 11.62,2.59 9.849,2.839C8.078,3.088 6.436,3.906 5.17,5.17L0.917,9.167"
+      android:strokeLineJoin="round"
+      android:strokeWidth="1.83333"
+      android:fillColor="#00000000"
+      android:strokeColor="@android:color/white"
+      android:strokeLineCap="round"/>
+</vector>
