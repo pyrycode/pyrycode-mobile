@@ -31,7 +31,7 @@ interface ConversationRepository {
     val mutationsSupported: Boolean get() = true  // #507 — capability gate for the mutation methods below
 
     suspend fun createDiscussion(workspace: String? = null): Conversation
-    suspend fun createChannel(name: String, workspace: String): Conversation =  // #956 — one create_conversation, is_promoted=true; name/workspace verbatim; default throws, unlike createDiscussion
+    suspend fun createChannel(name: String, workspace: String?): Conversation =  // #956/#1189 — null omits cwd so the daemon chooses its default; default throws, unlike createDiscussion
         error("createChannel is not implemented for this ConversationRepository")
     suspend fun promote(conversationId: String, name: String, workspace: String? = null): Conversation
     suspend fun archive(conversationId: String)

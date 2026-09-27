@@ -22,7 +22,7 @@ Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/
 
 `hostState` preserves each source host's metadata and active rows, adds a recent-three
 chat slice, full chat count, host-local optional previews and (#729) each host's
-channels/chats grouped by workspace, and (since #904) exposes the open Add workspace
+channels/chats grouped by workspace for other consumers, and (since #904) exposes the open Add workspace
 modal's target and its own host's recent folders. Since #731 it also carries the assembled tree's **collapsed** fold keys and
 the **last-opened** selection target — both mutated only by the screen's fold and row
 taps, never reconciled against an incoming snapshot (see
@@ -98,13 +98,12 @@ data class AddWorkspaceState(
     val startFailed: Boolean = false,
 )
 
-enum class ConversationTreeSection { Channels, Chats }               // #731
+enum class ConversationTreeSection { Host, Channels, Chats }         // #731/#1189
 
-/** A foldable node: a host row when [cwd] is null, that host's workspace row otherwise. */
-data class TreeFoldKey(                                              // #731
+/** A foldable node identified by its host and kind, independent of names and folders. */
+data class TreeFoldKey(                                              // #731/#1189
     val section: ConversationTreeSection,
     val serverId: String,
-    val cwd: String? = null,
 )
 
 data class HostConversationTarget(val serverId: String, val conversationId: String)
@@ -223,7 +222,14 @@ failed archive followed by a successful or failed rename never shows a stale arc
 row leaves the Chats section the same way a rename's new name arrives — the host's own conversation
 stream re-emits it with `archived = true`; nothing here patches the snapshot.
 
-**A workspace row's own pencil, host-resolved a sixth time (#905).** `TreeWorkspaceEditTapped(serverId,
+**Create channel from a host section (#1189).** `openCreateChannel(serverId)` accepts a host in the
+current snapshot even when it has no active channel. The section action leaves `CreateChannelState.cwd`
+null, so `submitCreateChannel` passes null to the repository and the daemon chooses its default folder;
+the app's saved per-host default is not consulted. A prompt-write failure retains the daemon-created id,
+so retry writes only the prompt. The fold keys stay in a separate `StateFlow` from snapshots and the
+selected target; folding never changes selection, and snapshot refresh or reconnect never resets folds.
+
+**Former workspace-row pencil, host-resolved a sixth time (#905).** `TreeWorkspaceEditTapped(serverId,
 cwd) -> vm.openWorkspaceEditor(serverId, cwd)`, `WorkspaceEditNameSubmitted(name) ->
 vm.submitWorkspaceName(name)` and `WorkspaceEditDismissed -> vm.dismissWorkspaceEditor()`, plus three more
 off the modal's own Archive step: `WorkspaceArchiveRequested -> vm.requestWorkspaceArchive()`,

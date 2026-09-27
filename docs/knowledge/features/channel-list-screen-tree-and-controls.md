@@ -9,39 +9,36 @@ anywhere** — with `contentPadding = PaddingValues(start = TreeGutter, end = Tr
 `TreeGutter = 20.dp` is the list's own horizontal gutter; the row composables from #730 carry only their own
 tree indent and no gutter, per that ticket's note. `TreeBottomInset = 16.dp` leaves air below the last row;
 the FAB and its former 88dp clearance are gone. There is no list-top padding.
-The private `LazyListScope.treeSection(section, hostState, onEvent)` emits one group's items —
-per host a `TreeHostRow`, then (unless the host's fold key is collapsed) per
-workspace group a `TreeWorkspaceRow` and (unless *its* key is collapsed) one `TreeConversationRow` per
-conversation — and `ConversationTree` calls it once for `ConversationTreeSection.Channels`, emits a
-`HorizontalDivider` item (`sidebarRuleColor()`, `TreeSectionRuleGap = 28.dp` on both sides), then once more
-for `Chats` — all three into the
-*same* `LazyColumn`, so the whole tree scrolls as one container and `performScrollToNode` can reach the last
-row of either group. Global Channels/Chats title rows and their pairing controls are no longer emitted
-(#1186); both groups still repeat the hosts and retain independent folding and row actions. The first
-host in each group has zero extra top padding; subsequent hosts use `TreeHostGap = 16.dp`. The fixed
-[toolbar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) supplies the entire 24dp gap from
-its divider to the first row. The later host-first tree is separate work (#1187).
+`ConversationTree` calls `treeHost` once per `hostState.hosts` entry, in host order. An expanded
+`TreeHostRow` emits its fixed Channels and Chats `TreeHostSectionRow`s, each followed by that host's
+`channels` or `chats` directly in source order when expanded. It does not flatten `channelGroups` or
+`chatGroups`: grouping by `cwd` would reorder the rows. There are no workspace rows or global tier
+headers. All rows share the same `LazyColumn`, so `performScrollToNode` can reach the final row.
+The first host has zero extra top padding; subsequent hosts use `TreeHostGap = 16.dp`. The fixed
+[toolbar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) supplies the 24dp gap from its
+divider to the first row. With the old tier divider gone, the toolbar rule is the only full-width rule.
+The section content begins 4dp and conversation content 12dp from the list's 20dp content edge.
+Each section uses a closed/open folder glyph and right/down chevron to match its fold state. Its fold
+and Channels plus controls retain separate 48dp touch targets and host-qualified TalkBack names.
 
-**Fold key and node identity.** `TreeFoldKey(section: ConversationTreeSection, serverId: String, cwd: String? = null)`
-is a host row when `cwd` is null, that host's workspace row otherwise — [`ChannelListViewModel`](channel-list-viewmodel.md)
-owns the type and the collapsed set; see that document for why the key includes `section` and why `cwd` is
-compared exactly. `ConversationTreeSection` (`Channels`, `Chats`) still selects the group's rows and row
-test tag (below), even though its global title is no longer rendered.
+**Fold key and node identity.** `TreeFoldKey(section: ConversationTreeSection, serverId: String)`
+uses `Host`, `Channels` or `Chats` as its node kind. [`ChannelListViewModel`](channel-list-viewmodel.md)
+owns the collapsed set independently of snapshots and the last-opened selection. Folding a host or either
+section therefore leaves selection intact and survives a thread round trip and reconnect. Item keys also
+include node kind and host id, so equal conversation ids on different hosts cannot collide.
 
 **Display text and fallback.** A host reads `displayName?.takeIf { it.isNotBlank() } ?: R.string.unnamed_host`
 — the nameless-host fallback #730 left open, mirroring `DiscussionPreviewRow`'s `untitled_discussion`
 convention, so a nameless host or a blank-string name never draws as a blank row and no opaque `serverId`
-reaches the UI. A conversation reads the same `name`-or-`untitled_discussion` rule. A workspace reads
-`HostWorkspaceGroup.displayName` verbatim (already resolved by `workspaceDisplayName` upstream). All three
-stay display text only: the tap target is built from `serverId` + `conversation.id`, the fold key from
-`serverId` + `cwd`, so a rename cannot retarget a row or fold/unfold anything.
+reaches the UI. A conversation reads the same `name`-or-`untitled_discussion` rule. Both stay display text
+only: targets use `serverId` + `conversation.id`, and fold keys use `serverId` + node kind, so renaming
+cannot retarget or unfold a row.
 
 **Row target and selection.** Each conversation row's `onClick` emits
-`TreeRowTapped(HostConversationTarget(row.serverId, row.conversation.id))` — `row.serverId` comes from
-`HostWorkspaceGroup`'s own `HostConversationRow`, i.e. the row's *own* host, never from
-`ThreadDestinationFactory.selectedServerId()`. `selected = target == hostState.selected`, so at most one row
-across both sections is highlighted (a conversation belongs to exactly one host, one section and one
-workspace group).
+`TreeRowTapped(HostConversationTarget(host.serverId, conversation.id))` using the enclosing row's *own*
+host, never `ThreadDestinationFactory.selectedServerId()`. Edit, attention and promotion use that same
+host-qualified target. `selected = target == hostState.selected`, so a colliding id on another host does
+not acquire the highlight.
 
 **Tier test tags.** Each conversation row carries `Modifier.testTag(section.rowTestTag)` —
 `internal const val TREE_CHANNEL_ROW_TEST_TAG = "tree-channel-row"` /
@@ -77,7 +74,8 @@ identical length.
 
 ## Add controls (#738)
 
-The list has one fixed toolbar pairing control and host-specific chat creation controls (#1186).
+The list has one fixed toolbar pairing control, host-specific chat creation controls (#1186), and a
+Channels-section plus for each host (#1189), including hosts with no channels.
 The toolbar uses `ChannelListBarEntry` with a 24dp `Add` glyph in a 48dp `IconButton`. The tree's controls
 live in `ConversationTreeRows.kt` and share one file-private `TreeRowControl` (renamed
 from `TreeAddControl` in #744, when the host row's edit control became its second call site): a
@@ -147,13 +145,11 @@ draws it — the same trade #731 took growing the design's 28dp pointer rows to 
 deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTreeRows.kt`. This tree-control
 geometry is separate from the toolbar's 24dp glyphs and 52dp left-control centre spacing.
 
-**#905 added the pencil; #958 added a plus, but only on Channels rows.** #663 (the same phase as #905) added
-`renameWorkspace` / `archiveWorkspace` to the host-owned repository with no UI caller; #905 is that caller —
-see [Workspace row edit and archive control (#905)](#workspace-row-edit-and-archive-control-905) below. The
-host row's own plus (a tier above, opening [`AddWorkspaceModal`](mobile-modal.md#callers) in #904) still
-creates an unpromoted chat in a picked or new folder; the workspace row's plus, added later, creates a
-**promoted channel** directly at that row's own folder — see
-[Workspace row create-channel control (#958)](#workspace-row-create-channel-control-958) below.
+**Channels-section creation.** The host row's own plus still creates an unpromoted chat, and its hold
+opens [`AddWorkspaceModal`](mobile-modal.md#callers) to choose a folder. The Channels section's own
+48dp plus opens [`CreateChannelModal`](mobile-modal.md#callers) for that host. Its TalkBack name includes
+the host; the section fold and plus have separate targets, and the plus does not fold the section. See
+[Create channel control](#workspace-row-create-channel-control-958).
 
 ## Host row edit control (#744)
 
@@ -206,7 +202,7 @@ See [pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-8
 plug for `TreeRowControl(icon = Icons.Filled.Download, …)` tagged `treeHostUpdateTestTag(serverId)`
 (shares `boundedTagId`'s clamp with the other row tags) — the update control never carries the reconnect
 tag, so a test can assert "no plug" directly. Tap still reports through the row's one `onReconnectTapped`
-callback, so the row itself stays agnostic; `treeSection`'s `onReconnectTapped` switch (`ChannelListScreen.kt`)
+callback, so the row itself stays agnostic; `treeHost`'s `onReconnectTapped` switch (`ChannelListScreen.kt`)
 is what branches three ways now: `PairingRejected` → `TreeHostRePairTapped`, `is UpdateRequired` →
 `ChannelListEvent.TreeHostUpdateTapped` (a `data object`, carrying nothing — the store listing needs no
 host, and the daemon-authored minimum version must never reach an event, a link, a content description or
@@ -274,7 +270,7 @@ and the pencil's `R.string.cd_tree_chat_edit` content description — the same o
 host row's controls use, and for the same reason: two identical accessible names on the same screen would
 be indistinguishable to TalkBack.
 
-**Both sections draw it, each to its own modal (#827, then #667).** `treeSection` in
+**Both sections draw it, each to its own modal (#827, then #667).** `treeHost` in
 [ChannelListScreen](channel-list-screen.md) passes `onEditTapped` from an exhaustive `when (section)` —
 originally `null` for `ConversationTreeSection.Channels` and `{ onEvent(TreeChatEditTapped(target)) }`
 for `Chats` — rather than a parameter on the section itself, which is exactly what let
@@ -294,7 +290,7 @@ since the host's own Archive screen restores the chat.
 
 `TreeConversationRow` gained a fifth parameter, `@StringRes editDescription: Int =
 R.string.cd_tree_chat_edit`, generalising the pencil's content description that #827 hard-wired to the
-chat string: `treeSection`'s exhaustive `when (section)` now passes `cd_tree_chat_edit` for `Chats` (as
+chat string: `treeHost`'s exhaustive `when (section)` now passes `cd_tree_chat_edit` for `Chats` (as
 before) and `cd_tree_channel_edit` for `Channels`, alongside `{ onEvent(TreeChannelEditTapped(target)) }`
 in place of the `null` every Channels row passed until this ticket — the pencil itself, its permanent
 (non-hover) drawing and its own merging-semantics node inside `FoldableTreeRow`'s `clickable` are
@@ -316,6 +312,10 @@ caller contract: the target-tagged prompt reading, the `null`-until-shown prompt
 unread prompt from ever being overwritten, and the outlined Archive action with no confirmation step.
 
 ## Workspace row edit and archive control (#905)
+
+This section records the former tree entry point. #1189 removed workspace rows from the sidebar, so
+their pencil no longer opens the editor there. The folder settings and repository operations remain,
+and the live scenario now exercises them through the host's repository and Archive screen.
 
 `TreeWorkspaceRow` gained a fourth parameter, `onEditTapped: (() -> Unit)? = null`, and — same shape as
 the host and chat rows' pencils — a non-null value draws a permanent `TreeRowControl(Icons.Filled.Edit,
@@ -348,29 +348,19 @@ field, its label-rule edge case and a Compose semantics trap in its test.
 
 ## Workspace row create-channel control (#958)
 
-`TreeWorkspaceRow` gained a fifth parameter, `onAddTapped: (() -> Unit)? = null`, drawn as a second,
-trailing `TreeRowControl(Icons.Filled.Add, …)` **after** the #905 pencil — the row now carries dots-free
-pencil-then-plus, the same left-to-right order the host row's edit-then-add pair established in #744. Both
-controls keep their own merging-semantics node inside `FoldableTreeRow`'s `clickable`, so tapping either
-neither folds the row nor triggers the other.
+The #958 control used to sit on a workspace row and create a channel in its `cwd`. The host-first tree
+removed those rows. `TreeHostSectionRow` now renders the plus only for Channels and emits
+`TreeHostChannelAddTapped(serverId)`; Chats has no plus. The fixed heading stays visible when empty, so
+creation is reachable before the host has a channel. `openCreateChannel(serverId)` checks that the host
+exists in the current snapshot, then opens [`CreateChannelModal`](mobile-modal.md#callers) without a folder
+override. The modal's nullable `cwd` is null for this action. The repository omits `cwd` from the wire
+request, letting the daemon choose its default folder regardless of the app's saved per-host default.
+The returned conversation retains the daemon-confirmed `cwd`.
 
-`treeSection` passes `onAddTapped` only for `ConversationTreeSection.Channels` rows, bound to
-`{ onEvent(TreeWorkspaceAddTapped(group.serverId, group.cwd)) }` — `HostWorkspaceGroup`'s own `serverId`
-and `cwd`, the same targeting discipline the #905 pencil uses. Chats-section rows pass `null` and draw no
-plus: a chat's workspace is not yet a channel, so there is nothing to promote it *from* at that tier (Save
-as channel, on the chat itself, is the promotion path there — see
-[Save as channel dialog](save-as-channel-dialog.md)). The content description
-(`R.string.cd_tree_workspace_new_channel`, "New channel in %1$s") reuses the row's already-`boundedRowText`-
-clamped name, the same one-clamp-two-uses shape the pencil's description uses.
-
-Opening [`CreateChannelModal`](mobile-modal.md#callers) from that target, resolving the repository at the
-press and running the two-write create-then-prompt sequence are `ChannelListViewModel`'s job — see
-[ChannelListViewModel](channel-list-viewmodel.md#wiring). `openCreateChannel(serverId, cwd)` opens only when
-that host's snapshot holds an active **channel** at exactly `cwd` — the same source a Channels-section row's
-existence already implies, so the plus's own visibility and the open guard agree by construction. OK sends
-one `createChannel(name, cwd)`; a non-blank system prompt is then written with `setSystemPrompt` to the
-**created** conversation, never read back. See [System prompt editor § intro](system-prompt-editor.md) for
-why this write bypasses that editor entirely.
+OK still sends one `createChannel` and then writes a non-blank system prompt to the created conversation.
+If that second write fails, retry uses the created id and does not create another channel. A dismissed
+modal does not reopen on a late response. See [System prompt editor](system-prompt-editor.md) for why
+this write bypasses that editor.
 
 ## Attention dot (#878)
 
@@ -404,7 +394,7 @@ the dot's layer and never recomposes `TreeConversationRow` or its `Text`.
 shape `LegDot` already used. The row's own `selectable` merges that description with the conversation name,
 so TalkBack reads e.g. "Running, kitchenclaw refactor" — the meaning never rests on colour alone.
 
-**Wiring.** `treeSection` passes `attention = entry.attentionFor(row.conversation.id)` —
+**Wiring.** `treeHost` passes `attention = entry.attentionFor(conversation.id)` —
 [`HostChannelListEntry.attentionFor`](channel-list-viewmodel.md), Idle by default, joined from
 `hostSource.attention` (see [state projection § Attention
 join](channel-list-viewmodel-projection.md#attention-join-877)). This ticket only draws the state;

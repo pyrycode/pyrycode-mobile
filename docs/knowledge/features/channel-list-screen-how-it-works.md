@@ -98,10 +98,10 @@ see [WorkspacePicker § Consumers](workspace-picker.md#consumers).
 ## Tree rows (#730)
 
 `ui/conversations/components/ConversationTreeRows.kt` supplies the three stateless composables this screen
-assembles: `TreeHostRow`, `TreeWorkspaceRow` and `TreeConversationRow`, plus their shared file-private
+assembles: `TreeHostRow`, `TreeHostSectionRow` and `TreeConversationRow`, plus their shared file-private
 `TreeRowControl` (see [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)).
-`TreeSectionHeader` and its resources remain available as a shared component, but this screen no longer
-emits it since #1186. The rows remain stateless and resolve nothing about which host or workspace they belong to; every
+`TreeSectionHeader` and `TreeWorkspaceRow` remain available as shared components, but this screen emits
+neither. The rows remain stateless and resolve nothing about which host or workspace they belong to; every
 parameter is display text, a flag or a callback the caller (this screen) already resolved — `TreeHostRow`'s
 new `serverId` parameter is the one exception, used only to name its own add control for the device suites,
 never to resolve anything the row draws. Row-level clamping, truncation, selection-fill and
