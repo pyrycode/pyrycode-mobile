@@ -407,7 +407,16 @@ class HostChannelListViewModelTest {
             f.vm.openCreateChat("Host")
             runCurrent()
             assertTrue(replacement.workspaces.isEmpty())
-            assertEquals(CreateChatState("Host", "Local Host"), f.vm.hostState.value.createChat)
+            assertEquals(
+                "Host",
+                f.vm.hostState.value.createChat
+                    ?.serverId,
+            )
+            assertEquals(
+                "Local Host",
+                f.vm.hostState.value.createChat
+                    ?.hostName,
+            )
             f.vm.submitCreateChat()
             runCurrent()
             assertEquals(listOf<String?>(null), replacement.workspaces)
@@ -511,6 +520,37 @@ class HostChannelListViewModelTest {
             f.vm.submitCreateChat()
             runCurrent()
             assertEquals(listOf(HostConversationTarget("host", "returned-id")), f.nav)
+        }
+
+    @Test
+    fun lateCreateReplyCannotCloseReopenedDialogForTheSameHost() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            val firstGate = CompletableDeferred<Unit>()
+            f.a.repo.createGate = firstGate
+            f.vm.openCreateChat("Host")
+            f.vm.submitCreateChat()
+            runCurrent()
+
+            val secondGate = CompletableDeferred<Unit>()
+            f.a.repo.createGate = secondGate
+            f.vm.dismissCreateChat()
+            f.vm.openCreateChat("Host")
+            f.vm.submitCreateChat()
+            runCurrent()
+            assertEquals(listOf<String?>(null, null), f.a.repo.workspaces)
+
+            firstGate.complete(Unit)
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.createChat).saving)
+            assertTrue(f.nav.isEmpty())
+
+            secondGate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.createChat)
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
         }
 
     @Test

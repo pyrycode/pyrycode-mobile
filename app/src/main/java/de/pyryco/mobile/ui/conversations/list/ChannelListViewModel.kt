@@ -198,6 +198,7 @@ data class CreateChatState(
     val hostName: String?,
     val saving: Boolean = false,
     val failed: Boolean = false,
+    val dialogId: Long = 0,
 )
 
 /**
@@ -329,6 +330,7 @@ class ChannelListViewModel(
     private val workspaceEditor = MutableStateFlow<WorkspaceEditorState?>(null)
     private val createChannel = MutableStateFlow<CreateChannelState?>(null)
     private val createChat = MutableStateFlow<CreateChatState?>(null)
+    private var nextCreateChatDialogId = 0L
 
     // #667: the editor's own prompt stays at its default here; the reading lives apart, tagged with the
     // channel it was read for, so a read landing mid-write never breaks that write's `compareAndSet` and no
@@ -442,7 +444,12 @@ class ChannelListViewModel(
             RelayLog.d { "event=create_chat_open_rejected code=unknown_host" }
             return
         }
-        createChat.value = CreateChatState(serverId, host.displayName?.takeIf { it.isNotBlank() }?.let(::boundedName))
+        createChat.value =
+            CreateChatState(
+                serverId,
+                host.displayName?.takeIf { it.isNotBlank() }?.let(::boundedName),
+                dialogId = ++nextCreateChatDialogId,
+            )
         RelayLog.d { "event=create_chat_opened" }
     }
 
