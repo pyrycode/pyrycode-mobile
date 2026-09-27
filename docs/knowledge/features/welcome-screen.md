@@ -13,28 +13,53 @@ A centred footer line — `"Open source · github.com/pyrycode/pyrycode-mobile"`
 
 ## How it works
 
-Pure stateless Composable. No `ViewModel`, no `remember`, no I/O.
-
-```kotlin
-@Composable
-fun WelcomeScreen(
-    onPaired: () -> Unit,
-    onSetup: () -> Unit,
-    modifier: Modifier = Modifier,
-)
-```
-
-The `modifier` parameter landed in #84 to satisfy compose-lints' `ComposeModifierMissing` rule. It threads onto the outermost `Box` (`Box(modifier = modifier.fillMaxSize().background(…).drawBehind { … })`); the NavHost call site passes nothing and the default keeps positioning unchanged.
+Stateless Composable with two callbacks and an optional `modifier`; no ViewModel
+or I/O. `remember(logo)` caches only the shape used for the logo shadow.
+The supplied modifier threads onto the outermost `Box`.
 
 Layout is a top-level `Box(fillMaxSize)` with three layers stacked back-to-front:
 
 1. **Base** — `Modifier.background(colorScheme.surface)`.
-2. **Atmospheric glow** (since #57) — `Modifier.drawBehind` paints a `Brush.radialGradient` centered at roughly (48% width, 30% height), radius ~53% of height, fading from `colorScheme.primaryContainer.copy(alpha = 0.6f)` to `Color.Transparent`. Sits behind content without consuming layout space.
-3. **Content** — `Column(fillMaxSize, systemBarsPadding, horizontalPadding = 32.dp, SpaceBetween)`:
-   - Top-anchored **hero** (`padding(top = 168.dp)` since #149, `spacedBy(28.dp)`): `Icon(R.drawable.ic_pyry_logo, tint = colorScheme.primary, modifier = Modifier.shadow(elevation = 6.dp, shape = RectangleShape, clip = false).size(width = 92.dp, height = 104.dp))` since #168 (the `.shadow(...)` chain prefix renders the M3 Elevation Level 3 two-tier drop-shadow under the logo per Figma `M3/Elevation Light/3` bound on the Hero group `6:33`; modifier order matters — `.shadow(...)` must come **before** `.size(...)` so the shadow draws around the area the size modifier reserves; the rectangular shadow shape is a Compose API limitation — `Modifier.shadow` traces the `shape` parameter, not the snowflake's alpha silhouette — and is judged tolerable on the dark canonical surface; see [`codebase/168.md`](../codebase/168.md)). The `Modifier.size(width = 92.dp, height = 104.dp)` value is from #167 (the prior `size(104.dp)` square box was correct when the drawable was 1:1; since #167 the drawable is 92:104 and the Icon bounding box must match the intrinsic ratio so the logo's left edge aligns with the column's 32dp padding). Then `"Pyrycode Mobile"` (`headlineLarge` / `onSurface`) stacked over `"Control Claude sessions on your phone."` (`titleMedium` / `onSurfaceVariant`), then a `bodyLarge` / `onSurfaceVariant` body paragraph explaining the local-first model. The 168.dp value is Figma node `6:32`'s `pt-[168px]` read as "below the safe area" — applied after `systemBarsPadding()` rather than with inset math (project-wide convention; see [`codebase/149.md`](../codebase/149.md)). The Hero title / subtitle / body `Text` composables deliberately carry **no** `TextStyle(shadow = Shadow(...))` even though Figma binds the elevation effect on the Hero group as a whole — on dark theme the `onSurface` / `onSurfaceVariant` glyphs lack the luminance contrast for a black-with-alpha shadow to read; #168 scopes shadow to the logo only and defers per-glyph text shadow as a possible follow-up.
-   - Bottom-anchored **CTA stack** (`padding(bottom = 16.dp)`, `spacedBy(12.dp)`): full-width 56dp-tall filled `Button` with `shape = RoundedCornerShape(28.dp)` since #149 (corner = height / 2 ⇒ pill, matching Figma node `6:41`'s `rounded-[28px]`; `ic_qr_scan_frame` leading icon + label), full-width 56dp-tall `TextButton` (no shape override — M3 text-button surface has no fill, so corner radius is visually irrelevant even though Figma node `6:43` also declares `rounded-[28px]`), centred `labelSmall` footer at `onSurfaceVariant.copy(alpha = 0.55f)`.
+2. **Atmospheric glow** — `drawWithCache` builds a radial shader with Figma's
+   affine transform, preserving the tilted ellipse and its independent axes.
+   The radius-10 reference uses `matrix(28.4 -2.6 4.3038 47.011 196 265)` at
+   412 × 892, scaled to the available drawing area's width and height. Stops
+   run from opaque `primaryContainer` at 0 to transparent `onPrimary` at 0.7.
+   This returns to the surface near the upper corners; a circular gradient
+   with a height-based radius does not reproduce that fade. Drawing consumes
+   no layout space.
+3. **Content** — a `Column` with `fillMaxSize`, `systemBarsPadding`, 32 dp
+   horizontal padding and `Arrangement.SpaceBetween` holds the hero and CTA stack.
 
-All colors come from `MaterialTheme.colorScheme.*` and all typography from `MaterialTheme.typography.*` — no hardcoded `Color(0x…)` literals, no custom `TextStyle(...)`. `Color.Transparent` (the terminal radial-gradient stop) is the only non-token `Color` and is permitted because it's a constant, not a hex literal. The logo's `Modifier.shadow(...)` since #168 also takes the framework default `DefaultShadowColor` (= `Color.Black`) rather than a per-call hex literal; M3's `ColorScheme` has no `shadow` token, so the framework default is the canonical answer rather than something to migrate to a theme slot. Edge-to-edge insets honored via `Modifier.systemBarsPadding()`.
+The hero starts 168 dp below the safe area and uses 28 dp gaps. Its existing
+`ic_pyry_logo` painter retains the `primary` tint and 92 × 104 dp slot. Matching
+that slot to the drawable's aspect ratio keeps the visible mark aligned with the
+32 dp content edge; a square slot introduces horizontal inset. Two `dropShadow`
+modifiers precede `.size(...)`, using a `GenericShape` parsed from the existing
+vector's single path and scaled from its viewport to the slot. Both use `scrim`:
+
+- 15% alpha, 8 dp blur radius, 3 dp spread, offset (0, 4 dp).
+- 30% alpha, 3 dp blur radius, zero spread, offset (0, 1 dp).
+
+These explicit layers follow the mark without a rectangular plate, replacing the
+former rectangular 6 dp elevation shadow. Hero text has no added shadow.
+The title remains `headlineLarge` / `onSurface`, the tagline `titleMedium` /
+`onSurfaceVariant`, and the body `bodyLarge` / `onSurfaceVariant`. Only the
+left-aligned body has `Modifier.width(320.dp)`: incoming constraints shrink it to
+available content width, giving 320 dp at a 412 dp display and 296 dp at 360 dp.
+Copy and typography are unchanged.
+
+The CTA stack has 16 dp bottom padding and 12 dp gaps. Its full-width, 56 dp
+primary `Button` uses `RoundedCornerShape(28.dp)` and the QR-frame icon. The
+full-width, 56 dp secondary `TextButton` explicitly uses `onSurface` for
+“Set up pyrycode first”. A centred `labelSmall` footer uses
+`onSurfaceVariant.copy(alpha = 0.55f)`.
+
+Colors and typography come from `MaterialTheme`. The activity's Scaffold applies
+and consumes shared system-bar insets before `PyryNavHost`; Welcome's
+`systemBarsPadding()` respects that consumption and must not add the same bars
+again. The glow scales within that inset-consumed content area. See
+[Navigation](navigation.md) for host ownership.
 
 ## Why callbacks instead of a NavController
 
@@ -77,15 +102,45 @@ Two vector drawables under `app/src/main/res/drawable/`, both rendered via `Icon
 
 Both have a single uniform fill / stroke color in the raw XML so the Compose `Icon(tint = …)` recolors them across light and dark themes without per-theme variants. Don't add `material-icons-extended` for the QR frame — the ticket explicitly bans new icon packages; assets come from the Figma payload only.
 
+## Testing
+
+`WelcomeScreenTest` in `app/src/sharedTest` checks both CTA displays, that each
+click invokes only its own callback, the 320/296 dp body widths and the setup
+text's `onSurface` role. Width assertions need Robolectric
+`@GraphicsMode(GraphicsMode.Mode.NATIVE)`: default graphics reported an
+implausible roughly 178 dp body, while native font rendering exposed the old
+roughly 348 dp measure. Semantics checks alone do not establish the glow or shadow.
+
+`WelcomeAppearanceDeviceTest` launches real `MainActivity` in dark mode with
+wallpaper colors disabled at 412 × 892 and 360 × 800 dp, at 160 dpi. It checks
+body bounds and action/footer reachability. Run it on the full `pixel8Api35`
+image with `requireRealSystemBars=true` for visual evidence; the ATD path can
+pass geometry checks without capturing pixels. See
+[Compose evidence](development-verification.md#compose-evidence) and the
+[retained captures, metadata and command](../../../app/src/androidTest/assets/welcome-1150/capture-context.txt).
+
 ## Edge cases / limitations
 
-- Previews render at the Figma 412×892 baseline. The screen itself adapts via `fillMaxSize` + `systemBarsPadding` and the radial-gradient center/radius are fractions of canvas size, so other form factors work — but visual review on tablets / foldables hasn't happened.
-- Glow alpha is `0.6f` (within the spec-suggested 0.4–0.8 range). Tune against the dark preview if a future ticket changes the brand palette.
-- Pairing-state-conditional start destination is **not** implemented here; that's #13. Once the user is paired, the start destination is `channel_list` and this screen no longer renders.
+- The elliptical glow scales independently with the available width and height.
+  The real activity includes system chrome absent from Figma, so its content
+  and glow are vertically displaced relative to the chrome-free reference.
+  Dark captures confirm the fade and silhouette shadow at 412 × 892 and
+  360 × 800 dp; tablets and foldables have not been visually reviewed.
+- The shadow shape assumes the drawable's first root child is its single filled
+  `VectorPath`. A future asset with groups or multiple paths needs corresponding
+  shape handling. A rectangular container shadow is not an acceptable substitute:
+  the plate was visible on the dark surface in the device review.
+- A 320 dp body measure does not guarantee Figma's line breaks. Retained Android
+  captures have four lines versus Figma's five with the existing `bodyLarge`
+  metrics. The body shrinks to 296 dp at 360 dp without horizontal overflow,
+  and both actions and the footer remain reachable above the real system bars.
+- Pairing-state-conditional start destination is owned by `MainActivity`, not
+  Welcome. Paired users start at `channel_list`.
 
 ## Related
 
-- Spec (current): `docs/specs/architecture/57-welcome-screen-figma-polish.md`
+- [Current visual treatment spec](../../specs/architecture/1150-welcome-dark-treatment.md)
+- [Original Figma polish spec](../../specs/architecture/57-welcome-screen-figma-polish.md)
 - Spec (original scaffold): `docs/specs/architecture/7-welcome-screen-scaffold.md`
 - Ticket notes: `../codebase/7.md` (scaffold), `../codebase/14.md` (`onSetup` external-browser wiring), `../codebase/57.md` (Figma polish), `../codebase/149.md` (pill CTA + 168.dp hero top padding refinement), `../codebase/150.md` (logo arm geometry repair under the old `9:2` source), `../codebase/167.md` (full drawable rewrite to single filled path under the new `80:2` source + Icon bounding-box switch to 92×104dp), `../codebase/168.md` (M3 Elevation Level 3 drop-shadow on logo `Icon` via `Modifier.shadow`)
 - Figma node: `6:32` (412×892 baseline) — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=6-32

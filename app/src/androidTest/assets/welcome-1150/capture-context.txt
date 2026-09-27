@@ -1,0 +1,29 @@
+Ticket: #1150
+Capture date: 2026-09-27
+Implementation revision: fa9b33ce (captured from e945f301 plus the identical implementation diff, before that diff was committed)
+WelcomeScreen.kt SHA-256: bdd1be7980b1f4b2ab5d1fe61445873252b52bedf14395b45f5d7a95e7ed5f40
+Tested debug APK SHA-256: 61c342cb4113734687c61dde0670ab2139226cae6c624d9e2bf6bac6031555a6
+Activity: production MainActivity, test Application with unpaired startup snapshot; no replacement screen or synthetic insets
+Device: Gradle-managed pixel8Api35, Google Play arm64-v8a, API 35, system image revision 9
+Display: 160 dpi (density 1.0); 412x892 and 360x800 px = dp; dark app theme, wallpaper colors disabled
+Insets and body bounds: see the per-capture .txt files
+Figma: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=6-32 (current render retained as figma.png)
+
+Command (exit 0; two tests executed, zero failures/errors/skips):
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+
+Original XML: app/build/outputs/androidTest-results/managedDevice/debug/pixel8Api35/TEST-pixel8Api35-_app-.xml
+Retained XML: device-results.xml
+Original PNG/metadata directory: app/build/intermediates/managed_device_android_test_additional_output/debugAndroidTest/pixel8Api35DebugAndroidTest/welcome-1150/
+
+Comparison:
+- The upper corner background at x=16 and x=width-16, y=80 is RGB(16,20,24) in both app captures and the Figma render.
+- The glow is a tilted ellipse, with its reference transform scaled to the inset-consumed content area. Real status/navigation bands explain the vertical displacement from the chrome-free Figma frame.
+- The logo retains the 92x104 dp slot, asset and primary tint. Shadow follows the branches of the mark; the former rectangular plate is absent.
+- Setup text is onSurface. Body is left-aligned at x=32 with measured widths 320 and 296 dp. At 360 dp both actions and the footer remain below the body and clear of system bars.
+- Existing platform bodyLarge metrics produce four body lines versus five in Figma. Typography and copy were intentionally preserved as required; only the measure changed. Existing logo tint and shared system-bar appearance are also preserved.
+
+PNG SHA-256:
+360x800-dark.png 6f13028f5934fcae10089ff07c7fed45fa6ffd17f28ea1db8a327a946bc4a97a
+412x892-dark.png 2500e0b87640c8de93609253a3e874d22a0934377f254c1508ede1d4ff607cc2
+figma.png 5cff4fa4be1c04af53cee6851223c53e6ae29ba02d802ec0ec37a90873163a09

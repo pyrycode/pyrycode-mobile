@@ -1,0 +1,1 @@
+activity=MainActivity api=35 sizeDp=412x892 density=1.0 systemBarsPx=Insets{left=0, top=63, right=0, bottom=24} bodyBoundsPx=Rect.fromLTRB(32.0, 463.0, 352.0, 559.0) theme=DARK wallpaperColors=false

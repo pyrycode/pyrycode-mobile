@@ -1,6 +1,8 @@
 package de.pyryco.mobile.ui.onboarding
 
 import android.content.res.Configuration
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,23 +15,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.dropShadow
+import androidx.compose.ui.graphics.Matrix
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.shadow.Shadow
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.graphics.vector.VectorPath
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -40,21 +50,56 @@ fun WelcomeScreen(
     onSetup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val glowColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+    val glowColor = MaterialTheme.colorScheme.primaryContainer
+    val glowEdge = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0f)
+    val logo = ImageVector.vectorResource(R.drawable.ic_pyry_logo)
+    val logoShape =
+        remember(logo) {
+            // The existing asset is one filled path; derive its silhouette without copying geometry.
+            val path = PathParser().addPathNodes((logo.root[0] as VectorPath).pathData).toPath()
+            GenericShape { size, _ ->
+                addPath(path)
+                transform(Matrix().apply { scale(size.width / logo.viewportWidth, size.height / logo.viewportHeight) })
+            }
+        }
     Box(
         modifier =
             modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.surface)
-                .drawBehind {
-                    drawRect(
-                        brush =
-                            Brush.radialGradient(
-                                colors = listOf(glowColor, Color.Transparent),
-                                center = Offset(size.width * 0.48f, size.height * 0.30f),
-                                radius = size.height * 0.53f,
-                            ),
-                    )
+                .drawWithCache {
+                    val xScale = size.width / 412f
+                    val yScale = size.height / 892f
+                    // Welcome's Figma radial transform retains both the ellipse and its tilt.
+                    val shader =
+                        RadialGradient(
+                            0f,
+                            0f,
+                            10f,
+                            intArrayOf(glowColor.toArgb(), glowEdge.toArgb()),
+                            floatArrayOf(0f, 0.7f),
+                            Shader.TileMode.CLAMP,
+                        ).apply {
+                            setLocalMatrix(
+                                android.graphics.Matrix().apply {
+                                    setValues(
+                                        floatArrayOf(
+                                            28.4f * xScale,
+                                            4.3038f * xScale,
+                                            196f * xScale,
+                                            -2.6f * yScale,
+                                            47.011f * yScale,
+                                            265f * yScale,
+                                            0f,
+                                            0f,
+                                            1f,
+                                        ),
+                                    )
+                                },
+                            )
+                        }
+                    val brush = ShaderBrush(shader)
+                    onDrawBehind { drawRect(brush) }
                 },
     ) {
         Column(
@@ -76,10 +121,23 @@ fun WelcomeScreen(
                     tint = MaterialTheme.colorScheme.primary,
                     modifier =
                         Modifier
-                            .shadow(
-                                elevation = 6.dp,
-                                shape = RectangleShape,
-                                clip = false,
+                            .dropShadow(
+                                shape = logoShape,
+                                shadow =
+                                    Shadow(
+                                        radius = 8.dp,
+                                        spread = 3.dp,
+                                        color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.15f),
+                                        offset = DpOffset(0.dp, 4.dp),
+                                    ),
+                            ).dropShadow(
+                                shape = logoShape,
+                                shadow =
+                                    Shadow(
+                                        radius = 3.dp,
+                                        color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.30f),
+                                        offset = DpOffset(0.dp, 1.dp),
+                                    ),
                             ).size(width = 92.dp, height = 104.dp),
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -101,6 +159,7 @@ fun WelcomeScreen(
                             "accessible from any device.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(320.dp),
                 )
             }
 
@@ -129,6 +188,7 @@ fun WelcomeScreen(
                 }
                 TextButton(
                     onClick = onSetup,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
                     modifier =
                         Modifier
                             .fillMaxWidth()
