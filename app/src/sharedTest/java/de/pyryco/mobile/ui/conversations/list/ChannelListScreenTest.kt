@@ -195,19 +195,39 @@ class ChannelListScreenTest {
     }
 
     @Test
-    fun multiHostTreeKeepsTargetsThroughFoldsEditingReconnectAndTheFinalChat() {
+    fun multiHostTreeKeepsTargetsThroughFoldsEditingPromotionReconnectAndTheFinalRow() {
         val many = (1..20).map { conversation("a$it", "A channel $it", "/a", true) }
-        setTree(
-            entry("first", "First", channels = many + conversation("same", "Selected channel", "/a", true)),
-            entry(
-                "second",
-                "Second",
-                channels = listOf(conversation("same", "Second channel", "/b", true)),
-                chats = listOf(conversation("last", "Final chat", "/b", false)),
-                relay = RelayLinkStatus.Offline,
-            ),
-            selected = HostConversationTarget("first", "same"),
-        )
+        val state =
+            mutableStateOf(
+                HostChannelListState(
+                    hosts =
+                        listOf(
+                            entry("first", "First", channels = many + conversation("same", "Selected channel", "/a", true)),
+                            entry(
+                                "second",
+                                "Second",
+                                channels = listOf(conversation("same", "Second channel", "/b", true)),
+                                chats = listOf(conversation("last", "Final chat", "/b", false)),
+                                relay = RelayLinkStatus.Offline,
+                            ),
+                        ),
+                    selected = HostConversationTarget("first", "same"),
+                ),
+            )
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ChannelListScreen(state.value, onEvent = { event ->
+                    events += event
+                    if (event is ChannelListEvent.TreeFoldToggled) {
+                        val collapsed = state.value.collapsed
+                        state.value =
+                            state.value.copy(
+                                collapsed = if (event.key in collapsed) collapsed - event.key else collapsed + event.key,
+                            )
+                    }
+                })
+            }
+        }
 
         val list = composeTestRule.onNode(hasScrollAction())
         list.performScrollToNode(hasText("First"))
@@ -252,6 +272,28 @@ class ChannelListScreenTest {
         list.performScrollToNode(hasTestTag(treeHostReconnectTestTag("second")))
         composeTestRule.onNodeWithTag(treeHostReconnectTestTag("second")).performClick()
         assertEquals(ChannelListEvent.TreeHostReconnectTapped("second"), events.last())
+
+        // A daemon promotion snapshot moves the same id to Channels on the chat's own host.
+        composeTestRule.runOnIdle {
+            val second = state.value.hosts[1]
+            val promoted =
+                second.host.chats
+                    .single()
+                    .copy(name = "Promoted channel", isPromoted = true)
+            state.value =
+                state.value.copy(
+                    hosts =
+                        listOf(
+                            state.value.hosts[0],
+                            second.copy(host = second.host.copy(channels = second.host.channels + promoted, chats = emptyList())),
+                        ),
+                )
+        }
+        val promotedRow = hasTestTag(TREE_CHANNEL_ROW_TEST_TAG) and hasText("Promoted channel")
+        list.performScrollToNode(promotedRow)
+        composeTestRule.onNode(promotedRow).assertIsDisplayed().performClick()
+        assertEquals(ChannelListEvent.TreeRowTapped(HostConversationTarget("second", "last")), events.last())
+        composeTestRule.onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText("Promoted channel")).assertCountEquals(0)
     }
 
     @Test
