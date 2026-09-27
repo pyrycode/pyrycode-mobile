@@ -106,7 +106,7 @@ Each row mirrors the sent user bubble, de-emphasized:
   since #644) and rendered at `Modifier.alpha(QUEUED_ALPHA = 0.6f)`;
 - a leading **decorative** "waiting" glyph — `Icons.Outlined.Schedule`, tinted `onSurfaceVariant`,
   `contentDescription = null` (the row's own text plus its state description carry the meaning);
-- a `Surface` bubble in the same uniform 6dp-cornered `BubbleShape` and `primaryContainer` /
+- a `Surface` bubble in the same uniform 6dp-cornered `BubbleShape` and `userBubbleContainer` /
   `onPrimaryContainer` colour family as [`UserMessageBubble`](message-bubble.md), holding **plain**
   `Text(text, bodyMedium)` — **never `MarkdownText`**, matching `UserMessageBubble`, since this is
   un-sent user *input* (an unmatched row's text is another paired device's input, relayed by the daemon,
@@ -129,12 +129,17 @@ Each row mirrors the sent user bubble, de-emphasized:
 ### Styling (design-owed)
 
 Unchanged by #782 — the visual only moved position, not shape. Queued entries deliberately read as **not
-yet sent**: the `primaryContainer` user-bubble shape/colour at `QUEUED_ALPHA = 0.6f` (in the spirit of
+yet sent**: the `userBubbleContainer` fill and shared user-bubble shape at `QUEUED_ALPHA = 0.6f` (in the spirit of
 [`ThreadScreen`](thread-screen.md)'s `ABOVE_DELIMITER_ALPHA = 0.55f` de-emphasis), plus the leading
 waiting glyph, distinguish a queued row from the full-opacity sent / streamed bubbles around it. The
 Figma `16-8` frame draws **no backlog treatment and no drop affordance** (unchanged since #461/#467); the
 visual follows the app's existing message-row idiom until the frame gains one — no contract change when
 it does, only a re-tune here.
+
+The fill follows [MessageBubble's theme mapping](message-bubble.md#token-mapping-figma-roles-against-this-apps-two-schemes):
+`#003355` in app-selected dark mode with wallpaper colours off, otherwise the
+selected scheme's `primaryContainer`. The 0.6 opacity applies to the whole row,
+including its fill, explicit `onPrimaryContainer` text and interactive drop control.
 
 ### Constants
 
