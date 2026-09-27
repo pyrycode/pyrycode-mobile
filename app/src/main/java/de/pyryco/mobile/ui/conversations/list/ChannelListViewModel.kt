@@ -16,7 +16,6 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
-import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.host.HostEditorController
 import de.pyryco.mobile.ui.host.HostEditorState
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
@@ -85,6 +84,8 @@ data class HostChannelListState(
     val workspaceEditor: WorkspaceEditorState? = null,
     /** The host whose Channels-section Create channel modal is open, or null when none is. */
     val createChannel: CreateChannelState? = null,
+    /** The host whose Chats-section Create chat confirmation is open. */
+    val createChat: CreateChatState? = null,
     /** The channel whose Edit channel modal is open, or null when none is (#667). */
     val channelEditor: ChannelEditorState? = null,
 ) {
@@ -189,6 +190,15 @@ data class CreateChannelState(
     val createdConversationId: String? = null,
     val createFailed: Boolean = false,
     val promptFailed: Boolean = false,
+)
+
+/** The held host and static UI flags for a fieldless Create chat confirmation. */
+data class CreateChatState(
+    val serverId: String,
+    val hostName: String?,
+    val saving: Boolean = false,
+    val failed: Boolean = false,
+    val dialogId: Long = 0,
 )
 
 /**
@@ -319,6 +329,8 @@ class ChannelListViewModel(
     private val chatEditor = MutableStateFlow<ChatEditorState?>(null)
     private val workspaceEditor = MutableStateFlow<WorkspaceEditorState?>(null)
     private val createChannel = MutableStateFlow<CreateChannelState?>(null)
+    private val createChat = MutableStateFlow<CreateChatState?>(null)
+    private var nextCreateChatDialogId = 0L
 
     // #667: the editor's own prompt stays at its default here; the reading lives apart, tagged with the
     // channel it was read for, so a read landing mid-write never breaks that write's `compareAndSet` and no
@@ -345,14 +357,15 @@ class ChannelListViewModel(
                     },
                 hostSource.attention,
             ) { entries, attention -> entries.map { it.copy(attention = attention[it.host.serverId].orEmpty()) } },
-            // The list's two add modals, grouped (#958): five flows is the typed `combine`'s limit.
-            combine(addWorkspace, addWorkspaceRecent, createChannel, ::Triple),
+            // The list's creation modals, grouped because five flows is the typed `combine`'s limit.
+            combine(addWorkspace, addWorkspaceRecent, combine(createChannel, createChat, ::Pair), ::Triple),
             collapsedKeys,
             lastOpenedTarget,
             // Grouped first: five flows is the typed `combine`'s limit.
             combine(combine(hostEditor.state, chatEditor, ::Pair), workspaceEditor, publishedChannelEditor, ::Triple),
-        ) { hosts, (adding, recent, creating), collapsed, selected, (editorAndChat, workspace, channel) ->
+        ) { hosts, (adding, recent, creatingModals), collapsed, selected, (editorAndChat, workspace, channel) ->
             val (editor, chat) = editorAndChat
+            val (creating, creatingChat) = creatingModals
             HostChannelListState(
                 hosts = hosts,
                 addWorkspace = adding,
@@ -364,6 +377,7 @@ class ChannelListViewModel(
                 chatEditor = chat,
                 workspaceEditor = workspace,
                 createChannel = creating,
+                createChat = creatingChat,
                 channelEditor = channel,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
@@ -423,11 +437,59 @@ class ChannelListViewModel(
         viewModelScope.launch { hostNavigationChannel.send(target) }
     }
 
-    fun createHostDiscussion(serverId: String) {
-        launchGuardedRepoCall {
-            val workspace = appPreferences.defaultWorkspace(serverId).first()
-            sendHostDiscussion(serverId, workspace)
+    /** Open a chat confirmation for the clicked host; only its stable id selects the repository. */
+    fun openCreateChat(serverId: String) {
+        val host = hostSource.snapshots.value.firstOrNull { it.serverId == serverId }
+        if (host == null) {
+            RelayLog.d { "event=create_chat_open_rejected code=unknown_host" }
+            return
         }
+        createChat.value =
+            CreateChatState(
+                serverId,
+                host.displayName?.takeIf { it.isNotBlank() }?.let(::boundedName),
+                dialogId = ++nextCreateChatDialogId,
+            )
+        RelayLog.d { "event=create_chat_opened" }
+    }
+
+    /** Confirm once using the daemon's default cwd; a failure leaves the same dialog retryable. */
+    fun submitCreateChat() {
+        val state = createChat.value ?: return
+        if (state.saving) return
+        val live = hostSource.repositoryFor(state.serverId)
+        if (live == null) {
+            createChat.compareAndSet(state, state.copy(failed = true))
+            RelayLog.d { "event=create_chat_failed code=unavailable" }
+            return
+        }
+        val pending = state.copy(saving = true, failed = false)
+        if (!createChat.compareAndSet(state, pending)) return
+        viewModelScope.launch {
+            val conversation =
+                try {
+                    RelayLog.d { "event=create_chat_started" }
+                    live.createDiscussion(null)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    createChat.compareAndSet(pending, pending.copy(saving = false, failed = true))
+                    RelayLog.d { "event=create_chat_failed code=request" }
+                    return@launch
+                }
+            if (!createChat.compareAndSet(pending, null)) {
+                RelayLog.d { "event=create_chat_created code=dismissed" }
+                return@launch
+            }
+            val target = HostConversationTarget(state.serverId, conversation.id)
+            lastOpenedTarget.value = target
+            hostNavigationChannel.send(target)
+            RelayLog.d { "event=create_chat_created" }
+        }
+    }
+
+    fun dismissCreateChat() {
+        createChat.value = null
+        RelayLog.d { "event=create_chat_dismissed" }
     }
 
     /**
@@ -440,7 +502,7 @@ class ChannelListViewModel(
     }
 
     /**
-     * Opens the Add workspace modal on a host row's own host (#904) — never the selected host. An id
+     * Opens the retained Add workspace modal on an explicitly named host (#904) — never the selected host. An id
      * the list does not hold opens nothing.
      */
     fun openAddWorkspace(serverId: String) {
@@ -1073,30 +1135,6 @@ class ChannelListViewModel(
             RelayLog.d { "event=channel_prompt_read_failed" }
             ChannelPromptReading.Unavailable
         }
-
-    private suspend fun sendHostDiscussion(
-        serverId: String,
-        workspace: String,
-    ) {
-        val live = hostSource.repositoryFor(serverId)
-        if (live == null) {
-            RelayLog.d { "event=host_chat_create_rejected code=unavailable" }
-            return
-        }
-        RelayLog.d { "event=host_chat_create_started" }
-        val conversation =
-            try {
-                live.createDiscussion(workspace)
-            } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                RelayLog.d { "event=host_chat_create_failed" }
-                throw error
-            }
-        // Created from this list, so opened from it: the new row takes the highlight (#731).
-        lastOpenedTarget.value = HostConversationTarget(serverId, conversation.id)
-        hostNavigationChannel.send(HostConversationTarget(serverId, conversation.id))
-        RelayLog.d { "event=host_chat_created" }
-    }
 
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L

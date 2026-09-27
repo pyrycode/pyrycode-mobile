@@ -108,8 +108,6 @@ class ConversationTreeRowsTest {
                 expanded = true,
                 onToggleExpanded = {},
                 onEditTapped = {},
-                onAddTapped = {},
-                onAddLongPressed = {},
             )
         }
 
@@ -194,8 +192,6 @@ class ConversationTreeRowsTest {
                     expanded = true,
                     onToggleExpanded = { toggles++ },
                     onEditTapped = {},
-                    onAddTapped = {},
-                    onAddLongPressed = {},
                 )
             }
         }
@@ -226,8 +222,6 @@ class ConversationTreeRowsTest {
                     expanded = false,
                     onToggleExpanded = {},
                     onEditTapped = {},
-                    onAddTapped = {},
-                    onAddLongPressed = {},
                 )
             }
         }
@@ -250,8 +244,6 @@ class ConversationTreeRowsTest {
                     expanded = true,
                     onToggleExpanded = {},
                     onEditTapped = {},
-                    onAddTapped = {},
-                    onAddLongPressed = {},
                 )
             }
         }
@@ -277,8 +269,6 @@ class ConversationTreeRowsTest {
                     expanded = true,
                     onToggleExpanded = { toggles++ },
                     onEditTapped = {},
-                    onAddTapped = {},
-                    onAddLongPressed = {},
                     onReconnectTapped = { reconnects++ },
                 )
             }
@@ -305,8 +295,6 @@ class ConversationTreeRowsTest {
                     expanded = true,
                     onToggleExpanded = {},
                     onEditTapped = {},
-                    onAddTapped = {},
-                    onAddLongPressed = {},
                 )
             }
         }
@@ -339,8 +327,6 @@ class ConversationTreeRowsTest {
                     expanded = expanded,
                     onToggleExpanded = onToggleExpanded,
                     onEditTapped = {},
-                    onAddTapped = {},
-                    onAddLongPressed = {},
                     onReconnectTapped = onReconnectTapped,
                 )
             }
@@ -405,8 +391,6 @@ class ConversationTreeRowsTest {
                     expanded = true,
                     onToggleExpanded = {},
                     onEditTapped = {},
-                    onAddTapped = {},
-                    onAddLongPressed = {},
                 )
             }
         }
@@ -482,7 +466,6 @@ class ConversationTreeRowsTest {
     @Test
     fun hostRow_editControl_isNamedForItsHostAndReportsOnlyItsOwnTap() {
         var edits = 0
-        var adds = 0
         var toggles = 0
         composeTestRule.setContent {
             PyrycodeMobileTheme {
@@ -493,14 +476,11 @@ class ConversationTreeRowsTest {
                     expanded = true,
                     onToggleExpanded = { toggles++ },
                     onEditTapped = { edits++ },
-                    onAddTapped = { adds++ },
-                    onAddLongPressed = {},
                 )
             }
         }
 
-        // Named for the host, at its own per-host handle, and distinguishable from the add control
-        // beside it — the whole reason both descriptions carry the host.
+        // Named for the host at its own per-host handle.
         composeTestRule
             .onAllNodes(hasContentDescription(string(R.string.cd_tree_host_edit, "Pyrybox")), useUnmergedTree = true)
             .assertCountEquals(1)
@@ -510,9 +490,8 @@ class ConversationTreeRowsTest {
 
         assertEquals(1, edits)
         // The control is its own merging node inside the row's clickable, so a tap on it must not fold
-        // the row or reach the add control.
+        // the row.
         assertEquals(0, toggles)
-        assertEquals(0, adds)
     }
 
     @Test
@@ -525,8 +504,6 @@ class ConversationTreeRowsTest {
                 expanded = true,
                 onToggleExpanded = {},
                 onEditTapped = {},
-                onAddTapped = {},
-                onAddLongPressed = {},
             )
         }
 
@@ -548,8 +525,6 @@ class ConversationTreeRowsTest {
                         expanded = true,
                         onToggleExpanded = {},
                         onEditTapped = {},
-                        onAddTapped = {},
-                        onAddLongPressed = {},
                     )
                     TreeWorkspaceRow(workspaceName = "Second Brain", expanded = true, onToggleExpanded = {})
                     TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {})

@@ -19,7 +19,7 @@ The first host has zero extra top padding; subsequent hosts use `TreeHostGap = 1
 divider to the first row. With the old tier divider gone, the toolbar rule is the only full-width rule.
 The section content begins 4dp and conversation content 12dp from the list's 20dp content edge.
 Each section uses a closed/open folder glyph and right/down chevron to match its fold state. Its fold
-and Channels plus controls retain separate 48dp touch targets and host-qualified TalkBack names.
+and both section plus controls retain separate 48dp touch targets and host-qualified TalkBack names.
 
 **Fold key and node identity.** `TreeFoldKey(section: ConversationTreeSection, serverId: String)`
 uses `Host`, `Channels` or `Chats` as its node kind. [`ChannelListViewModel`](channel-list-viewmodel.md)
@@ -57,9 +57,9 @@ construction (four before #738 retired the flat state's `Loading`/`Error` placeh
 shape as the two tags above (app-authored literal, no daemon text, invisible to TalkBack), but it names the
 destination rather than any chrome drawn on it: unlike the button wait it replaced, it does not imply a
 loaded list, and it survived #732/#738's chrome changes without a second migration. `InteractiveStreamE2ETest`'s
-shared `awaitChannelList()` helper reads it; `createChat()` and `openWorkspacePicker()` now drive a paired
-host's own add control via `treeHostAddTestTag(serverId)` (below) rather than the retired button's fixed
-content description — see [`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md).
+shared `awaitChannelList()` helper reads it; `createChat()` drives the paired host's Chats plus via
+`treeHostChatAddTestTag(serverId)` and confirms the dialog — see
+[`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md).
 
 **Item keys.** A private `treeItemKey(vararg parts: String)` length-prefixes each part before joining them
 with `|`, so no daemon-authored `serverId`, `cwd` or conversation id can forge another row's key by embedding
@@ -74,18 +74,10 @@ identical length.
 
 ## Add controls (#738)
 
-The list has one fixed toolbar pairing control, host-specific chat creation controls (#1186), and a
-Channels-section plus for each host (#1189), including hosts with no channels.
-The toolbar uses `ChannelListBarEntry` with a 24dp `Add` glyph in a 48dp `IconButton`. The tree's controls
-live in `ConversationTreeRows.kt` and share one file-private `TreeRowControl` (renamed
-from `TreeAddControl` in #744, when the host row's edit control became its second call site): a
-`Box.size(48.dp).clip(CircleShape).combinedClickable(...)` drawing a 16dp caller-supplied `icon` tinted
-`colorScheme.primary`, carrying the caller's content description and (for the host row's two controls) the
-caller's `testTag`. An optional `onLongClick` / `onLongClickLabel` pair makes the control drive both
-gestures when supplied — the same `combinedClickable`-on-the-control-itself construction `ChannelListFab`
-used, for the same reason: an M3 `IconButton` composes its own inner `clickable` that would shadow an outer
-`combinedClickable`'s long-press (see [`../codebase/25.md`](../codebase/25.md),
-[`../codebase/221.md`](../codebase/221.md)).
+The fixed toolbar plus pairs another host. Each host has a Channels-section plus (#1189) and a
+Chats-section plus (#1190), including when either section has no conversations. The section plus and fold
+are separate 48dp targets. `TreeRowControl` in `ConversationTreeRows.kt` draws their 16dp glyphs with a
+`clickable` and a host-qualified content description; it has no long-press path.
 
 - **Toolbar “Pair another host”** uses the static `R.string.cd_pair_another_host`, with no section suffix.
   Tapping it emits `ChannelListEvent.PairHostTapped`, which the route maps to
@@ -95,24 +87,15 @@ used, for the same reason: an M3 `IconButton` composes its own inner `clickable`
   to `channel_list`. `TreeSectionHeader` and its resources remain available, but the list no longer emits
   that component or its pairing controls. See
   [Navigation](navigation.md#manual-pairing-entry-and-return).
-- **`TreeHostRow`** gained `serverId: String`, `onAddTapped: () -> Unit` and `onAddLongPressed: () -> Unit`.
-  Tap emits `TreeHostAddTapped(serverId)` (the route calls `vm.createHostDiscussion(serverId)`); long-press
-  emits `TreeHostAddLongPressed(serverId)` — the row's **own** host, the same discipline `TreeRowTapped`
-  already used for taps, never `ThreadDestinationFactory.selectedServerId()`. Its two content descriptions
-  (`cd_tree_host_new_chat` / `cd_tree_host_pick_workspace`) are formatted with the row's already-
-  `boundedRowText`-clamped display name — computed once and passed down, so no path formats an unbounded
-  daemon-authored name into a description.
-
-**Long-press opens Add workspace, not a sheet (#904).** `TreeHostAddLongPressed(serverId)` now maps to
-`vm.openAddWorkspace(serverId)`, which opens [`AddWorkspaceModal`](mobile-modal.md#callers) — the shared
-`MobileModal` shell — on that row's own host rather than the bottom-sheet `WorkspacePicker` the control
-opened before. Picking a recent folder or creating one there, then OK, starts an unpromoted chat in exactly
-that folder on that host and opens its thread; a failure keeps the modal open instead of surfacing after a
-sheet that has already closed. The control itself, its content description, its long-press affordance and
-`treeHostAddTestTag(serverId)` are unchanged — only what the long-press opens moved. See
-[`ChannelListViewModel`](channel-list-viewmodel.md#wiring) for `AddWorkspaceState` and its five transitions,
-and [`WorkspacePicker`](workspace-picker.md#consumers) for why the thread's and Settings' pickers, reached
-through other controls, are unaffected.
+**Chats-section creation.** `TreeHostChatAddTapped(serverId)` opens a fieldless Create chat confirmation
+for that host without sending a request or folding the section. The dialog names the host and offers Create
+and Cancel. Confirming sends `createDiscussion(null)` to the held host, leaving `cwd` for the daemon to
+choose independently of the app's saved per-host default. Success selects and opens the returned chat;
+failure leaves the dialog open with a generic retryable error. The dialog and error survive disconnect and
+reconnect, with Create disabled while the host is unavailable. A fresh dialog identity prevents a delayed
+reply from a dismissed dialog closing or navigating from a later one, even on the same host. The old host
+row plus and its Add workspace long press are removed; folder choice remains in the thread's
+[workspace picker](workspace-picker.md#consumers), while the underlying Add workspace state remains.
 
 **Naming rule.** Pairing is unique and needs no section qualifier. Host controls still repeat down the
 screen and name the host they act on, the way fold controls name their row (`cd_tree_row_expand` /
@@ -120,24 +103,14 @@ screen and name the host they act on, the way fold controls name their row (`cd_
 the unique toolbar description with `onNode`; it retains the paste, fingerprint confirmation and
 connection/return waits. The retired section-qualified pairing name is no longer a list selector.
 
-**The device-suite handle.** `TreeHostRow` also builds `treeHostAddTestTag(serverId)` — a public top-level
-function in `ConversationTreeRows.kt` — and attaches it to its own control's `Modifier.testTag(...)`. The id
-comes from the saved `PairedServer` record the operator scanned, not a daemon frame, but a hostile QR could
-still make it enormous; `treeHostAddTestTag` clamps it the same way `treeItemKey` clamps its parts —
-truncated with the original length appended (`take(256) + "~" + length`) — so two ids sharing a 256-character
-prefix cannot collapse onto one tag. `InteractiveStreamE2ETest`'s `createChat()` / `openWorkspacePicker()`
-read it, built from the harness's own `ARG_SERVER_ID` instrumentation argument — see
-[`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md#what-rung-3-is-made-of). Sibling handles
-in this codebase (`CHANNEL_LIST_TEST_TAG`, `TREE_CHANNEL_ROW_TEST_TAG` / `TREE_CHAT_ROW_TEST_TAG`) are
-`internal`; this one is `public` because it is a function computed from caller-supplied input rather than a
-fixed constant, and both its production caller (`TreeHostRow`, same module) and its test caller (`androidTest`,
-a friend source set) already resolve `internal` — the wider visibility is not load-bearing, just consistent
-with taking a parameter.
+**Device-suite handles.** `treeHostChatAddTestTag(serverId)` and `treeHostChannelAddTestTag(serverId)`
+identify the two section controls. Their id clamp includes the original length after a 256-character
+prefix, so unusually long host ids cannot make the tags collide merely by sharing that prefix.
+`InteractiveStreamE2ETest.createChat()` uses the Chats tag and confirms the modal. See
+[`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
-**Nesting.** The host row's control sits inside `FoldableTreeRow`'s own `clickable`, which merges descendant
-semantics — but `combinedClickable` merges too, and merging stops at a merging descendant, so the control
-keeps its own node, its own name, its own tag and its own click action; a tap on it never reaches the row's
-fold. `ChannelListScreenTest` asserts this directly rather than trusting the inherited rule.
+**Nesting.** A section plus sits inside `FoldableTreeRow`'s clickable but keeps its own semantics node,
+name, tag and click action. `ChannelListScreenTest` proves tapping it does not fold the section.
 
 **The 48dp trade.** The design pins a 16dp plus with its centre 10dp from the row's content edge. Touch needs
 48dp, and centring a 16dp glyph in a 48dp target lands its centre about 22dp further inboard than the design
@@ -145,27 +118,20 @@ draws it — the same trade #731 took growing the design's 28dp pointer rows to 
 deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTreeRows.kt`. This tree-control
 geometry is separate from the toolbar's 24dp glyphs and 52dp left-control centre spacing.
 
-**Channels-section creation.** The host row's own plus still creates an unpromoted chat, and its hold
-opens [`AddWorkspaceModal`](mobile-modal.md#callers) to choose a folder. The Channels section's own
-48dp plus opens [`CreateChannelModal`](mobile-modal.md#callers) for that host. Its TalkBack name includes
+**Channels-section creation.** The Channels section's own 48dp plus opens
+[`CreateChannelModal`](mobile-modal.md#callers) for that host. Its TalkBack name includes
 the host; the section fold and plus have separate targets, and the plus does not fold the section. See
 [Create channel control](#workspace-row-create-channel-control-958).
 
 ## Host row edit control (#744)
 
-`TreeHostRow` gained a third parameter, `onEditTapped: () -> Unit`, and draws a second `TreeRowControl` —
-`Icons.Filled.Edit`, tinted `colorScheme.primary` like the plus — between `ConnectionLegPair` and the add
-control. The design's hover treatment swaps the leg dots for the pencil and the plus, in that order; the
-phone has no hover, so all three are drawn persistently in that same order: dots, pencil, plus. Tap emits
-`TreeHostEditTapped(serverId)` (the route calls `vm.openHostEditor(serverId)`) — the row's own host, the
-same discipline the fold, tap and add controls already use. There is no long-press path: the control has
-one action, so it passes neither `onLongClick` nor `onLongClickLabel` to `TreeRowControl`.
+`TreeHostRow` draws a persistent `TreeRowControl` pencil beside `ConnectionLegPair`. Tap emits
+`TreeHostEditTapped(serverId)` (the route calls `vm.openHostEditor(serverId)`) for that row's host. The
+former trailing plus is gone; the pencil has one click action and no long press.
 
 Its content description is `R.string.cd_tree_host_edit` formatted with the row's already-`boundedRowText`-clamped
-display name, for the same reason the add control's two descriptions are: the control repeats down the
-screen and has to say which host it acts on. `treeHostEditTestTag(serverId)` mirrors `treeHostAddTestTag`
-— both now delegate to one private `boundedTagId` clamp (`take(256) + "~" + length`) so the two tags
-cannot drift apart — and is attached to the pencil's own `Modifier.testTag(...)`.
+display name, so repeated controls still say which host they act on. `treeHostEditTestTag(serverId)`
+uses the shared `boundedTagId` clamp and is attached to the pencil's own `Modifier.testTag(...)`.
 
 Opening the modal, filling it from the host's stored pairing record, and saving the entered name are the
 view model's job — see [Wiring](channel-list-screen-how-it-works.md#wiring) below and [ChannelListViewModel](channel-list-viewmodel.md). The
@@ -224,21 +190,19 @@ inside the host's own lazy item — folding the host only drops the rows below i
 visible while folded. It reads `tree_host_update_required_version` when `update.minClientVersion` is
 non-null, else `tree_host_update_required`; this caption is the only place the version renders, already
 bounded by #1008's `validMinClientVersion` shape (three 1–6-digit parts, ≤ 20 characters). The fold
-chevron, and the pencil and plus controls, are unchanged — a too-old host can still be edited or
+chevron and pencil remain — a too-old host can still be edited or
 unpaired — even though the Figma frame omits the chevron; the row remains the fold control for every
 disconnected state, and dropping that affordance for one state was left out of scope.
 
 `TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
 today's `onSurfaceVariant`/`onSurface` tints); the host row passes `colorScheme.error` for both the glyph
-and the name when disconnected. A fourth `TreeRowControl` — `Icons.Filled.Power`, tinted `colorScheme.primary`
-like the other three — is drawn inboard of `ConnectionLegPair`, tagged `treeHostReconnectTestTag(serverId)`
-(shares `boundedTagId`'s clamp with the add and edit tags). Tap emits `TreeHostReconnectTapped(serverId)`
-(the route calls `vm.reconnectHost(serverId)`) — the row's own host, the same discipline the fold, tap,
-add and edit controls all use. There is no long-press path, same as the edit control.
+and the name when disconnected. A `TreeRowControl` with `Icons.Filled.Power` is drawn inboard of
+`ConnectionLegPair`, tagged `treeHostReconnectTestTag(serverId)` (sharing `boundedTagId`'s clamp with
+the edit tag). Tap emits `TreeHostReconnectTapped(serverId)` for the row's own host. There is no long press.
 
 Its content description is `R.string.cd_tree_host_reconnect` ("Reconnect %1$s") formatted with the row's
-already-`boundedRowText`-clamped display name, for the same reason the other three controls' descriptions
+already-`boundedRowText`-clamped display name, for the same reason the other host controls' descriptions
 are. The row's fold chevron is unchanged and still present on a disconnected row — the whole row remains
 the fold control, and removing that affordance for one state was explicitly left out of scope.
 

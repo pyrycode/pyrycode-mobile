@@ -43,6 +43,7 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.AddWorkspaceModal
 import de.pyryco.mobile.ui.components.CreateChannelModal
+import de.pyryco.mobile.ui.components.CreateChatModal
 import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.components.EditWorkspaceModal
@@ -83,7 +84,7 @@ internal const val TREE_CHAT_ROW_TEST_TAG: String = "tree-chat-row"
  *
  * Weaker than the button wait it replaced, on purpose — it matches the blank placeholder as readily as the
  * assembled tree. A caller that needs the loaded list must wait for the control it is about to drive, which
- * is what the device suites' creation helpers do through [de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag].
+ * is what the device suites' creation helpers do through [de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag].
  */
 internal const val CHANNEL_LIST_TEST_TAG: String = "channel-list"
 
@@ -138,15 +139,14 @@ sealed interface ChannelListEvent {
     /** The fixed toolbar's add control opens the existing scanner/code pairing flow. */
     data object PairHostTapped : ChannelListEvent
 
-    /** A host row's add control: a chat on **that** row's host, in its default workspace. */
-    data class TreeHostAddTapped(
+    /** A host's Chats-section plus opens Create chat for that host. */
+    data class TreeHostChatAddTapped(
         val serverId: String,
     ) : ChannelListEvent
 
-    /** The same control held: open Add workspace on **that** row's host (#904), a folder before the chat. */
-    data class TreeHostAddLongPressed(
-        val serverId: String,
-    ) : ChannelListEvent
+    data object CreateChatSubmitted : ChannelListEvent
+
+    data object CreateChatDismissed : ChannelListEvent
 
     /** A host row's edit control: open the Edit host modal on **that** row's host (#744). */
     data class TreeHostEditTapped(
@@ -376,7 +376,24 @@ fun ChannelListScreen(
     ChatEditorModal(hostState = hostState, onEvent = onEvent)
     WorkspaceEditorModal(hostState = hostState, onEvent = onEvent)
     CreateChannelModalBinding(hostState = hostState, onEvent = onEvent)
+    CreateChatModalBinding(hostState = hostState, onEvent = onEvent)
     ChannelEditorModal(hostState = hostState, onEvent = onEvent)
+}
+
+@Composable
+private fun CreateChatModalBinding(
+    hostState: HostChannelListState,
+    onEvent: (ChannelListEvent) -> Unit,
+) {
+    val state = hostState.createChat ?: return
+    CreateChatModal(
+        hostName = state.hostName ?: stringResource(R.string.unnamed_host),
+        onSubmit = { onEvent(ChannelListEvent.CreateChatSubmitted) },
+        onDismissRequest = { onEvent(ChannelListEvent.CreateChatDismissed) },
+        hostAvailable = hostState.isHostConnected(state.serverId),
+        loading = state.saving,
+        error = if (state.failed) stringResource(R.string.create_chat_failed) else null,
+    )
 }
 
 /**
@@ -659,8 +676,6 @@ private fun LazyListScope.treeHost(
             expanded = hostKey !in hostState.collapsed,
             onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(hostKey)) },
             onEditTapped = { onEvent(ChannelListEvent.TreeHostEditTapped(host.serverId)) },
-            onAddTapped = { onEvent(ChannelListEvent.TreeHostAddTapped(host.serverId)) },
-            onAddLongPressed = { onEvent(ChannelListEvent.TreeHostAddLongPressed(host.serverId)) },
             modifier = Modifier.padding(top = if (index == 0) 0.dp else TreeHostGap),
             onReconnectTapped = {
                 onEvent(
@@ -683,11 +698,12 @@ private fun LazyListScope.treeHost(
                 sectionName = stringResource(section.titleRes),
                 expanded = sectionKey !in hostState.collapsed,
                 onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(sectionKey)) },
+                isChat = section == ConversationTreeSection.Chats,
                 onAddTapped =
                     if (section == ConversationTreeSection.Channels) {
                         { onEvent(ChannelListEvent.TreeHostChannelAddTapped(host.serverId)) }
                     } else {
-                        null
+                        { onEvent(ChannelListEvent.TreeHostChatAddTapped(host.serverId)) }
                     },
             )
         }

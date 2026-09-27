@@ -14,9 +14,9 @@ opened from this list) live in the ViewModel, so they survive recomposition, `La
 incoming snapshot and the thread round trip.
 
 The floating action button that used to create a chat and open pairing is gone (#738). Pairing opens from
-the fixed top-right toolbar control (#1186), and each host row carries an add control
-that starts a chat on **that row's** host, or — held — opens [Add workspace](channel-list-screen-tree-and-controls.md#add-controls-738)
-on that same host (#904) — see [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738) below. With the button
+the fixed top-right toolbar control (#1186), and each host's Chats section carries a plus
+that opens a host-named Create chat confirmation (#1190) — see
+[Add controls](channel-list-screen-tree-and-controls.md#add-controls-738). With the button
 gone, the flat `ChannelListUiState` compatibility model (loading/error/empty placeholders,
 `workspacePickerVisible`) retired with it: `hostState.hosts.isEmpty()` is now the tree's only blank.
 
@@ -45,8 +45,8 @@ The body branches on `hostState.hosts` — the only model the screen is fed:
   than a distinct message — see [Edge cases](#edge-cases--limitations).
 - **Otherwise** — a private `ConversationTree(hostState, onEvent, modifier)` composable renders each host
   with its Channels and Chats sections. It draws no global tier divider or workspace rows.
-  Host-row add controls still create chats on their own hosts; the Channels section's plus creates a
-  channel in that host's daemon-default folder. See
+  Each Chats-section plus opens Create chat for its host; the Channels-section plus opens Create channel.
+  Both create in their host's daemon-default folder. See
   [Conversation tree (#731)](#conversation-tree-731) and [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
 `Routes.DISCUSSION_LIST` / `DiscussionListScreen` stay in the graph, unreachable — removing them was out of
@@ -65,10 +65,10 @@ sealed interface ChannelListEvent {
     data object ArchiveTapped : ChannelListEvent
     /** The fixed toolbar's add control opens the existing scanner/code pairing flow. */
     data object PairHostTapped : ChannelListEvent
-    /** A host row's add control: a chat on **that** row's host, in its default workspace (#738). */
-    data class TreeHostAddTapped(val serverId: String) : ChannelListEvent
-    /** The same control held: pick that host's workspace first — the path the retired button long-pressed. */
-    data class TreeHostAddLongPressed(val serverId: String) : ChannelListEvent
+    /** The Chats-section plus opens Create chat for its own host. */
+    data class TreeHostChatAddTapped(val serverId: String) : ChannelListEvent
+    data object CreateChatSubmitted : ChannelListEvent
+    data object CreateChatDismissed : ChannelListEvent
     /** A host row's edit control: open the Edit host modal for **that** row's host (#744). */
     data class TreeHostEditTapped(val serverId: String) : ChannelListEvent
     /** The open modal's OK, already trimmed. No `serverId` — the target is the open editor's, held in the
@@ -135,17 +135,16 @@ fun ChannelListScreen(
 
 `ExperimentalMaterial3Api` dropped from the file's `@OptIn` in #737 along with the `TopAppBar` import — the
 list's own bar is a plain `Column`/`Row`/`IconButton`/`HorizontalDivider`, none of them experimental.
-`ExperimentalFoundationApi` dropped from this file's `@OptIn` in #738 with `ChannelListFab` — the file's own
-`combinedClickable` usage went with it; the tree rows' `TreeAddControl` (below) carries that experimental
-opt-in now, local to `ConversationTreeRows.kt`.
+`ExperimentalFoundationApi` dropped from this file's `@OptIn` in #738 with `ChannelListFab`. The section
+controls now use ordinary `clickable` in `ConversationTreeRows.kt`.
 
 `RowTapped` and `RecentDiscussionsTapped` are gone — the two composables that emitted them
 (`ConversationRow` at the top level, `SeeAllDiscussionsRow`) no longer exist in this file, and an event
-nothing can emit is dead code. `CreateDiscussionTapped` and `LongPressFab` are gone too (#738), replaced by
-the host-qualified `TreeHostAddTapped` / `TreeHostAddLongPressed` pair, and `PairHostTapped` is new.
-`ChannelListEvent` still lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`: the screen remains
-the producer for every variant except the eighteen the VM's destination wiring consumes directly
-(`TreeHostAddTapped`, `TreeHostAddLongPressed`, `TreeHostEditTapped`, `HostEditNameSubmitted`,
+nothing can emit is dead code. `CreateDiscussionTapped` and `LongPressFab` are gone too (#738).
+`TreeHostChatAddTapped` now opens the host-qualified Create chat modal; `PairHostTapped` opens pairing.
+`ChannelListEvent` still lives in `ChannelListScreen.kt`, with the destination wiring calling explicit
+ViewModel methods for host and modal events
+(`TreeHostChatAddTapped`, `CreateChatSubmitted`, `CreateChatDismissed`, `TreeHostEditTapped`, `HostEditNameSubmitted`,
 `HostEditDismissed` (#744), `TreeChatEditTapped`, `ChatEditNameSubmitted`, `ChatEditDismissed` (#827),
 `AddWorkspaceSelected`, `AddWorkspaceFolderCreateRequested`, `AddWorkspaceSubmitted`,
 `AddWorkspaceDismissed` (#904, replacing `WorkspacePicked` / `WorkspacePickerDismissed`),
@@ -157,8 +156,8 @@ destination's `when (event)` instead (see [Wiring](channel-list-screen-how-it-wo
 The file-private `ChannelListFab` — the manually-composed `Surface` #22 → #221 built to own tap + long-press
 directly (bypassing the M3 `FloatingActionButton` widget's own inner `Surface(onClick = ...)`, which would
 otherwise shadow an outer `combinedClickable` — see [`../codebase/25.md`](../codebase/25.md) and
-[`../codebase/221.md`](../codebase/221.md)) — is gone (#738). The same construction lives on in
-`TreeRowControl`, used by the tree rows; the toolbar uses `IconButton` for its single tap action.
+[`../codebase/221.md`](../codebase/221.md)) — is gone (#738). `TreeRowControl` now has a single
+`clickable` action; the toolbar uses `IconButton` for its single tap action.
 See [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
 ## Conversation tree (#731)
@@ -246,12 +245,11 @@ distinction from the tree's own blank at all — see the next section.
   retired plus instruction, the pairing control emitting `PairHostTapped` and Settings emitting `SettingsTapped`.
   Reading the expected copy from the same string resource would also pass with guidance pointing to a
   missing control (#1169).
-  `hostRowAddControl_targetsItsOwnHost_onTapAndOnLongPress`
-  drives a two-host tree's **second** host and asserts the emitted `TreeHostAddTapped` /
-  `TreeHostAddLongPressed` carry that host's `serverId`, so a globally-selected wiring could not pass;
-  `hostRowAddControl_doesNotFoldTheRowItSitsIn` taps the control and asserts one `TreeHostAddTapped` with the
-  row's subtree still drawn, proving the nesting claim in [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738) rather than
-  trusting the inherited merge rule. `addWorkspaceModal_drawsOnItsStateAndGatesOkOnSelectionAndItsHost`
+  `chatsSectionAddControl_targetsItsOwnHost` drives a two-host tree's **second** Chats plus with colliding
+  conversation ids, checks its host-specific name, and asserts its dialog names that host;
+  `chatsSectionAddControl_doesNotFoldTheRowItSitsIn` proves the plus keeps its own click action.
+  `emptySecondHostHasItsOwnChatsCreateControlWithoutFolding` covers a host with no conversations.
+  `addWorkspaceModal_drawsOnItsStateAndGatesOkOnSelectionAndItsHost`
   (#904, replacing the retired `workspacePicker_drawsExactlyWhenItsTargetIsSet`) draws exactly while
   `hostState.addWorkspace` is set, asserts OK stays disabled with no selection and while the modal's own
   host is disconnected and enables once both hold, and asserts a tapped recent row reports its raw
@@ -336,7 +334,8 @@ distinction from the tree's own blank at all — see the next section.
   `docs/specs/architecture/905-edit-and-archive-workspace.md`,
   `docs/specs/architecture/878-tree-conversation-attention-dot.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
-  `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, since #904 `openAddWorkspace`,
+  `onHostRowTapped`, `onFoldToggled`, `openCreateChat`, `submitCreateChat`, `dismissCreateChat`,
+  and the retained `openAddWorkspace`,
   `selectAddWorkspaceFolder`, `createAddWorkspaceFolder`, `submitAddWorkspace`, `dismissAddWorkspace`
   (replacing `openHostWorkspacePicker`, `pickHostWorkspace`, `dismissHostWorkspacePicker`), since #744
   `openHostEditor`, `submitHostName`, `dismissHostEditor`, and since #745 `requestHostUnpair`,

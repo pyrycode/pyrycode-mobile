@@ -96,12 +96,12 @@ route host; Settings' picker uses its own picker's captured owner,
 changes. The factory returns a reconnecting facade for that owner, or the existing fake singleton
 in demo mode. See [DI ownership](dependency-injection-host-conversation-source.md#destination-ownership).
 
-**The channel list stopped wrapping this picker in #904.** The host row's long-press used to bind
+**The channel list stopped wrapping this picker in #904.** The former host row's long-press used to bind
 `HostWorkspaceRepository(hostState.workspacePickerServerId, destinations)` around the whole screen
 so this component's own repository lookup would agree with the picker target; #904 replaced that
 control's destination with [`AddWorkspaceModal`](mobile-modal.md#callers), which reads and writes
 through `ChannelListViewModel`'s own `hostSource.repositoryFor(serverId)` call at the press instead
-— so `Routes.CHANNEL_LIST` no longer wraps `ChannelListScreen` in `HostWorkspaceRepository` at all,
+— and #1190 later removed that long-press entry. `Routes.CHANNEL_LIST` no longer wraps `ChannelListScreen` in `HostWorkspaceRepository`,
 and nothing on that screen reads `LocalWorkspacePickerRepository` any more. See
 [§ Consumers](#related) below and [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring).
 

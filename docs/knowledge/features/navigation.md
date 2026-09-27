@@ -226,17 +226,17 @@ reads and actions to the retained owner. Reconnect switches its concrete reposit
 without changing route ownership; changing compatibility selection cannot redirect
 the open thread, permission prompt or picker. Demo routes carry the
 explicit `demo` id and use the existing fake singleton with inert live/modal/control
-dependencies, even when relay hosts are saved. Creation reads the `demo` workspace
-default or scratch, independently of any paired host's migrated legacy default.
+dependencies, even when relay hosts are saved. Chats creation sends a null `cwd` on
+the explicit `demo` repository, leaving the fake's default behavior independent of
+any paired host's migrated legacy default.
 
 ### Temporary flat-list compatibility
 
 [ChannelListScreen](channel-list-screen.md)'s assembled conversation tree (#729/#730/#731, split from
 \#641) resolves each row's host from the row itself — `TreeRowTapped(HostConversationTarget)` maps straight to
-`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. `TreeHostAddTapped(serverId)` (#738) /
-`TreeHostAddLongPressed(serverId)` (#738, retargeted to Add workspace by #904) carry the same discipline
-into creation: they map straight to `vm.createHostDiscussion(serverId)` / `vm.openAddWorkspace(serverId)`
-against the add control's own row, never `selectedServerId()`. `ChannelListScreen` and its `ChannelListViewModel` therefore have **no**
+`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. The Chats-section
+`TreeHostChatAddTapped(serverId)` opens a Create chat confirmation for that exact host; Create sends
+`createDiscussion(null)` through its repository, never `selectedServerId()`. `ChannelListScreen` and its `ChannelListViewModel` therefore have **no**
 remaining consumer of the compatibility adapter below — #738 retired the flat `ChannelListUiState`, its
 `onEvent` reducer and the `repository` constructor parameter that fed them, along with the last FAB path
 that read `selectedServerId()` for this screen. The still-unreachable `DiscussionListScreen`

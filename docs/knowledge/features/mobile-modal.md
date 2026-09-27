@@ -13,8 +13,8 @@ this shell, its second direct caller. Since #826 [`EditChatModal`](#callers) dra
 directly as its third caller — desktop's `EditChatDialogView` on the phone, a name field plus an
 outlined archive action, not yet drawn by any screen. Since #904
 [`AddWorkspaceModal`](#callers) draws this shell directly as its fourth caller — desktop's
-host-row Add workspace dialog on the phone, a folder list in place of a typed path, replacing
-the host row's own long-press into [`WorkspacePicker`](workspace-picker.md). Since #905
+Add workspace dialog on the phone, a folder list in place of a typed path. Its host-row
+long-press entry was removed by #1190; the folder picker remains in the thread. Since #905
 [`EditWorkspaceModal`](#callers) draws this shell directly as its fifth caller — desktop's
 `EditWorkspaceDialogView` on the phone, a name field plus an outlined archive action, driven by
 every workspace row's own pencil in both tree sections. Since #957
@@ -426,8 +426,8 @@ section label, paths in `bodyMedium` monospace, following `EditHostModal`'s fiel
 plus an outlined "Create new folder under pyry-workspace…" action styled like `EditChatModal`'s
 Archive action, which opens the existing [`CreateFolderDialog`](create-folder-dialog.md) stacked
 as a second window over the shell. OK needs a selected folder and an available host; `MobileModal`
-also disables it while `loading`. It replaces the host row's long-press into the bottom-sheet
-[`WorkspacePicker`](workspace-picker.md#consumers), which stays for the thread and Settings
+also disables it while `loading`. Its former host-row long-press entry was removed in #1190;
+[`WorkspacePicker`](workspace-picker.md#consumers) stays for the thread and Settings
 pickers — see [ChannelListScreen § Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)
 and [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the host-resolved state machine
 this caller is bound to.

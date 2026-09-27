@@ -33,10 +33,10 @@ drawn on the row's leading dot by #878, see [ChannelListScreen — conversation 
 controls § Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878). Host row activation and
 successful creation emit `HostConversationTarget(serverId, conversationId)` on
 `hostNavigationEvents` and record that target as `selected`. Creation retains its
-explicit host across preference reads and Add workspace interaction. Since #738, creation is reached only through this host-qualified path: `createHostDiscussion(serverId)`
-is called directly from the host row's own add control, never via a captured "selected" host;
-since #904 the same control's long-press calls `openAddWorkspace(serverId)` — the shared
-[`MobileModal`](mobile-modal.md) shell in place of the retired bottom-sheet picker.
+explicit host through the Chats-section confirmation: `openCreateChat(serverId)` holds the clicked
+host, and `submitCreateChat()` sends `createDiscussion(null)` through that host's repository. The
+daemon selects the folder independently of app preferences. The retained Add workspace state is no
+longer opened from the host row; the thread's picker remains available for folder changes.
 
 ## Shape
 
@@ -171,11 +171,10 @@ explicit value or scratch, even when a paired host owns the migrated legacy path
 
 `PyryNavHost`'s `Routes.CHANNEL_LIST` destination collects only `hostState`. Row taps and
 fold toggles map straight to `vm.onHostRowTapped(event.target)` / `vm.onFoldToggled(event.key)`,
-since the row already carries its own host; since #738 the two add controls follow the same
-rule — `ChannelListEvent.TreeHostAddTapped(serverId)` maps to `vm.createHostDiscussion(serverId)`,
-the control's own row, never `destinations.selectedServerId()`; since #904
-`TreeHostAddLongPressed(serverId)` maps to `vm.openAddWorkspace(serverId)`, opening the shared
-`MobileModal` shell in place of the retired bottom-sheet picker (see below). Since #744 the edit control follows the same
+since the row already carries its own host. The Chats-section plus maps
+`TreeHostChatAddTapped(serverId)` to `vm.openCreateChat(serverId)`; Create and Cancel call
+`vm.submitCreateChat()` and `vm.dismissCreateChat()`. The held dialog target, rather than
+`destinations.selectedServerId()`, selects the repository. Since #744 the edit control follows the same
 rule a third time: `TreeHostEditTapped(serverId) -> vm.openHostEditor(serverId)`,
 `HostEditNameSubmitted(name) -> vm.submitHostName(name)` and `HostEditDismissed -> vm.dismissHostEditor()`.
 \#745 adds three more events off the open modal's `Unpair host` action, none carrying a `serverId` — the
@@ -399,7 +398,10 @@ coverage of everything under [Wiring](#wiring) above, host by host and editor by
 
 - **No `init { }` block, no `refresh()`, no `retry()` method.** Cold-flow re-collection on resubscription is the existing retry surface. Explicit retry lands with the UI control that needs it.
 - **One-shot navigation is `Channel`-backed, not `StateFlow<Navigation?>`.** `MutableSharedFlow` was considered and rejected: replay-1 would re-fire on rotation, replay-0 would drop in-flight taps. `Channel(BUFFERED)` + `receiveAsFlow()` is the right shape — survives the recomposition window between tap and consume, cancels atomically with `viewModelScope`.
-- **Two rapid taps on the same host row's add control create two discussions.** No debounce / single-flight on `createHostDiscussion`. AC reads "single tap creates exactly one new discussion" — per-tap, not "duplicate-prevent". The fake's `createDiscussion` is fast; if real-world races appear they get their own ticket. Same shape the retired button's tap path had.
+- **Create chat is single-flight per open dialog.** `saving` prevents a second send. A dialog identity
+  survives state copies so a delayed reply from a dismissed dialog cannot close a reopened one for the
+  same host; this needs a same-host completion-order test because different-host tests would pass with
+  value-equal dialog states.
 - **No `flowOn(Dispatchers.IO)`.** Upstream host projection inherits the collector's dispatcher (`Dispatchers.Main.immediate` from `viewModelScope`). The fake's projection is pure CPU map manipulation; Phase 4's remote impl decides its own dispatcher internally. The VM stays dispatcher-agnostic.
 - **Content-free host logging.** Host projection logs a host count; picker and creation paths log static lifecycle/failure events through `RelayLog`. Preview failures never log exception text or decrypted content.
 

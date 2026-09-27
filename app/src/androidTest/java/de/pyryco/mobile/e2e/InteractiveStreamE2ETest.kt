@@ -108,8 +108,8 @@ import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
-import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
@@ -610,22 +610,12 @@ class InteractiveStreamE2ETest {
     /**
      * Create-workspace-folder twin of the ping happy path (#566, Layer 3): drive the real
      * create-a-workspace-folder flow end to end against real claude, exercising the already-shipped
-     * #564 create wire and #565 recents wire. Long-press the host row's add control → Add workspace
-     * (#904) → "Create new folder…" → type a folder name → the folder is selected → OK → land in a fresh
-     * discussion whose workspace **is** the created folder → send the constrained ping to prove it is a usable live-session workspace →
-     * re-open the picker and confirm the folder shows in "Recent".
+     * #564 create wire and #565 recents wire. Create a chat from its Chats section, open the thread's
+     * folder picker, create a new folder and move the chat there. A constrained ping proves the folder is
+     * usable as a live-session workspace; re-opening the thread picker checks it appears in Recent.
      *
-     * **Reachability (the material difference from #537).** The create affordance is **ungated** — it
-     * is *not* behind the `mutationsSupported` gate that hides the rename family, so this scenario is
-     * buildable where the #537 rename e2e is not. The FAB long-press → picker → create-row path is the
-     * same ungated entry on the live build the operator uses.
-     *
-     * **Why AC-3 re-opens the picker from the channel list, not the thread.** The thread's in-place
-     * picker entry — [de.pyryco.mobile.ui.conversations.components.WorkspaceChip] — is gated on
-     * `!state.hasMessages` (`ThreadScreen.kt`), so once the ping reply renders the chip has unmounted and
-     * cannot re-open the picker. AC-3 therefore returns to the list via the thread "Back" nav and re-uses
-     * the same ungated FAB long-press AC-1 already used. Sequencing AC-3 *after* the ping also means the
-     * folder has unambiguously been used by an active session before we assert it in "Recent".
+     * The WorkspaceChip unmounts after messages arrive, so the second picker opens from thread overflow.
+     * Sequencing that check after the ping means the folder has been used by an active session.
      *
      * Semi-deterministic by nature (real claude): every assertion is **tolerant** — generous timeouts,
      * substring / case-insensitive, never a delta-count or timing assertion. [folderName][FOLDER_NAME_PREFIX]
@@ -643,9 +633,12 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
         awaitConnected()
 
-        // 2. Open the Workspace Picker — the long-press path, not the tap, which would create a scratch
-        //    discussion instead. The helper waits for the control it drives; see its KDoc.
-        openWorkspacePicker()
+        // 2. Create a chat in the daemon default, then open its thread folder picker.
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        openThreadWorkspacePicker()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -656,20 +649,12 @@ class InteractiveStreamE2ETest {
         val folderName = FOLDER_NAME_PREFIX + System.currentTimeMillis()
         composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).onFirst().performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNode(hasSetTextAction()).performTextInput(folderName)
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextInput(folderName)
         composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
 
-        // 3b. Add workspace (#904): the created folder becomes the modal's selection and starts nothing.
-        //     OK enables once the folder is selected and the host reads connected; OK starts the chat.
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasText(OK_BUTTON) and isEnabled()).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onAllNodesWithText(folderName, substring = true).onFirst().assertIsDisplayed()
-        composeTestRule.onAllNodes(hasText(OK_BUTTON) and isEnabled()).onFirst().performClick()
-
-        // 4. AC-1: creating the folder navigates into a fresh discussion whose cwd is the created folder.
+        // 4. AC-1: the picker moves the already-open discussion into the created folder.
         //    The send button marks the thread; the workspace chip reflects the folder's basename verbatim
         //    ("Workspace: <folderName> (change)"). The chip is still present here — no messages yet.
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -686,14 +671,8 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
-        // 6. AC-3: the thread now has messages, so the WorkspaceChip is gone (!hasMessages gate). Re-open
-        //    the picker from the channel list — Back to the list, then the same long-press again — and assert
-        //    the freshly-used folder appears in "Recent" (the recents flow re-fetches cold on every open,
-        //    #565). Waiting for the "Recent" header covers the daemon round-trip; an exact "Recent" match is
-        //    unambiguous — more so since #731, which took the list's own "Recent discussions" header away.
-        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        awaitChannelList()
-        openWorkspacePicker()
+        // 6. Re-open the thread picker through overflow after the chip unmounts and check Recent.
+        openThreadWorkspacePicker()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(RECENT_SECTION).fetchSemanticsNodes().isNotEmpty()
         }
@@ -2027,16 +2006,13 @@ class InteractiveStreamE2ETest {
      *
      * **Defaults.** Each host's default is set from that host's own Settings to a run-unique folder created
      * through the picker, whose path is the daemon's canonical one (`workspace_folder_created`). A chat made
-     * from each host row's add control is then read back off that host's live repository: its `cwd`, which
-     * the daemon resolves before recording (pyrycode #2568), must equal that host's stored default. Real
-     * folders, not scratch: Settings' scratch row still sends the literal `~/.pyrycode/scratch`, which the
-     * daemon now records resolved, so it would not compare equal.
+     * from each host's Chats section uses the daemon default instead of either saved app default; Settings
+     * still keeps the two saved paths independent.
      *
      * **Archive.** One of host A's chats is archived from its thread and restored from A's Archive, reached
      * through A's Settings. B's full list and B's archived list are read before and compared after each step.
      *
-     * **Shared app state.** Both stored defaults are written back in `finally`, so later scenarios' chats keep
-     * landing in A's original default, and B is removed there as #847 does.
+     * **Shared app state.** Both stored defaults are written back in `finally`, and B is removed there as #847 does.
      *
      * **Zero real-claude turns**: pairing, folder creation, chat creation, rename, archive and restore are
      * daemon round-trips.
@@ -2076,19 +2052,18 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
 
-            // 4. AC-1: a chat from A's host row lands in A's default, as A's daemon reports its cwd. It is
-            //    renamed so it can be found on the list and in the Archive.
+            // 4. A's Chats plus uses the daemon default, ignoring A's saved app default. Rename it for Archive.
             val chatName = DEFAULTS_CHAT_NAME_PREFIX + System.currentTimeMillis()
             val chatA = createChatOn(serverIdA)
-            assertEquals("A's new chat is not in A's default", pathA, heldConversation(serverIdA, chatA).cwd)
+            assertNotEquals("A's new chat used the app default", pathA, heldConversation(serverIdA, chatA).cwd)
             renameOpenThread(chatName)
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitListText(chatName)
 
-            // 5. AC-1: a chat from B's host row lands in B's default.
+            // 5. B's Chats plus likewise ignores B's saved app default.
             val chatB = createChatOn(serverIdB)
-            assertEquals("B's new chat is not in B's default", pathB, heldConversation(serverIdB, chatB).cwd)
+            assertNotEquals("B's new chat used the app default", pathB, heldConversation(serverIdB, chatB).cwd)
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
 
@@ -2150,102 +2125,6 @@ class InteractiveStreamE2ETest {
                 saved?.setDefaultWorkspace(serverIdA, originalA)
                 originalB?.let { saved?.setDefaultWorkspace(serverIdB, it) }
                 koin?.get<PairedServerCollectionStore>()?.remove(serverIdB)
-            }
-        }
-    }
-
-    /**
-     * A workspace added, renamed and archived from the list (#1087, rung 3). Host A's row adds a workspace
-     * in a new, run-unique folder (#904's Add workspace modal); the chat it starts is in that folder on the
-     * daemon. The repository renames and archives that folder, preserving the folder-settings contract
-     * after the tree stops drawing folder rows. Restoring the chat from A's Archive keeps its label.
-     *
-     * **Shared host state.** The label is cleared and the chat deleted in `finally`. The folder stays under
-     * `~/pyry-workspace`, as #562's does; its run-unique name keeps repeated runs apart.
-     *
-     * **Zero real-claude turns**: folder creation, chat start, the renames, archive and restore are daemon
-     * round trips.
-     */
-    @Test
-    fun interactiveTurn_addRenameArchiveWorkspace_roundTripsThroughTheHost() {
-        val serverId = twoHostArg(ARG_SERVER_ID)
-        val stamp = System.currentTimeMillis()
-        val folderName = "${WORKSPACE_E2E_PREFIX}$stamp"
-        val label = "${WORKSPACE_E2E_PREFIX}label-$stamp"
-        val chatName = "${WORKSPACE_E2E_PREFIX}chat-$stamp"
-        var cwd: String? = null
-        var chatId: String? = null
-        try {
-            awaitChannelList()
-            awaitConnected()
-            val before = hostConversationIds(serverId)
-
-            // 1. AC-1: add a workspace in a new folder from host A's row. OK starts a chat there.
-            openWorkspacePicker()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).onFirst().performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(hasSetTextAction()).performTextInput(folderName)
-            composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
-            clickEnabledOk()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
-            }
-
-            // 2. AC-1: the chat is in that folder on the daemon. It is renamed so the Archive screen can find it.
-            renameOpenThread(chatName)
-            val id = newHostConversationId(serverId, before).also { chatId = it }
-            val path = heldConversation(serverId, id).cwd.also { cwd = it }
-            assertTrue("the chat is not in the new folder: ${path.substringAfterLast('/')}", path.endsWith("/$folderName"))
-            leaveThread()
-
-            // 3. Folder settings remain daemon-owned, even though no folder row is shown in the tree.
-            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).renameWorkspace(path, label) } }
-            assertEquals("the daemon's workspace label", label, heldConversation(serverId, id).workspaceLabel)
-
-            // 4. Archive the folder and restore its chat from Archive.
-            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).archiveWorkspace(path) } }
-            archivedIds(serverId) { id in it }
-
-            // 5. Restore the chat from A's Archive. The snackbar wait keeps the restore coroutine from
-            //    being cancelled by the Back that follows (#551).
-            openSettings()
-            showHostSettings(serverId)
-            composeTestRule.onNodeWithText(ARCHIVED_ROW).performScrollTo().performClick()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(chatName, substring = true)).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodes(hasContentDescription(chatName, substring = true)).onFirst().performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitChannelList()
-
-            // 6. The chat returns under the same folder label.
-            val restored = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(chatName)
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(restored) }.isSuccess }
-            composeTestRule.onNode(restored).assertIsDisplayed()
-            assertEquals("the restored workspace label", label, heldConversation(serverId, id).workspaceLabel)
-        } finally {
-            cwd?.let { path ->
-                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).renameWorkspace(path, null) } } }
-                    .onFailure { Log.w("E2E", "workspace label clear failed: ${it::class.simpleName}") }
-            }
-            chatId?.let { id ->
-                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
-                    .onFailure { Log.w("E2E", "workspace chat delete failed: ${it::class.simpleName}") }
             }
         }
     }
@@ -2314,10 +2193,11 @@ class InteractiveStreamE2ETest {
             assertEquals("B's conversation is not in the shared folder", shared, onB.cwd)
             peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
 
-            // 4. AC-1 + AC-2, thread chip: a discussion from A's row lands in A's default. With its empty thread
-            //    open, the peer's label replaces the folder's name on the chip, and the clear puts it back.
+            // 4. Create A's chat from its Chats section in the daemon default, then move it into the
+            //    chosen folder. With its empty thread open, the peer's label replaces that folder's name.
             val idA = createChatOn(serverIdA).also { chatA = it }
-            assertEquals("A's discussion is not in A's default", shared, heldConversation(serverIdA, idA).cwd)
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).changeWorkspace(idA, shared) } }
+            assertEquals("A's discussion did not move into the chosen folder", shared, heldConversation(serverIdA, idA).cwd)
             val labels = WorkspaceLabels(serverIdA, idA, serverIdB, onB.id)
             awaitChipShows(folder)
             val chipLabel = "${LABEL_E2E_PREFIX}chip-$stamp"
@@ -6247,11 +6127,11 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** Create a chat from [serverId]'s own host row, scrolled into view, and return its id once its thread is open. */
+    /** Create from [serverId]'s Chats section and return its id once its thread is open. */
     private fun createChatOn(serverId: String): String {
         val before = hostConversationIds(serverId)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            runCatching { scrollListTo(hasTestTag(treeHostAddTestTag(serverId))) }.isSuccess
+            runCatching { scrollListTo(hasTestTag(treeHostChatAddTestTag(serverId))) }.isSuccess
         }
         createChat(serverId)
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -6428,7 +6308,7 @@ class InteractiveStreamE2ETest {
      * Deliberately **weaker** than the "New discussion" wait it replaced. That control drew only on a loaded
      * flat state, so waiting for it implied a loaded list; this marker is on both of the list's draws — the
      * blank placeholder and the assembled tree — and implies only that the list is the destination on
-     * screen. [awaitHostAddControl] carries that wait now, for the two helpers where it was load-bearing:
+     * screen. [awaitHostChatAddControl] carries that wait now for the creation helper:
      * acting on a control before it is drawn fails the drive, not the wait.
      */
     private fun awaitChannelList() {
@@ -6437,39 +6317,33 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /**
-     * Create a fresh chat from the channel list; the app navigates into its thread.
-     *
-     * With [openWorkspacePicker], one of the **two** places in this class that name the create control —
-     * the two bodies #738 edits when the control changes, in place of the 33 sites they replaced. Each
-     * carries its own wait rather than sharing a third helper, so the count stays at two.
-     */
+    /** Create a fresh chat from one host's Chats section and confirm before navigation. */
     private fun createChat(serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))) {
-        awaitHostAddControl(serverId).performClick()
+        awaitHostChatAddControl(serverId).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(string(R.string.create_chat_title)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val confirm = hasText(string(R.string.create_chat_action)) and isEnabled() and hasClickAction()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(confirm).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(confirm).performClick()
     }
 
-    /**
-     * Long-press the same control to open that host's Add workspace modal (#904) — a *tap* would create
-     * a scratch chat instead (the long press routes to `ChannelListEvent.TreeHostAddLongPressed`,
-     * `combinedClickable.onLongClick`).
-     */
-    private fun openWorkspacePicker() {
-        awaitHostAddControl().performTouchInput { longClick() }
+    /** Drive the thread's own picker through the overflow path, usable after the chip disappears. */
+    private fun openThreadWorkspacePicker() {
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CHANGE_WORKSPACE_ITEM, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CHANGE_WORKSPACE_ITEM, substring = true).onFirst().performClick()
     }
 
-    /**
-     * Wait for the paired host's own add control and return it (#738).
-     *
-     * The floating button's single fixed content description is gone; each host row's control carries a
-     * per-host name instead, so the durable handle is the per-host test tag keyed on the `serverId` the
-     * harness itself passed in — unambiguous the moment a second host is paired, which a name-based or
-     * position-based match would not be. The tree draws each host once, so the tag matches once.
-     * [serverId] defaults to the first host; #1086 passes the second.
-     */
-    private fun awaitHostAddControl(
+    /** Wait for one host's Chats plus by the host id supplied by the harness. */
+    private fun awaitHostChatAddControl(
         serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
     ): SemanticsNodeInteraction {
-        val tag = treeHostAddTestTag(serverId)
+        val tag = treeHostChatAddTestTag(serverId)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -6513,7 +6387,7 @@ class InteractiveStreamE2ETest {
         // Production UI strings. Keep in sync with res/values/strings.xml:
         //   cd_send_message = "Send message", cd_back = "Back".
         // The button's fixed "New discussion" description went with the button (#738). Creation is now
-        // addressed by the paired host's own tag, built in awaitHostAddControl from the harness's own
+        // addressed by the paired host's own tag, built in awaitHostChatAddControl from the harness's own
         // serverId argument, so nothing here has to name it.
         const val CD_SEND_MESSAGE = "Send message"
         const val CD_BACK = "Back"
@@ -6737,10 +6611,6 @@ class InteractiveStreamE2ETest {
         const val DEFAULTS_FOLDER_PREFIX = "e2e1086-"
         const val DEFAULTS_CHAT_NAME_PREFIX = "e2e1086-chat-"
         const val DEFAULT_WORKSPACE_ROW = "Default workspace"
-
-        // #1087 workspace add, rename and archive. The folder is "e2e1087-<ms>", the label "e2e1087-label-<ms>"
-        // and the chat "e2e1087-chat-<ms>": the label differs from the folder, so #905's rule keeps it.
-        const val WORKSPACE_E2E_PREFIX = "e2e1087-"
 
         // #1089 workspace label from the peer. The folder is "e2e1089-<ms>"; the labels are "e2e1089-chip-<ms>",
         // "e2e1089-tree-<ms>" and "e2e1089-settings-<ms>", none equal to the folder or to each other.

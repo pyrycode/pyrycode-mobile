@@ -133,22 +133,21 @@ The production graph exposes host creation only after
 [startup migration](navigation.md#how-it-works) succeeds using the full saved-host
 snapshot. Creation uses explicit targets:
 
-- `createHostDiscussion(serverId)` captures its argument before reading
-  `appPreferences.defaultWorkspace(serverId).first()`. This one-shot read uses the
-  exact, case-sensitive id and passes the value verbatim. An unset host default
-  yields `DEFAULT_SCRATCH_CWD` (`~/.pyrycode/scratch`); it never falls back to the
-  legacy owner's path or the currently selected host's default.
+- `openCreateChat(serverId)` validates and holds the clicked host. `submitCreateChat()` resolves
+  that host's repository and sends `createDiscussion(null)`, so the daemon chooses its default
+  folder without reading the app's saved per-host default. The dialog state persists across
+  connection changes; a distinct dialog id fences late replies after dismissal and reopening.
 - `openAddWorkspace(serverId)` (#904, replacing `openHostWorkspacePicker`) stores the chosen
   host, exposed as `hostState.addWorkspace`. `submitAddWorkspace()` sends the modal's own
   `selected` path — a recent folder picked via `selectAddWorkspaceFolder`, or one just made via
   `createAddWorkspaceFolder` — through `createDiscussion(selected)`, and only records the
   navigation target if `compareAndSet(pending, null)` still finds the state it published, so a
   send that completes after `dismissAddWorkspace()` neither navigates nor reopens the modal. The
-  explicit path bypasses the preference read `createHostDiscussion` makes. See
+  explicit path remains separate from the Chats confirmation. See
   [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for all five methods and the
   `compareAndSet` discipline shared with `submitChatName`.
 
-Both creation paths resolve `hostSource.repositoryFor(capturedServerId)` immediately
+Both creation paths resolve `hostSource.repositoryFor(capturedServerId)`
 before sending. Compatibility selection changes cannot redirect them, and a
 replacement repository for that same host is used. Cached rows or connected
 indicators cannot authorize a send: unknown, removed, disconnected and handshaking
@@ -156,10 +155,9 @@ targets return no repository, create nothing and emit no success navigation. See
 [exact-host access](dependency-injection-host-conversation-source.md#exact-host-repository-access).
 
 A successful create emits exactly one target with the captured host and returned
-conversation id on `hostNavigationEvents`. Repository failures use the existing
-[guard](guarded-repo-launch.md): `RelayErrorException`, `IllegalStateException` and
-`UnsupportedOperationException` are quiet failures with no navigation. Cancellation
-propagates. Debug events contain static action/failure codes, never exception text,
+conversation id on `hostNavigationEvents`. A failed Chats create leaves its dialog open with a
+static retryable error; dismissal creates nothing. Cancellation propagates. Debug events contain
+static action/failure codes, never exception text,
 host ids, paths or message content. A disconnect after lookup can still fail the
 repository call; lookup is not a reservation.
 
@@ -168,7 +166,7 @@ route builder directly from the destination's `when (event)` — since #738 reti
 `ChannelListViewModel.onEvent` along with the compatibility `navigationEvents` it
 fed, there is no reducer left for the host-qualified events to be distinguished
 from; every `ChannelListEvent` variant the VM needs to act on now maps to one of
-its explicit methods (`onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`,
+its explicit methods (`onHostRowTapped`, `onFoldToggled`, `openCreateChat`, `submitCreateChat`, `dismissCreateChat`,
 `openAddWorkspace`, `selectAddWorkspaceFolder`, `createAddWorkspaceFolder`,
 `submitAddWorkspace`, `dismissAddWorkspace`) straight from `PyryNavHost`. Action
 coroutines and preview collection are cancelled when the ViewModel is cleared.
