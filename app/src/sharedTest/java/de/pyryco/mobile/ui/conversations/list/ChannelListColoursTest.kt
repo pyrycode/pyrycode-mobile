@@ -7,6 +7,8 @@ import android.view.View
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -23,6 +25,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.GraphicsMode
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -131,6 +134,25 @@ class ChannelListColoursTest {
             }
         val bands = matchingRows.filterIndexed { index, y -> index == 0 || y > matchingRows[index - 1] + 1 }
         assertEquals("Two separate full-width rules", 2, bands.size)
+        val density = checkNotNull(rootView).resources.displayMetrics.density
+        val panel = rule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).fetchSemanticsNode().boundsInRoot
+        val host =
+            rule
+                .onAllNodesWithText("Host")
+                .onFirst()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        assertEquals("Divider top", 68f, (bands.first() - panel.top) / density, 0.5f)
+        val firstRuleEnd = matchingRows.first { it + 1 !in matchingRows } + 1
+        assertEquals("Divider thickness", 1f, (firstRuleEnd - bands.first()) / density, 0.5f)
+        assertEquals("Divider to first row including list padding", 24f, (host.top - firstRuleEnd) / density, 0.5f)
+        val rulePixels = (0 until bitmap.width).filter { closeColour(expected, bitmap.getPixel(it, bands.first())) }
+        assertEquals("Divider left gutter", 20f, (rulePixels.first() - panel.left) / density, 0.5f)
+        assertEquals("Divider right gutter", 20f, (panel.right - rulePixels.last() - 1) / density, 0.5f)
+        // The runner's temp directory survives Robolectric's per-test sandbox cleanup for visual review.
+        val file = File(System.getProperty("java.io.tmpdir"), "sidebar-1186-$expected.png")
+        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        println("Sidebar render: ${file.absolutePath}")
     }
 
     private fun assertSelectedRowContrasts(bitmap: Bitmap) {

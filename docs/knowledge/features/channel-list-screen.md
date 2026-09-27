@@ -1,9 +1,9 @@
 # ChannelListScreen
 
 Stateless `(hostState, onEvent)` composable that renders a Material 3 `Scaffold` with the list's own
-top bar (a settings entry and an archive entry above a rule, #737 — see
+top bar (Settings and Archive at the left, one “Pair another host” plus at the right, above a rule — see
 [The list's own top bar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) below) above a single-`LazyColumn` conversation tree
-(#731): a Channels section and a Chats section, each holding host rows, their workspace rows and those
+(#731): Channels and Chats groups without global title rows (#1186), each holding host rows, their workspace rows and those
 workspaces' conversation rows, drawn from `hostState` (#729's `HostChannelListEntry.channelGroups` /
 `chatGroups`) using the row composables from `ui/conversations/components/ConversationTreeRows.kt` (#730,
 see [Tree rows](channel-list-screen-how-it-works.md#tree-rows-730) below). The flat `ConversationRow` list and the inline "Recent discussions"
@@ -13,8 +13,8 @@ through a selected-host adapter. Fold and selection state (which nodes are colla
 opened from this list) live in the ViewModel, so they survive recomposition, `LazyColumn` recycling, an
 incoming snapshot and the thread round trip.
 
-The floating action button that used to create a chat and open pairing is gone (#738): each section header
-now carries its own add control that opens pairing's existing scanner entry, and each host row carries one
+The floating action button that used to create a chat and open pairing is gone (#738). Pairing opens from
+the fixed top-right toolbar control (#1186), and each host row carries an add control
 that starts a chat on **that row's** host, or — held — opens [Add workspace](channel-list-screen-tree-and-controls.md#add-controls-738)
 on that same host (#904) — see [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738) below. With the button
 gone, the flat `ChannelListUiState` compatibility model (loading/error/empty placeholders,
@@ -25,22 +25,27 @@ Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/
 ## What it does
 
 Wraps its body in a `Scaffold` whose `topBar` is the file-private `ChannelListTopBar` (rendered in **every**
-state — see [The list's own top bar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) below). There is no `floatingActionButton`
+state and after scrolling to the final row). It has no title: “Open settings” and “Open archive” are at the
+left, and exactly one “Pair another host” control at the right emits `PairHostTapped` into the existing
+[scanner/code flow](navigation.md#manual-pairing-entry-and-return). The three 24dp glyphs retain separate
+48dp targets; 20dp gutters, a 1dp divider and a 24dp gap to the first row apply in both themes — see
+[The list's own top bar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737). There is no `floatingActionButton`
 slot: #738 retired it, along with the flat `ChannelListUiState` it gated on.
 
 The body branches on `hostState.hosts` — the only model the screen is fed:
 
 - **`hostState.hosts.isEmpty()`** — no host has produced a snapshot yet, or there are none paired. Falls back
-  to the centred `R.string.channel_list_empty` ("To pair a host, open Settings and choose Pair another server.")
-  copy. The always-present Settings gear leads to [Settings](settings-screen.md#what-it-does), whose
-  Pair another server row opens the scanner even with no paired hosts. The guidance names that available
-  route without asserting that no host is paired while snapshots are pending (#1169). This is the only
+  to the centred `R.string.channel_list_empty` ("To pair a host, tap Pair another host at the top right.")
+  copy. The guidance names the always-present toolbar control without asserting that no host is paired
+  while snapshots are pending. Settings still opens with no selected host; Archive remains visible but
+  its tap does nothing without a selected host. This is the only
   blank-tree case; a paired host with a snapshot but no conversations still draws its own host row, which is
   content, not a blank screen. The `Loading` / `Error(message)` compatibility placeholders #738 removed drew
   from the retired flat state; a cold start or an upstream failure now renders this same empty copy rather
   than a distinct message — see [Edge cases](#edge-cases--limitations).
 - **Otherwise** — a private `ConversationTree(hostState, onEvent, modifier)` composable renders the full
-  two-section tree, its section headers and host rows each carrying their own add control. See
+  two-group tree and its separator, without global Channels/Chats title rows or list-level pairing controls.
+  Host-row add controls still create chats on their own hosts; folds and workspace/conversation actions remain. See
   [Conversation tree (#731)](#conversation-tree-731) and [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
 `Routes.DISCUSSION_LIST` / `DiscussionListScreen` stay in the graph, unreachable — removing them was out of
@@ -57,8 +62,7 @@ sealed interface ChannelListEvent {
     data object SettingsTapped : ChannelListEvent
     /** The list's own archive entry — the same destination Settings' archived-discussions row opens (#737). */
     data object ArchiveTapped : ChannelListEvent
-    /** A section header's add control: pair an additional host (#738). Carries no section — both
-     *  headers open the same pairing flow, so only the control's own name disambiguates. */
+    /** The fixed toolbar's add control opens the existing scanner/code pairing flow. */
     data object PairHostTapped : ChannelListEvent
     /** A host row's add control: a chat on **that** row's host, in its default workspace (#738). */
     data class TreeHostAddTapped(val serverId: String) : ChannelListEvent
@@ -152,7 +156,8 @@ The file-private `ChannelListFab` — the manually-composed `Surface` #22 → #2
 directly (bypassing the M3 `FloatingActionButton` widget's own inner `Surface(onClick = ...)`, which would
 otherwise shadow an outer `combinedClickable` — see [`../codebase/25.md`](../codebase/25.md) and
 [`../codebase/221.md`](../codebase/221.md)) — is gone (#738). The same construction lives on in
-`TreeAddControl`, the control both new add controls draw; see [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
+`TreeRowControl`, used by the tree rows; the toolbar uses `IconButton` for its single tap action.
+See [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
 ## Conversation tree (#731)
 
@@ -226,18 +231,19 @@ distinction from the tree's own blank at all — see the next section.
   section's test tag; a tree far taller than the viewport reaches its last row via
   `performScrollToNode(hasScrollAction())`; and a nameless host and a nameless conversation render their
   fallback labels.
-  `listBar_drawsBothEntriesAndNoneOfTheRetiredChrome_onEveryDraw` (#737, reshaped #738) walks one composition
-  through both draws — the empty placeholder and the tree (four before #738 retired the flat state's loading
-  and error draws) — identifying each by its own distinguishing copy before asserting both bar entries
-  `assertIsDisplayed` and the app name / logo description `assertDoesNotExist`; a bar placed inside the tree's
-  scroll container would have passed on the loaded draw alone and vanished on the placeholder, which is the
-  mistake this walk exists to catch. `archiveEntry_emitsArchiveTapped` (#737) guards the new event, mirroring
-  the unchanged `settingsGear_emitsSettingsTapped` that guards `cd_open_settings` surviving.
+  `listBar_drawsThreeEntriesAndNoneOfTheRetiredChrome_onEveryDraw` walks one composition through the empty
+  placeholder and tree. It checks all three toolbar controls, their events, separate 48dp targets, 24dp
+  glyphs and outer 20dp gutters, plus absence of the global titles and old section-qualified pairing names.
+  A loaded-state-only assertion could miss a toolbar disappearing on the placeholder; the tall-tree test
+  also compares toolbar bounds and taps all three controls after scrolling to the final chat.
+  `ChannelListColoursTest` measures the rendered divider in light and dark themes: 1dp thickness, 20dp
+  gutters and 24dp to the first host, including list padding. Measuring only a padding constant would
+  miss extra space contributed by the list or row.
   `emptyState_rendersPlaceholder_whenThereAreNoHosts` checks the literal pairing guidance, absence of the
-  retired plus instruction and a Settings tap emitting `SettingsTapped`. Reading the expected copy from
-  the same string resource would also pass with guidance pointing to a missing control (#1169).
-  `sectionHeaders_eachCarryTheirOwnPairingControl` (#738) asserts both section headers carry a control,
-  each separately named, each emitting `PairHostTapped`; `hostRowAddControl_targetsItsOwnHost_onTapAndOnLongPress`
+  retired plus instruction, the pairing control emitting `PairHostTapped` and Settings emitting `SettingsTapped`.
+  Reading the expected copy from the same string resource would also pass with guidance pointing to a
+  missing control (#1169).
+  `hostRowAddControl_targetsItsOwnHost_onTapAndOnLongPress`
   drives a two-host tree's **second** host and asserts the emitted `TreeHostAddTapped` /
   `TreeHostAddLongPressed` carry that host's `serverId`, so a globally-selected wiring could not pass;
   `hostRowAddControl_doesNotFoldTheRowItSitsIn` taps the control and asserts one `TreeHostAddTapped` with the
@@ -336,7 +342,7 @@ distinction from the tree's own blank at all — see the next section.
   `requestWorkspaceArchive`, `confirmWorkspaceArchive`, `declineWorkspaceArchive`,
   `dismissWorkspaceEditor`; the compatibility `state` producer, `onEvent`
   reducer and `navigationEvents` this screen once also consumed retired with the button in #738), [Tree
-  rows](channel-list-screen-how-it-works.md#tree-rows-730) (`TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow` / `TreeConversationRow`,
+  rows](channel-list-screen-how-it-works.md#tree-rows-730) (`TreeHostRow` / `TreeWorkspaceRow` / `TreeConversationRow`,
   #730; `TreeRowControl` since #738, renamed from `TreeAddControl` in #744), [`EditHostModal`](mobile-modal.md#callers)
   (#743's shell content, driven by this screen since #744), [`EditChatModal`](mobile-modal.md#callers)
   (#826's shell content, driven by this screen since #827), [`AddWorkspaceModal`](mobile-modal.md#callers)

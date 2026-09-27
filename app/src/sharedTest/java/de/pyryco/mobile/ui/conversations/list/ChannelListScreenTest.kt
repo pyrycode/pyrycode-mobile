@@ -19,6 +19,7 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
@@ -173,8 +174,8 @@ class ChannelListScreenTest {
             ),
         )
 
-        composeTestRule.onNode(hasText(string(R.string.channels_section_header))).assertExists()
-        composeTestRule.onNode(hasText(string(R.string.chats_section_header))).assertExists()
+        composeTestRule.onNode(hasText(string(R.string.channels_section_header))).assertDoesNotExist()
+        composeTestRule.onNode(hasText(string(R.string.chats_section_header))).assertDoesNotExist()
         // The host draws a row in each section; its workspaces and conversations start expanded, which is
         // what every scripted device scenario depends on.
         composeTestRule.onAllNodes(hasText("Pyrybox")).assertCountEquals(2)
@@ -307,10 +308,23 @@ class ChannelListScreenTest {
     @Test
     fun tallTree_reachesItsLastRowInOneScrollContainer() {
         val many = (1..60).map { conversation("c$it", "channel $it", "/w/one", true) }
-        setTree(entry(serverId = "pyrybox", displayName = "Pyrybox", channels = many))
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = many,
+                chats = listOf(conversation("last", "last chat", "/w/two", false)),
+            ),
+        )
+        val before = toolbarBounds()
 
         composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("channel 60"))
         composeTestRule.onNode(hasText("channel 60")).assertIsDisplayed()
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("last chat"))
+        composeTestRule.onNode(hasText("last chat")).assertIsDisplayed()
+        assertBarDrawn()
+        assertEquals(before, toolbarBounds())
+        clickToolbar()
     }
 
     @Test
@@ -328,7 +342,7 @@ class ChannelListScreenTest {
     }
 
     /**
-     * The list draws its own bar (#737), so both entries have to survive every draw — not just the one a
+     * The list draws its own bar (#737), so all three entries have to survive every draw — not just the one a
      * single-state test happens to pick. A bar placed inside the tree's scroll container would pass on the
      * loaded draw and vanish on the centred placeholder, which is exactly the mistake this walks.
      *
@@ -340,17 +354,20 @@ class ChannelListScreenTest {
      * the generic top app bar, and the floating button's description with #738.
      */
     @Test
-    fun listBar_drawsBothEntriesAndNoneOfTheRetiredChrome_onEveryDraw() {
+    fun listBar_drawsThreeEntriesAndNoneOfTheRetiredChrome_onEveryDraw() {
         var hostState: HostChannelListState by mutableStateOf(HostChannelListState())
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                ChannelListScreen(hostState = hostState, onEvent = {})
+                ChannelListScreen(hostState = hostState, onEvent = { events += it })
             }
         }
 
         // 1. The empty placeholder: no host at all.
         composeTestRule.onNode(hasText(string(R.string.channel_list_empty))).assertExists()
         assertBarDrawn()
+        assertToolbarGeometry()
+        clickToolbar()
+        events.clear()
 
         // 2. The tree — a host arrives, so the placeholder gives way to real rows.
         composeTestRule.runOnIdle {
@@ -367,9 +384,17 @@ class ChannelListScreenTest {
         }
         composeTestRule.onNode(hasText("alpha channel")).assertIsDisplayed()
         assertBarDrawn()
+        assertToolbarGeometry()
+        clickToolbar()
     }
 
     private fun assertBarDrawn() {
+        composeTestRule.onAllNodes(hasContentDescription("Pair another host")).assertCountEquals(1)
+        composeTestRule.onNode(hasContentDescription("Pair another host")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Channels")).assertDoesNotExist()
+        composeTestRule.onNode(hasText("Chats")).assertDoesNotExist()
+        composeTestRule.onNode(hasContentDescription("Pair another host, Channels")).assertDoesNotExist()
+        composeTestRule.onNode(hasContentDescription("Pair another host, Chats")).assertDoesNotExist()
         composeTestRule.onNode(hasContentDescription(string(R.string.cd_open_settings))).assertIsDisplayed()
         composeTestRule.onNode(hasContentDescription(string(R.string.cd_open_archive))).assertIsDisplayed()
         // The generic top app bar's app name and Pyry logo go with it.
@@ -379,23 +404,39 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasContentDescription("New discussion")).assertDoesNotExist()
     }
 
-    /**
-     * The tree draws a header per section, so the pairing control repeats — and the two must be separately
-     * addressable rather than sharing one name. Both are driven here, so neither header can ship a control
-     * that is drawn but inert.
-     */
-    @Test
-    fun sectionHeaders_eachCarryTheirOwnPairingControl() {
-        setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"))
+    private val toolbarNames = listOf("Open settings", "Open archive", "Pair another host")
 
-        val channels = string(R.string.cd_tree_section_pair_host, string(R.string.channels_section_header))
-        val chats = string(R.string.cd_tree_section_pair_host, string(R.string.chats_section_header))
-        assertNotEquals(channels, chats)
+    private fun toolbarBounds() =
+        toolbarNames.map {
+            composeTestRule.onNode(hasContentDescription(it)).getUnclippedBoundsInRoot()
+        }
 
-        composeTestRule.onNode(hasContentDescription(channels)).performClick()
-        composeTestRule.onNode(hasContentDescription(chats)).performClick()
+    private fun clickToolbar() {
+        toolbarNames.forEach { composeTestRule.onNode(hasContentDescription(it)).performClick() }
+        assertEquals(listOf(ChannelListEvent.SettingsTapped, ChannelListEvent.ArchiveTapped, ChannelListEvent.PairHostTapped), events)
+    }
 
-        assertEquals(listOf(ChannelListEvent.PairHostTapped, ChannelListEvent.PairHostTapped), events)
+    private fun assertToolbarGeometry() {
+        val targets = toolbarBounds()
+        targets.forEach {
+            assertTrue(it.right - it.left >= 48.dp)
+            assertTrue(it.bottom - it.top >= 48.dp)
+            assertEquals(targets.first().top, it.top)
+        }
+        assertTrue(targets[0].right <= targets[1].left)
+        assertTrue(targets[1].right <= targets[2].left)
+        val glyphs =
+            toolbarNames.map {
+                composeTestRule.onNode(hasContentDescription(it), useUnmergedTree = true).getUnclippedBoundsInRoot()
+            }
+        val root = composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).getUnclippedBoundsInRoot()
+        glyphs.forEach {
+            assertEquals(24.dp, it.right - it.left)
+            assertEquals(24.dp, it.bottom - it.top)
+            assertEquals(28.dp, it.top - root.top)
+        }
+        assertEquals(20.dp, glyphs.first().left - root.left)
+        assertEquals(20.dp, root.right - glyphs.last().right)
     }
 
     /**
@@ -1276,8 +1317,12 @@ class ChannelListScreenTest {
         }
 
         composeTestRule
-            .onNode(hasText("To pair a host, open Settings and choose Pair another server."))
+            .onNode(hasText("To pair a host, tap Pair another host at the top right."))
             .assertIsDisplayed()
+        composeTestRule.onNode(hasText("No host is paired")).assertDoesNotExist()
+        composeTestRule.onNode(hasContentDescription("Pair another host")).assertIsDisplayed().performClick()
+        assertEquals(listOf(ChannelListEvent.PairHostTapped), events)
+        events.clear()
         composeTestRule.onNode(hasText("Tap + to start a conversation")).assertDoesNotExist()
         composeTestRule
             .onNode(hasContentDescription(string(R.string.cd_open_settings)))

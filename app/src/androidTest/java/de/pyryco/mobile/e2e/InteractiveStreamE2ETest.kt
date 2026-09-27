@@ -6325,7 +6325,7 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Pair a second host by pasting [pairCode]: the Channels header's add control opens the scanner, whose
+     * Pair a second host by pasting [pairCode]: the toolbar's add control opens the scanner, whose
      * every state offers a paste link ([PASTE_CODE_LINK]), which opens `PairCodeScreen`. Pair → confirm the
      * fingerprint → the screen waits for Connected and returns to the list.
      */
@@ -6334,9 +6334,8 @@ class InteractiveStreamE2ETest {
         hostName: String = HOST_B_NAME,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val pairControl =
-            context.getString(R.string.cd_tree_section_pair_host, context.getString(R.string.channels_section_header))
-        composeTestRule.onAllNodes(hasContentDescription(pairControl)).onFirst().performClick()
+        val pairControl = context.getString(R.string.cd_pair_another_host)
+        composeTestRule.onNode(hasContentDescription(pairControl)).performClick()
         val pasteLink = hasText(PASTE_CODE_LINK, substring = true) and hasClickAction()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(pasteLink).fetchSemanticsNodes().isNotEmpty()

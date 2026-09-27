@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
@@ -47,7 +48,6 @@ import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.components.EditWorkspaceModal
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
-import de.pyryco.mobile.ui.conversations.components.TreeSectionHeader
 import de.pyryco.mobile.ui.conversations.components.TreeWorkspaceRow
 import de.pyryco.mobile.ui.host.HostEditorModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -93,35 +93,25 @@ internal const val CHANNEL_LIST_TEST_TAG: String = "channel-list"
  */
 internal const val PLAY_STORE_URL: String = "https://play.google.com/store/apps/details?id=de.pyryco.mobile"
 
-// The list's own horizontal gutter — the tree rows carry only their own indent (#730). Vertical rhythm
-// follows the supplied design: 12dp from a section header to its first host, 16dp between host
-// containers, and 28dp of air on each side of the rule between the two sections.
+// Both conversation groups keep their host spacing and separator while the host-first tree is pending.
 private val TreeGutter = 20.dp
-private val TreeFirstHostGap = 8.dp
 private val TreeHostGap = 16.dp
 private val TreeSectionRuleGap = 28.dp
 
-// TreeSectionHeader centres a 20dp label in 48dp: 14dp inner slack + 14dp here = 28dp.
-private val TreeSectionRuleBottomGap = 14.dp
-
-// The 88dp that kept the floating action button off the tree's last row went with the button (#738). What
-// remains is the air the last row needs not to sit flush against the screen's bottom edge — the outer
-// Scaffold in MainActivity already pads the whole nav host past the system bars.
+// The outer Scaffold in MainActivity owns the system-bar insets.
 private val TreeBottomInset = 16.dp
 
-// The list's own bar (#737). The supplied design draws 24dp glyphs with their centres 32dp and 84dp from the
-// screen edge, a rule 20dp below them and 28dp of air between that rule and the first section header. Touch
-// needs 48dp, the same minimum the tree rows already hold to — and wrapping a 24dp glyph in a 48dp target adds
-// `BarTouchSlack` on every side of it. So each of the design's offsets is taken less that slack, which puts
-// both glyphs exactly where the design puts them while giving each entry a target a thumb can hit.
+// Figma's 24dp top inset + 4dp inside its 28dp wrapper put the glyph at 28dp. Centre
+// it in a 48dp target, subtracting the 12dp touch slack from that offset and the 16dp
+// wrapper-to-rule gap. The first host has no extra padding below the bar's 24dp gap.
 private val BarGlyphSize = 24.dp
 private val BarTouchSize = 48.dp
 private val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
-private val BarTopGap = 24.dp - BarTouchSlack
-private val BarRuleGap = 20.dp - BarTouchSlack
-private val BarBottomGap = TreeSectionRuleBottomGap
+private val BarTopGap = 28.dp - BarTouchSlack
+private val BarRuleGap = 16.dp - BarTouchSlack
+private val BarBottomGap = 24.dp
 
-// 52dp between the glyph centres, less the two 48dp targets they sit in.
+// Keep 52dp centre spacing so the left targets never overlap (the reference draws 44dp).
 private val BarEntryGap = 4.dp
 
 private const val SECTION_RULE_ALPHA = 0.60f
@@ -146,13 +136,7 @@ sealed interface ChannelListEvent {
     /** The list's own archive entry — the same destination Settings' archived-discussions row opens (#737). */
     data object ArchiveTapped : ChannelListEvent
 
-    /**
-     * A section header's add control: pair an additional host (#738).
-     *
-     * Carries no section, deliberately. Both headers open the same existing pairing flow, so a section
-     * identifier would establish no capability the route could act on; the section is what each control's
-     * *name* disambiguates, for the operator and for TalkBack.
-     */
+    /** The fixed toolbar's add control opens the existing scanner/code pairing flow. */
     data object PairHostTapped : ChannelListEvent
 
     /** A host row's add control: a chat on **that** row's host, in its default workspace. */
@@ -573,13 +557,11 @@ private fun WorkspaceEditorModal(
 }
 
 /**
- * The list's own bar: a settings entry at the leading content edge, an archive entry beside it, and the rule
- * that closes the bar (#737). The generic top app bar the supplied design marks hidden took the app name and
- * the Pyry logo with it — the bar holds these two entries and the rule, nothing else.
+ * The list's fixed, titleless bar: Settings and Archive at the left, host pairing at the right,
+ * and the rule that closes the bar.
  *
  * It lives in the `Scaffold`'s `topBar` slot rather than in the tree's scroll container, so it draws above the
- * branch on `hostState.hosts` and is therefore carried by all four of the screen's draws: the loading and
- * error texts, the empty placeholder and the assembled tree.
+ * branch on `hostState.hosts` and is therefore carried by both the empty placeholder and the assembled tree.
  *
  * No window insets of its own, unlike the `TopAppBar` it replaces: the outer `Scaffold` in `MainActivity`
  * already pads the whole `PyryNavHost` past the system bars, and the old bar applied its own on top of that.
@@ -588,25 +570,32 @@ private fun WorkspaceEditorModal(
 private fun ChannelListTopBar(onEvent: (ChannelListEvent) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.padding(start = TreeGutter - BarTouchSlack, top = BarTopGap),
-            horizontalArrangement = Arrangement.spacedBy(BarEntryGap),
+            modifier =
+                Modifier.fillMaxWidth().padding(
+                    start = TreeGutter - BarTouchSlack,
+                    end = TreeGutter - BarTouchSlack,
+                    top = BarTopGap,
+                ),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(BarEntryGap)) {
+                ChannelListBarEntry(
+                    icon = Icons.Default.Settings,
+                    label = stringResource(R.string.cd_open_settings),
+                    onClick = { onEvent(ChannelListEvent.SettingsTapped) },
+                )
+                ChannelListBarEntry(
+                    // Keep the existing Material approximation of Figma's FontAwesome archive glyph.
+                    icon = Icons.Default.Archive,
+                    label = stringResource(R.string.cd_open_archive),
+                    onClick = { onEvent(ChannelListEvent.ArchiveTapped) },
+                )
+            }
             ChannelListBarEntry(
-                icon = Icons.Default.Settings,
-                // Carried forward verbatim: the live archive/restore scenario reaches Settings by this
-                // description, mirrored in its own CD_OPEN_SETTINGS constant.
-                label = stringResource(R.string.cd_open_settings),
-                onClick = { onEvent(ChannelListEvent.SettingsTapped) },
-            )
-            ChannelListBarEntry(
-                // The design draws FontAwesome's `box-archive-solid`. Matched to the Material icon for the
-                // same affordance, as the tree rows matched theirs (`Dns` for a host, `FolderOpen` for a
-                // workspace), rather than vendoring a drawable: same lidded-box silhouette, and the name says
-                // what the entry does. `Inventory2` is the closer silhouette — a slot where this has an
-                // arrow — but it reads as inventory, not archive, at the call site.
-                icon = Icons.Default.Archive,
-                label = stringResource(R.string.cd_open_archive),
-                onClick = { onEvent(ChannelListEvent.ArchiveTapped) },
+                // The toolbar uses the same Material plus as the existing tree add controls.
+                icon = Icons.Default.Add,
+                label = stringResource(R.string.cd_pair_another_host),
+                onClick = { onEvent(ChannelListEvent.PairHostTapped) },
             )
         }
         HorizontalDivider(
@@ -617,6 +606,7 @@ private fun ChannelListTopBar(onEvent: (ChannelListEvent) -> Unit) {
                     top = BarRuleGap,
                     bottom = BarBottomGap,
                 ),
+            thickness = 1.dp,
             color = sidebarRuleColor(),
         )
     }
@@ -660,7 +650,7 @@ private fun ConversationTree(
         treeSection(ConversationTreeSection.Channels, hostState, onEvent)
         item(key = "tree-section-rule") {
             HorizontalDivider(
-                modifier = Modifier.padding(top = TreeSectionRuleGap, bottom = TreeSectionRuleBottomGap),
+                modifier = Modifier.padding(vertical = TreeSectionRuleGap),
                 color = sidebarRuleColor(),
             )
         }
@@ -669,7 +659,7 @@ private fun ConversationTree(
 }
 
 /**
- * Emits one section's rows: its header, then each host, each of that host's workspaces, and each
+ * Emits one group's rows: each host, each of that host's workspaces, and each
  * workspace's conversations — stopping at whichever node the operator folded.
  *
  * A conversation row's tap target is built from the row's **own** `serverId`, so a tree drawing rows
@@ -680,12 +670,6 @@ private fun LazyListScope.treeSection(
     hostState: HostChannelListState,
     onEvent: (ChannelListEvent) -> Unit,
 ) {
-    item(key = treeItemKey("header", section.name)) {
-        TreeSectionHeader(
-            title = stringResource(section.titleRes),
-            onAddTapped = { onEvent(ChannelListEvent.PairHostTapped) },
-        )
-    }
     hostState.hosts.forEachIndexed { index, entry ->
         val host = entry.host
         val hostKey = TreeFoldKey(section, host.serverId)
@@ -701,7 +685,7 @@ private fun LazyListScope.treeSection(
                 onEditTapped = { onEvent(ChannelListEvent.TreeHostEditTapped(host.serverId)) },
                 onAddTapped = { onEvent(ChannelListEvent.TreeHostAddTapped(host.serverId)) },
                 onAddLongPressed = { onEvent(ChannelListEvent.TreeHostAddLongPressed(host.serverId)) },
-                modifier = Modifier.padding(top = if (index == 0) TreeFirstHostGap else TreeHostGap),
+                modifier = Modifier.padding(top = if (index == 0) 0.dp else TreeHostGap),
                 onReconnectTapped = {
                     onEvent(
                         when (host.connectionStatus.relay) {

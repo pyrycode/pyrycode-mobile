@@ -11,7 +11,7 @@ owning `serverId` and the host-local `conversationId`.
 - **`welcome`** (start destination when no paired-server record exists) — renders `WelcomeScreen` (#7).
 - **`scanner`** — renders [ScannerScreen](scanner-screen.md) with its destination-scoped ViewModel, camera permission launcher and live preview. A decoded QR is parsed into an immutable fingerprint/record confirmation state without writing. Confirm saves, starts the controller and navigates to `channel_list`, popping the scanner inclusively; this camera path does not await encrypted readiness. Decline/Back from confirmation re-arms scanning. Paste actions navigate to `pair_code`; ordinary Back pops to the caller.
 - **`pair_code`** — renders [PairCodeScreen](paste-code-dialog.md) with a destination-scoped `PairCodeViewModel`. Its optional-name form, fingerprint confirmation and saved-target connection wait stay within one route. Cancel returns to the caller; success clears the previous graph entries and opens `channel_list` only after both target connection legs are ready. Since #842 the destination pattern (`Routes.PAIR_CODE_ROUTE`) takes an optional `serverId` query argument, shaped like Settings' own below; when present, the flow is scoped to re-pair exactly that host instead of naming a new one — see [manual pairing entry and return](#manual-pairing-entry-and-return).
-- **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md), fed entirely by host-qualified state since #738 retired the flat compatibility model and its `selectedServerId()` adapter for this screen. Its own section-header add control also opens `scanner` (`ChannelListEvent.PairHostTapped → navController.navigate(Routes.SCANNER)`, #738) — the first entry into pairing that does not require an unpaired phone, reusing the existing `scanner` destination above rather than adding a second flow; both of that destination's completions (camera confirm, and manual entry via `pair_code`) already land back here.
+- **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md), fed entirely by host-qualified state since #738 retired the flat compatibility model and its `selectedServerId()` adapter for this screen. Its single top-right toolbar control, “Pair another host”, opens `scanner` (`ChannelListEvent.PairHostTapped → navController.navigate(Routes.SCANNER)`). Both empty and populated lists expose this entry. Camera confirmation and successful manual pairing via `pair_code` land back on the list; see [manual pairing entry and return](#manual-pairing-entry-and-return).
 - **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md). Unreachable since #731 retired the channel list's "see all" link that was its only entry point; the route, screen and its adapter (captures host-qualified row and promotion targets, consumes only `hostNavigationEvents`) stay in the graph regardless — removing them is out of scope for both #731 and #738.
 - **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack. Also reachable from outside the graph entirely since [#685](../../specs/architecture/685-mobile-attention-alerts.md): a notification tap parses to the same `HostConversationTarget` and `PyryNavHost` pushes it on top of `channel_list` via its `openTarget` param, gated by `ThreadDestinationFactory.isSavedHost` — see [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685).
 - **`markdown_reader/{serverId}/{conversationId}/{attachmentId}`** — renders the [Markdown reader screen](markdown-reader-screen.md) (#1027), reached only from the thread destination above: tapping a ready file row whose name ends in `.md`/`.markdown` reads and strictly decodes it first, then routes `ThreadNavigation.OpenMarkdown(attachmentId)` to `navController.navigate(Routes.markdownReader(target, event.attachmentId))`. Wrapped in `HostDestination` like the thread route; the back arrow and system back both pop back to the same thread entry.
@@ -60,9 +60,12 @@ Every scanner paste action (viewport, denied and error) navigates to
 `koinViewModel<PairCodeViewModel>()` from `appModule`, using the observable
 collection store and registry. Its state holds both drafts in memory, without
 saving the pairing code in navigation arguments or saved instance state.
-The channel list's own section-header add control is a list entry point into this flow
-(`scanner`, then this route via Paste — #738); it is the first door into pairing reachable
-from an already-paired phone, where previously only the unpaired `welcome` screen had one.
+The channel list's single “Pair another host” control is fixed at the toolbar's top right (#1186),
+replacing the repeated global-header entries. It emits the existing parameterless `PairHostTapped`:
+list → scanner → Paste → code pairing. The control stays visible with an empty list and after scrolling;
+empty guidance points to it without assuming that missing host snapshots mean no hosts are paired.
+From code editing, Cancel or Back pops to the scanner; ordinary scanner Back returns to the same invoking
+list entry. No extra route or list-specific cancellation flag is needed.
 
 Since #842, a tree host row whose saved pairing was rejected (`RelayLinkStatus.PairingRejected`) is a
 third entry, scoped to that one host: `ChannelListEvent.TreeHostRePairTapped(serverId)` routes to
@@ -305,7 +308,7 @@ between synthetic-bar geometry and real-bar screenshots.
 mounts the production graph and opens `pair_code` over both Welcome and the
 channel list. It exercises all three exit actions after validation failure and
 checks the collection is unchanged. Directly navigating from the list here tests
-return semantics, not the future #641 entry affordance. The
+return semantics but cannot prove the toolbar's event wiring. The
 [pair-code tests](paste-code-dialog.md#testing) separately cover confirmation,
 failure/retry, cancellation fencing and actual keyboard reachability.
 
@@ -358,6 +361,13 @@ tapping the non-owner row hops to that host's own Settings by its **exact** id (
 Alpha's reserved-character id, not Bravo's plain one) and one `popBackStack()` from there reaches the
 channel list rather than retracing the hop — the `popUpTo … inclusive` back-stack behaviour above,
 proven on device.
+
+`SettingsNavigationTest.toolbarPairingUnwindsThroughScannerToTheInvokingList` drives the actual toolbar
+control through the production graph. It checks scanner Back, code Cancel then scanner Back, and code
+Back then scanner Back against the original `NavBackStackEntry`, with the saved-host count unchanged.
+`emptyToolbarArchiveHasNoDestinationAndSettingsStillOpens` removes both hosts and proves that Archive's
+tap stays on the list while Settings still opens with an empty owner. Event-only screen tests could pass
+with a broken destination or cancellation path; these route tests cover that boundary.
 
 `ArchiveNavigationTest` (#715) copies that same harness for the Archive destination: both hosts hold
 an archived conversation under the **same** id, proving the colliding-id case means giving two hosts

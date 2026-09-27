@@ -7,23 +7,26 @@ Split out of [ChannelListScreen](channel-list-screen.md) on 2026-09-22 to keep t
 `ConversationTree(hostState, onEvent, modifier)` is a single `LazyColumn` — **no nested scroll region
 anywhere** — with `contentPadding = PaddingValues(start = TreeGutter, end = TreeGutter, bottom = TreeBottomInset)`.
 `TreeGutter = 20.dp` is the list's own horizontal gutter; the row composables from #730 carry only their own
-tree indent and no gutter, per that ticket's note. `TreeBottomInset = 88.dp` keeps the FAB off the last row.
-The private `LazyListScope.treeSection(section, hostState, onEvent)` emits one section's items — the
-`TreeSectionHeader`, then per host a `TreeHostRow`, then (unless the host's fold key is collapsed) per
+tree indent and no gutter, per that ticket's note. `TreeBottomInset = 16.dp` leaves air below the last row;
+the FAB and its former 88dp clearance are gone. There is no list-top padding.
+The private `LazyListScope.treeSection(section, hostState, onEvent)` emits one group's items —
+per host a `TreeHostRow`, then (unless the host's fold key is collapsed) per
 workspace group a `TreeWorkspaceRow` and (unless *its* key is collapsed) one `TreeConversationRow` per
 conversation — and `ConversationTree` calls it once for `ConversationTreeSection.Channels`, emits a
-`HorizontalDivider` item (`outlineVariant @ 0.60f`, `TreeSectionRuleGap = 28.dp` above / `TreeSectionRuleBottomGap
-= 14.dp` below, plus the centred header's 14dp inner slack for 28dp to the label at normal font size;
-see [section-label spacing](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737)), then once more for `Chats` — all three into the
+`HorizontalDivider` item (`sidebarRuleColor()`, `TreeSectionRuleGap = 28.dp` on both sides), then once more
+for `Chats` — all three into the
 *same* `LazyColumn`, so the whole tree scrolls as one container and `performScrollToNode` can reach the last
-row of either section. `TreeFirstHostGap = 8.dp` / `TreeHostGap = 16.dp` space the header-to-first-host and
-host-to-host gaps.
+row of either group. Global Channels/Chats title rows and their pairing controls are no longer emitted
+(#1186); both groups still repeat the hosts and retain independent folding and row actions. The first
+host in each group has zero extra top padding; subsequent hosts use `TreeHostGap = 16.dp`. The fixed
+[toolbar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) supplies the entire 24dp gap from
+its divider to the first row. The later host-first tree is separate work (#1187).
 
 **Fold key and node identity.** `TreeFoldKey(section: ConversationTreeSection, serverId: String, cwd: String? = null)`
 is a host row when `cwd` is null, that host's workspace row otherwise — [`ChannelListViewModel`](channel-list-viewmodel.md)
 owns the type and the collapsed set; see that document for why the key includes `section` and why `cwd` is
-compared exactly. `ConversationTreeSection` (`Channels`, `Chats`) also selects the section's string resource
-(`R.string.channels_section_header` / `R.string.chats_section_header`) and its row test tag (below).
+compared exactly. `ConversationTreeSection` (`Channels`, `Chats`) still selects the group's rows and row
+test tag (below), even though its global title is no longer rendered.
 
 **Display text and fallback.** A host reads `displayName?.takeIf { it.isNotBlank() } ?: R.string.unnamed_host`
 — the nameless-host fallback #730 left open, mirroring `DiscussionPreviewRow`'s `untitled_discussion`
@@ -74,7 +77,9 @@ identical length.
 
 ## Add controls (#738)
 
-Both new controls live in `ConversationTreeRows.kt` and share one file-private `TreeRowControl` (renamed
+The list has one fixed toolbar pairing control and host-specific chat creation controls (#1186).
+The toolbar uses `ChannelListBarEntry` with a 24dp `Add` glyph in a 48dp `IconButton`. The tree's controls
+live in `ConversationTreeRows.kt` and share one file-private `TreeRowControl` (renamed
 from `TreeAddControl` in #744, when the host row's edit control became its second call site): a
 `Box.size(48.dp).clip(CircleShape).combinedClickable(...)` drawing a 16dp caller-supplied `icon` tinted
 `colorScheme.primary`, carrying the caller's content description and (for the host row's two controls) the
@@ -84,12 +89,13 @@ used, for the same reason: an M3 `IconButton` composes its own inner `clickable`
 `combinedClickable`'s long-press (see [`../codebase/25.md`](../codebase/25.md),
 [`../codebase/221.md`](../codebase/221.md)).
 
-- **`TreeSectionHeader`** gained `onAddTapped: () -> Unit`. Its content description is
-  `R.string.cd_tree_section_pair_host` formatted with the section's own title — app-authored, never daemon
-  text, so it is not run through `boundedRowText`. Tapping it emits `ChannelListEvent.PairHostTapped`, which
-  the route maps to `navController.navigate(Routes.SCANNER)` — pairing's **existing** entry, reused rather
-  than a second flow. Both of that entry's completions already land back on `channel_list` (camera pops
-  `SCANNER` inclusive; paste-code pops the graph), so no pop or flag is needed here. See
+- **Toolbar “Pair another host”** uses the static `R.string.cd_pair_another_host`, with no section suffix.
+  Tapping it emits `ChannelListEvent.PairHostTapped`, which the route maps to
+  `navController.navigate(Routes.SCANNER)`. The scanner's paste action opens code pairing; code Cancel/Back
+  returns to the scanner, and scanner Back returns to the invoking list. Successful camera pairing pops
+  `SCANNER` inclusive; successful code pairing waits for the saved target's connection and clears the graph
+  to `channel_list`. `TreeSectionHeader` and its resources remain available, but the list no longer emits
+  that component or its pairing controls. See
   [Navigation](navigation.md#manual-pairing-entry-and-return).
 - **`TreeHostRow`** gained `serverId: String`, `onAddTapped: () -> Unit` and `onAddLongPressed: () -> Unit`.
   Tap emits `TreeHostAddTapped(serverId)` (the route calls `vm.createHostDiscussion(serverId)`); long-press
@@ -110,10 +116,11 @@ sheet that has already closed. The control itself, its content description, its 
 and [`WorkspacePicker`](workspace-picker.md#consumers) for why the thread's and Settings' pickers, reached
 through other controls, are unaffected.
 
-**Naming rule.** Both controls repeat down the screen — one section header per section, one host row per
-host — so each has to say which section or host it acts on, the way the fold controls already name their
-row (`cd_tree_row_expand` / `cd_tree_row_collapse`, formatted with the row's name). No production string
-distinguishes two section headers or two host rows from each other otherwise.
+**Naming rule.** Pairing is unique and needs no section qualifier. Host controls still repeat down the
+screen and name the host they act on, the way fold controls name their row (`cd_tree_row_expand` /
+`cd_tree_row_collapse`, formatted with the row's name). `InteractiveStreamE2ETest.pairHostByCode` targets
+the unique toolbar description with `onNode`; it retains the paste, fingerprint confirmation and
+connection/return waits. The retired section-qualified pairing name is no longer a list selector.
 
 **The device-suite handle.** `TreeHostRow` also builds `treeHostAddTestTag(serverId)` — a public top-level
 function in `ConversationTreeRows.kt` — and attaches it to its own control's `Modifier.testTag(...)`. The id
@@ -137,9 +144,8 @@ fold. `ChannelListScreenTest` asserts this directly rather than trusting the inh
 **The 48dp trade.** The design pins a 16dp plus with its centre 10dp from the row's content edge. Touch needs
 48dp, and centring a 16dp glyph in a 48dp target lands its centre about 22dp further inboard than the design
 draws it — the same trade #731 took growing the design's 28dp pointer rows to a size a thumb can hit. Taken
-deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTreeRows.kt`. The section
-header's own band grows from the design's bare 20dp text line to 48dp for the same reason — it carries a
-control now, not just a label.
+deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTreeRows.kt`. This tree-control
+geometry is separate from the toolbar's 24dp glyphs and 52dp left-control centre spacing.
 
 **#905 added the pencil; #958 added a plus, but only on Channels rows.** #663 (the same phase as #905) added
 `renameWorkspace` / `archiveWorkspace` to the host-owned repository with no UI caller; #905 is that caller —
