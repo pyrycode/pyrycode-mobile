@@ -23,6 +23,8 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.assistantBubbleContainer
+import de.pyryco.mobile.ui.theme.userBubbleContainer
 import kotlinx.coroutines.delay
 import kotlinx.datetime.Instant
 
@@ -116,7 +118,7 @@ fun MessageBubble(
 
 /**
  * The design's `User message container` (Figma node `114:3559`): right-aligned, leading edge inset by
- * [MessageRoleInset], filled from the `primaryContainer` pair.
+ * [MessageRoleInset], using the theme's user bubble fill and `onPrimaryContainer` content.
  *
  * Content stays unparsed plain [Text] — the user wrote it, it is not a markdown source.
  */
@@ -129,7 +131,7 @@ private fun UserMessageBubble(
     MessageContainer(
         message = message,
         alignment = Alignment.End,
-        bubbleColor = MaterialTheme.colorScheme.primaryContainer,
+        bubbleColor = MaterialTheme.colorScheme.userBubbleContainer,
         bubbleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         attachments = attachments,
         modifier = modifier,
@@ -144,7 +146,7 @@ private fun UserMessageBubble(
 
 /**
  * The design's `Assistant message container` (Figma node `114:3558`): left-aligned, trailing edge inset
- * by [MessageRoleInset], filled from the `secondaryContainer` pair.
+ * by [MessageRoleInset], using the theme's assistant bubble fill and `onSecondaryContainer` content.
  *
  * The body keeps both renderers it has had since #184 — the progressive-reveal [StreamingAssistantBody]
  * while `isStreaming`, the static [MarkdownText] once finalized. Neither is wrapped in its own
@@ -165,7 +167,7 @@ private fun AssistantMessage(
     MessageContainer(
         message = message,
         alignment = Alignment.Start,
-        bubbleColor = MaterialTheme.colorScheme.secondaryContainer,
+        bubbleColor = MaterialTheme.colorScheme.assistantBubbleContainer,
         bubbleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         attachments = attachments,
         modifier = modifier,
