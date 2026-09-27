@@ -196,7 +196,7 @@ uses `PyrycodeMobileTheme` with these deliberate adaptations:
 
 | Reference | Shell | Reason |
 | --- | --- | --- |
-| `onPrimaryFixed` background | `colorScheme.modalContainer` (`#001D34` dark / `primaryContainer`, `#CFE4FF`, light) | (#1142) A fixed role is the same colour in both themes, and `#001D34` behind light theme's `onPrimaryContainer` content colour would be unreadable. `modalContainer` is a third app colour slot, built like [`success`](success-color.md) — a `CompositionLocal` + `ColorScheme` extension (`ui/theme/ModalColors.kt`) that lets dark paint the frame's navy while light keeps the unchanged container. `contentColor` stays `onPrimaryContainer` in both themes. |
+| `onPrimaryFixed` background | `colorScheme.modalContainer` (`#001D34` dark / `primaryContainer`, `#CFE4FF`, light) | (#1142) Static dark now maps Material's `onPrimaryFixed` to the same navy, but the shell keeps its scoped `modalContainer` slot so light retains a readable fill behind `onPrimaryContainer` content. `ModalColors.kt` provides that slot as a `CompositionLocal` + `ColorScheme` extension, like [`success`](success-color.md). `contentColor` stays `onPrimaryContainer` in both themes. |
 | 44 dp shell / 6 dp action corners | Local `RoundedCornerShape(44.dp)` / `RoundedCornerShape(6.dp)` | Match the reference in both themes without changing global theme shapes. |
 | Smaller action geometry | At least 48 dp action targets | Keep Close, Cancel and OK accessible to touch. |
 

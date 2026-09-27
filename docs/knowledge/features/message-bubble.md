@@ -144,12 +144,11 @@ only #644's static-dark fill divergence; body and metadata colours stay as befor
 | Meta row text + copy glyph `Schemes/inverse-primary` | `#32628D` | `LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)` (0.8) | **Divergence.** M3 has no de-emphasis role *inside* a filled container; `inverse-primary` is a light-scheme primary tone and only reads as de-emphasis against the dark reference frame. Taking the host bubble's own content colour at a fixed alpha de-emphasises correctly in both bubbles and both schemes. |
 
 The bubble-specific roles leave global Material containers unchanged (static dark:
-`primaryContainer = #134A74`, `secondaryContainer = #3A4857`). Do not substitute
-`colorScheme.onPrimaryFixed` for the assistant fill: the static schemes do not
-configure Material's fixed roles, so that property resolves to the baseline-purple
-default. The explicit bubble role supplies the reference hue without changing
-other surfaces. Metadata still uses the host content colour at 0.8 opacity;
-Figma's `inversePrimary` is not the readable cross-theme adaptation.
+`primaryContainer = #134A74`, `secondaryContainer = #3A4857`). Static dark now maps
+`colorScheme.onPrimaryFixed` to the same `#001D34`, but the assistant bubble keeps
+its scoped fill: light and wallpaper-colour bubbles still use `secondaryContainer`.
+Metadata still uses the host content colour at 0.8 opacity; Figma's
+`inversePrimary` is not the readable cross-theme adaptation.
 
 ### Meta row and copy control (`MessageMetaRow.kt`, since #644)
 

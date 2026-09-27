@@ -40,6 +40,13 @@ host, never `ThreadDestinationFactory.selectedServerId()`. Edit, attention and p
 host-qualified target. `selected = target == hostState.selected`, so a colliding id on another host does
 not acquire the highlight.
 
+In the static dark palette, a selected `TreeConversationRow` uses
+`colorScheme.onPrimary` (`#003355`), the `Schemes/On Primary` binding on Figma sidebar
+[`132:3902`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=132-3902)
+(inspected 2026-09-28). Light and wallpaper-colour palettes keep the translucent
+`primaryContainer` selection. `ChannelListColoursTest` samples the selected-row
+pixel; a contrast-only assertion could pass while the role was still wrong.
+
 **Tier test tags.** Each conversation row carries `Modifier.testTag(section.rowTestTag)` —
 `internal const val TREE_CHANNEL_ROW_TEST_TAG = "tree-channel-row"` /
 `internal const val TREE_CHAT_ROW_TEST_TAG = "tree-chat-row"` in `ChannelListScreen.kt`. The two tiers are
