@@ -49,6 +49,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.composerFieldContainer
 
 // Figma 16:8's `Input large` (347:6635): a 6dp-cornered container 52dp tall holding the message text
 // inset 16dp from the leading edge, and — overlapping its trailing edge 4dp in — a 48dp button drawn
@@ -175,7 +176,7 @@ fun ThreadInputBar(
         }
     Surface(
         shape = FieldCorner,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = MaterialTheme.colorScheme.composerFieldContainer,
         modifier =
             modifier
                 .fillMaxWidth()
@@ -200,7 +201,7 @@ fun ThreadInputBar(
                         .then(if (onImagesReceived != null) Modifier.contentReceiver(imageReceiver) else Modifier),
                 inputTransformation = reportEdits,
                 textStyle =
-                    MaterialTheme.typography.bodyLarge.copy(
+                    MaterialTheme.typography.bodyMedium.copy(
                         color = MaterialTheme.colorScheme.onSurface,
                     ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -212,7 +213,7 @@ fun ThreadInputBar(
                         if (fieldState.text.isEmpty()) {
                             Text(
                                 text = stringResource(R.string.thread_input_placeholder),
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color =
                                     MaterialTheme.colorScheme.onSurfaceVariant
                                         .copy(alpha = 0.6f),
