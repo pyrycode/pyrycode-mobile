@@ -68,6 +68,7 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
@@ -118,14 +119,15 @@ import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.CONTEXT_USAGE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ComposerAction
 import de.pyryco.mobile.ui.conversations.thread.EFFORT_PLACEHOLDER_LABEL
-import de.pyryco.mobile.ui.conversations.thread.INHERITED_RUN_CONFIG_LABEL
 import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_WINDOW_MS
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.PermissionModeOption
 import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
+import de.pyryco.mobile.ui.conversations.thread.UNAVAILABLE_MODEL_LABEL
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
 import de.pyryco.mobile.ui.conversations.thread.completeSlashCommand
+import de.pyryco.mobile.ui.conversations.thread.dropdownLabel
 import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
@@ -2864,7 +2866,7 @@ class InteractiveStreamE2ETest {
             val nameX = MODEL_X_NAME_PREFIX + stamp
             val chatX = prepareChat(nameX, originals)
             val chatY = prepareChat(MODEL_Y_NAME_PREFIX + stamp, originals)
-            val rows = usableRows(publishedMenu(chatX.id))
+            val rows = usableRows(publishedMenu(chatX.id)).filter { it.value != INHERITED_MODEL_VALUE }
             val rowA = checkNotNull(rows.firstOrNull { it.effortLevels.isNotEmpty() }) { "no published model offers effort levels" }
             val rowB = checkNotNull(rows.firstOrNull { it.value != rowA.value }) { "the menu publishes fewer than two usable models" }
             val target =
@@ -2878,18 +2880,23 @@ class InteractiveStreamE2ETest {
             assertSaved(chatX.id, rowA.value, effortX)
             assertSaved(chatY.id, rowB.value, effortY)
 
-            // The phone changes X's model from the footer. The label settles when the refreshed reading lands.
+            // Open Run configuration from the footer and pick a published row. A fresh reading settles it.
             openChatRow(nameX)
-            awaitFooter(changeModelLabel, rowA.displayName.inert())
-            pickFooterOption(changeModelLabel, target.displayName.inert())
-            awaitFooter(changeModelLabel, target.displayName.inert())
+            awaitFooter(changeModelLabel, rowA.dropdownLabel(ConversationAgent.Claude))
+            pickFooterOption(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
+            awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
 
             assertEquals("X's saved model after the change", target.value, freshSettings(chatX.id).model)
             assertSaved(chatY.id, rowB.value, effortY)
 
             leaveThread()
             openChatRow(nameX)
-            awaitFooter(changeModelLabel, target.displayName.inert())
+            assertEquals("X's model on a fresh settings reply", target.value, freshSettings(chatX.id).model)
+            awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
+            leaveThread()
+            openChatRow(MODEL_Y_NAME_PREFIX + stamp)
+            assertEquals("Y's model on a fresh settings reply", rowB.value, freshSettings(chatY.id).model)
+            awaitFooter(changeModelLabel, rowB.dropdownLabel(ConversationAgent.Claude))
         } finally {
             restoreSettings(originals)
         }
@@ -2952,14 +2959,18 @@ class InteractiveStreamE2ETest {
             val chat = prepareChat(name, originals)
             val current = originals.getValue(chat.id).model
             val row =
-                checkNotNull(usableRows(publishedMenu(chat.id)).firstOrNull { it.effortLevels.isNotEmpty() && it.value != current }) {
+                checkNotNull(
+                    usableRows(publishedMenu(chat.id)).firstOrNull {
+                        it.effortLevels.isNotEmpty() && it.value != current && it.value != INHERITED_MODEL_VALUE
+                    },
+                ) {
                     "no other published model offers effort levels"
                 }
             val level = row.effortLevels.first()
 
             openChatRow(name)
-            pickFooterOption(changeModelLabel, row.displayName.inert())
-            awaitFooter(changeModelLabel, row.displayName.inert())
+            pickFooterOption(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude))
+            awaitFooter(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude))
             pickFooterOption(changeEffortLabel, level.inert())
             awaitFooter(changeEffortLabel, level.inert())
 
@@ -3023,7 +3034,7 @@ class InteractiveStreamE2ETest {
             val explicit = row.effortLevels.last { it != remembered }
             assertSaved(priming.id, "", "")
             openChatRow(primingName)
-            awaitFooter(changeModelLabel, INHERITED_RUN_CONFIG_LABEL)
+            awaitFooter(changeModelLabel, inheritedModelLabel(publishedMenu(priming.id)))
             pickFooterOption(changeEffortLabel, remembered.inert())
             awaitFooter(changeEffortLabel, remembered.inert())
             assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
@@ -3470,7 +3481,7 @@ class InteractiveStreamE2ETest {
             val (effortLabel, effortNote) = appliedEffortFooter(fresh.effectiveEffort)
             val mode = fresh.permissionMode
             assertTrue("the fresh reading after a real turn confirms no permission mode", mode.isNotEmpty())
-            awaitFooter(changeModelLabel, INHERITED_RUN_CONFIG_LABEL)
+            awaitFooter(changeModelLabel, inheritedModelLabel(publishedMenu(chat.id)))
             awaitFooter(changeEffortLabel, effortLabel) { it == effortNote }
             awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
 
@@ -3485,8 +3496,8 @@ class InteractiveStreamE2ETest {
                 ) {
                     "the menu publishes no usable model besides the inherited default"
                 }
-            pickFooterOption(changeModelLabel, target.displayName.inert())
-            awaitFooter(changeModelLabel, target.displayName.inert())
+            pickFooterOption(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
+            awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
             assertEquals("the saved model after the change", target.value, freshSettings(chat.id).model)
         } finally {
             restoreSettings(originals)
@@ -5621,16 +5632,36 @@ class InteractiveStreamE2ETest {
         return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeModelMenu(conversationId).filterNotNull().first() } }
     }
 
-    /**
-     * The rows the footer can offer and the daemon will accept: nothing the scenario reads was cut, and the
-     * label names one row only, so tapping it cannot pick another.
-     */
+    /** Usable Claude rows, including default for inherited-effort setup. Ordinary labels must be unique
+     * so tapping a model in Run configuration cannot pick another published row. */
     private fun usableRows(menu: ModelMenu): List<ModelMenuRow> =
         menu.rows.filter { row ->
-            row.truncatedFields.orEmpty().none { it in CUT_FIELDS_IN_USE } &&
+            row.agent == ConversationAgent.Claude &&
+                row.truncatedFields.orEmpty().none { it in CUT_FIELDS_IN_USE } &&
                 row.displayName.inert().isNotBlank() &&
-                menu.rows.count { it.displayName.inert() == row.displayName.inert() } == 1
+                (
+                    row.value == INHERITED_MODEL_VALUE ||
+                        menu.rows.count {
+                            it.agent == ConversationAgent.Claude &&
+                                it.value != INHERITED_MODEL_VALUE &&
+                                it.dropdownLabel(ConversationAgent.Claude) == row.dropdownLabel(ConversationAgent.Claude)
+                        } == 1
+                )
         }
+
+    /** Expected inherited label from the host's fresh published list, independent of a running turn. */
+    private fun inheritedModelLabel(menu: ModelMenu): String {
+        val claudeRows = menu.rows.filter { it.agent == ConversationAgent.Claude }
+        val default = claudeRows.filter { it.value == INHERITED_MODEL_VALUE }.singleOrNull()
+        val resolved = default?.resolvedModel.orEmpty()
+        if (resolved.isBlank() || resolved.startsWith("<") || "resolved_model" in default?.truncatedFields.orEmpty()) {
+            return UNAVAILABLE_MODEL_LABEL
+        }
+        return claudeRows
+            .filter { it.value != INHERITED_MODEL_VALUE && it.resolvedModel == resolved }
+            .singleOrNull()
+            ?.dropdownLabel(ConversationAgent.Claude) ?: UNAVAILABLE_MODEL_LABEL
+    }
 
     /**
      * Create a chat on the host, named [name] so its row can be found, and record its first reading in
@@ -5748,18 +5779,28 @@ class InteractiveStreamE2ETest {
     ) {
         val section = runConfigSection(clickLabel)
         openRunConfiguration()
-        val selected = SemanticsMatcher("selected run setting '$label'") { node ->
-            node.config.getOrNull(SemanticsProperties.Selected) == true &&
-                node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == label }
-        }
+        val selected =
+            SemanticsMatcher("selected run setting '$label'") { node ->
+                node.config.getOrNull(SemanticsProperties.Selected) == true &&
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .any { it.text == label }
+            }
         try {
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 val hasSelection = label == "Effort" || composeTestRule.onAllNodes(selected).fetchSemanticsNodes().isNotEmpty()
                 val pending = composeTestRule.onAllNodesWithText("$section · applying…").fetchSemanticsNodes().isNotEmpty()
                 val texts =
-                    composeTestRule.onAllNodes(SemanticsMatcher("text") { it.config.getOrNull(SemanticsProperties.Text) != null })
+                    composeTestRule
+                        .onAllNodes(SemanticsMatcher("text") { it.config.getOrNull(SemanticsProperties.Text) != null })
                         .fetchSemanticsNodes()
-                        .flatMap { it.config.getOrNull(SemanticsProperties.Text).orEmpty().map { text -> text.text } }
+                        .flatMap {
+                            it.config
+                                .getOrNull(SemanticsProperties.Text)
+                                .orEmpty()
+                                .map { text -> text.text }
+                        }
                 val descriptions = listOf<String?>(if (pending) footerPending else null) + texts
                 hasSelection && descriptions.any(state)
             }
@@ -5771,12 +5812,19 @@ class InteractiveStreamE2ETest {
     }
 
     /** Open the run configuration sheet and choose its published value. */
-    private fun pickFooterOption(clickLabel: String, optionLabel: String) {
+    private fun pickFooterOption(
+        clickLabel: String,
+        optionLabel: String,
+    ) {
         runConfigSection(clickLabel)
         openRunConfiguration()
         val option = hasText(optionLabel) and hasClickAction() and isEnabled()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(option).fetchSemanticsNodes().isNotEmpty() }
-        composeTestRule.onAllNodes(option).onFirst().performScrollTo().performClick()
+        composeTestRule
+            .onAllNodes(option)
+            .onFirst()
+            .performScrollTo()
+            .performClick()
     }
 
     private fun runConfigSection(clickLabel: String): String =

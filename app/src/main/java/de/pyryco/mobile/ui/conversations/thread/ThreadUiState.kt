@@ -134,8 +134,9 @@ enum class SaveAsChannelFailure { Promote, SystemPrompt }
  * **[value] is the only field that stays verbatim, and the only one that is never rendered.** It is the
  * argument [ConversationRepository.setSessionSettings] takes; it is an alias (`sonnet`), a bracketed
  * variant (`opus[1m]`) or `default`, so nothing parses it and nothing presents it as a version.
- * [label] and [detail] are the same daemon strings put through [inert] — see its KDoc for why the
- * client owes that.
+ * [label] is the display-only Claude family derived from [value] or the inert published name; Codex
+ * uses the inert published name. [detail] is inert resolved text. [resolvedModel] stays raw for exact
+ * inherited-default comparison and is never rendered directly.
  */
 data class ThreadModelChoice(
     val value: String,
@@ -145,6 +146,8 @@ data class ThreadModelChoice(
     val effortChoices: List<ThreadEffortChoice>,
     /** Whether the row accepts `auto` permission mode (#650) — the only thing that offers Auto approval. */
     val supportsAutoMode: Boolean = false,
+    /** Exact concrete identifier for inherited-default resolution; never used as a write value. */
+    val resolvedModel: String = "",
 )
 
 /** One selectable reasoning-effort level of one [ThreadModelChoice] (#807). Same split as its parent:
@@ -162,7 +165,8 @@ data class ThreadEffortChoice(
  * three-entry `Model` and five-entry `Effort` device enums are this phone's guesses, and a value this
  * server never published is refused server-side.
  *
- * @param choices The published models in the daemon's own order, which is the display order.
+ * @param choices The ordinary published models in daemon order; the `default` row is held in
+ *   [inheritedChoice] for metadata and is never a visible choice.
  * @param menuAvailable Whether a menu was ever published for this conversation. `false` with empty
  *   [choices] is "no list"; `true` with empty [choices] is the different, equally legal reading that
  *   claude offered nothing.
@@ -172,7 +176,7 @@ data class ThreadEffortChoice(
  *   [droppedModels] so each number keeps its provenance; the sheet sums them for display only.
  * @param settingsAvailable Whether a settings reading is available at all. `false` ⇒ both labels read
  *   unknown; it covers no connection, no `interactive` capability, and the window before the first reply.
- * @param savedModel The saved model override verbatim, `""` meaning "no override, inherited default".
+ * @param savedModel The saved model override verbatim; `""` and confirmed `default` mean inherited.
  * @param savedEffort The **saved** effort choice verbatim, `""` meaning inherited default. It is the
  *   display fallback only while [appliedEffort] reports no value (#889), and never a write source.
  * @param pendingModel / @param pendingEffort A tap whose write has not settled, or `null`. Cleared by an
@@ -197,6 +201,10 @@ data class ThreadEffortChoice(
  */
 data class ThreadRunConfig(
     val choices: List<ThreadModelChoice> = emptyList(),
+    /** Published default metadata, deliberately absent from the visible [choices]. */
+    val inheritedChoice: ThreadModelChoice? = null,
+    /** Whether its concrete identifier matches exactly one row in the full published menu. */
+    val inheritedResolutionUnique: Boolean = true,
     val menuAvailable: Boolean = false,
     val droppedModels: Int = 0,
     val hiddenChoices: Int = 0,
@@ -241,19 +249,33 @@ data class ThreadRunConfig(
                 else -> EffortNote.DefaultRunningUnavailable
             }
 
-    /** The published row [selectedModel] names, or `null` when the menu published no matching one. */
-    val selectedChoice: ThreadModelChoice? get() = choices.firstOrNull { it.value == selectedModel }
+    /** Only a confirmed inherited choice may resolve through the hidden default's concrete identifier. */
+    val selectedChoice: ThreadModelChoice?
+        get() {
+            if (!settingsAvailable && pendingModel == null) return null
+            if (pendingModel == null && (savedModel.isEmpty() || savedModel == INHERITED_DEFAULT_MODEL_VALUE)) {
+                val resolved = inheritedChoice?.resolvedModel.orEmpty()
+                if (!inheritedResolutionUnique || resolved.isBlank() || resolved.startsWith("<")) return null
+                return choices.filter { it.resolvedModel == resolved }.singleOrNull()
+            }
+            return choices.firstOrNull { it.value == selectedModel }
+        }
 
-    /** The effort levels **the selected row** supports. Empty is a positive statement that this model
-     *  exposes no effort control — never a cue to substitute the `Effort` entries. With no model override
-     *  (`""`) the row is the inherited default's, published as `default` (#972, desktop `effortRowFor`).
-     *  Only this lookup substitutes: [selectedChoice] and everything reading it stay unwidened. With a
-     *  [capabilities] list (#1111), only the levels it also names: the footer, the Status sheet and the
-     *  effort recall all read this one lookup. */
+    /** Metadata follows the saved inherited setting even when no ordinary row can represent it. */
+    val selectedMetadata: ThreadModelChoice?
+        get() =
+            if (!settingsAvailable && pendingModel == null) {
+                null
+            } else if (pendingModel == null && (savedModel.isEmpty() || savedModel == INHERITED_DEFAULT_MODEL_VALUE)) {
+                inheritedChoice
+            } else {
+                selectedChoice
+            }
+
+    /** Published effort levels for the explicit row or hidden inherited metadata, narrowed by capabilities. */
     val effortChoices: List<ThreadEffortChoice>
         get() {
-            val model = selectedModel.ifEmpty { INHERITED_DEFAULT_MODEL_VALUE }
-            val levels = choices.firstOrNull { it.value == model }?.effortChoices.orEmpty()
+            val levels = selectedMetadata?.effortChoices.orEmpty()
             val accepted = capabilities?.effortLevels ?: return levels
             return levels.filter { it.value in accepted }
         }
@@ -265,8 +287,20 @@ data class ThreadRunConfig(
     /** Whether a write can be addressed at all — the `""`-session-id read-only gate. */
     val writable: Boolean get() = sessionId.isNotEmpty()
 
-    /** The footer's model segment. */
-    val modelLabel: String get() = label(selectedModel) { selectedChoice?.label }
+    /** The footer's model segment, sourced from selection rather than the independent running reading. */
+    val modelLabel: String
+        get() =
+            when {
+                !settingsAvailable && pendingModel == null -> UNKNOWN_RUN_CONFIG_LABEL
+                selectedChoice != null -> selectedChoice?.label.orEmpty()
+                selectedModel.isEmpty() || (pendingModel == null && savedModel == INHERITED_DEFAULT_MODEL_VALUE) ->
+                    UNAVAILABLE_MODEL_LABEL
+                else -> selectedModel.inert()
+            }
+
+    /** Text for an unrepresented confirmed or pending choice in the sheet, never a radio label. */
+    val modelSelectionNote: String?
+        get() = modelLabel.takeIf { settingsAvailable && selectedChoice == null }
 
     /** The footer's effort segment. No menu lookup: a level is its own label. With nothing selected it
      *  names the control (#889) rather than claiming "default", which an explicit `null` would contradict. */
@@ -277,30 +311,14 @@ data class ThreadRunConfig(
                 selectedEffort.isEmpty() -> EFFORT_PLACEHOLDER_LABEL
                 else -> selectedEffort.inert()
             }
-
-    /**
-     * The three display states the contracts keep apart, collapsed to one string for the footer: no
-     * reading at all is *unknown*; a reading of `""` is the daemon's inherited default, which is a real
-     * answer rather than an absent one; anything else is the published label when the menu named one and
-     * the reported value itself — made [inert], since it is daemon-authored too — when it did not.
-     */
-    private inline fun label(
-        raw: String,
-        published: () -> String?,
-    ): String =
-        when {
-            !settingsAvailable -> UNKNOWN_RUN_CONFIG_LABEL
-            raw.isEmpty() -> INHERITED_RUN_CONFIG_LABEL
-            else -> published() ?: raw.inert()
-        }
 }
 
 internal const val UNKNOWN_RUN_CONFIG_LABEL = "unknown"
 
-internal const val INHERITED_RUN_CONFIG_LABEL = "default"
+internal const val UNAVAILABLE_MODEL_LABEL = "Model unavailable"
 
 /** The published row `value` the daemon gives the inherited-default model (#972). A lookup key, not a label. */
-private const val INHERITED_DEFAULT_MODEL_VALUE = "default"
+internal const val INHERITED_DEFAULT_MODEL_VALUE = "default"
 
 internal const val EFFORT_PLACEHOLDER_LABEL = "Effort"
 

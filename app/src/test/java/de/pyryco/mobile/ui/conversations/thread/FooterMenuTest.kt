@@ -41,8 +41,10 @@ class FooterMenuTest {
         sessionId: String = "s1",
         appliedEffort: EffectiveEffort = EffectiveEffort.Unavailable,
         capabilities: SessionCapabilities? = null,
+        inheritedChoice: ThreadModelChoice? = null,
     ) = ThreadRunConfig(
         choices = choices,
+        inheritedChoice = inheritedChoice,
         menuAvailable = menuAvailable,
         droppedModels = droppedModels,
         hiddenChoices = hiddenChoices,
@@ -130,7 +132,7 @@ class FooterMenuTest {
 
     @Test
     fun effort_withNoModelOverride_offersTheDefaultRowsLevels() {
-        val config = config(choices = listOf(opus, inherited), savedModel = "", savedEffort = "")
+        val config = config(choices = listOf(opus), inheritedChoice = inherited, savedModel = "", savedEffort = "")
 
         assertEquals(inherited.effortChoices, config.effortChoices)
         assertTrue(footerControlEnabled(FooterControl.Effort, config))
@@ -147,10 +149,10 @@ class FooterMenuTest {
 
     @Test
     fun effort_withNoModelOverride_leavesTheModelSelectionUnwidened() {
-        val config = config(choices = listOf(opus, inherited), savedModel = "", savedEffort = "")
+        val config = config(choices = listOf(opus), inheritedChoice = inherited, savedModel = "", savedEffort = "")
 
         assertNull(config.selectedChoice)
-        assertEquals(INHERITED_RUN_CONFIG_LABEL, config.modelLabel)
+        assertEquals(UNAVAILABLE_MODEL_LABEL, config.modelLabel)
         assertEquals("", footerMenu(FooterControl.Model, config)?.selectedValue)
     }
 

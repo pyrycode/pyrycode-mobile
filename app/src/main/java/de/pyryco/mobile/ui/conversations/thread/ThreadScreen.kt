@@ -699,7 +699,8 @@ fun ThreadScreen(
             // The producer's own cut plus this client's render cap, summed for display only — each keeps
             // its own field on the state so neither is ever recomputed from the other.
             notListedModels = state.runConfig.droppedModels + state.runConfig.hiddenChoices,
-            selectedModel = state.runConfig.selectedModel,
+            selectedModel = state.runConfig.selectedChoice?.value,
+            modelSelectionNote = state.runConfig.modelSelectionNote,
             onModelSelected = { value ->
                 onModelSelected(value)
                 sheetVisible = false
@@ -718,9 +719,10 @@ fun ThreadScreen(
             running = state.runConfig.running,
             contextPercent = state.runConfig.contextPercent,
             permissionMode = state.runConfig.permissionMode,
-            permissionChoices = PermissionModeOption.entries
-                .filter { state.runConfig.offersPermission(it) }
-                .map { it.wire to it.label },
+            permissionChoices =
+                PermissionModeOption.entries
+                    .filter { state.runConfig.offersPermission(it) }
+                    .map { it.wire to it.label },
             onPermissionSelected = { value ->
                 onPermissionModeSelected(value)
                 sheetVisible = false

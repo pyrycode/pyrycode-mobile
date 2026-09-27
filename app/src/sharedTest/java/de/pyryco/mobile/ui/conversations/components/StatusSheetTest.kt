@@ -62,7 +62,8 @@ class StatusSheetTest {
         choices: List<ThreadModelChoice> = listOf(opus, sonnet, haiku),
         menuAvailable: Boolean = true,
         notListedModels: Int = 0,
-        selectedModel: String = "opus",
+        selectedModel: String? = "opus",
+        modelSelectionNote: String? = null,
         onModelSelected: (String) -> Unit = {},
         effortChoices: List<ThreadEffortChoice>? = null,
         selectedEffort: String = "high",
@@ -83,6 +84,7 @@ class StatusSheetTest {
                 menuAvailable = menuAvailable,
                 notListedModels = notListedModels,
                 selectedModel = selectedModel,
+                modelSelectionNote = modelSelectionNote,
                 onModelSelected = onModelSelected,
                 // Defaulted to the selected row's own levels, which is what the ViewModel derives.
                 effortChoices =
@@ -164,6 +166,28 @@ class StatusSheetTest {
     }
 
     @Test
+    fun inheritedSelectionMarksOneOrdinaryRowWithoutShowingDefault() {
+        composeTestRule.setSheet(selectedModel = "sonnet")
+
+        composeTestRule.onNode(isSelectable() and hasText("Sonnet 4.6")).assertIsSelected()
+        composeTestRule.onAllNodes(isSelectable() and hasText("Default")).assertCountEquals(0)
+    }
+
+    @Test
+    fun delayedSettingsHaveNoSelectedRadio() {
+        composeTestRule.setSheet(selectedModel = null)
+        composeTestRule.onNode(isSelectable() and hasText("Opus 4.7")).assertIsNotSelected()
+        composeTestRule.onNode(isSelectable() and hasText("Sonnet 4.6")).assertIsNotSelected()
+    }
+
+    @Test
+    fun unmatchedSettingsShowInertNoteWithNoSelectedRadio() {
+        composeTestRule.setSheet(selectedModel = null, modelSelectionNote = "opus[1m]")
+        composeTestRule.onNodeWithText("opus[1m]").assertIsDisplayed()
+        composeTestRule.onNode(isSelectable() and hasText("Opus 4.7")).assertIsNotSelected()
+    }
+
+    @Test
     fun an_unavailable_menu_says_so_and_offers_no_rows() {
         composeTestRule.setSheet(choices = emptyList(), menuAvailable = false)
 
@@ -176,7 +200,7 @@ class StatusSheetTest {
     fun a_menu_that_published_nothing_is_a_different_statement_from_an_absent_one() {
         composeTestRule.setSheet(choices = emptyList(), menuAvailable = true)
 
-        composeTestRule.onNode(hasText("This server published no models.")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("This server published no selectable models.")).assertIsDisplayed()
     }
 
     @Test

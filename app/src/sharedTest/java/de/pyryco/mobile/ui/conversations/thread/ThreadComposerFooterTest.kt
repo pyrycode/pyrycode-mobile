@@ -3,7 +3,6 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -11,11 +10,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertIsNotFocused
-import androidx.compose.ui.test.assertIsNotSelected
-import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
-import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -24,20 +19,15 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
-import de.pyryco.mobile.data.model.ConversationAgent
-import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -181,7 +171,9 @@ class ThreadComposerFooterTest {
         setThread(baseConfig.copy(permissionMode = "plan"))
 
         val actions = footerButton("Actions").assertIsDisplayed().getUnclippedBoundsInRoot()
-        assertTrue(actions.left < composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files)).getUnclippedBoundsInRoot().left)
+        assertTrue(
+            actions.left < composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files)).getUnclippedBoundsInRoot().left,
+        )
         footerButton("Actions").performClick()
         overlay().assertExists()
 

@@ -70,3 +70,7 @@ Pending for the documentation stage: update selection and label behavior in `doc
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-27
+
+## Revisions
+
+- Existing `ThreadViewModelEffortRecallTest.anOutstandingModelTap_defersTheDecisionUntilAReadingSettlesIt` exercises a write while the model menu is still absent. Keep `onModelSelected`'s established caller contract; the visible-row restriction belongs to the sheet and footer options. A ViewModel guard would change effort recall timing beyond this ticket.

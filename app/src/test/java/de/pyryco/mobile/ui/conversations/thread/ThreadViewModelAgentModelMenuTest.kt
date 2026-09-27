@@ -51,8 +51,45 @@ class ThreadViewModelAgentModelMenuTest {
         runTest {
             val config = runConfigFor(ConversationAgent.Claude)
 
-            assertEquals(listOf("sonnet", "opus", "default"), config.choices.map { it.value })
+            assertEquals(listOf("sonnet", "opus"), config.choices.map { it.value })
             assertEquals(5, config.droppedModels)
+        }
+
+    @Test
+    fun inheritedClaudeSetting_selectsOnlyTheOrdinaryRowWithTheSameConcreteModel() =
+        runTest {
+            val menu =
+                ModelMenu(
+                    rows =
+                        listOf(
+                            row("default", ConversationAgent.Claude, resolvedModel = "claude-sonnet-5"),
+                            row("sonnet", ConversationAgent.Claude, resolvedModel = "claude-sonnet-5"),
+                            row("opus", ConversationAgent.Claude, resolvedModel = "claude-opus-5"),
+                        ),
+                    droppedModels = 0,
+                )
+            val config = runConfigFor(ConversationAgent.Claude, menu = menu, savedModel = "")
+
+            assertEquals(listOf("sonnet", "opus"), config.choices.map { it.value })
+            assertEquals("sonnet", config.selectedChoice?.value)
+            assertEquals("Sonnet", config.modelLabel)
+        }
+
+    @Test
+    fun inheritedResolutionDoesNotClaimUniquenessWhenAnotherMatchIsPastTheRenderCap() =
+        runTest {
+            val rows =
+                listOf(row("sonnet", ConversationAgent.Claude, resolvedModel = "same-model")) +
+                    (1..31).map { row("other-$it", ConversationAgent.Claude, resolvedModel = "other-$it") } +
+                    listOf(
+                        row("shadow", ConversationAgent.Claude, resolvedModel = "same-model"),
+                        row("default", ConversationAgent.Claude, resolvedModel = "same-model"),
+                    )
+            val config = runConfigFor(ConversationAgent.Claude, ModelMenu(rows, 0), savedModel = "")
+
+            assertEquals(1, config.hiddenChoices)
+            assertEquals(null, config.selectedChoice)
+            assertEquals(UNAVAILABLE_MODEL_LABEL, config.modelLabel)
         }
 
     @Test
@@ -66,17 +103,36 @@ class ThreadViewModelAgentModelMenuTest {
         }
 
     @Test
+    fun claudeRowsUseRawValueFamiliesAndFallBackToPublishedNames() =
+        runTest {
+            val menu =
+                ModelMenu(
+                    rows =
+                        listOf(
+                            row("claude-fable-5[1m]", ConversationAgent.Claude, displayName = "Fable tier"),
+                            row("5[1m]", ConversationAgent.Claude, displayName = "Numbered tier"),
+                            row("gpt-6-sol", ConversationAgent.Codex, displayName = "Vendor Sol face"),
+                        ),
+                    droppedModels = 0,
+                )
+
+            assertEquals(listOf("Fable", "Numbered tier"), runConfigFor(ConversationAgent.Claude, menu).choices.map { it.label })
+            assertEquals(listOf("Vendor Sol face"), runConfigFor(ConversationAgent.Codex, menu).choices.map { it.label })
+        }
+
+    @Test
     fun codexConversation_leavesOutClaudesDroppedModels() =
         runTest {
             assertEquals(0, runConfigFor(ConversationAgent.Codex).droppedModels)
         }
 
     @Test
-    fun codexConversation_withNoSavedModel_readsDefault_andOffersNoEffort() =
+    fun codexConversation_withNoSavedModel_hasNoInheritedRow_andOffersNoEffort() =
         runTest {
             val config = runConfigFor(ConversationAgent.Codex, savedModel = "")
 
-            assertEquals(INHERITED_RUN_CONFIG_LABEL, config.modelLabel)
+            assertEquals(UNAVAILABLE_MODEL_LABEL, config.modelLabel)
+            assertEquals(null, config.selectedChoice)
             assertTrue(config.effortChoices.isEmpty())
         }
 
@@ -128,7 +184,7 @@ class ThreadViewModelAgentModelMenuTest {
             val repo = AgentRepo(ConversationAgent.Claude)
             val vm = collectedVm(repo, MERGED, savedModel = "opus")
             assertEquals(
-                listOf("sonnet", "opus", "default"),
+                listOf("sonnet", "opus"),
                 vm.state.value.runConfig.choices
                     .map { it.value },
             )

@@ -237,9 +237,8 @@ class ThreadViewModel(
     private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)
     val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()
 
-    /** A model tap whose write has not settled (#807), or `null`. Single-writer:
-     *  [onModelSelected] sets it, a failed write clears it, and [sessionSettings]'s `onEach` clears it
-     *  when a reading lands. */
+    /** A model tap whose write has not settled, or `null`. A matching fresh settings reading confirms it;
+     *  a rejected write or lost settings context clears it. */
     private val pendingModel = MutableStateFlow<String?>(null)
 
     /** The [pendingModel] twin for effort (#807). */
@@ -252,18 +251,18 @@ class ThreadViewModel(
      * This conversation's saved run configuration (#590), the authority for the displayed model and
      * effort and for the session id a write addresses (#807).
      *
-     * The `onEach` is the pending-clearing rule AC #3 states: **an arriving reading** ends a pending
-     * selection, never the acknowledgement, which echoes only the input session id and confirms nothing.
+     * The `onEach` confirms a pending model only when a fresh reading names that raw value. A stale reply
+     * cannot briefly put the old model back. A lost reading clears the pending context. The acknowledgement
+     * echoes only the input session id and confirms nothing.
      * It rides this flow rather than a second collector because `observeSessionSettings` is cold and
      * per-collector — a separate subscription would send a second `request_session_settings` frame on
-     * every thread entry. A reading that lands between a tap and its ack clears early, deliberately: a
-     * reading outranks an unacked optimistic value for the same reason the ack does not outrank it.
+     * every thread entry.
      */
     private val sessionSettings: Flow<SessionSettings?> =
         repository
             .observeSessionSettings(conversationId)
             .onEach { reading ->
-                pendingModel.value = null
+                if (reading == null || pendingModel.value == reading.model) pendingModel.value = null
                 pendingEffort.value = null
                 // #650: a `null` reading heads every new subscription (host switch, owning-host reconnect)
                 // and follows a failed read; a reading for another session means the session was replaced.
@@ -333,12 +332,14 @@ class ThreadViewModel(
             sessionSettings,
             // #1110: the agent joins by a chained combine, since this one is at the typed ceiling. Filtering
             // here, before [runConfig] caps the rows, is what makes the hidden count the filtered list's.
-            repository.observeModelMenu(conversationId).combine(conversationAgent) { menu, agent -> menu?.forAgent(agent) },
+            repository.observeModelMenu(conversationId).combine(conversationAgent) { menu, agent ->
+                menu?.forAgent(agent) to agent
+            },
             pendingModel,
             pendingEffort,
             pendingPermission,
-        ) { settings, menu, model, effort, permission ->
-            runConfig(settings, menu, model, effort, permission)
+        ) { settings, menuAndAgent, model, effort, permission ->
+            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission)
         }.combine(runningModel) { config, running -> config.copy(running = running) }
             .combine(repository.observeContextUsage(conversationId)) { config, usage ->
                 config.copy(contextPercent = usage?.percentage)
@@ -2208,16 +2209,27 @@ private const val MAX_RENDERED_MODEL_CHOICES = 32
 private fun runConfig(
     settings: SessionSettings?,
     menu: ModelMenu?,
+    agent: ConversationAgent,
     pendingModel: String?,
     pendingEffort: String?,
     pendingPermission: String?,
 ): ThreadRunConfig {
     val rows = menu?.rows.orEmpty()
+    val visibleRows = rows.filterNot { it.value == INHERITED_DEFAULT_MODEL_VALUE }
+    val defaultRow =
+        if (agent == ConversationAgent.Claude) {
+            rows.filter { it.value == INHERITED_DEFAULT_MODEL_VALUE }.singleOrNull()
+        } else {
+            null
+        }
     return ThreadRunConfig(
-        choices = rows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice() },
+        choices = visibleRows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
+        inheritedChoice = defaultRow?.toChoice(agent),
+        inheritedResolutionUnique =
+            defaultRow != null && visibleRows.count { it.resolvedModel == defaultRow.resolvedModel } == 1,
         menuAvailable = menu != null,
         droppedModels = menu?.droppedModels ?: 0,
-        hiddenChoices = (rows.size - MAX_RENDERED_MODEL_CHOICES).coerceAtLeast(0),
+        hiddenChoices = (visibleRows.size - MAX_RENDERED_MODEL_CHOICES).coerceAtLeast(0),
         settingsAvailable = settings != null,
         savedModel = settings?.model.orEmpty(),
         savedEffort = settings?.effort.orEmpty(),
@@ -2265,15 +2277,27 @@ internal const val PERMISSION_SETTLE_INTERVAL_MS = 500L
 
 /** One published row, split into the verbatim write argument and the inert render of it. `resolvedModel`
  *  becomes [ThreadModelChoice.detail] only when it says something the label does not. */
-private fun ModelMenuRow.toChoice(): ThreadModelChoice {
-    val label = displayName.inert()
+private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
+    val label = dropdownLabel(agent)
     return ThreadModelChoice(
         value = value,
         label = label,
         detail = resolvedModel.inert().takeIf { it.isNotBlank() && it != label }.orEmpty(),
         effortChoices = effortLevels.map { ThreadEffortChoice(value = it, label = it.inert()) },
         supportsAutoMode = supportsAutoMode,
+        resolvedModel = resolvedModel.takeUnless { "resolved_model" in truncatedFields.orEmpty() }.orEmpty(),
     )
+}
+
+/** The desktop dropdown label, shared with the host-backed scenario's dynamic assertion. */
+internal fun ModelMenuRow.dropdownLabel(agent: ConversationAgent): String =
+    if (agent == ConversationAgent.Claude) value.modelFamily().ifEmpty { displayName.inert() } else displayName.inert()
+
+/** Desktop's dropdown family rule over the raw published value; used only for display. */
+private fun String.modelFamily(): String {
+    val bare = removePrefix("claude-")
+    val head = bare.takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
+    return head.replaceFirstChar { it.uppercaseChar() }
 }
 
 private fun Conversation.displayName(): String =

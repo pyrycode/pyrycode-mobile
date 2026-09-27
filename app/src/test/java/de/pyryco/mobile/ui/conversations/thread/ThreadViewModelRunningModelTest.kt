@@ -74,7 +74,7 @@ class ThreadViewModelRunningModelTest {
             val config = vm.state.value.runConfig
             assertEquals("claude-opus-4-7", config.running.model?.text)
             assertEquals("", config.selectedModel)
-            assertEquals(INHERITED_RUN_CONFIG_LABEL, config.modelLabel)
+            assertEquals(UNAVAILABLE_MODEL_LABEL, config.modelLabel)
         }
 
     @Test
