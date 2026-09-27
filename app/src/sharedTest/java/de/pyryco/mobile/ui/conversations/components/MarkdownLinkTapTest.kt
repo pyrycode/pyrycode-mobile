@@ -13,6 +13,8 @@ import androidx.compose.ui.test.performFirstLinkClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.ui.conversations.thread.MarkdownDocument
+import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -99,6 +101,21 @@ class MarkdownLinkTapTest {
         tapLink("Plan")
 
         assertEquals(emptyList<String>(), opened)
+    }
+
+    @Test
+    fun reader_links_keep_web_routing_and_inert_workspace_paths() {
+        show {
+            MarkdownReaderScreen(
+                MarkdownDocument("Links.md", "[Plan](notes/Plan.md)\n\n[site](https://example.com/a.md)"),
+                onBack = {},
+            )
+        }
+        tapLink("Plan")
+        assertEquals(emptyList<String>(), opened)
+        tapLink("site")
+        assertEquals(listOf("https://example.com/a.md"), opened)
+        assertEquals(emptyList<String>(), paths)
     }
 
     @Test

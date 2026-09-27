@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
@@ -18,7 +19,6 @@ import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
-import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -32,6 +32,7 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -39,6 +40,8 @@ import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
+import de.pyryco.mobile.ui.conversations.thread.MarkdownDocument
+import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -80,6 +83,7 @@ class MarkdownTextTest {
     private fun render(
         markdown: String,
         maxWidth: androidx.compose.ui.unit.Dp? = null,
+        reader: Boolean = false,
     ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = false) {
@@ -91,7 +95,11 @@ class MarkdownTextTest {
                                 .testTag(CONTAINER_TAG)
                                 .let { if (maxWidth == null) it else it.widthIn(max = maxWidth) },
                     ) {
-                        MarkdownText(markdown)
+                        if (reader) {
+                            MarkdownReaderScreen(MarkdownDocument("Reader.md", markdown), onBack = {})
+                        } else {
+                            MarkdownText(markdown)
+                        }
                     }
                 }
             }
@@ -142,12 +150,18 @@ class MarkdownTextTest {
      * is laid out but off-screen, a swipe brings it in, and the container never widens to fit it.
      */
     @Test
-    fun wide_table_scrolls_horizontally_without_widening_its_container() {
+    fun wide_table_scrolls_horizontally_without_widening_its_container() = assertTableScrolling(reader = false)
+
+    @Test
+    fun reader_wide_table_scrolls_horizontally_without_widening_its_container() = assertTableScrolling(reader = true)
+
+    private fun assertTableScrolling(reader: Boolean) {
         render(
             "| Col A | Col B | Col C | Col D | Col E |\n" +
                 "|---|---|---|---|---|\n" +
                 "| alpha one | beta two | gamma three | delta four | epsilon five |\n",
             maxWidth = CONTAINER_MAX_WIDTH,
+            reader = reader,
         )
 
         // Laid out but off-screen, then reachable by scrolling — `performScrollTo` drives the
@@ -279,7 +293,12 @@ class MarkdownTextTest {
      * it, or the tilde pairing reaching across a fence.
      */
     @Test
-    fun a_message_mixing_every_construct_renders_each_part() {
+    fun a_message_mixing_every_construct_renders_each_part() = assertMixedContent(reader = false)
+
+    @Test
+    fun reader_a_message_mixing_every_construct_renders_each_part() = assertMixedContent(reader = true)
+
+    private fun assertMixedContent(reader: Boolean) {
         render(
             """
             ## Release check
@@ -291,12 +310,13 @@ class MarkdownTextTest {
             - [x] tagged
             - [ ] published
 
-            The ~~old~~ new path, and `inline code`:
+            The ~~old~~ **bold** *italic* path, and `inline code`:
 
             ```kotlin
             fun ship() = Unit
             ```
             """.trimIndent(),
+            reader = reader,
         )
 
         composeTestRule.onNodeWithText("Release check").assertIsDisplayed()
@@ -308,8 +328,12 @@ class MarkdownTextTest {
         composeTestRule.onNodeWithText("tagged").assertIsDisplayed()
         composeTestRule.onNodeWithText("fun ship() = Unit").assertIsDisplayed()
 
-        val annotated = annotatedTextOf("The old new path, and inline code:")
+        val annotated = annotatedTextOf("The old bold italic path, and inline code:")
         assertEquals(listOf("old"), annotated.struckSubstrings())
+        assertEquals(listOf("bold"), annotated.substringsStyled { it.fontWeight == FontWeight.Bold })
+        assertEquals(listOf("italic"), annotated.substringsStyled { it.fontStyle == FontStyle.Italic })
+        assertEquals(listOf("inline code"), annotated.substringsStyled { it.fontFamily == FontFamily.Monospace })
+        assertTrue(annotatedTextOf("fun ship() = Unit").spanStyles.any { it.item.color != Color.Unspecified })
     }
 
     // ------------------------------------------------------- #768 — the heading's marker whitespace
@@ -396,12 +420,18 @@ class MarkdownTextTest {
      * nor the other block reaches the clipboard, and the interior blank lines survive.
      */
     @Test
-    fun each_copy_control_copies_only_its_own_block_source_exactly() {
+    fun each_copy_control_copies_only_its_own_block_source_exactly() = assertCodeCopy(reader = false)
+
+    @Test
+    fun reader_each_copy_control_copies_only_its_own_block_source_exactly() = assertCodeCopy(reader = true)
+
+    private fun assertCodeCopy(reader: Boolean) {
         render(
             "Intro prose.\n\n" +
                 "```kotlin\nfun a() {\n    val x = 1\n\n\n    return x\n}\n```\n\n" +
                 "Between.\n\n" +
                 "```\nsecond\n  block\n```\n",
+            reader = reader,
         )
 
         val controls = composeTestRule.onAllNodesWithContentDescription(copyCode)
@@ -418,13 +448,18 @@ class MarkdownTextTest {
      * beside the viewport rather than over it, which is what keeps it off the code at every offset.
      */
     @Test
-    fun a_long_line_scrolls_inside_the_block_while_label_and_copy_stay_put() {
+    fun a_long_line_scrolls_inside_the_block_while_label_and_copy_stay_put() = assertCodeScrolling(reader = false)
+
+    @Test
+    fun reader_a_long_line_scrolls_inside_the_block_while_label_and_copy_stay_put() = assertCodeScrolling(reader = true)
+
+    private fun assertCodeScrolling(reader: Boolean) {
         val longLine = "val numbers = listOf(" + (1..40).joinToString() + ")"
-        render("```kotlin\n$longLine\n```\n", maxWidth = CONTAINER_MAX_WIDTH)
+        render("```kotlin\n$longLine\n```\n", maxWidth = CONTAINER_MAX_WIDTH, reader = reader)
 
         val label = composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG)
         val copy = composeTestRule.onNodeWithContentDescription(copyCode)
-        val viewport = composeTestRule.onNode(hasScrollAction())
+        val viewport = composeTestRule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange))
         val code = composeTestRule.onNodeWithText(longLine)
         val labelBefore = label.getBoundsInRoot()
         val copyBefore = copy.getBoundsInRoot()

@@ -17,17 +17,20 @@ menu's last item writes the note's text into a document the operator picks — s
 
 ## What it does
 
-The reader draws the thread's own top bar — 24dp back arrow, the file name in `titleLarge` /
-`onPrimaryContainer` on one ellipsised line, a three-dot overflow button at the end (since #1067, see below), a
-60%-alpha header rule — with no title tap. Below it, the file
-renders through [`MarkdownText`](markdown-text.md), the same renderer [assistant replies](message-bubble.md)
-use, in a `weight(1f)` `verticalScroll` column under the fixed bar. The back arrow and system back both pop
-the destination and return to the same thread. A file that cannot be read, or is not valid UTF-8, never opens
-the reader at all — the operator stays on the thread with the existing `AttachmentNotice.OPEN_FAILED`
-snackbar (see [Load and navigate from the thread](#load-and-navigate-from-the-thread) below). Once the reader
-is open, the same "could not be read" notice can recur as a snackbar *inside* the reader — see
-[Copy and refresh menu](#copy-and-refresh-menu-since-1067) — because Refresh can fail after the first read
-already succeeded.
+The fixed top bar has a 24dp back arrow, a single-line ellipsised file name in `titleLarge` /
+`onPrimaryContainer`, a three-dot overflow menu and a 60%-alpha rule; the title is not tappable.
+The body uses [`MarkdownText`](markdown-text.md#public-surface) in a `weight(1f)` `verticalScroll` column.
+Both attachment and linked-note readers explicitly select M3 `bodyLarge` (16sp/24sp), 12dp block gaps
+and 6dp sibling-list-item gaps. Paragraphs, ordered/unordered/task-list text, ordinary markers and
+quote paragraphs share that size, including nested content; quote paragraphs retain italics.
+Finished and streaming thread markdown keep `bodyMedium` (14sp/20sp) and 8dp/4dp gaps.
+Headings, tables and code keep their existing typography, formatting, highlighting, copy controls and
+horizontal scrolling; reader menu copies and link routing are unchanged.
+
+The back arrow and system back return to the same thread. An unreadable or invalid UTF-8 file leaves
+the operator on the thread with `AttachmentNotice.OPEN_FAILED` (see [Load and navigate from the
+thread](#load-and-navigate-from-the-thread)). A failed Refresh retains the open document and shows the
+same notice inside the reader; see [Copy and refresh menu](#copy-and-refresh-menu-since-1067).
 
 With app dark mode selected and wallpaper colours off, the full-size reader `Surface` uses
 `#0B0E11` (30% black over `#101418`), including the transparent header's background and blank space

@@ -49,6 +49,7 @@ import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.ui.conversations.components.MAX_CLIPBOARD_CHARS
 import de.pyryco.mobile.ui.conversations.components.MarkdownText
+import de.pyryco.mobile.ui.conversations.components.MarkdownTextStyle
 import de.pyryco.mobile.ui.conversations.components.boundClipHtml
 import de.pyryco.mobile.ui.conversations.components.boundClipText
 import de.pyryco.mobile.ui.conversations.components.markdownHtml
@@ -376,6 +377,12 @@ fun MarkdownReaderScreen(
                 ) {
                     MarkdownText(
                         markdown = document.text,
+                        style =
+                            MarkdownTextStyle(
+                                body = MaterialTheme.typography.bodyLarge,
+                                blockSpacing = 12.dp,
+                                listItemSpacing = 6.dp,
+                            ),
                         modifier =
                             Modifier.padding(
                                 start = BarGutter,
