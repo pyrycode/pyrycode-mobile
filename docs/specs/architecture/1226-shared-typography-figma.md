@@ -42,3 +42,8 @@ No reference-document section is named by the issue. The documentation stage own
 ## Open questions
 
 - Does the available managed-device capture render nonblank pixels at 412 × 892? If the ATD image cannot, use the existing full-image capture route documented in development verification and record which device provided visual evidence.
+
+## Revisions
+
+- 2026-09-28: The full-image `pixel8Api35` capture supplied nonblank 412 × 892 sidebar evidence. A new `EditHostModalTest` enlarged-text assertion found `IdentityRow` clipping “Server identity:” at 320 dp and 1.5× text; the focused API 33 emulator run reproduced it. `IdentityRow` layout is outside this shared-ramp ticket, so the assertion remains `@Ignore` pending [#1229](https://github.com/pyrycode/pyrycode-mobile/issues/1229). The test is retained as the bug's regression proof; this ticket's executable checks cover the shared metrics and existing compact modal behavior, but cannot claim enlarged-label acceptance until #1229 lands.
+- The comparison image uses Figma sidebar `15:8` against the current fake-backed app's sidebar, with physical system bars removed from the emulator image before alignment. The fake's names, row count, control placement and backdrop differ from the reference; the type-role metrics are compared by the focused assertions rather than treating those screen-content differences as typography defects.
