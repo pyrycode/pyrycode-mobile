@@ -2769,6 +2769,56 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun onModelSelected_connectionFailureDoesNotReplaceRememberedChoice() =
+        runTest {
+            var remembered = "previous-model"
+            val backing = FakeConversationRepository()
+            backing.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus"), row("haiku", "Haiku")))
+            backing.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus"))
+            val repo =
+                object : ConversationRepository by backing {
+                    override suspend fun setSessionSettings(
+                        sessionId: String,
+                        model: String?,
+                        effort: String?,
+                        yolo: Boolean?,
+                        permissionMode: String?,
+                    ): Unit = throw IllegalStateException("not connected")
+                }
+            val vm = makeVm(runConfigHandle(), repo, rememberModel = { remembered = it })
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onModelSelected("haiku")
+            advanceUntilIdle()
+
+            assertEquals("previous-model", remembered)
+            assertEquals("opus", vm.state.value.runConfig.selectedModel)
+            collector.cancel()
+        }
+
+    @Test
+    fun onEffortSelected_acknowledgedEffortDoesNotReplaceRememberedModel() =
+        runTest {
+            var remembered = "previous-model"
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus", effortLevels = listOf("low", "max"))))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus", effort = "low"))
+            val vm = makeVm(runConfigHandle(), repo, rememberModel = { remembered = it })
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onEffortSelected("max")
+            advanceUntilIdle()
+
+            assertEquals("previous-model", remembered)
+            val call = repo.setSessionSettingsCalls.single()
+            assertEquals("max", call.effort)
+            assertNull(call.model)
+            collector.cancel()
+        }
+
+    @Test
     fun onModelSelected_cancelledBeforeAcknowledgementDoesNotReplaceRememberedChoice() =
         runTest {
             var remembered = "previous-model"
