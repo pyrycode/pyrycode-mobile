@@ -87,7 +87,6 @@ import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
-import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.theme.threadColors
@@ -409,16 +408,6 @@ fun ThreadScreen(
                 // #843: a rejected pairing reads as Offline here, and its retry cannot succeed — the Top
                 // overlay's pairing pill replaces it. Network loss still gets the banner and its retry.
                 if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)
-                if (!state.isPromoted && !state.hasMessages) {
-                    WorkspaceChip(
-                        workspaceLabel = state.workspaceLabel,
-                        onClick = onWorkspaceChipTapped,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                    )
-                }
                 // #782: the thread's rows are the join of its items with the daemon's queued backlog, so a
                 // message the daemon parked draws once — in place, carrying the queue treatment — instead
                 // of once as an optimistic echo and again in a foot-of-list section. Pure and cached on
@@ -728,6 +717,15 @@ fun ThreadScreen(
             effortNote = state.runConfig.effortNote?.text(state.agent),
             running = state.runConfig.running,
             contextPercent = state.runConfig.contextPercent,
+            permissionMode = state.runConfig.permissionMode,
+            permissionChoices = PermissionModeOption.entries
+                .filter { state.runConfig.offersPermission(it) }
+                .map { it.wire to it.label },
+            onPermissionSelected = { value ->
+                onPermissionModeSelected(value)
+                sheetVisible = false
+            },
+            permissionPending = state.runConfig.pendingPermission != null,
         )
     }
     if (state.channelInfoOpen) {
@@ -736,10 +734,6 @@ fun ThreadScreen(
             mutationsSupported = state.mutationsSupported,
             onRename = {
                 onOverflowEvent(ThreadEvent.Rename)
-                onOverflowEvent(ThreadEvent.ChannelInfoDismiss)
-            },
-            onChangeWorkspace = {
-                onOverflowEvent(ThreadEvent.ChangeWorkspace)
                 onOverflowEvent(ThreadEvent.ChannelInfoDismiss)
             },
             onArchive = { onOverflowEvent(ThreadEvent.Archive) },

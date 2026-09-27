@@ -28,6 +28,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
@@ -131,228 +132,45 @@ class ThreadComposerFooterTest {
     private val pendingState =
         SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Applying")
 
-    // AC#1: both buttons show the thread state's current values, and the Status sheet is one tap away.
-    // #650 moved the permission control into the footer, so the sheet no longer carries a YOLO switch.
     @Test
-    fun footer_showsCurrentValues_andKeepsTheStatusSheetOneTapAway() {
-        setThread()
-
-        footerButton("Opus 4.7").assertIsDisplayed()
-        footerButton("high").assertIsDisplayed()
-
-        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
-        composeTestRule.onNodeWithText("Run configuration").assertIsDisplayed()
-        composeTestRule.onNodeWithText("YOLO mode").assertDoesNotExist()
-    }
-
-    // #650: the permission button labels the confirmed mode and offers the modes the wire accepts, with
-    // Auto approval left out for a row that does not support it. A choice hands back the wire value.
-    @Test
-    fun permissionButton_labelsTheConfirmedMode_andChoosingBypassDispatchesItsWireValue() {
+    fun footerKeepsActionsAndRunConfigurationWithoutDuplicateChoices() {
         setThread(baseConfig.copy(permissionMode = "plan"))
 
-        footerButton("Plan").performClick()
-        overlay().assertExists()
-        listOf("Manual approval", "Auto-approve edits", "Plan", "Approved actions only", "Bypass approvals").forEach {
-            composeTestRule.onNode(hasText(it) and isSelectable()).assertIsDisplayed()
-        }
-        composeTestRule.onNode(hasText("Auto approval") and isSelectable()).assertDoesNotExist()
-
-        composeTestRule.onNode(hasText("Bypass approvals") and isSelectable()).performClick()
-
-        assertEquals(listOf("bypassPermissions"), permissionSelections)
-        assertTrue(modelSelections.isEmpty())
-        overlay().assertDoesNotExist()
-    }
-
-    // #650: no confirmed mode, no button — "" beside a live session id proves nothing.
-    @Test
-    fun permissionButton_isAbsentWithoutAConfirmedMode() {
-        setThread(baseConfig.copy(permissionMode = ""))
-
-        composeTestRule.onNodeWithText("Manual approval").assertDoesNotExist()
-        composeTestRule.onNodeWithText("Bypass approvals").assertDoesNotExist()
-        footerButton("Opus 4.7").assertIsDisplayed()
-    }
-
-    // #650: an outstanding write keeps the confirmed label, marks it pending and opens nothing.
-    @Test
-    fun permissionButton_whilePending_keepsTheConfirmedLabel() {
-        setThread(baseConfig.copy(permissionMode = "plan", pendingPermission = "default"))
-
-        composeTestRule.onNode(hasText("Plan") and pendingState).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Manual approval").assertDoesNotExist()
-    }
-
-    // AC#2 + AC#3: the model overlay lists the published models and nothing else. Choosing one hands the
-    // verbatim value to the existing handler and closes the overlay.
-    @Test
-    fun modelOverlay_listsOnlyPublishedModels_andChoosingOneDispatchesAndCloses() {
-        setThread()
-
-        footerButton("Opus 4.7").performClick()
-        overlay().assertExists()
-        composeTestRule.onNode(hasText("Haiku") and isSelectable()).assertIsDisplayed()
-        composeTestRule.onNode(hasText("Opus 4.7") and isSelectable()).assertIsDisplayed()
-        composeTestRule.onNodeWithText("max").assertDoesNotExist()
-
-        composeTestRule.onNode(hasText("Haiku") and isSelectable()).performClick()
-
-        assertEquals(listOf("haiku"), modelSelections)
-        assertTrue(effortSelections.isEmpty())
-        overlay().assertDoesNotExist()
-    }
-
-    @Test
-    fun effortOverlay_listsTheSelectedRowsLevels_andChoosingOneDispatches() {
-        setThread()
-
-        footerButton("high").performClick()
-        composeTestRule.onNode(hasText("max") and isSelectable()).assertIsDisplayed()
-        composeTestRule.onNode(hasText("Haiku") and isSelectable()).assertDoesNotExist()
-
-        composeTestRule.onNode(hasText("max") and isSelectable()).performClick()
-
-        assertEquals(listOf("max"), effortSelections)
-        overlay().assertDoesNotExist()
-    }
-
-    // AC#2: a selected row publishing no effort levels has nothing to offer, so its button opens nothing.
-    @Test
-    fun effortButton_forARowPublishingNoLevels_opensNothing() {
-        setThread(baseConfig.copy(savedModel = "haiku"))
-
-        composeTestRule.onNode(hasText("high") and !isSelectable()).assertIsNotEnabled().performClick()
-
-        overlay().assertDoesNotExist()
-    }
-
-    // AC#2: with no published menu, the model button opens nothing either.
-    @Test
-    fun modelButton_withNoPublishedMenu_opensNothing() {
-        setThread(baseConfig.copy(choices = emptyList(), menuAvailable = false))
-
-        composeTestRule.onNode(hasText("opus[1m]") and !isSelectable()).assertIsNotEnabled().performClick()
-
-        overlay().assertDoesNotExist()
-    }
-
-    // AC#2: a tap outside closes the overlay, selects nothing and never reaches the composer. The click
-    // lands near the input field's start, which the scrim covers. Since #884 put the Actions button first,
-    // the model overlay opens far enough right to cover the field's centre, so the tap stays clear of it.
-    @Test
-    fun outsideTap_dismissesWithoutSelecting_andNeverReachesTheComposer() {
-        setThread()
-
-        footerButton("Opus 4.7").performClick()
-        overlay().assertExists()
-
-        composeTestRule.onNode(hasSetTextAction()).performTouchInput { click(centerLeft + Offset(8.dp.toPx(), 0f)) }
-
-        overlay().assertDoesNotExist()
-        composeTestRule.onNode(hasSetTextAction()).assertIsNotFocused()
-        assertTrue(modelSelections.isEmpty())
-        assertTrue(effortSelections.isEmpty())
-    }
-
-    // AC#2: the overlay opens above the button that anchors it.
-    @Test
-    fun overlay_opensAboveItsFooterButton() {
-        setThread()
-        val buttonTop = footerButton("Opus 4.7").getUnclippedBoundsInRoot().top
-
-        footerButton("Opus 4.7").performClick()
-
-        val lowestRowBottom =
-            listOf("Opus 4.7", "Haiku")
-                .map { composeTestRule.onNode(hasText(it) and isSelectable()).getUnclippedBoundsInRoot().bottom }
-                .maxBy { it.value }
-        assertTrue("overlay must sit above the footer", lowestRowBottom <= buttonTop)
-    }
-
-    // A cut menu is never presented as complete. The caption carries the producer's figure plus the
-    // client's render cap, not a count of rows.
-    @Test
-    fun cutModelMenu_saysItIsASubset() {
-        setThread(baseConfig.copy(droppedModels = 40, hiddenChoices = 2))
-
-        footerButton("Opus 4.7").performClick()
-
-        composeTestRule.onNodeWithText("+42 not listed").assertIsDisplayed()
-    }
-
-    // #889: an explicit null reading clears the selection and explains why, in the button's state
-    // description; an applied value replaces the saved one on the button and in the overlay.
-    @Test
-    fun effortButton_followsTheAppliedReading_andExplainsAMissingOne() {
-        setThread(baseConfig.copy(appliedEffort = EffectiveEffort.NotReported))
-
-        footerButton("Effort").assert(
-            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Claude reports no effort parameter."),
-        )
-
-        state = state(runConfig = baseConfig.copy(appliedEffort = EffectiveEffort.Applied("max")))
-        composeTestRule.waitForIdle()
-
-        footerButton("max").performClick()
-        composeTestRule.onNode(isSelectable() and hasText("max")).assertIsSelected()
-        composeTestRule.onNode(isSelectable() and hasText("high")).assertIsNotSelected()
-    }
-
-    // #1115: in a Codex conversation both effort notes name Codex, on the footer and on the Status sheet.
-    @Test
-    fun effortNotes_nameTheConversationsAgent() {
-        setThread(baseConfig.copy(appliedEffort = EffectiveEffort.NotReported))
-        state = state.copy(agent = ConversationAgent.Codex)
-        composeTestRule.waitForIdle()
-
-        footerButton("Effort").assert(
-            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Codex reports no effort parameter."),
-        )
-
-        state = state.copy(runConfig = baseConfig.copy(savedEffort = ""))
+        footerButton("Actions").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Opus 4.7").assertDoesNotExist()
+        composeTestRule.onNodeWithText("high").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Plan").assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
-        composeTestRule
-            .onNodeWithText("Codex's default applies. The running effort is unavailable.")
-            .assertIsDisplayed()
+        composeTestRule.onNodeWithText("Run configuration").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Opus 4.7").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Plan").performScrollTo().assertIsDisplayed()
     }
 
-    // AC#3: a pending tap is visibly distinct, and a refused write (the VM clears the pending tap) returns
-    // the button to the value it showed before.
     @Test
-    fun pendingSelection_isDistinct_andARefusalRevertsTheButton() {
-        setThread(baseConfig.copy(pendingModel = "haiku"))
+    fun runConfigurationSelectsModelEffortAndPermission() {
+        setThread(baseConfig.copy(permissionMode = "plan"))
+        val opener = composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand))
 
-        composeTestRule.onNode(hasText("Haiku") and !isSelectable()).assert(pendingState)
-        composeTestRule.onNode(hasText("high") and !isSelectable()).assert(!pendingState)
+        opener.performClick()
+        composeTestRule.onNode(hasText("Haiku") and isSelectable()).performClick()
+        assertEquals(listOf("haiku"), modelSelections)
 
-        state = state(runConfig = baseConfig)
-        composeTestRule.waitForIdle()
+        opener.performClick()
+        composeTestRule.onNode(hasText("max") and isSelectable()).performClick()
+        assertEquals(listOf("max"), effortSelections)
 
-        footerButton("Opus 4.7").assert(!pendingState)
-        composeTestRule.onAllNodesWithText("Haiku").assertCountEquals(0)
+        opener.performClick()
+        composeTestRule.onNode(hasText("Bypass approvals") and isSelectable()).performScrollTo().performClick()
+        assertEquals(listOf("bypassPermissions"), permissionSelections)
+        composeTestRule.onNodeWithText("Run configuration").assertDoesNotExist()
     }
 
-    // AC#4: the overlay never survives the conversation. Switching conversations or leaving the thread and
-    // coming back opens with it closed.
     @Test
-    fun overlay_doesNotSurviveLeavingTheConversation() {
-        setThread()
-
-        footerButton("Opus 4.7").performClick()
-        overlay().assertExists()
-        state = state(conversationId = "c2")
-        composeTestRule.waitForIdle()
-        overlay().assertDoesNotExist()
-
-        footerButton("high").performClick()
-        overlay().assertExists()
-        shown = false
-        composeTestRule.waitForIdle()
-        shown = true
-        composeTestRule.waitForIdle()
-        overlay().assertDoesNotExist()
-        composeTestRule.onNode(hasText("max") and isSelectable()).assertDoesNotExist()
+    fun runConfigurationShowsUnavailablePermissionWhenNoConfirmedMode() {
+        setThread(baseConfig.copy(permissionMode = ""))
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
+        composeTestRule.onNodeWithText("Permission mode unavailable").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Bypass approvals").assertDoesNotExist()
     }
 
     private fun actionRow(label: String) = composeTestRule.onNode(hasText(label) and hasClickAction() and !isSelectable())
@@ -363,7 +181,7 @@ class ThreadComposerFooterTest {
         setThread(baseConfig.copy(permissionMode = "plan"))
 
         val actions = footerButton("Actions").assertIsDisplayed().getUnclippedBoundsInRoot()
-        assertTrue(actions.left < footerButton("Plan").getUnclippedBoundsInRoot().left)
+        assertTrue(actions.left < composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files)).getUnclippedBoundsInRoot().left)
         footerButton("Actions").performClick()
         overlay().assertExists()
 

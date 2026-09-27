@@ -388,78 +388,42 @@ class HostChannelListViewModelTest {
         }
 
     @Test
-    fun confirmedChatUsesClickedHostAndDaemonDefaultDespiteSavedPreference() =
+    fun chatTapCreatesImmediatelyOnClickedHostInDaemonDefaultFolder() =
         runTest(dispatcher) {
-            val f =
-                fixture(
-                    flowOf(
-                        preferencesOf(
-                            stringPreferencesKey("default_workspace_host:Host") to "chosen-default",
-                            stringPreferencesKey("default_workspace_host:host") to "other-default",
-                        ),
-                    ),
-                )
+            val f = fixture(
+                flowOf(preferencesOf(stringPreferencesKey("default_workspace_host:Host") to "chosen-default")),
+            )
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
             f.selected.value = f.b.repo
             val replacement = Repo()
             f.a.live.value = replacement
-            f.vm.openCreateChat("Host")
-            runCurrent()
-            assertTrue(replacement.workspaces.isEmpty())
-            assertEquals(
-                "Host",
-                f.vm.hostState.value.createChat
-                    ?.serverId,
-            )
-            assertEquals(
-                "Local Host",
-                f.vm.hostState.value.createChat
-                    ?.hostName,
-            )
-            f.vm.submitCreateChat()
+
+            f.vm.createChat("Host")
             runCurrent()
             assertEquals(listOf<String?>(null), replacement.workspaces)
-            assertTrue(
-                f.a.repo.workspaces
-                    .isEmpty(),
-            )
-            assertTrue(
-                f.b.repo.workspaces
-                    .isEmpty(),
-            )
-            assertTrue(f.lookups.contains("Host"))
+            assertTrue(f.a.repo.workspaces.isEmpty())
+            assertTrue(f.b.repo.workspaces.isEmpty())
             assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+            assertNull(f.vm.hostState.value.createChat)
 
-            f.vm.openCreateChat("host")
-            f.vm.submitCreateChat()
+            f.vm.createChat("host")
             runCurrent()
             assertEquals(listOf<String?>(null), f.b.repo.workspaces)
             assertEquals(HostConversationTarget("host", "returned-id"), f.nav.last())
-            assertNull(f.vm.hostState.value.createChat)
         }
 
     @Test
-    fun chatCancelCreatesNothingAndRepeatedConfirmCreatesOnce() =
+    fun repeatedChatTapWhileCreatingStartsOnlyOneRequest() =
         runTest(dispatcher) {
             val f = fixture()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-
-            f.vm.openCreateChat("host")
-            f.vm.dismissCreateChat()
-            f.vm.submitCreateChat()
-            runCurrent()
-            assertTrue(
-                f.b.repo.workspaces
-                    .isEmpty(),
-            )
-
             val gate = CompletableDeferred<Unit>()
             f.b.repo.createGate = gate
-            f.vm.openCreateChat("host")
-            f.vm.submitCreateChat()
-            f.vm.submitCreateChat()
+
+            f.vm.createChat("host")
+            f.vm.createChat("host")
             runCurrent()
             assertEquals(listOf<String?>(null), f.b.repo.workspaces)
             assertTrue(requireNotNull(f.vm.hostState.value.createChat).saving)
@@ -471,86 +435,24 @@ class HostChannelListViewModelTest {
         }
 
     @Test
-    fun chatFailureAndReconnectKeepTheSameDialogRetryableWithoutServerText() =
+    fun chatFailureCanBeRetriedWithAnotherTapWithoutShowingServerText() =
         runTest(dispatcher) {
             val f = fixture()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
             f.a.repo.failure = RelayErrorException("server.error", false, "server-secret")
-            f.vm.openCreateChat("Host")
-            f.vm.submitCreateChat()
+            f.vm.createChat("Host")
             runCurrent()
             assertTrue(requireNotNull(f.vm.hostState.value.createChat).failed)
             assertTrue(f.nav.isEmpty())
 
-            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
-            runCurrent()
-            assertTrue(requireNotNull(f.vm.hostState.value.createChat).failed)
-            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
             f.a.repo.failure = null
-            f.vm.submitCreateChat()
+            f.vm.createChat("Host")
             runCurrent()
             assertEquals(listOf<String?>(null, null), f.a.repo.workspaces)
             assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
             assertNull(f.vm.hostState.value.createChat)
             assertTrue(logs.none { "server-secret" in it })
-        }
-
-    @Test
-    fun lateCreateReplyCannotCloseAnotherHostsDialogOrNavigate() =
-        runTest(dispatcher) {
-            val f = fixture()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-            val gate = CompletableDeferred<Unit>()
-            f.a.repo.createGate = gate
-            f.vm.openCreateChat("Host")
-            f.vm.submitCreateChat()
-            runCurrent()
-            f.vm.dismissCreateChat()
-            f.vm.openCreateChat("host")
-            gate.complete(Unit)
-            runCurrent()
-            assertEquals(
-                "host",
-                f.vm.hostState.value.createChat
-                    ?.serverId,
-            )
-            assertTrue(f.nav.isEmpty())
-            f.vm.submitCreateChat()
-            runCurrent()
-            assertEquals(listOf(HostConversationTarget("host", "returned-id")), f.nav)
-        }
-
-    @Test
-    fun lateCreateReplyCannotCloseReopenedDialogForTheSameHost() =
-        runTest(dispatcher) {
-            val f = fixture()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-            val firstGate = CompletableDeferred<Unit>()
-            f.a.repo.createGate = firstGate
-            f.vm.openCreateChat("Host")
-            f.vm.submitCreateChat()
-            runCurrent()
-
-            val secondGate = CompletableDeferred<Unit>()
-            f.a.repo.createGate = secondGate
-            f.vm.dismissCreateChat()
-            f.vm.openCreateChat("Host")
-            f.vm.submitCreateChat()
-            runCurrent()
-            assertEquals(listOf<String?>(null, null), f.a.repo.workspaces)
-
-            firstGate.complete(Unit)
-            runCurrent()
-            assertTrue(requireNotNull(f.vm.hostState.value.createChat).saving)
-            assertTrue(f.nav.isEmpty())
-
-            secondGate.complete(Unit)
-            runCurrent()
-            assertNull(f.vm.hostState.value.createChat)
-            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
         }
 
     @Test
@@ -744,45 +646,18 @@ class HostChannelListViewModelTest {
         }
 
     @Test
-    fun unavailableTargetsNeverCreateOrNavigateEvenWithCachedRowsAndConnectedIndicators() =
+    fun unavailableOrUnknownHostNeverCreatesOrNavigates() =
         runTest(dispatcher) {
-            val preferences = MutableSharedFlow<Preferences>()
-            val f = fixture(preferences)
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-            f.a.repo.rows.value = listOf(row("cached"))
-            for (reason in listOf("unknown", "removed", "disconnected", "handshaking")) {
-                f.hosts.value = listOf(f.a.entry, f.b.entry)
-                f.a.available = true
-                f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
-                val target = if (reason == "unknown") "HOST" else "Host"
-                f.vm.openCreateChat(target)
-                f.vm.openAddWorkspace(target)
-                f.vm.selectAddWorkspaceFolder("explicit")
-                f.a.available = false
-                if (reason == "removed") f.hosts.value = listOf(f.b.entry)
-                if (reason == "disconnected") f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
-                if (reason == "handshaking") f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking)
-                f.vm.submitCreateChat()
-                preferences.emit(emptyPreferences())
-                f.vm.createAddWorkspaceFolder("folder")
-                f.vm.submitAddWorkspace()
-                runCurrent()
-                // A known host that is unavailable at the press fails it and stays open.
-                f.vm.hostState.value.addWorkspace
-                    ?.let { assertTrue(it.startFailed) }
-                f.vm.hostState.value.createChat
-                    ?.let { assertTrue(it.failed) }
-                f.vm.dismissCreateChat()
-                f.vm.dismissAddWorkspace()
-            }
-            assertTrue(
-                f.a.repo.workspaces
-                    .isEmpty(),
-            )
-            assertTrue(
-                f.b.repo.workspaces
-                    .isEmpty(),
-            )
+            f.vm.createChat("HOST")
+            f.a.available = false
+            f.vm.createChat("Host")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.createChat).failed)
+            assertTrue(f.a.repo.workspaces.isEmpty())
+            assertTrue(f.b.repo.workspaces.isEmpty())
             assertTrue(f.nav.isEmpty())
         }
 
@@ -802,15 +677,13 @@ class HostChannelListViewModelTest {
                     CancellationException("sensitive"),
                 )) {
                     f.a.repo.failure = failure
-                    f.vm.openCreateChat("Host")
-                    f.vm.submitCreateChat()
+                    f.vm.createChat("Host")
                     runCurrent()
                     assertEquals(
                         failure is CancellationException,
                         f.a.repo.actionJob!!
                             .isCancelled,
                     )
-                    f.vm.dismissCreateChat()
                     f.vm.openAddWorkspace("Host")
                     f.vm.selectAddWorkspaceFolder("explicit")
                     f.vm.submitAddWorkspace()
@@ -846,8 +719,7 @@ class HostChannelListViewModelTest {
             runCurrent()
             val target = HostConversationTarget("Host", "same")
             f.vm.onHostRowTapped(target)
-            f.vm.openCreateChat("Host")
-            f.vm.submitCreateChat()
+            f.vm.createChat("Host")
             runCurrent()
             assertEquals(listOf(target, HostConversationTarget("Host", "returned-id")), f.nav)
             assertEquals(listOf<String?>(null), f.a.repo.workspaces)
@@ -917,8 +789,7 @@ class HostChannelListViewModelTest {
                         .host.channels,
                 )
                 val navigation = async { vm.hostNavigationEvents.first() }
-                vm.openCreateChat("demo")
-                vm.submitCreateChat()
+                vm.createChat("demo")
                 val target = navigation.await()
                 assertEquals("demo", target.serverId)
                 val created = fake.observeConversations(ConversationFilter.Discussions).first().single { it.id == target.conversationId }
@@ -940,8 +811,7 @@ class HostChannelListViewModelTest {
                 )
                 prefs.setDefaultWorkspace("demo", "/demo-only").getOrThrow()
                 val nextNavigation = async { vm.hostNavigationEvents.first() }
-                vm.openCreateChat("demo")
-                vm.submitCreateChat()
+                vm.createChat("demo")
                 val next = nextNavigation.await()
                 assertEquals("demo", next.serverId)
                 assertEquals(
@@ -1060,8 +930,7 @@ class HostChannelListViewModelTest {
             assertEquals(second, f.vm.hostState.value.selected)
 
             // A discussion created from this list is opened from it too, so it takes the highlight.
-            f.vm.openCreateChat("Host")
-            f.vm.submitCreateChat()
+            f.vm.createChat("Host")
             runCurrent()
             assertEquals(HostConversationTarget("Host", "returned-id"), f.vm.hostState.value.selected)
         }
