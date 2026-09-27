@@ -6,6 +6,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 
 ## Product and UI
 
+- [Shared typography](features/shared-typography.md): Figma text roles, emphasis, visual evidence and font-scale limit.
 - [Navigation](features/navigation.md): routes, pairing state and the single activity.
 - [Welcome](features/welcome-screen.md): first-run entry point.
 - [Pairing](features/scanner-screen.md): camera scanner, [pair with code](features/paste-code-dialog.md), [fingerprint confirmation](features/pairing-confirm-gate.md), and [paired-server storage](features/paired-server-store.md).

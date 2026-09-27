@@ -36,7 +36,7 @@ Lifted verbatim from `ScannerScreen.kt`'s pairing-flow chrome: `title = Text("Pa
 
 | Element | M3 role | Notes |
 |---|---|---|
-| TopAppBar title ("Pair with pyrycode") | `MaterialTheme.typography.titleLarge` | Top-level `style =` argument on the title `Text`; resolved via `Typography()` defaults (no theme override). |
+| TopAppBar title ("Pair with pyrycode") | `MaterialTheme.typography.titleLarge` | Top-level `style =` argument on the title `Text`; resolved via the [app type ramp](shared-typography.md). |
 | Headline ("Connecting to your pyrycode server…") | `MaterialTheme.typography.bodyLarge` | Figma binds Roboto Regular 16sp/24sp w/ 0.15 tracking; M3 `bodyLarge` is 16sp/24sp w/ 0.5 letter-spacing. The 0.35sp delta is sub-perceptible at 16sp and resolved at spec time — do not `TextStyle.copy(letterSpacing = …)` to chase it. |
 | Server address (`"home.lan:7117"`) | `MaterialTheme.typography.bodyMedium` + `fontFamily = FontFamily.Monospace` as a top-level `Text` parameter | `FontFamily.Monospace` is Compose's platform-monospace alias; no `res/font/` resource needed. The top-level `fontFamily =` argument overrides only the family in the passed `style` — keeps the named-role binding intact (AC#3) while satisfying the monospace requirement without an inlined `TextStyle.copy(...)`. |
 

@@ -4,6 +4,8 @@ Outer shell for the conversation thread at the `conversation_thread/{serverId}/{
 
 Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/`). Files: `ThreadScreen.kt`, `ThreadTopAppBar.kt`, `ThreadInputBar.kt`, `ThreadViewModel.kt`. Since the 2026-09-23 file split, the screen's history rows, permission modal and previews live in `ThreadHistoryRows.kt`, `ThreadPermissionModal.kt` and `ThreadScreenPreviews.kt`, and the view model's state types, question-modal types and live-delta fold in `ThreadUiState.kt`, `QuestionModalState.kt` and `ThreadFold.kt`. The [`ConnectionBanner`](connection-banner.md) it consumes lives one package over at `ui/conversations/components/ConnectionBanner.kt`. Figma reference frame: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — the TopAppBar region (back arrow + title + `more_vert` overflow), the empty reverse-layout `LazyColumn` shell, the composer (subframe `16:61`), and the banner slot between them are in scope here; the message list, status row, and other body decorations in the same frame are deferred to the downstream tickets above.
 
+Thread text uses the [shared type ramp](shared-typography.md) checked against Figma `16:8`.
+
 ## Map
 
 Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guard enforces. Each section named below moved verbatim, heading and anchors intact, into its own document:

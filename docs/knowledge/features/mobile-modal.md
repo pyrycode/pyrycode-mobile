@@ -231,6 +231,9 @@ The exported close vector uses `primary` over `onPrimary`. The shell retains
 `titleLarge` and an `inversePrimary` divider at 60% opacity. Light and dark
 previews are defined at 412 × 892 dp.
 
+The shared [type ramp](shared-typography.md) supplies the modal text metrics;
+Edit host's enlarged identity label still clips at 320 dp and 1.5× text (#1229).
+
 ## Focus and verification
 
 [`MobileModalFillTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/components/MobileModalFillTest.kt)
