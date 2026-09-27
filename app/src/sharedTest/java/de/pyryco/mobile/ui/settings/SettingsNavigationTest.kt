@@ -294,6 +294,49 @@ class SettingsNavigationTest {
         }
     }
 
+    @Test fun toolbarPairingUnwindsThroughScannerToTheInvokingList() {
+        start()
+        val invokingList = nav.currentBackStackEntry
+        compose.onNodeWithContentDescription("Pair another host").performClick()
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.SCANNER }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.runOnIdle { assertEquals(invokingList, nav.currentBackStackEntry) }
+
+        compose.onNodeWithContentDescription("Pair another host").performClick()
+        compose.onNode(hasText("paste", substring = true, ignoreCase = true) and hasClickAction()).performClick()
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.PAIR_CODE_ROUTE }
+        compose.onNodeWithText("Cancel").performClick()
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.SCANNER }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.runOnIdle { assertEquals(invokingList, nav.currentBackStackEntry) }
+
+        compose.onNodeWithContentDescription("Pair another host").performClick()
+        compose.onNode(hasText("paste", substring = true, ignoreCase = true) and hasClickAction()).performClick()
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.PAIR_CODE_ROUTE }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.SCANNER }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.runOnIdle {
+            assertEquals(invokingList, nav.currentBackStackEntry)
+            assertEquals(2, runBlocking { store.list() }.size)
+        }
+    }
+
+    @Test fun emptyToolbarArchiveHasNoDestinationAndSettingsStillOpens() {
+        start()
+        compose.runOnIdle {
+            runBlocking {
+                store.remove(ALPHA_ID)
+                store.remove(BRAVO_ID)
+            }
+        }
+        compose.waitUntil(5_000) { registry.selected.value == null }
+        compose.onNodeWithContentDescription("Open archive").performClick()
+        compose.runOnIdle { assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route) }
+        openSettings()
+        compose.runOnIdle { assertEquals("", Routes.settingsOwner(nav.currentBackStackEntry?.arguments)) }
+    }
+
     private fun openWorkspacePicker() {
         compose.onNodeWithText("Default workspace").performScrollTo().performClick()
         compose.waitForIdle()
