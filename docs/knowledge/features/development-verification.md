@@ -101,9 +101,17 @@ width stays at Robolectric's default 320dp on purpose. Any wider and a dialog
 holding a text field never settles, and the test fails after 60 seconds with
 `AppNotIdleException` ([robolectric#8460](https://github.com/robolectric/robolectric/issues/8460)).
 A test that needs the Pixel 2 width wraps its content in
-`DeviceConfigurationOverride.ForcedSize`. A test that measures text exactly, such as
+`DeviceConfigurationOverride.ForcedSize`. This does not resize a dialog's separate
+Robolectric window. For a read-only modal, use a window qualifier and pass
+`requiredSize` through the modal's modifier, then assert the measured content width;
+otherwise the supposed 412dp fixture can still run at 320dp.
+[`BackgroundTaskPanelLayoutTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/BackgroundTaskPanelLayoutTest.kt)
+uses `@Config(qualifiers = "w412dp-h892dp")` with no editable fields (#1164).
+It checks the content-relative inset at two heights to reject vertical centering,
+then checks text reachability and both Close actions in pinned and compact modes.
+A test that measures text exactly, such as
 single-line truncation or overflow, adds `@GraphicsMode(GraphicsMode.Mode.NATIVE)`
-so Robolectric uses real fonts. The device ignores both.
+so Robolectric uses real fonts. The device ignores Robolectric annotations.
 
 A shared test class needs `@RunWith(AndroidJUnit4::class)`. The device runner
 does not require it, but without it the JVM runs the class outside Robolectric and
