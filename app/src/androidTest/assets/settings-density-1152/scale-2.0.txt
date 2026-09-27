@@ -1,0 +1,10 @@
+productionComposables=SettingsScreen,AboutScreen syntheticHost=true theme=dark wallpaperColors=false
+sizePx=1080x2340 sizeDp=411.43x891.43 density=2.625 densityDpi=420 fontScale=2.0
+api=35 device=sdk_gphone64_arm64 fingerprint=google/sdk_gphone64_arm64/emu64a:15/AE3A.240806.036/12592187:user/release-keys build=28f056bb
+Pair another server boundsPx=Rect.fromLTRB(0.0, 1074.0, 1080.0, 1237.0) heightDp=62.095238
+Theme boundsPx=Rect.fromLTRB(0.0, 1388.0, 1080.0, 1640.0) heightDp=96.0
+Use Material You dynamic color boundsPx=Rect.fromLTRB(0.0, 1640.0, 1080.0, 1914.0) heightDp=104.38095
+Default YOLO boundsPx=Rect.fromLTRB(0.0, 2025.0, 1080.0, 2277.0) heightDp=96.0
+Version 1.0.0 boundsPx=Rect.fromLTRB(0.0, 297.0, 1080.0, 549.0) heightDp=96.0
+Privacy policy boundsPx=Rect.fromLTRB(0.0, 934.0, 1080.0, 1097.0) heightDp=62.095238
+License: MIT boundsPx=Rect.fromLTRB(0.0, 1097.0, 1080.0, 1260.0) heightDp=62.095238

@@ -1,12 +1,17 @@
 package de.pyryco.mobile.ui.settings
 
 import android.os.Build
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,15 +24,16 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -385,13 +392,35 @@ internal fun SettingsRow(
     onClick: (() -> Unit)? = null,
 ) {
     val rowModifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
-    ListItem(
-        modifier = rowModifier,
-        headlineContent = { Text(headline) },
-        supportingContent = supporting?.let { { Text(it) } },
-        trailingContent = trailing,
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-    )
+    Row(
+        modifier =
+            rowModifier
+                .fillMaxWidth()
+                .heightIn(min = if (onClick != null) 48.dp else 44.dp)
+                .background(MaterialTheme.colorScheme.surface)
+                .semantics(mergeDescendants = true) {}
+                .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f).padding(vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(headline, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            supporting?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (trailing != null) {
+            Spacer(Modifier.width(16.dp))
+            // Keep the native 48 dp switch target: its 2 dp outer padding yields the 52 dp row.
+            Box(Modifier.padding(vertical = 2.dp)) {
+                CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant) {
+                    ProvideTextStyle(MaterialTheme.typography.labelSmall, content = trailing)
+                }
+            }
+        }
+    }
 }
 
 /**
