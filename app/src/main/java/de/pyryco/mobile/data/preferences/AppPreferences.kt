@@ -42,6 +42,21 @@ class AppPreferences(
         dataStore.edit { prefs -> prefs[DEFAULT_MODEL] = model.name }
     }
 
+    /** The exact published model from the last acknowledged thread choice, separate from [defaultModel]. */
+    val rememberedModel: Flow<String?> =
+        dataStore.data.map { prefs -> prefs[REMEMBERED_MODEL] }
+
+    /** Stores [value] verbatim after acknowledgement; logs only a static outcome code. */
+    suspend fun setRememberedModel(value: String): Result<Unit> =
+        try {
+            dataStore.edit { prefs -> prefs[REMEMBERED_MODEL] = value }
+            RelayLog.d { "event=remembered_model_set outcome=success" }
+            Result.success(Unit)
+        } catch (error: IOException) {
+            RelayLog.w { "event=remembered_model_set outcome=io_failure" }
+            Result.failure(error)
+        }
+
     val defaultEffort: Flow<Effort> =
         dataStore.data.map { prefs ->
             val stored = prefs[DEFAULT_EFFORT]
@@ -180,6 +195,7 @@ class AppPreferences(
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val USE_WALLPAPER_COLORS = booleanPreferencesKey("use_wallpaper_colors")
         val DEFAULT_MODEL = stringPreferencesKey("default_model")
+        val REMEMBERED_MODEL = stringPreferencesKey("remembered_model")
         val DEFAULT_EFFORT = stringPreferencesKey("default_effort")
         val REMEMBERED_EFFORT = stringPreferencesKey("remembered_effort")
         val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")

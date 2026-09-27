@@ -62,3 +62,7 @@ None. The existing `sendSessionSettings` success point and `AppPreferences` stor
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-27
+
+## Revisions
+
+- 2026-09-27: Project-wide `spotlessCheck` failed on five already-unformatted files outside the model persistence path. The required formatting pass changes `ThreadScreen`, `InteractiveStreamE2ETest`, `LiteralScreenNavigationTest`, `ThreadComposerFooterTest`, and `HostChannelListViewModelTest` without changing their behavior. Their inclusion is solely to satisfy the verifier's formatting gate; no model design change is needed.

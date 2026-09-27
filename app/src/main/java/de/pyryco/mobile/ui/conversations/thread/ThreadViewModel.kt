@@ -137,6 +137,8 @@ class ThreadViewModel(
     // #686: the phone's one remembered effort level, recalled once per opening by [effortRecall].
     // Defaulted to a store that remembers nothing, so the demo path and existing tests stay inert.
     rememberedEffort: RememberedEffortStore = RememberedEffortStore.None,
+    // #1222: production persists an acknowledged model choice; fake and demo threads stay inert.
+    private val rememberModel: suspend (String) -> Unit = {},
     // #1027: where a markdown attachment's kept file is read before the reader opens.
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
@@ -1920,6 +1922,7 @@ class ThreadViewModel(
         viewModelScope.launch {
             try {
                 repository.setSessionSettings(sessionId, model, effort)
+                if (model != null) rememberModel(model)
                 // #686: an acknowledged effort write is the only thing that sets the remembered level.
                 if (effort != null) effortRecall.remember(effort)
                 // #807: the ack echoes only the input session id and confirms no value, so a settled write
