@@ -2934,6 +2934,11 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNodeWithContentDescription("Close").performClick()
             awaitFooter(changeModelLabel, label)
             assertEquals("the source choice was acknowledged", target.value, freshSettings(original.id).model)
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    preferences.rememberedModel.first { it == target.value }
+                }
+            }
             leaveThread()
 
             val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
