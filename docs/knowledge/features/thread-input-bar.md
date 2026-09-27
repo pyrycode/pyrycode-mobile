@@ -288,7 +288,29 @@ The button itself — its two-state icon, content description and enabled logic 
 
 ### IME handling — `Modifier.imePadding()` moved to the composer column
 
-**Moved in [#643](../codebase/643.md).** `Modifier.imePadding()` no longer lives on this composable — it lives on the `Column` [`ThreadScreen`](thread-screen.md) mounts in its `bottomBar` slot (see "`ThreadScreen` mount point" below), one level up, alongside that column's own `background(surface)` and its 12dp/16dp top/bottom padding. It still does **not** belong on the `Scaffold` body modifier or the screen root — that would shift the top app bar and the message list upward when the keyboard appears, which is wrong. Lifting the whole three-band composer column (status area + field + footer) as one unit above the keyboard, while the header and the list stay stationary, is the same rule as before #643, just applied one level higher now that the composer is three bands instead of one. The `LazyColumn`'s `reverseLayout = true` ordering keeps the latest item visible immediately above the lifted composer.
+`MainActivity` declares `android:windowSoftInputMode="adjustResize"` in the
+[manifest](../../../app/src/main/AndroidManifest.xml). Leaving the window policy
+unspecified allowed a populated thread to pan its header off screen when the
+keyboard reopened; the controlled [#1166 regression](../../specs/architecture/1166-thread-keyboard.md)
+failed with that policy and passed with `adjustResize` alone. The activity's
+system-bar consumption and the composer's padding did not need to change.
+
+`Modifier.imePadding()` belongs only on the `Column` [`ThreadScreen`](thread-screen.md)
+mounts in its `bottomBar` slot, as it has since [#643](../codebase/643.md), rather
+than on `ThreadInputBar`, the Scaffold body or the screen root. The activity
+[reserves and consumes system-bar padding](navigation.md#configuration); the
+composer reserves the remaining IME inset once. Its status area, field and footer
+lift together, retaining the 12dp top and 16dp bottom padding. The header stays
+below the status bar while the message viewport shrinks and remains scrollable;
+there is no keyboard-height blank band above the IME.
+
+The reversed, keyed `LazyColumn` retains latest-message anchoring when already at
+the bottom. With messages unchanged, dismissing the keyboard restores the prior
+message index/offset, including a scrolled-away anchor, and reopening preserves
+the draft. This uses the existing heap-only draft and list state. Test the full
+open/dismiss/reopen cycle in the real activity: an initial opening or an empty
+thread can miss the pan. See [Compose evidence](development-verification.md#compose-evidence)
+for the populated regression and retained captures.
 
 ### `ThreadScreen` mount point — three-part `Input area`
 

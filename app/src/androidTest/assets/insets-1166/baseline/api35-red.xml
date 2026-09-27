@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="2" errors="0" skipped="0" time="21.37" timestamp="2026-09-27T04:28:00" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.MainActivityInsetsDeviceTest" tests="2" failures="2" errors="0" skipped="0" time="18.765" timestamp="2026-09-27T04:28:00" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="populatedThreadKeyboardAt360By640" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="9.653">
+      <failure>java.lang.AssertionError: Assert failed: The component with ContentDescription = 'Back' (ignoreCase: false) is not displayed!
+at androidx.compose.ui.test.AssertionsKt.assertIsDisplayed(Assertions.kt:34)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.bounds(MainActivityInsetsDeviceTest.kt:369)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.screenBounds(MainActivityInsetsDeviceTest.kt:271)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.exerciseThreadKeyboard(MainActivityInsetsDeviceTest.kt:224)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.populatedThreadKeyboardAt360By640(MainActivityInsetsDeviceTest.kt:145)
+</failure>
+    </testcase>
+    <testcase name="populatedThreadKeyboardAt412By892" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="9.112">
+      <failure>java.lang.AssertionError: Assert failed: The component with ContentDescription = 'Back' (ignoreCase: false) is not displayed!
+at androidx.compose.ui.test.AssertionsKt.assertIsDisplayed(Assertions.kt:34)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.bounds(MainActivityInsetsDeviceTest.kt:369)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.screenBounds(MainActivityInsetsDeviceTest.kt:271)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.exerciseThreadKeyboard(MainActivityInsetsDeviceTest.kt:224)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.populatedThreadKeyboardAt412By892(MainActivityInsetsDeviceTest.kt:143)
+</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

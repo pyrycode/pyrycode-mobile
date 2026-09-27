@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="6" failures="0" errors="0" skipped="0" time="79.907" timestamp="2026-09-27T04:32:03" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.MainActivityInsetsDeviceTest" tests="4" failures="0" errors="0" skipped="0" time="70.104" timestamp="2026-09-27T04:32:03" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="activityAt360By800" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="13.571" />
+    <testcase name="populatedThreadKeyboardAt360By640" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="24.878" />
+    <testcase name="activityAt412By892" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="6.941" />
+    <testcase name="populatedThreadKeyboardAt412By892" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="24.714" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.components.MobileModalTest" tests="2" failures="0" errors="0" skipped="0" time="4.2" timestamp="2026-09-27T04:32:03" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="landscape_ime_keeps_focused_field_following_content_and_actions_reachable" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="2.032" />
+    <testcase name="ime_keeps_focused_field_final_item_and_actions_reachable" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="2.168" />
+  </testsuite>
+</testsuites>

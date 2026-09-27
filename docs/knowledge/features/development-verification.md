@@ -215,6 +215,32 @@ settle before launching the Activity. The
 [committed captures and measurements](../../../app/src/androidTest/assets/insets-1149/)
 show 412×892 and 360×800 dp; synthetic geometry alone cannot prove pixels.
 
+For thread keyboard regressions, exercise a populated thread through opening,
+dismissal and reopening in the real activity. Initial opening alone missed the
+pan in #1166; an empty-thread comparison also failed to establish the reported
+case. `MainActivityInsetsDeviceTest.populatedThreadKeyboardAt412By892` and
+`populatedThreadKeyboardAt360By640` create a temporary fake channel with 30 fixed
+messages. The usual demo's animated streaming message can confound scroll-anchor
+checks. Establish newest and older anchors before each preservation cycle, leave
+messages unchanged, and do not send or manually scroll until draft preservation
+and dismissal's index/offset restoration have been checked. Then prove touch
+scrolling with the IME open. Check the header in screen coordinates, actual IME
+visibility and positive inset, visible messages, enabled send reachability and
+the normal 16dp footer gap on both opening and reopening.
+
+The [#1166 captures and XML](../../../app/src/androidTest/assets/insets-1166/)
+retain before/open/dismissed/reopened states at 412×892 and 360×640 dp in static
+dark, static light and light with wallpaper colours enabled, for both anchors.
+They use the full `pixel8Api35` image and `requireRealSystemBars=true` described
+above. The [baseline](../../../app/src/androidTest/assets/insets-1166/baseline/)
+intentionally retains two failures with the unspecified soft-input policy: the
+Back/header control disappears on reopening. Both regressions pass with the
+[explicit activity policy](thread-input-bar.md#ime-handling--modifierimepadding-moved-to-the-composer-column).
+When changing activity-wide soft-input or inset handling, also rerun
+`MobileModalTest.ime_keeps_focused_field_final_item_and_actions_reachable` and
+`landscape_ime_keeps_focused_field_following_content_and_actions_reachable`;
+the retained `api33-green.xml` includes both alongside the activity checks.
+
 Selecting an IME after the Compose rule launches its activity can recreate that
 activity and dispose content installed with `setContent`. `MobileModalTest` uses
 an outer rule (`order = 0`, selected by `@WithTestIme`) to select the IME and drain
