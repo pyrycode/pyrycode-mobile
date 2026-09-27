@@ -31,7 +31,10 @@ slot: #738 retired it, along with the flat `ChannelListUiState` it gated on.
 The body branches on `hostState.hosts` — the only model the screen is fed:
 
 - **`hostState.hosts.isEmpty()`** — no host has produced a snapshot yet, or there are none paired. Falls back
-  to the centred `R.string.channel_list_empty` ("Tap + to start a conversation") copy. This is the only
+  to the centred `R.string.channel_list_empty` ("To pair a host, open Settings and choose Pair another server.")
+  copy. The always-present Settings gear leads to [Settings](settings-screen.md#what-it-does), whose
+  Pair another server row opens the scanner even with no paired hosts. The guidance names that available
+  route without asserting that no host is paired while snapshots are pending (#1169). This is the only
   blank-tree case; a paired host with a snapshot but no conversations still draws its own host row, which is
   content, not a blank screen. The `Loading` / `Error(message)` compatibility placeholders #738 removed drew
   from the retired flat state; a cold start or an upstream failure now renders this same empty copy rather
@@ -213,7 +216,7 @@ distinction from the tree's own blank at all — see the next section.
 - **Press-elevation animation is lost** on the manual-`Surface` construction `ChannelListFab` pioneered and
   `TreeRowControl` inherits (#221, #738, #744) — unchanged; the `combinedClickable` default ripple covers
   the feedback gap.
-- **Instrumented test coverage.** `ChannelListScreenTest` (`app/src/androidTest/.../list/ChannelListScreenTest.kt`)
+- **Screen test coverage.** `ChannelListScreenTest` (`app/src/sharedTest/.../list/ChannelListScreenTest.kt`)
   builds a hand-crafted `HostChannelListState` and asserts, among others: both sections render their host,
   workspace and conversation rows with nothing folded on first show; folding a host hides its workspaces and
   their conversations while folding a workspace hides only its own rows; a conversation row emits
@@ -230,6 +233,9 @@ distinction from the tree's own blank at all — see the next section.
   scroll container would have passed on the loaded draw alone and vanished on the placeholder, which is the
   mistake this walk exists to catch. `archiveEntry_emitsArchiveTapped` (#737) guards the new event, mirroring
   the unchanged `settingsGear_emitsSettingsTapped` that guards `cd_open_settings` surviving.
+  `emptyState_rendersPlaceholder_whenThereAreNoHosts` checks the literal pairing guidance, absence of the
+  retired plus instruction and a Settings tap emitting `SettingsTapped`. Reading the expected copy from
+  the same string resource would also pass with guidance pointing to a missing control (#1169).
   `sectionHeaders_eachCarryTheirOwnPairingControl` (#738) asserts both section headers carry a control,
   each separately named, each emitting `PairHostTapped`; `hostRowAddControl_targetsItsOwnHost_onTapAndOnLongPress`
   drives a two-host tree's **second** host and asserts the emitted `TreeHostAddTapped` /
