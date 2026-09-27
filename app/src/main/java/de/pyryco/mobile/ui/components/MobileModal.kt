@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -194,7 +195,7 @@ private fun MobileModalShell(
         }
         // Figma fills the sheet with onPrimaryFixed, which cannot differ between themes and is unreadable
         // behind the light content colour, so the fill is the modalContainer slot: the frame's navy in dark,
-        // primaryContainer in light (#1142). Its 44/6 dp shapes map to extraLarge/small.
+        // primaryContainer in light (#1142). Keep the reference corners local to this shell and its actions.
         Surface(
             modifier =
                 modifier
@@ -202,7 +203,7 @@ private fun MobileModalShell(
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .imePadding()
                     .semantics { paneTitle = title },
-            shape = MaterialTheme.shapes.extraLarge,
+            shape = RoundedCornerShape(44.dp),
             color = MaterialTheme.colorScheme.modalContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ) {
@@ -298,7 +299,7 @@ private fun ModalCancelButton(
         onClick = onClick,
         modifier = Modifier.heightIn(min = 48.dp),
         enabled = enabled,
-        shape = MaterialTheme.shapes.small,
+        shape = RoundedCornerShape(6.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
     ) {
@@ -322,7 +323,7 @@ private fun ModalSubmitButton(
         },
         modifier = Modifier.heightIn(min = 48.dp),
         enabled = enabled,
-        shape = MaterialTheme.shapes.small,
+        shape = RoundedCornerShape(6.dp),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
     ) {
         if (loading) {
