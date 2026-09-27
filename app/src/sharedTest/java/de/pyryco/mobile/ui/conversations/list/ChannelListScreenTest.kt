@@ -138,22 +138,6 @@ class ChannelListScreenTest {
                     hostState = hostState,
                     onEvent = { event ->
                         events += event
-                        when (event) {
-                            is ChannelListEvent.TreeHostChatAddTapped ->
-                                hostState =
-                                    hostState.copy(
-                                        createChat =
-                                            CreateChatState(
-                                                event.serverId,
-                                                hostState.hosts
-                                                    .first { it.host.serverId == event.serverId }
-                                                    .host.displayName,
-                                            ),
-                                    )
-
-                            ChannelListEvent.CreateChatDismissed -> hostState = hostState.copy(createChat = null)
-                            else -> Unit
-                        }
                         if (event is ChannelListEvent.TreeFoldToggled) {
                             val collapsed = hostState.collapsed
                             hostState =
@@ -202,25 +186,19 @@ class ChannelListScreenTest {
             .performClick()
         assertEquals(listOf(ChannelListEvent.TreeHostChatAddTapped("second")), events)
         composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Chats on Second"))).assertExists()
-        composeTestRule.onNode(hasText(string(R.string.create_chat_host, "Second"))).assertExists()
-        composeTestRule.onNode(hasText(string(R.string.create_chat_action))).performClick()
-        assertEquals(ChannelListEvent.CreateChatSubmitted, events.last())
-        composeTestRule.onNode(hasText(string(android.R.string.cancel))).performClick()
-        assertEquals(ChannelListEvent.CreateChatDismissed, events.last())
+        composeTestRule.onNode(hasText(string(R.string.create_chat_title))).assertDoesNotExist()
     }
 
     @Test
-    fun failedCreateDialogKeepsGenericErrorAndDisablesCreateWhileHostIsOffline() {
+    fun failedDirectCreateShowsGenericErrorWithoutOpeningDialog() {
         setTree(
             entry("first", "First", relay = RelayLinkStatus.Offline),
-            createChat = CreateChatState("first", "First", failed = true),
+            createChat = CreateChatState("first", requestId = 1, saving = false, failed = true),
         )
 
-        composeTestRule.onNode(hasText(string(R.string.create_chat_host, "First"))).assertExists()
+        composeTestRule.waitForIdle()
         composeTestRule.onNode(hasText(string(R.string.create_chat_failed))).assertExists()
-        composeTestRule.onNode(hasText(string(R.string.create_chat_action))).assertIsNotEnabled()
-        composeTestRule.onNode(hasText(string(android.R.string.cancel))).performClick()
-        assertEquals(listOf(ChannelListEvent.CreateChatDismissed), events)
+        composeTestRule.onNode(hasText(string(R.string.create_chat_title))).assertDoesNotExist()
     }
 
     @Test
@@ -645,7 +623,7 @@ class ChannelListScreenTest {
 
         macbook.performClick()
         assertEquals(listOf(ChannelListEvent.TreeHostChatAddTapped("macbook")), events)
-        composeTestRule.onNode(hasText(string(R.string.create_chat_host, "Macbook"))).assertExists()
+        composeTestRule.onNode(hasText(string(R.string.create_chat_title))).assertDoesNotExist()
     }
 
     /**

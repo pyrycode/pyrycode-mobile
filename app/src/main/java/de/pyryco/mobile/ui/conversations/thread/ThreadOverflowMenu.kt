@@ -52,13 +52,6 @@ fun ThreadOverflowMenu(
                 },
             )
             DropdownMenuItem(
-                text = { Text(stringResource(R.string.thread_overflow_change_workspace)) },
-                onClick = {
-                    onDismiss()
-                    onEvent(ThreadEvent.ChangeWorkspace)
-                },
-            )
-            DropdownMenuItem(
                 text = { Text(stringResource(R.string.thread_overflow_archive)) },
                 onClick = {
                     onDismiss()

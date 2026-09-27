@@ -61,7 +61,7 @@ class ThreadScreenOverflowTest {
 
         composeTestRule.onNodeWithText("Reset session").assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
     }
@@ -121,18 +121,6 @@ class ThreadScreenOverflowTest {
 
         assertEquals(listOf(ThreadEvent.Rename), events)
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertDoesNotExist()
-    }
-
-    @Test
-    fun tapping_change_workspace_fires_event_and_closes_menu() {
-        val events = mutableListOf<ThreadEvent>()
-        setContent(events)
-
-        composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).performClick()
-
-        assertEquals(listOf(ThreadEvent.ChangeWorkspace), events)
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
     }
 
     @Test

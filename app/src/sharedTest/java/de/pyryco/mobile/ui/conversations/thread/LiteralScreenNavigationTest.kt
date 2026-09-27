@@ -125,42 +125,12 @@ class LiteralScreenNavigationTest {
         awaitTarget(b, Routes.CONVERSATION_THREAD)
     }
 
-    @Test fun threadWorkspacePickerKeepsOwnerAcrossSelectionChanges() {
+    @Test fun threadOverflowOmitsChangeWorkspace() {
         start(live = true)
         compose.runOnIdle { nav.navigate(Routes.thread(a)) }
         awaitTarget(a, Routes.CONVERSATION_THREAD)
         compose.onNodeWithContentDescription("More actions").performClick()
-        compose.onNodeWithText("Change workspace…").performClick()
-        assertOwnerPicker()
-        select(a.serverId)
-        select(b.serverId)
-        assertOwnerPicker()
-        compose.runOnIdle { registry.connectionFor(a.serverId)!!.supervisor.close() }
-        compose.waitForIdle()
-        compose.onNodeWithText("/${a.serverId}/recent").assertDoesNotExist()
-        createFolder()
-        compose.onNodeWithText("Couldn't create folder").assertIsDisplayed()
-        compose.onNodeWithText("OK").performClick()
-        compose.runOnIdle { model<ThreadViewModel>().retry() }
-        assertOwnerPicker()
-        createFolder()
-        compose.waitUntil(5_000) { peers.getValue(a.serverId).outbound.any { it.type == "change_workspace" } }
-        compose.runOnIdle {
-            val request = peers.getValue(a.serverId).outbound.last { it.type == "change_workspace" }
-            assertEquals(
-                a.conversationId,
-                request.payload.jsonObject
-                    .getValue("conversation_id")
-                    .jsonPrimitive.content,
-            )
-            assertEquals(
-                "/${a.serverId}/created",
-                request.payload.jsonObject
-                    .getValue("cwd")
-                    .jsonPrimitive.content,
-            )
-            assertNoOtherPickerCalls()
-        }
+        compose.onNodeWithText("Change workspace…").assertDoesNotExist()
     }
 
     @Test fun flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges() {

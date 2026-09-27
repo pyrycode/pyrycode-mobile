@@ -13,7 +13,9 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.conversations.thread.ThreadEffortChoice
 import de.pyryco.mobile.ui.conversations.thread.ThreadModelChoice
@@ -71,6 +73,9 @@ class StatusSheetTest {
         effortNote: String? = null,
         running: ThreadRunningModel = ThreadRunningModel(),
         contextPercent: Int? = null,
+        permissionMode: String = "plan",
+        permissionPending: Boolean = false,
+        onPermissionSelected: (String) -> Unit = {},
     ) = setContent {
         PyrycodeMobileTheme {
             StatusSheetContent(
@@ -90,11 +95,34 @@ class StatusSheetTest {
                 effortNote = effortNote,
                 running = running,
                 contextPercent = contextPercent,
+                permissionMode = permissionMode,
+                permissionChoices = listOf("plan" to "Plan", "default" to "Manual approval"),
+                permissionPending = permissionPending,
+                onPermissionSelected = onPermissionSelected,
             )
         }
     }
 
     // ---- Model section ---------------------------------------------------------------------------
+
+    @Test
+    fun permissionChoiceIsAvailableInRunConfiguration() {
+        val selected = mutableListOf<String>()
+        composeTestRule.setSheet(onPermissionSelected = selected::add)
+
+        composeTestRule.onNode(hasText("Plan") and isSelectable()).assertIsSelected()
+        composeTestRule.onNode(hasText("Manual approval") and isSelectable()).performScrollTo().performClick()
+
+        assertEquals(listOf("default"), selected)
+    }
+
+    @Test
+    fun permissionChoiceIsDisabledWhileAWriteIsPending() {
+        composeTestRule.setSheet(permissionPending = true)
+
+        composeTestRule.onNodeWithText("Permission · applying…").assertIsDisplayed()
+        composeTestRule.onNode(hasText("Manual approval") and isSelectable()).assertIsNotEnabled()
+    }
 
     @Test
     fun renders_the_published_rows_with_their_labels_and_details() {

@@ -371,9 +371,7 @@ internal fun PyryNavHost(
                         // onto this very entry, the paste-code path pops the graph.
                         ChannelListEvent.PairHostTapped ->
                             navController.navigate(Routes.SCANNER)
-                        is ChannelListEvent.TreeHostChatAddTapped -> vm.openCreateChat(event.serverId)
-                        ChannelListEvent.CreateChatSubmitted -> vm.submitCreateChat()
-                        ChannelListEvent.CreateChatDismissed -> vm.dismissCreateChat()
+                        is ChannelListEvent.TreeHostChatAddTapped -> vm.createChat(event.serverId)
                         // Same rule again for editing (#744): the control's own host. The view model
                         // reads that host's stored record and owns the modal's target and flags.
                         is ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)

@@ -75,6 +75,10 @@ fun StatusSheet(
     effortNote: String? = null,
     running: ThreadRunningModel = ThreadRunningModel(),
     contextPercent: Int? = null,
+    permissionMode: String = "",
+    permissionChoices: List<Pair<String, String>> = emptyList(),
+    onPermissionSelected: (String) -> Unit = {},
+    permissionPending: Boolean = false,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 ) {
     ModalBottomSheet(
@@ -97,6 +101,10 @@ fun StatusSheet(
             effortNote = effortNote,
             running = running,
             contextPercent = contextPercent,
+            permissionMode = permissionMode,
+            permissionChoices = permissionChoices,
+            onPermissionSelected = onPermissionSelected,
+            permissionPending = permissionPending,
         )
     }
 }
@@ -117,11 +125,13 @@ internal fun StatusSheetContent(
     effortNote: String? = null,
     running: ThreadRunningModel = ThreadRunningModel(),
     contextPercent: Int? = null,
+    permissionMode: String = "",
+    permissionChoices: List<Pair<String, String>> = emptyList(),
+    onPermissionSelected: (String) -> Unit = {},
+    permissionPending: Boolean = false,
 ) {
     // The menu length is the daemon's, and its producer cap is not a wire constant — so the body scrolls
-    // rather than clipping the Context-window section below a long Model section. #650 moved the
-    // permission control to the composer footer, where it reads the daemon's confirmed mode. The
-    // SettingsScreen / MobileModal idiom; ModalBottomSheet handles the nested scroll.
+    // rather than clipping later sections. The SettingsScreen / MobileModal idiom handles nested scroll.
     Column(
         modifier =
             Modifier
@@ -152,6 +162,13 @@ internal fun StatusSheetContent(
         effortNote?.let { Caption(text = it) }
         SectionHeader(text = "Context window")
         ContextWindowSection(contextPercent = contextPercent)
+        SectionHeader(text = sectionTitle("Permission", permissionPending))
+        PermissionSection(
+            selectedMode = permissionMode,
+            choices = permissionChoices,
+            enabled = enabled && !permissionPending,
+            onSelected = onPermissionSelected,
+        )
         Spacer(modifier = Modifier.height(24.dp))
     }
 }
@@ -322,6 +339,37 @@ private fun EffortChipRow(
                     Text(text = effort.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
             )
+        }
+    }
+}
+
+@Composable
+private fun PermissionSection(
+    selectedMode: String,
+    choices: List<Pair<String, String>>,
+    enabled: Boolean,
+    onSelected: (String) -> Unit,
+) {
+    if (selectedMode.isEmpty()) {
+        UnavailableNote(text = "Permission mode unavailable")
+        return
+    }
+    Column(modifier = Modifier.selectableGroup()) {
+        choices.forEach { (value, label) ->
+            val selected = value == selectedMode
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .selectable(selected = selected, enabled = enabled, role = Role.RadioButton) {
+                            onSelected(value)
+                        }.padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = selected, enabled = enabled, onClick = null)
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(text = label, style = MaterialTheme.typography.bodyLarge)
+            }
         }
     }
 }

@@ -84,7 +84,7 @@ data class HostChannelListState(
     val workspaceEditor: WorkspaceEditorState? = null,
     /** The host whose Channels-section Create channel modal is open, or null when none is. */
     val createChannel: CreateChannelState? = null,
-    /** The host whose Chats-section Create chat confirmation is open. */
+    /** The host whose Chats-section create request is in flight or has failed. */
     val createChat: CreateChatState? = null,
     /** The channel whose Edit channel modal is open, or null when none is (#667). */
     val channelEditor: ChannelEditorState? = null,
@@ -192,13 +192,12 @@ data class CreateChannelState(
     val promptFailed: Boolean = false,
 )
 
-/** The held host and static UI flags for a fieldless Create chat confirmation. */
+/** State for a direct Chats-section create request. */
 data class CreateChatState(
     val serverId: String,
-    val hostName: String?,
-    val saving: Boolean = false,
+    val requestId: Long,
+    val saving: Boolean = true,
     val failed: Boolean = false,
-    val dialogId: Long = 0,
 )
 
 /**
@@ -330,7 +329,7 @@ class ChannelListViewModel(
     private val workspaceEditor = MutableStateFlow<WorkspaceEditorState?>(null)
     private val createChannel = MutableStateFlow<CreateChannelState?>(null)
     private val createChat = MutableStateFlow<CreateChatState?>(null)
-    private var nextCreateChatDialogId = 0L
+    private var nextCreateChatRequestId = 0L
 
     // #667: the editor's own prompt stays at its default here; the reading lives apart, tagged with the
     // channel it was read for, so a read landing mid-write never breaks that write's `compareAndSet` and no
@@ -437,59 +436,42 @@ class ChannelListViewModel(
         viewModelScope.launch { hostNavigationChannel.send(target) }
     }
 
-    /** Open a chat confirmation for the clicked host; only its stable id selects the repository. */
-    fun openCreateChat(serverId: String) {
+    /** Create on the clicked host immediately, using its daemon default folder. */
+    fun createChat(serverId: String) {
         val host = hostSource.snapshots.value.firstOrNull { it.serverId == serverId }
         if (host == null) {
-            RelayLog.d { "event=create_chat_open_rejected code=unknown_host" }
+            RelayLog.d { "event=create_chat_rejected code=unknown_host" }
             return
         }
-        createChat.value =
-            CreateChatState(
-                serverId,
-                host.displayName?.takeIf { it.isNotBlank() }?.let(::boundedName),
-                dialogId = ++nextCreateChatDialogId,
-            )
-        RelayLog.d { "event=create_chat_opened" }
-    }
-
-    /** Confirm once using the daemon's default cwd; a failure leaves the same dialog retryable. */
-    fun submitCreateChat() {
-        val state = createChat.value ?: return
-        if (state.saving) return
-        val live = hostSource.repositoryFor(state.serverId)
+        if (createChat.value?.saving == true) return
+        val state = CreateChatState(serverId, requestId = ++nextCreateChatRequestId)
+        createChat.value = state
+        val live = hostSource.repositoryFor(serverId)
         if (live == null) {
-            createChat.compareAndSet(state, state.copy(failed = true))
+            createChat.compareAndSet(state, state.copy(saving = false, failed = true))
             RelayLog.d { "event=create_chat_failed code=unavailable" }
             return
         }
-        val pending = state.copy(saving = true, failed = false)
-        if (!createChat.compareAndSet(state, pending)) return
         viewModelScope.launch {
             val conversation =
                 try {
                     RelayLog.d { "event=create_chat_started" }
                     live.createDiscussion(null)
                 } catch (error: Exception) {
-                    if (error is CancellationException) throw error
-                    createChat.compareAndSet(pending, pending.copy(saving = false, failed = true))
+                    if (error is CancellationException) {
+                        createChat.compareAndSet(state, null)
+                        throw error
+                    }
+                    createChat.compareAndSet(state, state.copy(saving = false, failed = true))
                     RelayLog.d { "event=create_chat_failed code=request" }
                     return@launch
                 }
-            if (!createChat.compareAndSet(pending, null)) {
-                RelayLog.d { "event=create_chat_created code=dismissed" }
-                return@launch
-            }
-            val target = HostConversationTarget(state.serverId, conversation.id)
+            createChat.compareAndSet(state, null)
+            val target = HostConversationTarget(serverId, conversation.id)
             lastOpenedTarget.value = target
             hostNavigationChannel.send(target)
             RelayLog.d { "event=create_chat_created" }
         }
-    }
-
-    fun dismissCreateChat() {
-        createChat.value = null
-        RelayLog.d { "event=create_chat_dismissed" }
     }
 
     /**

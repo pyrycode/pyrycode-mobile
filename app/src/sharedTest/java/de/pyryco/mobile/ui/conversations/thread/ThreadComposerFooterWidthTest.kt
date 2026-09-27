@@ -42,7 +42,7 @@ class ThreadComposerFooterWidthTest {
     // A 1080 px Pixel 8 at its default density is about 411dp wide.
     private val pixel8 = DpSize(411.dp, 800.dp)
 
-    // The chat #1032 was seen in: "Actions, Manual approval, default, medium".
+    // A full run configuration still leaves the footer controls room on a Pixel 8.
     private val fullConfig =
         ThreadRunConfig(
             choices =
@@ -62,8 +62,7 @@ class ThreadComposerFooterWidthTest {
             sessionId = "s1",
         )
 
-    // #1032 AC#1: with the longest labels showing, the paperclip and the Status opener keep their full tap
-    // targets inside the footer and respond to a tap, and every button is still there.
+    // The paperclip and run configuration opener keep their full tap targets inside the footer.
     @Test
     fun fullFooter_keepsThePaperclipAndStatusOpenerVisibleAndTappable() {
         var attaches = 0
@@ -89,8 +88,9 @@ class ThreadComposerFooterWidthTest {
             icon.assertIsDisplayed().assertWidthIsEqualTo(32.dp)
             assertTrue(icon.getUnclippedBoundsInRoot().right <= footerRight)
         }
-        listOf("Actions", "Manual approval", "default", "medium").forEach {
-            composeTestRule.onNode(hasText(it) and hasClickAction()).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Actions") and hasClickAction()).assertIsDisplayed()
+        listOf("Manual approval", "default", "medium").forEach {
+            composeTestRule.onNode(hasText(it) and hasClickAction()).assertDoesNotExist()
         }
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files)).performClick()

@@ -52,7 +52,7 @@ class ThreadOverflowMenuTest {
         composeTestRule.onNodeWithText(RETIRED_LITERAL_SCREEN_ITEM).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_install_memory_plugin)).assertIsDisplayed()
@@ -76,7 +76,7 @@ class ThreadOverflowMenuTest {
         composeTestRule.onNodeWithText(string(R.string.save_as_channel_action)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_install_memory_plugin)).assertDoesNotExist()
@@ -143,25 +143,6 @@ class ThreadOverflowMenuTest {
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).performClick()
 
         assertEquals(listOf("dismiss", "event:Rename"), log)
-    }
-
-    @Test
-    fun tapping_change_workspace_dismisses_then_dispatches_event() {
-        val log = mutableListOf<String>()
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                ThreadOverflowMenu(
-                    expanded = true,
-                    isPromoted = true,
-                    onDismiss = { log.add("dismiss") },
-                    onEvent = { log.add("event:$it") },
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).performClick()
-
-        assertEquals(listOf("dismiss", "event:ChangeWorkspace"), log)
     }
 
     @Test

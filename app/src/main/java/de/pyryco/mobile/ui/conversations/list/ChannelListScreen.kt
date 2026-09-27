@@ -22,8 +22,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -43,7 +47,6 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.AddWorkspaceModal
 import de.pyryco.mobile.ui.components.CreateChannelModal
-import de.pyryco.mobile.ui.components.CreateChatModal
 import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.components.EditWorkspaceModal
@@ -139,14 +142,10 @@ sealed interface ChannelListEvent {
     /** The fixed toolbar's add control opens the existing scanner/code pairing flow. */
     data object PairHostTapped : ChannelListEvent
 
-    /** A host's Chats-section plus opens Create chat for that host. */
+    /** A host's Chats-section plus creates a chat on that host. */
     data class TreeHostChatAddTapped(
         val serverId: String,
     ) : ChannelListEvent
-
-    data object CreateChatSubmitted : ChannelListEvent
-
-    data object CreateChatDismissed : ChannelListEvent
 
     /** A host row's edit control: open the Edit host modal on **that** row's host (#744). */
     data class TreeHostEditTapped(
@@ -342,6 +341,12 @@ fun ChannelListScreen(
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
+    val snackbarHostState = remember { SnackbarHostState() }
+    val createChat = hostState.createChat
+    val createChatFailure = stringResource(R.string.create_chat_failed)
+    LaunchedEffect(createChat?.requestId, createChat?.failed) {
+        if (createChat?.failed == true) snackbarHostState.showSnackbar(createChatFailure)
+    }
     Scaffold(
         // The arrival marker goes on the root, above the branch below, so both draws carry it (#736).
         modifier = modifier.testTag(CHANNEL_LIST_TEST_TAG),
@@ -352,6 +357,7 @@ fun ChannelListScreen(
                 colors.surface
             },
         topBar = { ChannelListTopBar(onEvent) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { inner ->
         val bodyModifier = Modifier.padding(inner)
         if (hostState.hosts.isEmpty()) {
@@ -376,24 +382,7 @@ fun ChannelListScreen(
     ChatEditorModal(hostState = hostState, onEvent = onEvent)
     WorkspaceEditorModal(hostState = hostState, onEvent = onEvent)
     CreateChannelModalBinding(hostState = hostState, onEvent = onEvent)
-    CreateChatModalBinding(hostState = hostState, onEvent = onEvent)
     ChannelEditorModal(hostState = hostState, onEvent = onEvent)
-}
-
-@Composable
-private fun CreateChatModalBinding(
-    hostState: HostChannelListState,
-    onEvent: (ChannelListEvent) -> Unit,
-) {
-    val state = hostState.createChat ?: return
-    CreateChatModal(
-        hostName = state.hostName ?: stringResource(R.string.unnamed_host),
-        onSubmit = { onEvent(ChannelListEvent.CreateChatSubmitted) },
-        onDismissRequest = { onEvent(ChannelListEvent.CreateChatDismissed) },
-        hostAvailable = hostState.isHostConnected(state.serverId),
-        loading = state.saving,
-        error = if (state.failed) stringResource(R.string.create_chat_failed) else null,
-    )
 }
 
 /**

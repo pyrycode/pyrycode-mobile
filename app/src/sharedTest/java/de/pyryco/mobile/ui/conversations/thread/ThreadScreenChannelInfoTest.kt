@@ -114,13 +114,12 @@ class ThreadScreenChannelInfoTest {
     }
 
     @Test
-    fun tapping_change_workspace_emits_change_then_dismiss() {
+    fun channelInfoOmitsChangeWorkspaceAction() {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
-        composeTestRule.onNodeWithText("Change workspace").performClick()
-
-        assertEquals(listOf(ThreadEvent.ChangeWorkspace, ThreadEvent.ChannelInfoDismiss), events)
+        composeTestRule.onNodeWithText("Change workspace").assertDoesNotExist()
+        assertEquals(emptyList<ThreadEvent>(), events)
     }
 
     @Test

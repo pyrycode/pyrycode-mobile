@@ -247,14 +247,8 @@ private const val PENDING_ALPHA = 0.55f
  * paperclip (#933) sits just before that icon and calls [onAttach], which opens the file picker. The Actions button (#884) leads the row, as in the design,
  * and always opens its menu. The `Cxt:` segment (#946) follows the buttons as plain text, not a control.
  *
- * Stateless. The model and effort buttons show [ThreadRunConfig.modelLabel] / [ThreadRunConfig.effortLabel].
- * Those labels read the pending tap first and the confirmed reading after it; for effort that reading is
- * Claude's applied value, with the saved choice only as an explained fallback (#889). When the ViewModel clears a
- * refused write, the button returns to its earlier value with no footer logic. The permission button
- * (#650) is different: it shows only [permissionModeLabel], the confirmed reading, and is absent when
- * there is none. Its outstanding write only dims it. A button with an outstanding tap is dimmed and says
- * so in its state description. [onAnchorChanged] reports each button's window bounds, which the screen
- * uses to place the overlay above it.
+ * Stateless. Model, effort and permission choices live in the run configuration sheet. [onAnchorChanged]
+ * reports the Actions button's window bounds so the screen can place its overlay above it.
  */
 @Composable
 fun ThreadComposerFooter(
@@ -282,33 +276,6 @@ fun ThreadComposerFooter(
                 pending = false,
                 onClick = { onOpen(FooterControl.Actions) },
                 onBounds = { onAnchorChanged(FooterControl.Actions, it) },
-            )
-            permissionModeLabel(runConfig)?.let { label ->
-                FooterButton(
-                    label = label,
-                    clickLabel = stringResource(R.string.thread_footer_change_permission),
-                    enabled = footerControlEnabled(FooterControl.Permission, runConfig),
-                    pending = runConfig.pendingPermission != null,
-                    onClick = { onOpen(FooterControl.Permission) },
-                    onBounds = { onAnchorChanged(FooterControl.Permission, it) },
-                )
-            }
-            FooterButton(
-                label = runConfig.modelLabel,
-                clickLabel = stringResource(R.string.thread_footer_change_model),
-                enabled = footerControlEnabled(FooterControl.Model, runConfig),
-                pending = runConfig.pendingModel != null,
-                onClick = { onOpen(FooterControl.Model) },
-                onBounds = { onAnchorChanged(FooterControl.Model, it) },
-            )
-            FooterButton(
-                label = runConfig.effortLabel,
-                clickLabel = stringResource(R.string.thread_footer_change_effort),
-                enabled = footerControlEnabled(FooterControl.Effort, runConfig),
-                pending = runConfig.pendingEffort != null,
-                note = runConfig.effortNote?.text(agent),
-                onClick = { onOpen(FooterControl.Effort) },
-                onBounds = { onAnchorChanged(FooterControl.Effort, it) },
             )
             ContextSegment(percent = runConfig.contextPercent)
         }
@@ -338,7 +305,7 @@ fun ThreadComposerFooter(
             Icon(
                 imageVector = Icons.Outlined.Tune,
                 contentDescription = stringResource(R.string.cd_thread_status_expand),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(StatusOpenerIconSize),
             )
         }

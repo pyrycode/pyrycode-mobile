@@ -62,7 +62,6 @@ internal data class ChannelInfoUiModel(
 internal fun ChannelInfoSheet(
     model: ChannelInfoUiModel,
     onRename: () -> Unit,
-    onChangeWorkspace: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
     onInstallMemoryPlugin: () -> Unit,
@@ -81,7 +80,6 @@ internal fun ChannelInfoSheet(
         ChannelInfoSheetContent(
             model = model,
             onRename = onRename,
-            onChangeWorkspace = onChangeWorkspace,
             onArchive = onArchive,
             onDelete = onDelete,
             onInstallMemoryPlugin = onInstallMemoryPlugin,
@@ -95,7 +93,6 @@ internal fun ChannelInfoSheet(
 internal fun ChannelInfoSheetContent(
     model: ChannelInfoUiModel,
     onRename: () -> Unit,
-    onChangeWorkspace: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
     onInstallMemoryPlugin: () -> Unit,
@@ -119,7 +116,6 @@ internal fun ChannelInfoSheetContent(
             SectionHeader(text = "Actions")
             ActionsGrid(
                 onRename = onRename,
-                onChangeWorkspace = onChangeWorkspace,
                 onArchive = onArchive,
                 onDelete = onDelete,
             )
@@ -282,7 +278,6 @@ private fun MemoryRow(
 @Composable
 private fun ActionsGrid(
     onRename: () -> Unit,
-    onChangeWorkspace: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -293,13 +288,7 @@ private fun ActionsGrid(
                 .padding(start = 16.dp, end = 16.dp, top = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            ActionCell(label = "Rename", onClick = onRename, modifier = Modifier.weight(1f))
-            ActionCell(label = "Change workspace", onClick = onChangeWorkspace, modifier = Modifier.weight(1f))
-        }
+        ActionCell(label = "Rename", onClick = onRename, modifier = Modifier.fillMaxWidth())
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -388,7 +377,6 @@ private fun ChannelInfoSheetPreview() {
                 ChannelInfoSheetContent(
                     model = SAMPLE_MODEL,
                     onRename = {},
-                    onChangeWorkspace = {},
                     onArchive = {},
                     onDelete = {},
                     onInstallMemoryPlugin = {},
@@ -416,7 +404,6 @@ private fun ChannelInfoSheetDarkPreview() {
                 ChannelInfoSheetContent(
                     model = SAMPLE_MODEL,
                     onRename = {},
-                    onChangeWorkspace = {},
                     onArchive = {},
                     onDelete = {},
                     onInstallMemoryPlugin = {},
