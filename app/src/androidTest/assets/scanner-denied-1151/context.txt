@@ -1,0 +1,4 @@
+activity=MainActivity route=welcome->real-camera-denial theme=Dark
+sizeDp=412x892 density=1.0 systemBarsPx=Insets{left=0, top=24, right=0, bottom=24} syntheticBars=false
+api=35 device=sdk_gphone64_arm64 fingerprint=google/sdk_gphone64_arm64/emu64a:15/AE3A.240806.036/12592187:user/release-keys
+build=1.0.0 backBoundsPx=Rect.fromLTRB(4.0, 36.0, 52.0, 84.0)
