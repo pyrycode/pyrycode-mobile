@@ -1,12 +1,12 @@
 # MarkdownText
 
-GFM renderer for assistant-message content (#129; fenced-code styling extended in #130; tables, task lists and strikethrough added in #681 by switching the parser flavour from CommonMark to GFM; code-block chrome restyled and given a per-block copy control in #657). Single public composable that takes a markdown source string and renders it into native Compose primitives — every text style resolved from `MaterialTheme.typography`, every link routed through `LocalUriHandler`, every container colour pulled from `MaterialTheme.colorScheme`. No Android-View interop seam; the renderer is pure Compose end-to-end.
+GFM renderer for assistant-message content (#129; fenced-code styling extended in #130; tables, task lists and strikethrough added in #681 by switching the parser flavour from CommonMark to GFM; code-block chrome restyled and given a per-block copy control in #657). Single public composable that takes a markdown source string and renders it into native Compose primitives — body styling supplied by the caller or default theme token, every link routed through `LocalUriHandler`, every container colour pulled from `MaterialTheme.colorScheme`. No Android-View interop seam; the renderer is pure Compose end-to-end.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt`). Sibling of [`MessageBubble`](./message-bubble.md). Library choice rationale: [ADR 0002](../decisions/0002-markdown-renderer-library.md) — the parser library choice (`org.jetbrains:markdown`) and the "own the renderer" decision still stand; the *flavour* it names (`CommonMarkFlavourDescriptor`) does not — #681 switched to `GFMFlavourDescriptor` and the ADR predicted exactly that move in its Consequences section. [ADR 0003](../decisions/0003-syntax-highlighter-library.md) covers the code-block syntax highlighter, unaffected by the flavour change.
 
 ## What it does
 
-Parses an input string with `org.jetbrains:markdown`'s `MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(...)` and walks the resulting AST, dispatching each top-level block to a Compose composable. Block kinds supported: ATX headings (h1–h3), paragraphs, ordered and unordered lists, task lists, blockquotes, fenced code blocks, indented code blocks, pipe tables. Inline kinds supported: bold (`STRONG`), italic (`EMPH`), inline code (`CODE_SPAN`), inline links (`INLINE_LINK`), strikethrough (both `~~double~~` and `~single~` tilde forms). `org.jetbrains:markdown` offers no per-construct registration, so the single flavour switch that unlocks these three constructs also changes what two *unwanted* node kinds parse as — bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) — see [Edge cases / limitations](#edge-cases--limitations) for what they render as and why. Unsupported AST node kinds (HTML, horizontal rules) fall back to rendering the raw source text of that node as a plain `bodyMedium` paragraph — the renderer never throws. Images are a separate case, not a fallback one — see the corrected claim in [Link safety](#link-safety--scheme-allowlist).
+Parses an input string with `org.jetbrains:markdown`'s `MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(...)` and walks the resulting AST, dispatching each top-level block to a Compose composable. Block kinds supported: ATX headings (h1–h3), paragraphs, ordered and unordered lists, task lists, blockquotes, fenced code blocks, indented code blocks, pipe tables. Inline kinds supported: bold (`STRONG`), italic (`EMPH`), inline code (`CODE_SPAN`), inline links (`INLINE_LINK`), strikethrough (both `~~double~~` and `~single~` tilde forms). `org.jetbrains:markdown` offers no per-construct registration, so the single flavour switch that unlocks these three constructs also changes what two *unwanted* node kinds parse as — bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) — see [Edge cases / limitations](#edge-cases--limitations) for what they render as and why. Unsupported AST node kinds (HTML, horizontal rules) fall back to rendering the raw source text of that node using the selected body style — the renderer never throws. Images are a separate case, not a fallback one — see the corrected claim in [Link safety](#link-safety--scheme-allowlist).
 
 ## Public surface
 
@@ -16,14 +16,28 @@ fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     onOpenMarkdownPath: ((String) -> Unit)? = null,
+    style: MarkdownTextStyle = MarkdownTextStyle(MaterialTheme.typography.bodyMedium),
 )
 ```
 
-**No `style` parameter** — every text style is owned by the renderer and resolved from `MaterialTheme.typography` by element kind, satisfying AC5's "no raw `TextStyle` or `.sp` literals" contract by construction.
+`MarkdownTextStyle(body: TextStyle, blockSpacing: Dp = 8.dp, listItemSpacing: Dp = 4.dp)`
+is an immutable body-presentation value. Finished and streaming [`MessageBubble`](message-bubble.md)
+use the default M3 `bodyMedium` (14sp/20sp), with 8dp block and 4dp sibling-item gaps.
+The [attachment and linked-note reader](markdown-reader-screen.md#what-it-does) explicitly supplies
+`bodyLarge` (16sp/24sp), 12dp block gaps and 6dp sibling-item gaps.
 
-**No `color` parameter** — text inherits the ambient `LocalContentColor.current`. The consumer (`AssistantMessage` in [`MessageBubble`](./message-bubble.md)) wraps the call in `CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { MarkdownText(...) }`. Keeps the renderer reusable from any future surface (system messages, tool cards) without changing the signature.
+The style reaches paragraphs, ordered/unordered/task-list text, ordinary list markers and fallback
+prose, recursively through lists and quotes. Quote paragraphs add italics to the selected body style.
+Headings, tables and code retain their element-specific typography; inline formatting, highlighting,
+link routing, code copying and horizontal scrolling are independent of this body style.
 
-**`onOpenMarkdownPath`, opt-in, since #1050.** Every link keeps opening via the ambient `LocalUriHandler.current.openUri(url)` when this is `null` — the default, and what the reader's own `MarkdownText` call and every other caller still get unchanged. A caller that passes a callback opts a workspace-path link (`markdownLinkPath`, below) in to routing through it instead of doing nothing; every other target (`http`, `https`, `mailto`) still opens through the platform handler regardless of the callback. Only [`MessageBubble`](message-bubble.md)'s assistant paths pass one, so the callback exists to let a link in an assistant reply — not a link anywhere else — open the in-app reader. See [Markdown-path links](#markdown-path-links-since-1050).
+**No `color` parameter** — text inherits `LocalContentColor.current`; assistant bubbles and the reader
+supply `onSurface`.
+
+**`onOpenMarkdownPath` is opt-in.** Only the assistant reply paths pass this callback to open workspace
+notes. With the default `null`, including inside the reader, workspace paths stay inert. Allowed
+`http`, `https` and `mailto` links use the ambient `LocalUriHandler` in either case. See
+[Markdown-path links](#markdown-path-links-since-1050).
 
 ## How it works
 
@@ -39,23 +53,23 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 
 ### Block dispatch
 
-`MarkdownBlock(node, source, uriHandler)` is a `when (node.type)` over `MarkdownElementTypes`:
+`MarkdownBlock(node, source, uriHandler, style)` is a `when (node.type)` over `MarkdownElementTypes`:
 
 | AST type | Renders as |
 |---|---|
 | `ATX_1` | `Text(buildInline(...), style = headlineSmall)` |
 | `ATX_2` | `Text(buildInline(...), style = titleLarge)` |
 | `ATX_3` | `Text(buildInline(...), style = titleMedium)` |
-| `PARAGRAPH` | `Text(buildInline(...), style = bodyMedium)` |
+| `PARAGRAPH` | `Text(buildInline(...), style = style.body)` |
 | `UNORDERED_LIST` | `Column { … Row { Text("•"); Spacer; Column { recurse } } … }` — an item carrying a `GFMTokenTypes.CHECK_BOX` child renders `TaskMark(checked)` instead of the bullet; see [Task lists](#task-lists) |
 | `ORDERED_LIST` | same but marker is `"${index + 1}."` (1-based); both list kinds dispatch through the same `ListBlock`, so a `CHECK_BOX` child replaces the marker here too — untested directly, but true by the shared code path |
 | `BLOCK_QUOTE` | `Row { Box(width = 4dp, fillMaxHeight, background = onSurfaceVariant); Spacer(12dp); Column { italic paragraphs } }` |
 | `GFMElementTypes.TABLE` | `TableBlock(...)` — see [Tables](#tables) |
 | `CODE_FENCE` | `CodeBlock(fencedCodeText(node, source), language = first FENCE_LANG child or null, copyable = true)` — see [Code blocks](#code-blocks) |
 | `CODE_BLOCK` | `CodeBlock(indentedCodeText(node, source), language = null, copyable = true)` — indented 4-space blocks have no info string |
-| _else_ | `Text(node.getTextInNode(source).trim(), style = bodyMedium)` — fallback |
+| _else_ | `Text(node.getTextInNode(source).trim(), style = style.body)` — fallback |
 
-The top-level `MarkdownText` wraps the dispatched children in `Column(modifier, verticalArrangement = Arrangement.spacedBy(ParagraphSpacing))` so inter-block gaps come from the column, not from per-element padding. List items use the same `spacedBy(ParagraphSpacing)` so nested blocks inside a list item separate the same way as top-level blocks.
+`Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Gaps come from the columns, not per-element padding.
 
 ### Heading inline content
 
@@ -94,7 +108,7 @@ Link text is built from the `LINK_TEXT` child's children, filtering `LBRACKET` /
 
 **Ragged input degrades, it doesn't error.** A short row reads as empty cells (`cells.getOrNull(column)`); a long row's overflow is dropped, and there is nothing addressable to recover — the lexer has already fused that overflow into the trailing separator token. `columnCount` and `MAX_TABLE_ROWS` are also where two fan-out caps apply: `MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256` (both `internal` since #1067, shared with the reader's plain-text table copy). The table is one composable `Text` per cell with no lazy layout, so a hostile or merely malformed reply amplifies a few kilobytes of pipes into tens of thousands of measured composables, re-paid on every streaming reveal tick (#184 re-parses ~50×/sec). Both bounds sit far above any real reply — flagged in the #681 security review as a SHOULD FIX, applied with two `take()` calls rather than a heuristic. A table hitting either cap silently drops the excess rows/columns; nothing surfaces that a cap was hit.
 
-**Collapsed borders in `onSurfaceVariant`, not `primaryContainer`.** Each cell draws its own top and start edges (`tableCellEdges`); the table's content `Row` draws the closing end and bottom edges (`tableOuterEdges`) — every internal grid line is drawn exactly once, where a four-sided `Modifier.border` per cell would double the seam between neighbours. The colour was shipped as `MaterialTheme.colorScheme.primaryContainer` (transcribed from desktop's `--color-primary-container`) and was invisible — **1.01:1** contrast against the bubble, in both themes. That isn't a near-miss on this one palette: M3 assigns `primaryContainer` and `secondaryContainer` the same tone by construction (90 light / 30 dark), and `MessageBubble` — this renderer's only caller — always grounds it on `secondaryContainer`, so the pairing is luminance-identical in *any* M3 palette, generated or dynamic. `onSurfaceVariant` measures 7.27:1 light / 5.51:1 dark against that bubble and is the only measured candidate clearing WCAG 1.4.11's 3:1 in both themes; it's now the shared token for the table grid, the task-mark border, struck text, and — since #770 — the blockquote bar: four de-emphasised structural elements, one contrast-checked token. `outlineVariant` is explicitly not a substitute (1.00:1 dark on the same ground); [`BlockQuoteBlock`](#block-dispatch)'s bar carried that same defect, pre-existing since #129, until #770 moved it to `onSurfaceVariant`. **The lesson generalises: porting a desktop CSS custom property onto the M3 slot of the same name carries no contrast guarantee**, because the two design systems ground their message content on different container colours. Both bindings carry a comment recording the contrast bar any future replacement has to clear, since a pixel test would cost more than it proves.
+**Collapsed borders in `onSurfaceVariant`, not `primaryContainer`.** Each cell draws its own top and start edges (`tableCellEdges`); the table's content `Row` draws the closing end and bottom edges (`tableOuterEdges`) — every internal grid line is drawn exactly once, where a four-sided `Modifier.border` per cell would double the seam between neighbours. The colour was shipped as `MaterialTheme.colorScheme.primaryContainer` (transcribed from desktop's `--color-primary-container`) and was invisible — **1.01:1** contrast against the bubble, in both themes. That isn't a near-miss on this one palette: M3 assigns `primaryContainer` and `secondaryContainer` the same tone by construction (90 light / 30 dark), and the assistant `MessageBubble` grounds it on `secondaryContainer`, so the pairing is luminance-identical in *any* M3 palette, generated or dynamic. `onSurfaceVariant` measures 7.27:1 light / 5.51:1 dark against that bubble and is the only measured candidate clearing WCAG 1.4.11's 3:1 in both themes; it's now the shared token for the table grid, the task-mark border, struck text, and — since #770 — the blockquote bar: four de-emphasised structural elements, one contrast-checked token. `outlineVariant` is explicitly not a substitute (1.00:1 dark on the same ground); [`BlockQuoteBlock`](#block-dispatch)'s bar carried that same defect, pre-existing since #129, until #770 moved it to `onSurfaceVariant`. **The lesson generalises: porting a desktop CSS custom property onto the M3 slot of the same name carries no contrast guarantee**, because the two design systems ground their message content on different container colours. Both bindings carry a comment recording the contrast bar any future replacement has to clear, since a pixel test would cost more than it proves.
 
 ### Task lists
 
@@ -223,7 +237,6 @@ Consumer wiring: [`MessageBubble`](message-bubble.md)'s `onOpenMarkdownLink` par
 ### File-private spacing constants
 
 ```kotlin
-private val ParagraphSpacing = 8.dp           // inter-block gap (and intra-list-item half-gap)
 private val ListItemIndent = 8.dp             // gap between bullet/number and item body
 private val BlockquoteBarWidth = 4.dp
 private val BlockquoteContentIndent = 12.dp   // gap between bar and quoted content
@@ -256,12 +269,12 @@ Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TAB
 
 - **Library dependencies:** `implementation(libs.jetbrains.markdown)` (parser; catalog pin `jetbrainsMarkdown = "0.7.3"`) and `implementation(libs.snipme.highlights)` (code-block tokeniser since #130; catalog pin `snipmeHighlights = "1.1.0"`) in `app/build.gradle.kts`. No KSP, no kapt, no proguard rules for either.
 - **Two strings since #681, plus one since #657:** `markdown_task_mark_checked` / `markdown_task_mark_unchecked` — static TalkBack labels for the task-mark, chosen by a boolean, carrying no format argument and no daemon-authored text. `cd_thread_copy_code` ("Copy this code block") is the accessible name for each code block's copy control, in the same `cd_thread_*` family as `MessageMetaRow`'s `cd_thread_copy_message`. Otherwise renders the input markdown verbatim; no other resource lookup.
-- **No theme overrides.** Reads `colorScheme.surfaceContainer`, `colorScheme.background`, `colorScheme.primaryContainer`, `colorScheme.onPrimaryContainer`, `colorScheme.primary`, `colorScheme.secondary`, `colorScheme.tertiary`, `colorScheme.onSurfaceVariant` and `typography.headlineSmall` / `titleLarge` / `titleMedium` / `bodyMedium` / `labelSmall` / `labelMedium`. All are M3 defaults — no custom slots, no `CompositionLocal` overrides beyond consumer-supplied `LocalContentColor` (and the code block's own local re-provide of it at `CODE_COPY_ALPHA` for its copy glyph). `colorScheme.outlineVariant` was read here through #129; #770 moved the last reader (`BlockQuoteBlock`'s bar) to `onSurfaceVariant`, so nothing in this file reads that slot any more.
+- **No theme overrides.** Reads `colorScheme.surfaceContainer`, `colorScheme.background`, `colorScheme.primaryContainer`, `colorScheme.onPrimaryContainer`, `colorScheme.primary`, `colorScheme.secondary`, `colorScheme.tertiary`, `colorScheme.onSurfaceVariant` and element typography from `MaterialTheme.typography`, with prose supplied by `MarkdownTextStyle.body`. All are M3 defaults — no custom slots, no `CompositionLocal` overrides beyond consumer-supplied `LocalContentColor` (and the code block's own local re-provide of it at `CODE_COPY_ALPHA` for its copy glyph). `colorScheme.outlineVariant` was read here through #129; #770 moved the last reader (`BlockQuoteBlock`'s bar) to `onSurfaceVariant`, so nothing in this file reads that slot any more.
 - **No DI.** Pure leaf composable; no Koin module touched.
 
 ## Previews
 
-`MessageBubble.kt` carries the canonical preview pair for this renderer (the renderer's only consumer today), not `MarkdownText.kt` itself. `MessageBubbleMarkdownLightPreview` and `MessageBubbleMarkdownDarkPreview` both render a file-private `MARKDOWN_PREVIEW_FIXTURE` that exercises every supported element (h1/h2/h3, bold, italic, inline code, link, unordered list, ordered list, a mixed task list, both strikethrough forms beside a home-relative-paths line that must *not* strike, a three-column table with all three alignments, blockquote, fenced code blocks for Kotlin / JSON / Bash / Markdown) inside the `MessageBubble` host. Satisfies #129's AC6, #130's AC7 and #681's AC5.
+`MessageBubble.kt` carries the canonical preview pair for this renderer (for thread defaults), not `MarkdownText.kt` itself. `MessageBubbleMarkdownLightPreview` and `MessageBubbleMarkdownDarkPreview` both render a file-private `MARKDOWN_PREVIEW_FIXTURE` that exercises every supported element (h1/h2/h3, bold, italic, inline code, link, unordered list, ordered list, a mixed task list, both strikethrough forms beside a home-relative-paths line that must *not* strike, a three-column table with all three alignments, blockquote, fenced code blocks for Kotlin / JSON / Bash / Markdown) inside the `MessageBubble` host. Satisfies #129's AC6, #130's AC7 and #681's AC5.
 
 ## Edge cases / limitations
 
@@ -273,8 +286,8 @@ Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TAB
 - **Lists are flat-bulleted.** Unordered lists use `"•"`; ordered lists use `"${index + 1}."` from the 1-based item position within the list. Nested-list indentation depth comes from the recursive `MarkdownBlock` call inside the list item's `Column` — no per-level indent multiplier.
 - **Blockquote paragraphs render italic.** Non-paragraph children inside a blockquote (e.g. a nested list) recurse through `MarkdownBlock` without the italic override. The blockquote bar is `onSurfaceVariant` (since #770; see [Tables](#tables)) and spans the intrinsic height of the content column.
 - **No free-text selection; code blocks are the one construct with a copy affordance.** The composable uses bare `Text(...)`, not `SelectionContainer { Text(...) }`, everywhere else. Since #657, each fenced or indented code block carries its own [`CopyTextControl`](./message-bubble.md) that copies the block's exact source; nothing else in the renderer (prose, tables, list items, blockquotes) is copyable. If long-press-to-copy for the rest of the message lands later, the right place is a screen-level wrap of the thread `LazyColumn` body, not per-renderer.
-- **Streaming is not specially handled.** `MarkdownText` treats `markdown` as a complete, final string each composition; partial markdown (an unclosed `**bold` mid-stream) still parses (the JetBrains parser is total) and renders as best it can. #184 owns streaming-aware behaviour at the `MessageBubble` layer — `StreamingAssistantBody` appends a `▎` caret glyph to the revealed prefix and passes the result through this renderer unchanged. The renderer never changed signature.
-- **Renderer is total.** The JetBrains parser produces an AST for any input string — there is no exception path. Unsupported element kinds hit the `else` fallback (raw text as a `bodyMedium` paragraph), so the message is never blank. #681 leaned on exactly this property to switch parser flavours without suppressing anything — see the next two points.
+- **Streaming is not specially handled.** `MarkdownText` treats `markdown` as a complete, final string each composition; partial markdown (an unclosed `**bold` mid-stream) still parses (the JetBrains parser is total) and renders as best it can. #184 owns streaming-aware behaviour at the `MessageBubble` layer — `StreamingAssistantBody` appends a `▎` caret glyph to the revealed prefix and passes the result through this renderer unchanged. Streaming uses the default body style.
+- **Renderer is total.** The JetBrains parser produces an AST for any input string — there is no exception path. Unsupported element kinds hit the `else` fallback (raw text using the selected body style), so the message is never blank. #681 leaned on exactly this property to switch parser flavours without suppressing anything — see the next two points.
 - **Parser flavour is GFM since #681, and that changes more than the three constructs it was switched on for.** `org.jetbrains:markdown` has no per-construct registration — `GFMFlavourDescriptor` is the only off-the-shelf way to reach tables, task lists and strikethrough, and it necessarily also brings bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) into every message this renderer sees, whether or not that message uses any of the three wanted constructs.
 - **Bare URLs and `$…$` render as their own literal characters — deliberately, by omission rather than suppression.** `GFM_AUTOLINK` is a childless leaf with no dispatcher arm, so `appendInline`'s `else` appends its raw text; there is no link annotation to tap. `INLINE_MATH` has children with no arm either, so the `else` recurses and its `DOLLAR` / `TEXT` / `WHITE_SPACE` leaves rebuild the `$…$` span verbatim. Block `$$…$$` reaches `MarkdownBlock`'s own `else` and renders as raw text the same way. `MarkdownTextParsingTest` pins the AST shape each depends on, because the property here rests on an *absent* branch, and an absent branch reddens nothing on its own if the library ever adds one.
 - **Task marks are inert by construction.** See [Task lists](#task-lists) — no `clickable`, `toggleable`, `ToggleableState` or `focusable`, on purpose; a bare `contentDescription` is announced but offers nothing to activate.
