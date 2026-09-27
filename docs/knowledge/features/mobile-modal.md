@@ -167,8 +167,8 @@ layouts (#1135):
 
 - **Pinned** (available height ≥ `MinPinnedShellHeight`, 280 dp — roughly the chrome's own
   200 dp plus room for one outlined text field): the header and centered Cancel/OK footer sit
-  outside a weighted inner scroll area; short content centers vertically and overflow can
-  scroll to the final item. This is the layout Figma draws and the one every caller sees in
+  outside a weighted inner scroll area; short content centers unless a caller adds a weighted
+  spacer, and overflow can scroll to the final item. This is the layout Figma draws and the one every caller sees in
   portrait, keyboard or not.
 - **Compact** (below 280 dp — landscape with the keyboard up, on the phones this shell has
   been measured on): the header, content and footer scroll together as one column instead,
@@ -576,20 +576,24 @@ in the composition tree does not affect what it draws over. See
 [Question batch modal](question-batch-modal.md) for the full caller contract.
 
 [`BackgroundTaskPanel`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/BackgroundTaskPanel.kt)
-(#678, redrawn to its Figma frames by #1041) is
-[`MobileReadOnlyModal`](#the-read-only-panel-mobilereadonlymodal)'s first and so far only caller. Unlike
-`PermissionModalOverlay` and `QuestionBatchModal`, which use `MobileGateModal`, it draws inside
-`ThreadScreen` itself, behind screen-local `remember(state.conversationId)` visibility the Actions menu's
-background-tasks row flips — see [Thread composer footer § Actions
-menu](thread-composer-footer-actions-menu.md#actions-menu-884) for the row and its live-count label, and [Thread screen —
-overlays § Background-tasks panel placement](thread-screen-how-it-works-overlays-and-app-bar.md#background-tasks-panel-placement-post-678)
-for where it mounts. It lists the open conversation's `BackgroundTaskRoster?` (#677) read-only, with three
+(#678, #1041) uses `MobileReadOnlyModal` inside `ThreadScreen`, with conversation-keyed visibility
+toggled by the [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884).
+See [panel placement](thread-screen-how-it-works-overlays-and-app-bar.md#background-tasks-panel-placement-post-678).
+It lists the conversation's `BackgroundTaskRoster?` read-only, with three
 readings: `null` draws a dashed ring, "No background-task report yet" and "The daemon has not reported on
 this conversation since the app connected."; an empty roster draws a solid ring, "No background tasks" and
 "Claude has nothing running in the background for this conversation."; a listed roster splits `tasks` into a
 "Running · n" group (`filterNot { it.isFinished }`) and a "Finished · n" group (`filter { it.isFinished }`),
 each in claude's order and each undrawn when empty — `droppedTasks > 0` both raises a filled
 `secondaryContainer` partial-list notice above the groups and switches both counts to "n shown".
+
+Both empty readings use a 160dp top inset inside scrollable content (#1164), with a
+32dp ring and 12dp gaps. A trailing spacer absorbs slack, keeping the inset stable
+across heights. The accessible header places the ring at 265dp from the shell top
+at 412dp width; the reference's 249dp absolute coordinate is not the invariant.
+Any partial notice stays before the reading. At short heights, the shell retains
+pinned or compact scrolling, keeping the header, supporting text and both Close
+actions reachable; see [layout modes](#layout-and-theme).
 
 Each task is a card: the raw `taskType` in monospace beside a
 [`TaskStatusTag`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/TaskStatusTag.kt) pill
