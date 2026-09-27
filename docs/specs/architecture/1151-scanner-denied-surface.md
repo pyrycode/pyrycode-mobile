@@ -64,3 +64,9 @@ None. The reference is frameless; actual activity evidence records the additiona
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-27
+
+## Revisions
+
+- 2026-09-27: the real-route test is explicitly API 35+ because it requires full system chrome and a fresh permission request. The routine API 33 ATD sweep skips this capture test; the builder runs the selected class on `pixel8Api35` and checks one executed case with no skips. Shared callback regressions still execute under Robolectric and on supported devices.
+- The text action uses a 48 dp layout slot around a 40 dp visible `TextButton`. A 4 dp preceding spacer plus the centered slot produces the reference's 8 dp visual gap; 80 dp below the slot yields the 84 dp visual bottom margin. The shared test asserts the 48 dp touch height separately from the 40 dp visual height.
+- The real-route test exercises settings and paste/cancel after the first real permission denial, then Back to Welcome. An initial run verified Back but timed out waiting for a second permission prompt after reentry; that extra prompt is not part of the acceptance contract, so the test no longer depends on it.

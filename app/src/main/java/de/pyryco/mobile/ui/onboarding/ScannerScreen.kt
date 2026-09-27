@@ -81,6 +81,7 @@ fun ScannerScreen(
             )
         ScannerUiState.Denied ->
             ScannerDeniedScreen(
+                onNavigateBack = onNavigateBack,
                 onOpenSettings = onOpenSettings,
                 onPasteCode = onPasteCode,
                 modifier = modifier,
