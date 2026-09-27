@@ -70,3 +70,7 @@ Pending documentation stage: describe new-chat model selection and the existing-
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-27
+
+## Revisions
+
+- 2026-09-28: Resolved the open session-id question: `Conversation.currentSessionId` is available on the create reply, and an empty value is handled by leaving the inherited setting unchanged. A settings write that throws after the daemon has processed it may leave the final server state unknown; navigation still proceeds, and the UI reads the server's saved state on opening. This corrects the stronger failed-write fallback claim in the original design without expanding scope.

@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Rows, preview keys and workspace groups are local to [host]; never flatten them across hosts. */
 data class HostChannelListEntry(
@@ -436,6 +437,50 @@ class ChannelListViewModel(
         viewModelScope.launch { hostNavigationChannel.send(target) }
     }
 
+    /** A newly created chat alone may inherit the phone's last acknowledged model choice. */
+    private suspend fun applyRememberedModel(
+        repository: ConversationRepository,
+        conversation: Conversation,
+    ) {
+        val remembered =
+            try {
+                appPreferences.rememberedModel.first()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                RelayLog.d { "event=new_chat_model outcome=preference_unavailable" }
+                return
+            }
+        if (remembered.isNullOrEmpty() || remembered == "default") return
+        val menu =
+            try {
+                withTimeoutOrNull(5_000) {
+                    repository.observeModelMenu(conversation.id).filterNotNull().first()
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                null
+            }
+        if (menu == null) {
+            RelayLog.d { "event=new_chat_model outcome=menu_unavailable" }
+            return
+        }
+        val offered =
+            menu.rows.any { row ->
+                row.agent == conversation.agent && row.value == remembered && "value" !in row.truncatedFields.orEmpty()
+            }
+        if (!offered || conversation.currentSessionId.isEmpty()) {
+            RelayLog.d { "event=new_chat_model outcome=not_applicable" }
+            return
+        }
+        try {
+            repository.setSessionSettings(conversation.currentSessionId, model = remembered)
+            RelayLog.d { "event=new_chat_model outcome=applied" }
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            RelayLog.d { "event=new_chat_model outcome=write_failed" }
+        }
+    }
+
     /** Create on the clicked host immediately, using its daemon default folder. */
     fun createChat(serverId: String) {
         val host = hostSource.snapshots.value.firstOrNull { it.serverId == serverId }
@@ -456,7 +501,7 @@ class ChannelListViewModel(
             val conversation =
                 try {
                     RelayLog.d { "event=create_chat_started" }
-                    live.createDiscussion(null)
+                    live.createDiscussion(null).also { applyRememberedModel(live, it) }
                 } catch (error: Exception) {
                     if (error is CancellationException) {
                         createChat.compareAndSet(state, null)
@@ -568,7 +613,7 @@ class ChannelListViewModel(
             RelayLog.d { "event=add_workspace_start_started" }
             val conversation =
                 try {
-                    live.createDiscussion(workspace)
+                    live.createDiscussion(workspace).also { applyRememberedModel(live, it) }
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     RelayLog.d { "event=add_workspace_start_failed" }
