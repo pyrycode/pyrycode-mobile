@@ -27,6 +27,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.threadColors
 
 // Figma 16:8's `Top bar` (533:1948): a 24dp back glyph, the conversation title, a 24dp overflow glyph,
 // and the 1dp rule that closes the bar 16dp below them. The design positions bare glyphs; a real tap
@@ -128,11 +129,9 @@ fun ThreadTopAppBar(
                     top = BarRuleGap,
                     bottom = BarBottomGap,
                 ),
-            // The design names `Schemes/inverse-primary` at 60%, which is the light-scheme primary tone
-            // and reads as a rule only against the dark reference frame. `outlineVariant` is M3's divider
-            // role and is what the shipped list bar maps this same rule to, so both bars stay identical
-            // under either scheme.
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = BAR_RULE_ALPHA),
+            color =
+                MaterialTheme.colorScheme.threadColors.headerRule
+                    .copy(alpha = BAR_RULE_ALPHA),
         )
     }
 }

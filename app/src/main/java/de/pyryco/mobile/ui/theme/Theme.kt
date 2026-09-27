@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalContext
 
 private val lightScheme =
@@ -295,6 +296,14 @@ fun PyrycodeMobileTheme(
             else -> lightScheme to lightWarningColors
         }
     val successColors = if (darkTheme) darkSuccessColors else lightSuccessColors
+    // Figma's thread/reader Content layer: 30% black over Surface, only in static dark.
+    val threadCanvas = if (darkTheme && !dynamicColor) colorScheme.scrim.copy(alpha = 0.3f).compositeOver(colorScheme.surface) else null
+    val threadColors =
+        ThreadColors(
+            background = threadCanvas ?: colorScheme.background,
+            surface = threadCanvas ?: colorScheme.surface,
+            headerRule = if (threadCanvas != null) colorScheme.inversePrimary else colorScheme.outlineVariant,
+        )
     val composerFieldContainer =
         if (darkTheme && !dynamicColor) onPrimaryDark.copy(alpha = 0.41f) else colorScheme.surfaceContainerHigh
     val userBubbleContainer = if (darkTheme && !dynamicColor) onPrimaryDark else colorScheme.primaryContainer
@@ -316,6 +325,7 @@ fun PyrycodeMobileTheme(
         LocalComposerFieldContainer provides composerFieldContainer,
         LocalUserBubbleContainer provides userBubbleContainer,
         LocalAssistantBubbleContainer provides assistantBubbleContainer,
+        LocalThreadColors provides threadColors,
     ) {
         MaterialTheme(
             colorScheme = colorScheme,

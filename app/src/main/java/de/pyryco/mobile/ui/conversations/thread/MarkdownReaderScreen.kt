@@ -54,6 +54,7 @@ import de.pyryco.mobile.ui.conversations.components.boundClipText
 import de.pyryco.mobile.ui.conversations.components.markdownHtml
 import de.pyryco.mobile.ui.conversations.components.markdownPlainText
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.threadColors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -351,7 +352,11 @@ fun MarkdownReaderScreen(
     }
     val saveNote = rememberNoteSaver { notice -> scope.launch { snackbarHostState.showSnackbar(notices.getValue(notice)) } }
     // A Surface, not a bare background: it also sets `onSurface` as the content colour MarkdownText's text uses.
-    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+    Surface(
+        modifier = modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.threadColors.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
         Box {
             Column {
                 MarkdownReaderTopBar(
@@ -440,7 +445,9 @@ private fun MarkdownReaderTopBar(
         }
         HorizontalDivider(
             modifier = Modifier.padding(start = BarGutter, end = BarGutter, top = BarRuleGap, bottom = BarBottomGap),
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = BAR_RULE_ALPHA),
+            color =
+                MaterialTheme.colorScheme.threadColors.headerRule
+                    .copy(alpha = BAR_RULE_ALPHA),
         )
     }
 }
