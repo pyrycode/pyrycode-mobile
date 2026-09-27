@@ -55,3 +55,7 @@ Pending for the documentation stage: update `docs/knowledge/features/markdown-te
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-27
+
+## Revisions
+
+- 2026-09-27 — No design changes. Native Robolectric pixel capture timed out, so a temporary device-only capture fixture rendered the existing preview content in light/dark on the managed API 33 device (two executed, zero failures/skips). The fixture was removed after visual review; permanent typography, spacing and interaction proof remains in shared tests. Both renders retain the requested body hierarchy and spacing, with the ticket's explicitly retained code chrome and italic quote treatment.

@@ -73,7 +73,6 @@ import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.parser.MarkdownParser
 
-private val ParagraphSpacing = 8.dp
 private val ListItemIndent = 8.dp
 private val BlockquoteBarWidth = 4.dp
 private val BlockquoteContentIndent = 12.dp
@@ -139,6 +138,13 @@ internal const val MAX_TABLE_ROWS = 256
  */
 internal val MarkdownFlavour = GFMFlavourDescriptor()
 
+/** Body presentation; headings, tables and code keep their own element-specific styles. */
+data class MarkdownTextStyle(
+    val body: TextStyle,
+    val blockSpacing: Dp = 8.dp,
+    val listItemSpacing: Dp = 4.dp,
+)
+
 /**
  * [onOpenMarkdownPath] (#1050) opts a caller in to workspace notes: a link whose target is a markdown path
  * ([markdownLinkPath]) is handed to it instead of doing nothing. Only assistant replies pass it; with the
@@ -149,6 +155,7 @@ fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     onOpenMarkdownPath: ((String) -> Unit)? = null,
+    style: MarkdownTextStyle = MarkdownTextStyle(MaterialTheme.typography.bodyMedium),
 ) {
     val platformHandler = LocalUriHandler.current
     val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
@@ -165,10 +172,10 @@ fun MarkdownText(
         }
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(ParagraphSpacing),
+        verticalArrangement = Arrangement.spacedBy(style.blockSpacing),
     ) {
         root.children.forEach { child ->
-            MarkdownBlock(child, markdown, uriHandler)
+            MarkdownBlock(child, markdown, uriHandler, style)
         }
     }
 }
@@ -178,6 +185,7 @@ private fun MarkdownBlock(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
+    style: MarkdownTextStyle,
 ) {
     when (node.type) {
         MarkdownElementTypes.ATX_1 ->
@@ -189,14 +197,14 @@ private fun MarkdownBlock(
         MarkdownElementTypes.PARAGRAPH ->
             Text(
                 text = buildInline(node, source, uriHandler),
-                style = MaterialTheme.typography.bodyMedium,
+                style = style.body,
             )
         MarkdownElementTypes.UNORDERED_LIST ->
-            ListBlock(node, source, uriHandler, ordered = false)
+            ListBlock(node, source, uriHandler, style, ordered = false)
         MarkdownElementTypes.ORDERED_LIST ->
-            ListBlock(node, source, uriHandler, ordered = true)
+            ListBlock(node, source, uriHandler, style, ordered = true)
         MarkdownElementTypes.BLOCK_QUOTE ->
-            BlockQuoteBlock(node, source, uriHandler)
+            BlockQuoteBlock(node, source, uriHandler, style)
         GFMElementTypes.TABLE ->
             TableBlock(node, source, uriHandler)
         MarkdownElementTypes.CODE_FENCE -> {
@@ -215,7 +223,7 @@ private fun MarkdownBlock(
         else -> {
             val text = node.getTextInNode(source).toString().trim()
             if (text.isNotEmpty()) {
-                Text(text = text, style = MaterialTheme.typography.bodyMedium)
+                Text(text = text, style = style.body)
             }
         }
     }
@@ -260,17 +268,18 @@ private fun ListBlock(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
+    style: MarkdownTextStyle,
     ordered: Boolean,
 ) {
     val items = node.children.filter { it.type == MarkdownElementTypes.LIST_ITEM }
-    Column(verticalArrangement = Arrangement.spacedBy(ParagraphSpacing / 2)) {
+    Column(verticalArrangement = Arrangement.spacedBy(style.listItemSpacing)) {
         items.forEachIndexed { index, item ->
             val checkBox = item.children.firstOrNull { it.type == GFMTokenTypes.CHECK_BOX }
             Row {
                 if (checkBox == null) {
                     Text(
                         text = if (ordered) "${index + 1}." else "•",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = style.body,
                     )
                 } else {
                     // GFM draws the mark INSTEAD of the marker, so this arm replaces the bullet
@@ -280,7 +289,7 @@ private fun ListBlock(
                 }
                 Spacer(Modifier.width(ListItemIndent))
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(ParagraphSpacing),
+                    verticalArrangement = Arrangement.spacedBy(style.blockSpacing),
                 ) {
                     item.children
                         .filter {
@@ -289,7 +298,7 @@ private fun ListBlock(
                                 it.type != GFMTokenTypes.CHECK_BOX &&
                                 it.type != MarkdownTokenTypes.WHITE_SPACE &&
                                 it.type != MarkdownTokenTypes.EOL
-                        }.forEach { child -> MarkdownBlock(child, source, uriHandler) }
+                        }.forEach { child -> MarkdownBlock(child, source, uriHandler, style) }
                 }
             }
         }
@@ -353,6 +362,7 @@ private fun BlockQuoteBlock(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
+    style: MarkdownTextStyle,
 ) {
     // The bar is the only thing marking a quote as quoted — this block adds no treatment beyond
     // the paragraph italic — so it conveys structure and has to clear WCAG 1.4.11's 3:1 against the
@@ -372,7 +382,7 @@ private fun BlockQuoteBlock(
                     .background(barColor),
         )
         Spacer(Modifier.width(BlockquoteContentIndent))
-        Column(verticalArrangement = Arrangement.spacedBy(ParagraphSpacing)) {
+        Column(verticalArrangement = Arrangement.spacedBy(style.blockSpacing)) {
             node.children
                 .filter {
                     it.type != MarkdownTokenTypes.BLOCK_QUOTE &&
@@ -383,12 +393,12 @@ private fun BlockQuoteBlock(
                         Text(
                             text = buildInline(child, source, uriHandler),
                             style =
-                                MaterialTheme.typography.bodyMedium.copy(
+                                style.body.copy(
                                     fontStyle = FontStyle.Italic,
                                 ),
                         )
                     } else {
-                        MarkdownBlock(child, source, uriHandler)
+                        MarkdownBlock(child, source, uriHandler, style)
                     }
                 }
         }
