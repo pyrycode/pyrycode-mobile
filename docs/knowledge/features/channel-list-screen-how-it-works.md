@@ -23,9 +23,19 @@ chrome rather than relying on a shared `TopAppBar` slot threaded through the Nav
 
 The file-private `ChannelListTopBar(onEvent)` is a `Column`: a `Row` of two 48dp `IconButton`s (`Icons.Default.Settings`
 emitting `SettingsTapped`, `Icons.Default.Archive` emitting `ArchiveTapped`, each a 24dp `Icon` tinted
-`colorScheme.primary` with its own `contentDescription`), then a `HorizontalDivider` in `outlineVariant` held
-back to the tree's existing `SECTION_RULE_ALPHA` — the same treatment the tree's between-sections rule already
-gives the design's identically-styled rectangle.
+`colorScheme.primary` with its own `contentDescription`), then a `HorizontalDivider`. Both this divider and
+the tree's between-sections rule use the private `sidebarRuleColor()` helper: `inversePrimary` for a dark
+surface, `outlineVariant` for a light surface, each at `SECTION_RULE_ALPHA = 0.60f`.
+
+**Panel colours ([#1158](../../specs/architecture/1158-dark-sidebar-colours.md)).** The list's `Scaffold`
+composites the current scheme's `scrim` at 30% over `surface` when `surface.luminance() < 0.5f`; its transparent
+top bar inherits that same fill, including with no hosts. The divider helper uses the same luminance check,
+so both treatments follow the active app theme and previews independently of the system theme. Light
+surfaces keep their plain `surface` fill and `outlineVariant` rules at 60%.
+
+This treatment belongs to Figma's nested sidebar panel `I133:259;103:2959`; the outer frame's surface already
+matches the design. Keep the fill local to the list Scaffold: global theme tokens, system bars and other
+screens retain their existing colours. Selected rows keep their existing distinct fill.
 
 **It lives in the `Scaffold`'s `topBar` slot, not the tree's scroll container**, so it draws above the
 `hostState.hosts` branch and is carried by **both** of the screen's draws — the empty placeholder and the
