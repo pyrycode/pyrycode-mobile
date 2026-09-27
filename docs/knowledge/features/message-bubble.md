@@ -8,11 +8,11 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/p
 
 Dispatches on `message.role` with a Kotlin `when`:
 
-- **`Role.User`** → `UserMessageBubble(message, modifier)` — right-aligned, filled from the `primaryContainer` pair, plain unparsed `Text(message.content)`.
-- **`Role.Assistant`** → `AssistantMessage(message, modifier)` — left-aligned, filled from the `secondaryContainer` pair, either the static [`MarkdownText`](./markdown-text.md) (finalized) or the private `StreamingAssistantBody` (while `message.isStreaming`).
+- **`Role.User`** → `UserMessageBubble(message, modifier)` — right-aligned, filled from `colorScheme.userBubbleContainer` with `onPrimaryContainer` content, plain unparsed `Text(message.content)`.
+- **`Role.Assistant`** → `AssistantMessage(message, modifier)` — left-aligned, filled from `colorScheme.assistantBubbleContainer` with `onSecondaryContainer` content, either the static [`MarkdownText`](./markdown-text.md) (finalized) or the private `StreamingAssistantBody` (while `message.isStreaming`).
 - **`Role.Tool`** → `message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier.padding(start = MessageContentGutter + ToolNestingIndent * toolNestingDepth, end = MessageContentGutter), subagentDepth = toolNestingDepth) }` — routes the unwrapped [`ToolCall`](./data-model.md) payload to [`ToolCallRow`](./tool-call-row.md) since #131. Since #644 this arm also applies the thread's shared content gutter to the modifier it passes down, so the tool card sits on the same inset as the two bubble roles without [`ToolCallRow.kt`](./tool-call-row.md) itself changing — that file is owned by [#658](../codebase/658.md), and this is a caller-side `Modifier.padding`, not an edit to it. **Since #896** the arm also reads `toolNestingDepth` (see [Subagent nesting indent](#subagent-nesting-indent-since-896) below) and steps the start padding in by one `ToolNestingIndent` per level, on top of the gutter; `end` stays a plain `MessageContentGutter`. The null-safe `?.let` still absorbs the data-class invariant (`toolCall` non-null iff `role == Role.Tool`) silently — a `Role.Tool` message with `toolCall = null` (a data-layer bug) renders nothing.
 
-Both bubble roles route through one private `MessageContainer(message, alignment, bubbleColor, bubbleContentColor, body)` — the design's shared `Message` component (Figma `132:*`, inside `Message area` `533:1956`). It is the only place that knows the shape, the padding, the gutter/inset geometry and the meta row; the two role composables differ only in which alignment and which M3 container-pair they pass in. See [Shared `Message` container](#shared-message-container-since-644) below.
+Both bubble roles route through one private `MessageContainer(message, alignment, bubbleColor, bubbleContentColor, body)` — the design's shared `Message` component (Figma `132:*`, inside `Message area` `533:1956`). It is the only place that knows the shape, the padding, the gutter/inset geometry and the meta row; the two role composables differ only in which alignment and which bubble fill and content colour they pass in. See [Shared `Message` container](#shared-message-container-since-644) below.
 
 ## Shape
 
@@ -110,7 +110,7 @@ private fun MessageContainer(
 }
 ```
 
-`UserMessageBubble` and `AssistantMessage` are now thin: each supplies `alignment` (`Alignment.End` / `Alignment.Start`), the M3 container-pair (see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes) below), and the `body` composable — plain `Text` for the user, the streaming/static markdown pair for the assistant. Neither role owns its own `Surface`, padding, or meta row any more; drift between the two is no longer possible because there is one function that lays both out.
+`UserMessageBubble` and `AssistantMessage` are now thin: each supplies `alignment` (`Alignment.End` / `Alignment.Start`), the bubble fill and content colour (see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes) below), and the `body` composable — plain `Text` for the user, the streaming/static markdown pair for the assistant. Neither role owns its own `Surface`, padding, or meta row any more; drift between the two is no longer possible because there is one function that lays both out.
 
 The frame's 412dp reference width carries a 20dp gutter on each edge (`MessageContentGutter`), leaving a 372dp content area; the role container then insets its *opposite* edge by 100dp (`MessageRoleInset`), which caps a bubble at 272dp there. The inset is the mechanism and 272dp is its value at the reference width — there is no separate max-width constant to drift away from it. The gutter lives on the component (not on `ThreadScreen`'s `LazyColumn`, which applies none) because this ticket did not touch that screen.
 
@@ -124,21 +124,32 @@ Split into [MessageBubble — attachment slot](message-bubble-attachment-slot.md
 
 ### The #128 divergence closes here
 
-`MessageBubble`'s assistant body was unboxed, flat text since #128; `message-bubble.md` used to record that as a deliberate, unresolved divergence from the Figma frame, with `needs-rework:po` as the escalation path for reconciling it. **#644 is that reconciliation, resolved in favour of the design.** Both roles now render through the same boxed `Message` component described above; there is no more flat-vs-boxed asymmetry between the two roles, and the escalation note is retired. The asymmetry that remains is only alignment and colour — which side of the lane, and which M3 container-pair.
+`MessageBubble`'s assistant body was unboxed, flat text since #128; `message-bubble.md` used to record that as a deliberate, unresolved divergence from the Figma frame, with `needs-rework:po` as the escalation path for reconciling it. **#644 is that reconciliation, resolved in favour of the design.** Both roles now render through the same boxed `Message` component described above; there is no more flat-vs-boxed asymmetry between the two roles, and the escalation note is retired. The asymmetry that remains is only alignment and colour — which side of the lane, and which bubble fill and content colour.
 
 ### Token mapping — Figma roles against this app's two schemes
 
-The supplied `16:8` adaptation is drawn against this app's **dark** palette, and its role names are only partly usable literally:
+The supplied `16:8` adaptation is drawn against this app's **dark** palette.
+Since [#1161](../../specs/architecture/1161-dark-message-bubble-fills.md), the bubble
+fills match it in static dark mode (`darkTheme && !dynamicColor`). Static light
+and wallpaper-derived light/dark palettes retain their selected scheme's
+`primaryContainer` (user) and `secondaryContainer` (assistant). This supersedes
+only #644's static-dark fill divergence; body and metadata colours stay as before:
 
 | Figma role | Design hex | Used here | Why |
 |---|---|---|---|
-| Assistant fill `Schemes/on-primary-fixed` | `#001D34` | `colorScheme.secondaryContainer` | **Divergence.** `Theme.kt`'s `darkColorScheme(...)` / `lightColorScheme(...)` never set the M3 *fixed* roles, so `colorScheme.onPrimaryFixed` resolves to the baseline-purple default, not anything in this palette. `secondaryContainer` is the canonical partner of the assistant body's own `onSecondaryContainer` and keeps the assistant bubble distinct from the user's primary-tinted one in both schemes. |
+| Assistant fill `Schemes/on-primary-fixed` | `#001D34` | `colorScheme.assistantBubbleContainer` | Static dark uses `assistantBubbleContainerDark` from `BubbleColors.kt`, for both streaming and finalized replies. Static light and wallpaper modes use `secondaryContainer`. |
 | Assistant body `Schemes/on-secondary-container` | `#D6E4F7` | `colorScheme.onSecondaryContainer` | As named. |
-| User fill `Schemes/on-primary` | `#003355` | `colorScheme.primaryContainer` | **Divergence**, same reasoning. Also the fill the shipped user bubble already painted pre-#644, so [`QueuedBacklog`](queued-backlog-section.md)'s mirrored row stays in family for free. |
+| User fill `Schemes/on-primary` | `#003355` | `colorScheme.userBubbleContainer` | Static dark uses `onPrimaryDark` from `Color.kt`; static light and wallpaper modes use `primaryContainer`. [`QueuedMessageRow`](queued-backlog-section.md) shares this base fill beneath its existing 0.6 row opacity. |
 | User body `Schemes/on-primary-container` | `#CFE4FF` | `colorScheme.onPrimaryContainer` | As named. |
-| Meta row text + copy glyph `Schemes/inverse-primary` | `#32628D` | `LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)` | **Divergence.** M3 has no de-emphasis role *inside* a filled container; `inverse-primary` is a light-scheme primary tone and only reads as de-emphasis against the dark reference frame. Taking the host bubble's own content colour at a fixed alpha de-emphasises correctly in both bubbles and both schemes. |
+| Meta row text + copy glyph `Schemes/inverse-primary` | `#32628D` | `LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)` (0.8) | **Divergence.** M3 has no de-emphasis role *inside* a filled container; `inverse-primary` is a light-scheme primary tone and only reads as de-emphasis against the dark reference frame. Taking the host bubble's own content colour at a fixed alpha de-emphasises correctly in both bubbles and both schemes. |
 
-Every other `Schemes/*` hex in `16:8` matches a `*Dark` value in `Color.kt` exactly; only the *fixed* roles and the in-container de-emphasis role need this substitution. Same trade #643 made for the header rule (`Schemes/inverse-primary` @ 60% → `outlineVariant` at 0.60 alpha), reused verbatim for the [session boundary](session-boundary-delimiter.md)'s rules.
+The bubble-specific roles leave global Material containers unchanged (static dark:
+`primaryContainer = #134A74`, `secondaryContainer = #3A4857`). Do not substitute
+`colorScheme.onPrimaryFixed` for the assistant fill: the static schemes do not
+configure Material's fixed roles, so that property resolves to the baseline-purple
+default. The explicit bubble role supplies the reference hue without changing
+other surfaces. Metadata still uses the host content colour at 0.8 opacity;
+Figma's `inversePrimary` is not the readable cross-theme adaptation.
 
 ### Meta row and copy control (`MessageMetaRow.kt`, since #644)
 
@@ -224,7 +235,20 @@ Each role container's `Row` carries `Modifier.padding(bottom = MessageAreaRowSpa
 - **Transitive dependencies:** the assistant variant routes through [`MarkdownText`](./markdown-text.md), wired against `org.jetbrains:markdown` (see [ADR 0002](../decisions/0002-markdown-renderer-library.md)). Since #644, `MessageMetaRow.kt` reads `LocalClipboardManager` / `AnnotatedString` (`androidx.compose.ui`) and `java.time.format.DateTimeFormatter` (already on the min-SDK-33 classpath, no desugaring needed — same posture as [`SessionBoundaryDelimiter`](session-boundary-delimiter.md)'s time formatter).
 - **One string resource** (since #644): `cd_thread_copy_message` ("Copy this message"), the copy control's accessible name, in the `cd_thread_*` family. User bodies still render plainly and assistant bodies through `MarkdownText` — no role prefix, no fallback copy on the body text itself.
 - **One drawable** (since #644): `res/drawable/ic_copy.xml` — single-path, 11×12 viewport, tinted at the call site from `LocalContentColor`, the same idiom `ic_open_in_new.xml` already uses.
-- **No theme overrides.** Reads `colorScheme.primaryContainer` / `onPrimaryContainer` (user), `colorScheme.secondaryContainer` / `onSecondaryContainer` (assistant), `typography.bodyMedium` / `bodySmall` directly — see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes). The assistant body's colour now comes from `Surface(contentColor = …)` rather than a `CompositionLocalProvider` the bubble sets up itself; `Box`, `CompositionLocalProvider` and `LocalContentColor` are no longer referenced anywhere in `MessageBubble.kt` as a result — the meta row's de-emphasis and `MarkdownText`'s ambient both come from the one `Surface`.
+- **Bubble theme roles:** wrap consumers in `PyrycodeMobileTheme`, which provides
+  `LocalUserBubbleContainer` / `LocalAssistantBubbleContainer` through the
+  `ColorScheme.userBubbleContainer` / `assistantBubbleContainer` extensions in
+  `ui/theme/BubbleColors.kt`. The locals require this provider. The theme resolves
+  the exception from its effective `darkTheme` and `dynamicColor` arguments;
+  bubble consumers do not read system dark mode. With wallpaper colours off,
+  app-selected dark mode uses the reference fills even on a light system, while
+  app-selected light mode retains its containers on a dark system. Runtime theme changes update already
+  composed bubbles. With wallpaper colours enabled, both modes use the selected
+  scheme's containers — see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes).
+- **Content styling:** `onPrimaryContainer` (user), `onSecondaryContainer`
+  (assistant), and `typography.bodyMedium` / `bodySmall` remain unchanged. The
+  shared `Surface(contentColor = …)` supplies the assistant markdown ambient and
+  the meta row's content colour; metadata applies its existing 0.8 opacity.
 - **Attachment rendering** (since #984, `MessageAttachments.kt` beside this file): `android.graphics.ImageDecoder` for off-main-thread thumbnail decode at a capped target size — no third-party image library. Two new string families in the `thread_attachment_*` group (`unnamed`, `loading`, `not_found`, `failed`, `retry`); no new drawable, since the file row reuses `ic_attachment_file` from the composer strip (#933).
 
 ## Previews
@@ -241,7 +265,18 @@ No preview for the `Role.Tool` arm at depth 0 — preview coverage for the tool-
 
 ## Testing
 
-`app/src/androidTest/.../components/MessageBubbleTest.kt` (new, #644), the rung-2 component-render layer, with a file-local fake `ClipboardManager` provided through `LocalClipboardManager`:
+`app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas
+pixels at the 412dp reference width to check user, finalized assistant, streaming
+assistant and queued fills in static dark/light and wallpaper dark/light modes.
+The queued expectation composites the user base fill at 0.6 over the background.
+Every fixture deliberately sets system mode opposite to app mode, so an accidental
+system-mode lookup cannot hide behind matching defaults. The suite also checks
+streaming finalization and theme changes without remounting, text-layout colours
+for bodies and timestamps, and unchanged global Material containers in static
+modes. Sample padding inside the surface, clear of text and rounded corners, to
+assert the actual fill rather than only the theme token.
+
+`app/src/sharedTest/.../components/MessageBubbleTest.kt` (new, #644), the rung-2 component-render layer, with a file-local fake `ClipboardManager` provided through `LocalClipboardManager`:
 
 - `bothRoles_renderBodyAndOwnMetaRow` — both roles render their body text and their own meta row.
 - `roleAlignment_userSitsRightOfAssistant_andEachClearsTheOppositeInset` — reads both bodies' rects; the user body sits right of the assistant body and each clears the opposite root edge by at least `MessageRoleInset`.

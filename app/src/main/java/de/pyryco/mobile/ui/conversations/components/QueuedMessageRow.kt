@@ -26,6 +26,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.userBubbleContainer
 
 // Sit on the same gutter as the message rows around it (MessageBubble.kt's MessageContentGutter).
 private val QueuedRowVerticalPadding = 8.dp
@@ -103,7 +104,7 @@ fun QueuedMessageRow(
         )
         Surface(
             shape = BubbleShape,
-            color = MaterialTheme.colorScheme.primaryContainer,
+            color = MaterialTheme.colorScheme.userBubbleContainer,
         ) {
             Text(
                 text = text,
