@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -108,10 +109,11 @@ fun ConnectionStatusLine(
     status: ConnectionStatus,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    FlowRow(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(LegSpacing),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(IntraLegSpacing),
+        itemVerticalAlignment = Alignment.CenterVertically,
     ) {
         StatusLeg(name = "Relay", visual = status.relay.toLegVisual())
         StatusLeg(name = "Pyrycode", visual = status.pyrycode.toLegVisual())
@@ -171,6 +173,7 @@ private fun ConnectionStatusLinePreviewMatrix() {
 }
 
 @Preview(name = "ConnectionStatusLine — Light", showBackground = true, widthDp = 412)
+@Preview(name = "ConnectionStatusLine — Light 200%", showBackground = true, widthDp = 412, fontScale = 2f)
 @Composable
 private fun ConnectionStatusLineLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
@@ -180,6 +183,13 @@ private fun ConnectionStatusLineLightPreview() {
     }
 }
 
+@Preview(
+    name = "ConnectionStatusLine — Dark 200%",
+    showBackground = true,
+    widthDp = 412,
+    fontScale = 2f,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
 @Preview(
     name = "ConnectionStatusLine — Dark",
     showBackground = true,
