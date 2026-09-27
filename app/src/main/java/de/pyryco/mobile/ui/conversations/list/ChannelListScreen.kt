@@ -48,7 +48,7 @@ import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.components.EditWorkspaceModal
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
-import de.pyryco.mobile.ui.conversations.components.TreeWorkspaceRow
+import de.pyryco.mobile.ui.conversations.components.TreeHostSectionRow
 import de.pyryco.mobile.ui.host.HostEditorModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
@@ -93,10 +93,9 @@ internal const val CHANNEL_LIST_TEST_TAG: String = "channel-list"
  */
 internal const val PLAY_STORE_URL: String = "https://play.google.com/store/apps/details?id=de.pyryco.mobile"
 
-// Both conversation groups keep their host spacing and separator while the host-first tree is pending.
+// Host containers share one scrollable list and keep the Figma spacing.
 private val TreeGutter = 20.dp
 private val TreeHostGap = 16.dp
-private val TreeSectionRuleGap = 28.dp
 
 // The outer Scaffold in MainActivity owns the system-bar insets.
 private val TreeBottomInset = 16.dp
@@ -118,7 +117,7 @@ private const val SECTION_RULE_ALPHA = 0.60f
 
 // A daemon-authored identity is clamped before it reaches an item key, for the same reason every render
 // path clamps daemon text: `item(key = …)` is evaluated on every recomposition of the list content, so
-// an oversized `cwd` or id would be copied on each one instead of truncating once.
+// an oversized id would be copied on each one instead of truncating once.
 private const val MAX_KEY_PART_CHARS = 256
 
 sealed interface ChannelListEvent {
@@ -255,16 +254,6 @@ sealed interface ChannelListEvent {
     data object AddWorkspaceDismissed : ChannelListEvent
 
     /**
-     * A workspace row's pencil, in either section: open Edit workspace on **that** row's own host and exact
-     * `cwd` (#905). Never the shown name, which two workspaces can share; the view model reads it from the
-     * host's own snapshot.
-     */
-    data class TreeWorkspaceEditTapped(
-        val serverId: String,
-        val cwd: String,
-    ) : ChannelListEvent
-
-    /**
      * The Edit workspace modal's OK, carrying the entered name already trimmed by the component. No ids, for
      * the reason [HostEditNameSubmitted] carries none; the view model applies the label rule.
      */
@@ -287,13 +276,9 @@ sealed interface ChannelListEvent {
      */
     data object WorkspaceArchiveDeclined : ChannelListEvent
 
-    /**
-     * A Channels-section workspace row's plus: open Create channel on **that** row's own host and exact `cwd`
-     * (#958). Never the shown name, which two workspaces can share.
-     */
-    data class TreeWorkspaceAddTapped(
+    /** A host's Channels-section plus opens Create channel in that daemon workspace's default folder. */
+    data class TreeHostChannelAddTapped(
         val serverId: String,
-        val cwd: String,
     ) : ChannelListEvent
 
     /**
@@ -342,8 +327,7 @@ sealed interface ChannelListEvent {
 }
 
 /**
- * The conversation tree: a Channels section and a Chats section, each holding host rows, their
- * workspace rows and those workspaces' conversation rows.
+ * The conversation tree: each host holds Channels and Chats sections with direct conversation rows.
  *
  * Stateless, and fed by exactly one model: [hostState] carries the host-qualified rows (#729), the
  * collapsed nodes, the last-opened target and the open modals' targets. The flat `ChannelListUiState`
@@ -647,112 +631,98 @@ private fun ConversationTree(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = TreeGutter, end = TreeGutter, bottom = TreeBottomInset),
     ) {
-        treeSection(ConversationTreeSection.Channels, hostState, onEvent)
-        item(key = "tree-section-rule") {
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = TreeSectionRuleGap),
-                color = sidebarRuleColor(),
-            )
+        hostState.hosts.forEachIndexed { index, entry ->
+            treeHost(index, entry, hostState, onEvent)
         }
-        treeSection(ConversationTreeSection.Chats, hostState, onEvent)
     }
 }
 
 /**
- * Emits one group's rows: each host, each of that host's workspaces, and each
- * workspace's conversations — stopping at whichever node the operator folded.
+ * Emits a host once, followed by its two independent sections and direct conversation rows.
  *
  * A conversation row's tap target is built from the row's **own** `serverId`, so a tree drawing rows
  * from several hosts opens each on the host that owns it.
  */
-private fun LazyListScope.treeSection(
-    section: ConversationTreeSection,
+private fun LazyListScope.treeHost(
+    index: Int,
+    entry: HostChannelListEntry,
     hostState: HostChannelListState,
     onEvent: (ChannelListEvent) -> Unit,
 ) {
-    hostState.hosts.forEachIndexed { index, entry ->
-        val host = entry.host
-        val hostKey = TreeFoldKey(section, host.serverId)
-        item(key = treeItemKey("host", section.name, host.serverId)) {
-            TreeHostRow(
+    val host = entry.host
+    val hostKey = TreeFoldKey(ConversationTreeSection.Host, host.serverId)
+    item(key = treeItemKey("host", host.serverId)) {
+        TreeHostRow(
+            serverId = host.serverId,
+            hostName = host.displayName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.unnamed_host),
+            connectionStatus = host.connectionStatus,
+            expanded = hostKey !in hostState.collapsed,
+            onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(hostKey)) },
+            onEditTapped = { onEvent(ChannelListEvent.TreeHostEditTapped(host.serverId)) },
+            onAddTapped = { onEvent(ChannelListEvent.TreeHostAddTapped(host.serverId)) },
+            onAddLongPressed = { onEvent(ChannelListEvent.TreeHostAddLongPressed(host.serverId)) },
+            modifier = Modifier.padding(top = if (index == 0) 0.dp else TreeHostGap),
+            onReconnectTapped = {
+                onEvent(
+                    when (host.connectionStatus.relay) {
+                        RelayLinkStatus.PairingRejected -> ChannelListEvent.TreeHostRePairTapped(host.serverId)
+                        is RelayLinkStatus.UpdateRequired -> ChannelListEvent.TreeHostUpdateTapped
+                        else -> ChannelListEvent.TreeHostReconnectTapped(host.serverId)
+                    },
+                )
+            },
+        )
+    }
+    if (hostKey in hostState.collapsed) return
+    for (section in listOf(ConversationTreeSection.Channels, ConversationTreeSection.Chats)) {
+        val sectionKey = TreeFoldKey(section, host.serverId)
+        item(key = treeItemKey("section", section.name, host.serverId)) {
+            TreeHostSectionRow(
                 serverId = host.serverId,
                 hostName = host.displayName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.unnamed_host),
-                connectionStatus = host.connectionStatus,
-                expanded = hostKey !in hostState.collapsed,
-                onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(hostKey)) },
-                // The row's own host, as with a conversation row's target: the tree draws rows from every
-                // host, so a globally selected one would edit or create the chat on the wrong machine.
-                onEditTapped = { onEvent(ChannelListEvent.TreeHostEditTapped(host.serverId)) },
-                onAddTapped = { onEvent(ChannelListEvent.TreeHostAddTapped(host.serverId)) },
-                onAddLongPressed = { onEvent(ChannelListEvent.TreeHostAddLongPressed(host.serverId)) },
-                modifier = Modifier.padding(top = if (index == 0) 0.dp else TreeHostGap),
-                onReconnectTapped = {
-                    onEvent(
-                        when (host.connectionStatus.relay) {
-                            RelayLinkStatus.PairingRejected -> ChannelListEvent.TreeHostRePairTapped(host.serverId)
-                            is RelayLinkStatus.UpdateRequired -> ChannelListEvent.TreeHostUpdateTapped
-                            else -> ChannelListEvent.TreeHostReconnectTapped(host.serverId)
-                        },
-                    )
-                },
+                sectionName = stringResource(section.titleRes),
+                expanded = sectionKey !in hostState.collapsed,
+                onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(sectionKey)) },
+                onAddTapped =
+                    if (section == ConversationTreeSection.Channels) {
+                        { onEvent(ChannelListEvent.TreeHostChannelAddTapped(host.serverId)) }
+                    } else {
+                        null
+                    },
             )
         }
-        if (hostKey in hostState.collapsed) return@forEachIndexed
-        val groups =
-            when (section) {
-                ConversationTreeSection.Channels -> entry.channelGroups
-                ConversationTreeSection.Chats -> entry.chatGroups
-            }
-        groups.forEach { group ->
-            val workspaceKey = TreeFoldKey(section, group.serverId, group.cwd)
-            item(key = treeItemKey("workspace", section.name, group.serverId, group.cwd)) {
-                TreeWorkspaceRow(
-                    workspaceName = group.displayName,
-                    expanded = workspaceKey !in hostState.collapsed,
-                    onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(workspaceKey)) },
-                    // The group's own host and exact cwd, in both sections, never its shown name.
-                    onEditTapped = { onEvent(ChannelListEvent.TreeWorkspaceEditTapped(group.serverId, group.cwd)) },
-                    // Channels only (#958): the plus creates a channel at the group's own host and cwd.
-                    onAddTapped =
-                        when (section) {
-                            ConversationTreeSection.Channels -> {
-                                { onEvent(ChannelListEvent.TreeWorkspaceAddTapped(group.serverId, group.cwd)) }
-                            }
-                            ConversationTreeSection.Chats -> null
-                        },
-                )
-            }
-            if (workspaceKey in hostState.collapsed) return@forEach
-            items(
-                items = group.conversations,
-                key = { row -> treeItemKey("conversation", section.name, row.serverId, row.conversation.id) },
-            ) { row ->
-                val target = HostConversationTarget(row.serverId, row.conversation.id)
-                TreeConversationRow(
-                    conversationName =
-                        row.conversation.name?.takeIf { it.isNotBlank() }
-                            ?: stringResource(R.string.untitled_discussion),
-                    selected = target == hostState.selected,
-                    onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
-                    modifier = Modifier.testTag(section.rowTestTag),
-                    attention = entry.attentionFor(row.conversation.id),
-                    // The row's own target, as for its tap: Edit channel on Channels rows (#667), Edit chat on Chats.
-                    onEditTapped =
-                        when (section) {
-                            ConversationTreeSection.Channels -> {
-                                { onEvent(ChannelListEvent.TreeChannelEditTapped(target)) }
-                            }
-                            ConversationTreeSection.Chats -> {
-                                { onEvent(ChannelListEvent.TreeChatEditTapped(target)) }
-                            }
-                        },
-                    editDescription =
-                        when (section) {
-                            ConversationTreeSection.Channels -> R.string.cd_tree_channel_edit
-                            ConversationTreeSection.Chats -> R.string.cd_tree_chat_edit
-                        },
-                )
-            }
+        if (sectionKey in hostState.collapsed) continue
+        val conversations = if (section == ConversationTreeSection.Channels) host.channels else host.chats
+        items(
+            items = conversations,
+            key = { conversation -> treeItemKey("conversation", section.name, host.serverId, conversation.id) },
+        ) { conversation ->
+            val target = HostConversationTarget(host.serverId, conversation.id)
+            TreeConversationRow(
+                conversationName =
+                    conversation.name?.takeIf { it.isNotBlank() }
+                        ?: stringResource(R.string.untitled_discussion),
+                selected = target == hostState.selected,
+                onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
+                modifier = Modifier.testTag(section.rowTestTag),
+                attention = entry.attentionFor(conversation.id),
+                onEditTapped =
+                    when (section) {
+                        ConversationTreeSection.Host -> error("Host is not a conversation section")
+                        ConversationTreeSection.Channels -> {
+                            { onEvent(ChannelListEvent.TreeChannelEditTapped(target)) }
+                        }
+                        ConversationTreeSection.Chats -> {
+                            { onEvent(ChannelListEvent.TreeChatEditTapped(target)) }
+                        }
+                    },
+                editDescription =
+                    when (section) {
+                        ConversationTreeSection.Host -> error("Host is not a conversation section")
+                        ConversationTreeSection.Channels -> R.string.cd_tree_channel_edit
+                        ConversationTreeSection.Chats -> R.string.cd_tree_chat_edit
+                    },
+            )
         }
     }
 }
@@ -760,6 +730,7 @@ private fun LazyListScope.treeSection(
 private val ConversationTreeSection.titleRes: Int
     get() =
         when (this) {
+            ConversationTreeSection.Host -> error("Host has no section title")
             ConversationTreeSection.Channels -> R.string.channels_section_header
             ConversationTreeSection.Chats -> R.string.chats_section_header
         }
@@ -767,6 +738,7 @@ private val ConversationTreeSection.titleRes: Int
 private val ConversationTreeSection.rowTestTag: String
     get() =
         when (this) {
+            ConversationTreeSection.Host -> error("Host has no conversation rows")
             ConversationTreeSection.Channels -> TREE_CHANNEL_ROW_TEST_TAG
             ConversationTreeSection.Chats -> TREE_CHAT_ROW_TEST_TAG
         }
@@ -774,7 +746,7 @@ private val ConversationTreeSection.rowTestTag: String
 /**
  * Builds a `LazyColumn` item key out of daemon-authored identities.
  *
- * Each part is length-prefixed, so no `serverId`, `cwd` or conversation id can forge another row's key
+ * Each part is length-prefixed, so no `serverId` or conversation id can forge another row's key
  * by embedding the separator — a duplicate key is a crash, not a rendering glitch. An oversized part is
  * clamped with its own length appended, which keeps distinct identities distinct without copying a
  * multi-megabyte string on every recomposition.
@@ -856,7 +828,7 @@ private fun previewHostState(now: Instant): HostChannelListState {
         )
     return HostChannelListState(
         hosts = listOf(pyrybox, macbook),
-        collapsed = setOf(TreeFoldKey(ConversationTreeSection.Channels, "macbook")),
+        collapsed = setOf(TreeFoldKey(ConversationTreeSection.Host, "macbook")),
         selected = HostConversationTarget("pyrybox", "c2"),
     )
 }

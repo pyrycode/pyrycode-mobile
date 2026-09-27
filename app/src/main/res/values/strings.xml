@@ -35,6 +35,8 @@
     <!-- A workspace row's pencil (#905), in both sections; %1$s is the workspace's (clamped) shown name. -->
     <string name="cd_tree_workspace_edit">Edit workspace %1$s</string>
     <string name="cd_tree_workspace_new_channel">New channel in %1$s</string>
+    <string name="cd_tree_host_new_channel">New channel on %1$s</string>
+    <string name="tree_host_section_label">%1$s on %2$s</string>
     <!-- A tree conversation row's status dot (#878): one per attention state, so the meaning never rests on colour. -->
     <string name="cd_conversation_attention_waiting">Waiting for your answer</string>
     <string name="cd_conversation_attention_running">Running</string>

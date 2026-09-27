@@ -81,7 +81,7 @@ internal class ConversationCommands(
      */
     suspend fun createChannel(
         name: String,
-        workspace: String,
+        workspace: String?,
     ): Conversation = create(CreateConversationPayloadDto(isPromoted = true, name = name, cwd = workspace))
 
     /**

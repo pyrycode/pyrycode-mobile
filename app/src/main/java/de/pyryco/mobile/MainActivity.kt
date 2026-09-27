@@ -401,14 +401,13 @@ internal fun PyryNavHost(
                         is ChannelListEvent.AddWorkspaceFolderCreateRequested -> vm.createAddWorkspaceFolder(event.name)
                         ChannelListEvent.AddWorkspaceSubmitted -> vm.submitAddWorkspace()
                         ChannelListEvent.AddWorkspaceDismissed -> vm.dismissAddWorkspace()
-                        is ChannelListEvent.TreeWorkspaceEditTapped -> vm.openWorkspaceEditor(event.serverId, event.cwd)
                         is ChannelListEvent.WorkspaceEditNameSubmitted -> vm.submitWorkspaceName(event.name)
                         ChannelListEvent.WorkspaceEditDismissed -> vm.dismissWorkspaceEditor()
                         ChannelListEvent.WorkspaceArchiveRequested -> vm.requestWorkspaceArchive()
                         ChannelListEvent.WorkspaceArchiveConfirmed -> vm.confirmWorkspaceArchive()
                         ChannelListEvent.WorkspaceArchiveDeclined -> vm.declineWorkspaceArchive()
                         // And for creating a channel (#958): the plus's own host and exact cwd.
-                        is ChannelListEvent.TreeWorkspaceAddTapped -> vm.openCreateChannel(event.serverId, event.cwd)
+                        is ChannelListEvent.TreeHostChannelAddTapped -> vm.openCreateChannel(event.serverId)
                         is ChannelListEvent.CreateChannelSubmitted -> vm.submitCreateChannel(event.name, event.systemPrompt)
                         ChannelListEvent.CreateChannelDismissed -> vm.dismissCreateChannel()
                         // And for editing a channel (#667): the pen's own host and conversation.

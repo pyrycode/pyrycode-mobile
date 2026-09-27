@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Power
@@ -74,7 +75,8 @@ import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 // belongs to the list that assembles them (#731).
 private val HostRowIndent = 0.dp
 private val WorkspaceRowIndent = 12.dp
-private val ConversationRowIndent = 16.dp
+private val ConversationRowIndent = 12.dp
+private val HostSectionIndent = 4.dp
 
 // The design draws 28/28/24dp rows for a pointer. Touch needs 48dp — the same minimum
 // `ConversationRowTest` already holds the flat row to. The hierarchy the heights carried on desktop
@@ -299,6 +301,41 @@ fun treeHostReconnectTestTag(serverId: String): String = "tree-host-reconnect:${
 
 fun treeHostUpdateTestTag(serverId: String): String = "tree-host-update:${boundedTagId(serverId)}"
 
+fun treeHostChannelAddTestTag(serverId: String): String = "tree-host-channel-add:${boundedTagId(serverId)}"
+
+/** Fixed Channels or Chats section under one host; only Channels offers creation. */
+@Composable
+fun TreeHostSectionRow(
+    serverId: String,
+    hostName: String,
+    sectionName: String,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+    onAddTapped: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val boundedHost = boundedRowText(hostName)
+    FoldableTreeRow(
+        glyph = if (expanded) Icons.Filled.FolderOpen else Icons.Filled.Folder,
+        name = sectionName,
+        foldLabelName = stringResource(R.string.tree_host_section_label, sectionName, boundedHost),
+        nameStyle = MaterialTheme.typography.titleSmall,
+        startIndent = HostSectionIndent,
+        expanded = expanded,
+        onToggleExpanded = onToggleExpanded,
+        modifier = modifier,
+    ) {
+        if (onAddTapped != null) {
+            TreeRowControl(
+                icon = Icons.Filled.Add,
+                contentDescription = stringResource(R.string.cd_tree_host_new_channel, boundedHost),
+                onClick = onAddTapped,
+                modifier = Modifier.testTag(treeHostChannelAddTestTag(serverId)),
+            )
+        }
+    }
+}
+
 /**
  * Whether a host row draws the disconnected treatment and its reconnect control (#840).
  *
@@ -376,7 +413,7 @@ fun TreeWorkspaceRow(
 }
 
 /**
- * One conversation under a workspace — the same row for a channel and for a chat, as the design
+ * One conversation under its host's Channels or Chats section — the same row for both, as the design
  * instances one component in both sections.
  *
  * The leading status dot draws [attention], the row's one state that #877 resolves by precedence (#878).
@@ -409,26 +446,34 @@ fun TreeConversationRow(
 
     Row(
         modifier =
-            modifier
+            Modifier
                 .fillMaxWidth()
                 .heightIn(min = TreeRowMinHeight)
                 .clip(TreeRowShape)
                 .background(fill)
-                .selectable(selected = selected, role = Role.Button, onClick = onClick)
-                .padding(start = ConversationRowIndent, end = TreeRowEndPadding),
+                .padding(end = TreeRowEndPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ConversationStatusDot(attention = attention)
-        Spacer(modifier = Modifier.width(TreeGlyphGap))
-        Text(
-            text = bounded,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            // Filling the width pushes the pencil to the trailing edge and ellipsizes a long name before it.
-            modifier = Modifier.weight(1f, fill = onEditTapped != null),
-        )
+        Row(
+            modifier =
+                modifier
+                    .weight(1f)
+                    .heightIn(min = TreeRowMinHeight)
+                    .selectable(selected = selected, role = Role.Button, onClick = onClick)
+                    .padding(start = ConversationRowIndent),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ConversationStatusDot(attention = attention)
+            Spacer(modifier = Modifier.width(TreeGlyphGap))
+            Text(
+                text = bounded,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
         if (onEditTapped != null) {
             TreeRowControl(
                 icon = Icons.Filled.Edit,
@@ -443,9 +488,10 @@ fun TreeConversationRow(
  * The shared host/workspace row: leading glyph, name, fold chevron, then the caller's [trailing]
  * content.
  *
- * The whole row is the fold control, so folding works by touch alone with nothing riding on a
- * pointer hovering. A non-null [accent] recolours the leading glyph and the name, and nothing else. The row deliberately sets no `contentDescription` of its own: `clickable` merges
- * descendants, and an overriding description would replace the chevron's and the leg dots' own
+ * The leading row area is the fold control, so folding works by touch alone with nothing riding on a
+ * pointer hovering. The trailing controls have separate, non-overlapping targets. A non-null [accent]
+ * recolours the leading glyph and the name, and nothing else. The row deliberately sets no
+ * `contentDescription` of its own: `clickable` merges the leading descendants, and an overriding description would replace the chevron's and the leg dots' own
  * names. The action is named through `onClickLabel`, and the chevron repeats that name so the
  * control is identifiable in the unmerged tree too.
  */
@@ -459,9 +505,10 @@ private fun FoldableTreeRow(
     onToggleExpanded: () -> Unit,
     modifier: Modifier = Modifier,
     accent: Color? = null,
+    foldLabelName: String = name,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
-    val foldLabel = foldActionLabel(expanded = expanded, rowName = name)
+    val foldLabel = foldActionLabel(expanded = expanded, rowName = foldLabelName)
 
     Row(
         modifier =
@@ -469,40 +516,47 @@ private fun FoldableTreeRow(
                 .fillMaxWidth()
                 .heightIn(min = TreeRowMinHeight)
                 .clip(TreeRowShape)
-                .clickable(onClickLabel = foldLabel, role = Role.Button, onClick = onToggleExpanded)
-                .padding(start = startIndent, end = TreeRowEndPadding),
+                .padding(end = TreeRowEndPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = glyph,
-            contentDescription = null,
-            tint = accent ?: MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(TreeGlyphSize),
-        )
-        Spacer(modifier = Modifier.width(TreeGlyphGap))
-        // The name and its chevron share the row's leftover width, so a long name ellipsizes rather
-        // than pushing the chevron or any trailing content past the row's edge.
-        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = name,
-                style = nameStyle,
-                color = accent ?: MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Spacer(modifier = Modifier.width(TreeNameGap))
+        Row(
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .heightIn(min = TreeRowMinHeight)
+                    .clickable(onClickLabel = foldLabel, role = Role.Button, onClick = onToggleExpanded)
+                    .padding(start = startIndent),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(
-                imageVector =
-                    if (expanded) {
-                        Icons.Filled.KeyboardArrowDown
-                    } else {
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight
-                    },
-                contentDescription = foldLabel,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(TreeChevronSize),
+                imageVector = glyph,
+                contentDescription = null,
+                tint = accent ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(TreeGlyphSize),
             )
+            Spacer(modifier = Modifier.width(TreeGlyphGap))
+            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = name,
+                    style = nameStyle,
+                    color = accent ?: MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(modifier = Modifier.width(TreeNameGap))
+                Icon(
+                    imageVector =
+                        if (expanded) {
+                            Icons.Filled.KeyboardArrowDown
+                        } else {
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight
+                        },
+                    contentDescription = foldLabel,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(TreeChevronSize),
+                )
+            }
         }
         trailing()
     }
@@ -526,9 +580,8 @@ private fun FoldableTreeRow(
  * deliberately, and the same trade #731 took growing the design's 28dp pointer rows to a size a thumb can
  * hit; the alternative is a target below the accessibility minimum every other row here holds to.
  *
- * Nested inside the host row's own `clickable`, which merges descendants — but `combinedClickable` merges
- * too, and merging stops at a merging descendant, so this stays its own node with its own name, tag and
- * click action and a tap on it never reaches the row's fold.
+ * Adjacent to the row's fold or open target, so this stays its own node with its own name, tag and
+ * click action and a tap on it never reaches the row's main action.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

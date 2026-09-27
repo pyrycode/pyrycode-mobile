@@ -50,7 +50,7 @@ Unknown hosts and invalid names are rejected before creating. Disconnection, dae
 
 ## Documentation handoff
 
-Pending for the documentation stage: update `docs/knowledge/features/channel-list-screen.md` and `docs/knowledge/features/channel-list-screen-tree-and-controls.md` sections describing the conversation tree, fold keys and Create channel; update the coverage list in `docs/e2e-interactive-stream.md` for the revised live scenario. No shared documentation is edited here.
+Pending for the documentation stage: update `docs/knowledge/features/channel-list-screen.md` § Conversation tree and § Preview for the host-first tree; update `docs/knowledge/features/channel-list-screen-tree-and-controls.md` § Conversation tree, § Add controls and § Workspace row create-channel control for section folds and daemon-default Create channel; update `docs/e2e-interactive-stream.md` § Live mode and § Verification status for the revised create-channel, workspace-label and folder-settings scenarios after the dispatcher supplies live evidence. No shared documentation is edited here.
 
 ## Open questions
 
@@ -73,3 +73,8 @@ Pending for the documentation stage: update `docs/knowledge/features/channel-lis
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-27
+
+## Revisions
+
+- During implementation, the existing `InteractiveStreamE2ETest#interactiveTurn_addRenameArchiveWorkspace_roundTripsThroughTheHost` also proved a deleted workspace-row pencil. It now exercises the same folder rename/archive repository round trip and Archive restore while checking the daemon-owned label; its UI pencil assertions cannot remain after folder rows disappear.
+- The repository test confirmed `CreateConversationPayloadDto` omits a null `cwd` on the wire and retains the daemon-confirmed folder. The nullable contract is a single consumer chain spanning 10 production Kotlin files; the section action is its only new consumer, so the one-consumer floor keeps this together.

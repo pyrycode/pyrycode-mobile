@@ -52,6 +52,7 @@ import de.pyryco.mobile.ui.components.EDIT_CHAT_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostReconnectTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostUpdateTestTag
@@ -164,6 +165,96 @@ class ChannelListScreenTest {
     ): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId, *formatArgs)
 
     @Test
+    fun hostsContainOrderedChannelsAndChatsWithAnEmptyChannelsAddAction() {
+        setTree(
+            entry(
+                serverId = "first",
+                displayName = "First",
+                channels =
+                    listOf(
+                        conversation("one", "first channel", "/other", true),
+                        conversation("two", "second channel", "/earlier", true),
+                    ),
+                chats = listOf(conversation("chat", "first chat", "/later", false)),
+            ),
+            entry(serverId = "second", displayName = "Second"),
+        )
+
+        composeTestRule.onAllNodes(hasText("First")).assertCountEquals(1)
+        composeTestRule.onAllNodes(hasText("Second")).assertCountEquals(1)
+        composeTestRule.onAllNodes(hasText(string(R.string.channels_section_header))).assertCountEquals(2)
+        composeTestRule.onAllNodes(hasText(string(R.string.chats_section_header))).assertCountEquals(2)
+        composeTestRule.onAllNodes(hasText("other")).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasText("earlier")).assertCountEquals(0)
+        assertTrue(
+            composeTestRule.onNode(hasText("first channel")).getUnclippedBoundsInRoot().top <
+                composeTestRule.onNode(hasText("second channel")).getUnclippedBoundsInRoot().top,
+        )
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_host_new_channel, "Second"))).performClick()
+        assertEquals(ChannelListEvent.TreeHostChannelAddTapped("second"), events.last())
+    }
+
+    @Test
+    fun multiHostTreeKeepsTargetsThroughFoldsEditingReconnectAndTheFinalChat() {
+        val many = (1..20).map { conversation("a$it", "A channel $it", "/a", true) }
+        setTree(
+            entry("first", "First", channels = many + conversation("same", "Selected channel", "/a", true)),
+            entry(
+                "second",
+                "Second",
+                channels = listOf(conversation("same", "Second channel", "/b", true)),
+                chats = listOf(conversation("last", "Final chat", "/b", false)),
+                relay = RelayLinkStatus.Offline,
+            ),
+            selected = HostConversationTarget("first", "same"),
+        )
+
+        val list = composeTestRule.onNode(hasScrollAction())
+        list.performScrollToNode(hasText("First"))
+        composeTestRule.onNode(hasText("First")).performClick()
+        composeTestRule.onAllNodes(hasText("Selected channel")).assertCountEquals(0)
+        list.performScrollToNode(hasText("Second"))
+        composeTestRule.onNode(hasText("Second")).assertExists()
+        assertTrue(
+            composeTestRule.onNode(hasText("Second")).getUnclippedBoundsInRoot().right <=
+                composeTestRule.onNodeWithTag(treeHostReconnectTestTag("second")).getUnclippedBoundsInRoot().left,
+        )
+        assertTrue(
+            composeTestRule.onNodeWithTag(treeHostEditTestTag("second")).getUnclippedBoundsInRoot().right <=
+                composeTestRule.onNodeWithTag(treeHostAddTestTag("second")).getUnclippedBoundsInRoot().left,
+        )
+        list.performScrollToNode(hasText("First"))
+        composeTestRule.onNode(hasText("First")).performClick()
+        list.performScrollToNode(hasText("Selected channel"))
+        composeTestRule.onNode(hasText("Selected channel")).assertIsSelected()
+
+        val firstChannels = hasContentDescription(string(R.string.cd_tree_row_collapse, "Channels on First"))
+        list.performScrollToNode(firstChannels)
+        composeTestRule.onNode(firstChannels).performClick()
+        composeTestRule.onAllNodes(hasText("Selected channel")).assertCountEquals(0)
+        val firstChats = hasContentDescription(string(R.string.cd_tree_row_collapse, "Chats on First"))
+        composeTestRule.onNode(firstChats).assertExists()
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_expand, "Channels on First"))).performClick()
+        list.performScrollToNode(hasText("Selected channel"))
+        composeTestRule.onNode(hasText("Selected channel")).assertIsSelected()
+
+        val secondChannel = hasText("Second channel")
+        list.performScrollToNode(secondChannel)
+        composeTestRule.onNode(secondChannel).assertIsNotSelected()
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_channel_edit, "Second channel"))).performClick()
+        assertEquals(ChannelListEvent.TreeChannelEditTapped(HostConversationTarget("second", "same")), events.last())
+
+        val finalChat = hasText("Final chat")
+        list.performScrollToNode(finalChat)
+        composeTestRule.onNode(finalChat).assertIsDisplayed().performClick()
+        // The thread destination carries this chat's own host into its promotion action.
+        assertEquals(ChannelListEvent.TreeRowTapped(HostConversationTarget("second", "last")), events.last())
+        list.performScrollToNode(hasTestTag(treeHostReconnectTestTag("second")))
+        composeTestRule.onNodeWithTag(treeHostReconnectTestTag("second")).performClick()
+        assertEquals(ChannelListEvent.TreeHostReconnectTapped("second"), events.last())
+    }
+
+    @Test
     fun tree_rendersBothSectionsFromRealHostData_expandedOnFirstShow() {
         setTree(
             entry(
@@ -174,28 +265,23 @@ class ChannelListScreenTest {
             ),
         )
 
-        composeTestRule.onNode(hasText(string(R.string.channels_section_header))).assertDoesNotExist()
-        composeTestRule.onNode(hasText(string(R.string.chats_section_header))).assertDoesNotExist()
-        // The host draws a row in each section; its workspaces and conversations start expanded, which is
-        // what every scripted device scenario depends on.
-        composeTestRule.onAllNodes(hasText("Pyrybox")).assertCountEquals(2)
-        composeTestRule.onNode(hasText("one")).assertExists()
-        composeTestRule.onNode(hasText("two")).assertExists()
+        composeTestRule.onNode(hasText(string(R.string.channels_section_header))).assertExists()
+        composeTestRule.onNode(hasText(string(R.string.chats_section_header))).assertExists()
+        composeTestRule.onAllNodes(hasText("Pyrybox")).assertCountEquals(1)
+        composeTestRule.onNode(hasText("one")).assertDoesNotExist()
+        composeTestRule.onNode(hasText("two")).assertDoesNotExist()
         composeTestRule.onNode(hasText("alpha channel")).assertIsDisplayed()
         composeTestRule.onNode(hasText("bravo chat")).assertIsDisplayed()
     }
 
     @Test
-    fun foldingAHostHidesItsWorkspaces_andFoldingAWorkspaceHidesOnlyItsOwnConversations() {
+    fun foldingAHostHidesItsSections_andFoldingASectionHidesOnlyItsOwnConversations() {
         setTree(
             entry(
                 serverId = "pyrybox",
                 displayName = "Pyrybox",
-                channels =
-                    listOf(
-                        conversation("c1", "alpha channel", "/w/one", true),
-                        conversation("c2", "bravo channel", "/w/two", true),
-                    ),
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                chats = listOf(conversation("d1", "bravo chat", "/w/two", false)),
             ),
             entry(
                 serverId = "macbook",
@@ -204,20 +290,19 @@ class ChannelListScreenTest {
             ),
         )
 
-        // Fold the first host: its workspaces and their conversations go, the other host's stay.
-        composeTestRule.onAllNodes(hasText("Pyrybox")).onFirst().performClick()
-        composeTestRule.onNode(hasText("one")).assertDoesNotExist()
+        // Fold the first host: its sections and conversations go, the other host's stay.
+        composeTestRule.onNode(hasText("Pyrybox")).performClick()
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Channels on Pyrybox"))).assertDoesNotExist()
         composeTestRule.onNode(hasText("alpha channel")).assertDoesNotExist()
-        composeTestRule.onNode(hasText("bravo channel")).assertDoesNotExist()
+        composeTestRule.onNode(hasText("bravo chat")).assertDoesNotExist()
         composeTestRule.onNode(hasText("charlie channel")).assertExists()
 
-        // Unfold it and fold one workspace instead: only that workspace's conversations go.
-        composeTestRule.onAllNodes(hasText("Pyrybox")).onFirst().performClick()
+        // Unfold it and fold Channels: Chats and the other host remain.
+        composeTestRule.onNode(hasText("Pyrybox")).performClick()
         composeTestRule.onNode(hasText("alpha channel")).assertExists()
-        composeTestRule.onNode(hasText("one")).performClick()
-        composeTestRule.onNode(hasText("one")).assertExists()
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Channels on Pyrybox"))).performClick()
         composeTestRule.onNode(hasText("alpha channel")).assertDoesNotExist()
-        composeTestRule.onNode(hasText("bravo channel")).assertExists()
+        composeTestRule.onNode(hasText("bravo chat")).assertExists()
         composeTestRule.onNode(hasText("charlie channel")).assertExists()
     }
 
@@ -337,7 +422,7 @@ class ChannelListScreenTest {
             ),
         )
 
-        composeTestRule.onAllNodes(hasText(string(R.string.unnamed_host))).assertCountEquals(2)
+        composeTestRule.onAllNodes(hasText(string(R.string.unnamed_host))).assertCountEquals(1)
         composeTestRule.onNode(hasText(string(R.string.untitled_discussion))).assertIsDisplayed()
     }
 
@@ -391,8 +476,6 @@ class ChannelListScreenTest {
     private fun assertBarDrawn() {
         composeTestRule.onAllNodes(hasContentDescription("Pair another host")).assertCountEquals(1)
         composeTestRule.onNode(hasContentDescription("Pair another host")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("Channels")).assertDoesNotExist()
-        composeTestRule.onNode(hasText("Chats")).assertDoesNotExist()
         composeTestRule.onNode(hasContentDescription("Pair another host, Channels")).assertDoesNotExist()
         composeTestRule.onNode(hasContentDescription("Pair another host, Chats")).assertDoesNotExist()
         composeTestRule.onNode(hasContentDescription(string(R.string.cd_open_settings))).assertIsDisplayed()
@@ -889,7 +972,7 @@ class ChannelListScreenTest {
     }
 
     @Test
-    fun workspaceRowPencil_inBothSections_namesItsWorkspace_andOpensItsOwnHostAndCwdWithoutFolding() {
+    fun sectionRowsNameTheirHostAndLeaveFolderSettingsOutOfTheTree() {
         setTree(
             entry(
                 serverId = "pyrybox",
@@ -904,34 +987,21 @@ class ChannelListScreenTest {
             ),
         )
 
-        val one = hasContentDescription(string(R.string.cd_tree_workspace_edit, "one"))
-        composeTestRule.onAllNodes(one).assertCountEquals(1)
+        val channels = hasContentDescription(string(R.string.cd_tree_row_collapse, "Channels on Pyrybox"))
         composeTestRule
-            .onNode(one)
+            .onNode(channels)
             .assertWidthIsAtLeast(48.dp)
             .assertHeightIsAtLeast(48.dp)
             .performClick()
-        // The pencil's own node took the tap: the workspace's conversation is still drawn, nothing folded.
-        composeTestRule.onNode(hasText("alpha channel")).assertExists()
-
-        // Two hosts show a workspace called "two"; each pencil addresses its own host.
-        val two = hasContentDescription(string(R.string.cd_tree_workspace_edit, "two"))
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("charlie chat"))
-        composeTestRule.onAllNodes(two).assertCountEquals(2)
-        composeTestRule.onAllNodes(two)[1].performClick()
+        composeTestRule.onNode(hasText("alpha channel")).assertDoesNotExist()
+        composeTestRule.onNode(hasText("bravo chat")).assertExists()
         composeTestRule.onNode(hasText("charlie chat")).assertExists()
-
-        assertEquals(
-            listOf(
-                ChannelListEvent.TreeWorkspaceEditTapped("pyrybox", "/w/one"),
-                ChannelListEvent.TreeWorkspaceEditTapped("macbook", "/w/two"),
-            ),
-            events,
-        )
+        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_workspace_edit, "one"))).assertCountEquals(0)
+        assertEquals(ChannelListEvent.TreeFoldToggled(TreeFoldKey(ConversationTreeSection.Channels, "pyrybox")), events.last())
     }
 
     @Test
-    fun workspaceRowPlus_onChannelsRowsOnly_namesItsWorkspace_andOpensItsOwnHostAndCwdWithoutFolding() {
+    fun channelsSectionPlus_namesItsHostAndWorksWhenItsSectionIsEmpty() {
         setTree(
             entry(
                 serverId = "pyrybox",
@@ -942,29 +1012,34 @@ class ChannelListScreenTest {
             entry(
                 serverId = "macbook",
                 displayName = "Macbook",
-                channels = listOf(conversation("c2", "charlie channel", "/w/one", true)),
             ),
         )
 
-        // Two hosts show a Channels workspace called "one"; the Chats workspace has no plus.
-        val one = hasContentDescription(string(R.string.cd_tree_workspace_new_channel, "one"))
-        composeTestRule.onAllNodes(one).assertCountEquals(2)
-        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_workspace_new_channel, "chats"))).assertCountEquals(0)
+        val first = hasTestTag(treeHostChannelAddTestTag("pyrybox"))
+        val second = hasTestTag(treeHostChannelAddTestTag("macbook"))
+        val fold = composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Channels on Pyrybox")))
+        assertTrue(fold.getUnclippedBoundsInRoot().right <= composeTestRule.onNode(first).getUnclippedBoundsInRoot().left)
+        assertTrue(
+            composeTestRule.onNode(hasText("alpha channel")).getUnclippedBoundsInRoot().right <=
+                composeTestRule
+                    .onNode(hasContentDescription(string(R.string.cd_tree_channel_edit, "alpha channel")))
+                    .getUnclippedBoundsInRoot()
+                    .left,
+        )
         composeTestRule
-            .onAllNodes(one)[0]
+            .onNode(first)
             .assertWidthIsAtLeast(48.dp)
             .assertHeightIsAtLeast(48.dp)
             .performClick()
-        // The plus's own node took the tap: the workspace's channel is still drawn, nothing folded.
+        // The plus's own node took the tap: the channel is still drawn, nothing folded.
         composeTestRule.onNode(hasText("alpha channel")).assertExists()
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("charlie channel"))
-        composeTestRule.onAllNodes(one)[1].performClick()
-        composeTestRule.onNode(hasText("charlie channel")).assertExists()
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(second)
+        composeTestRule.onNode(second and hasContentDescription(string(R.string.cd_tree_host_new_channel, "Macbook"))).performClick()
 
         assertEquals(
             listOf(
-                ChannelListEvent.TreeWorkspaceAddTapped("pyrybox", "/w/one"),
-                ChannelListEvent.TreeWorkspaceAddTapped("macbook", "/w/one"),
+                ChannelListEvent.TreeHostChannelAddTapped("pyrybox"),
+                ChannelListEvent.TreeHostChannelAddTapped("macbook"),
             ),
             events,
         )
@@ -977,7 +1052,7 @@ class ChannelListScreenTest {
     @Test
     fun createChannelModal_reportsTheTypedValues_failuresAreStatic_andOkFollowsItsOwnHost() {
         val state =
-            mutableStateOf(HostChannelListState(listOf(channelHost()), createChannel = CreateChannelState("pyrybox", "/w/one")))
+            mutableStateOf(HostChannelListState(listOf(channelHost()), createChannel = CreateChannelState("pyrybox")))
         composeTestRule.setContent {
             PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
         }
@@ -986,13 +1061,13 @@ class ChannelListScreenTest {
         composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput("Be brief.")
         composeTestRule.onNode(hasText("OK")).performClick()
 
-        state.value = state.value.copy(createChannel = CreateChannelState("pyrybox", "/w/one", createFailed = true))
+        state.value = state.value.copy(createChannel = CreateChannelState("pyrybox", createFailed = true))
         composeTestRule.onNode(hasText(string(R.string.create_channel_failed))).performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertTextContains("  Ops  ")
 
         state.value =
             state.value.copy(
-                createChannel = CreateChannelState("pyrybox", "/w/one", createdConversationId = "c9", promptFailed = true),
+                createChannel = CreateChannelState("pyrybox", createdConversationId = "c9", promptFailed = true),
             )
         composeTestRule.onNode(hasText(string(R.string.create_channel_prompt_failed))).performScrollTo().assertIsDisplayed()
         composeTestRule.onAllNodes(hasText(string(R.string.create_channel_failed))).assertCountEquals(0)

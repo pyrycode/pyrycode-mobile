@@ -1086,7 +1086,7 @@ class RemoteConversationRepository(
     /** Create a named, promoted channel (#956); see [ConversationCommands.createChannel]. */
     override suspend fun createChannel(
         name: String,
-        workspace: String,
+        workspace: String?,
     ): Conversation = conversationCommands.createChannel(name, workspace)
 
     /** Promote a conversation into a named channel (#348); see [ConversationCommands.promote]. */

@@ -191,7 +191,7 @@ class StableConversationRepository(
 
     override suspend fun createChannel(
         name: String,
-        workspace: String,
+        workspace: String?,
     ): Conversation = live.createChannel(name, workspace)
 
     override suspend fun promote(

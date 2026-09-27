@@ -947,7 +947,7 @@ class StableConversationRepositoryTest {
         private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
 
         val createDiscussionCalls = mutableListOf<String?>()
-        val createChannelCalls = mutableListOf<Pair<String, String>>()
+        val createChannelCalls = mutableListOf<Pair<String, String?>>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
         val requestScreenSnapshotCalls = mutableListOf<String>()
         val dropQueuedMessageCalls = mutableListOf<Pair<String, Long>>()
@@ -1090,7 +1090,7 @@ class StableConversationRepositoryTest {
 
         override suspend fun createChannel(
             name: String,
-            workspace: String,
+            workspace: String?,
         ): Conversation {
             createChannelCalls += name to workspace
             return createChannelResult

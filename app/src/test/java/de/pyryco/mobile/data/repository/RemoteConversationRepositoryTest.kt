@@ -1047,6 +1047,25 @@ class RemoteConversationRepositoryTest {
             runCurrent()
         }
 
+    @Test
+    fun createChannel_withoutWorkspace_omitsCwdAndKeepsDaemonConfirmedFolder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val created = startCreateChannel(repo, "Named", null)
+            runCurrent()
+            val sent = pump.sent.single { it.type == "create_conversation" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"is_promoted":true,"name":"Named"}"""),
+                sent.payload,
+            )
+
+            pump.push(conversationCreatedEnvelope(inReplyTo = sent.id, id = "c-default", cwd = "/daemon/default", isPromoted = true))
+            runCurrent()
+            assertEquals("/daemon/default", created().getOrThrow().cwd)
+        }
+
     // AC #1: the return is the daemon's confirmed conversation, not the request echoed back.
     @Test
     fun createChannel_onCreatedReply_returnsDaemonValuesNotRequest() =
@@ -9548,7 +9567,7 @@ class RemoteConversationRepositoryTest {
     private fun TestScope.startCreateChannel(
         repo: RemoteConversationRepository,
         name: String,
-        workspace: String,
+        workspace: String?,
     ): () -> Result<Conversation> {
         var outcome: Result<Conversation>? = null
         backgroundScope.launch { outcome = runCatching { repo.createChannel(name, workspace) } }
