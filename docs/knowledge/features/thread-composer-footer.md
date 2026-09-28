@@ -1,25 +1,25 @@
 # Thread composer footer
 
-Always-visible row at the bottom of [`ThreadScreen`](thread-screen.md), stacked below the [`ThreadInputBar`](thread-input-bar.md) inside the same `Scaffold.bottomBar` slot. **[#808](../codebase/808.md) replaced [the retired `ThreadStatusRow`](thread-screen-how-it-works-list-and-status-row.md#status-row-wiring-post-145)** — one monospace `model · effort` string with a single expand affordance — with independent buttons, each opening the design's [Options overlay](options-overlay.md) directly above it. **[#650](https://github.com/pyrycode/pyrycode-mobile/issues/650)** added a third button, Permission, ordered first per Figma `110:3494` (`Actions · Auto · Opus · Max · Cxt`), and retired the [`StatusSheet`](status-sheet.md)'s YOLO switch — the sheet no longer hosts a permission control of any kind. A trailing icon still keeps the sheet one tap away, now for Model, Effort and the Context-window section only. **[#884](https://github.com/pyrycode/pyrycode-mobile/issues/884)** added a fourth button, Actions, leading the row per that same Figma order — a client-owned menu of Reset session, Compact session and Knowledge capture; see [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884).
+Always-visible row at the bottom of [`ThreadScreen`](thread-screen.md), stacked below the [`ThreadInputBar`](thread-input-bar.md) inside the same `Scaffold.bottomBar` slot. **[#808](../codebase/808.md) replaced [the retired `ThreadStatusRow`](thread-screen-how-it-works-list-and-status-row.md#status-row-wiring-post-145)** — one monospace `model · effort` string with a single expand affordance — with independent buttons, each opening the design's [Options overlay](options-overlay.md) directly above it. **[#650](https://github.com/pyrycode/pyrycode-mobile/issues/650)** added a third button, Permission, ordered first per Figma `110:3494` (`Actions · Auto · Opus · Max · Cxt`), and retired the [`StatusSheet`](status-sheet.md)'s YOLO switch — the control later moved back into Run configuration in #1196. The trailing icon is the current entry to Run configuration, which includes Model, Effort and Permission after #1196. **[#884](https://github.com/pyrycode/pyrycode-mobile/issues/884)** added a fourth button, Actions, leading the row per that same Figma order — a client-owned menu of Reset session, Compact session and Knowledge capture; see [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884).
 
 Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadComposerFooter.kt`). Figma reference: the `Input footer` [`110:3494`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=110-3494) inside `Input area` [`533:1957`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957), parent [thread screen node](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8).
 
 ## What it does
 
-Renders one small button per control — `Actions` (#884), `Permission` (#650), `Model` and `Effort`, in that order — each showing that control's current value with a trailing up-chevron, followed by a `Tune` icon that opens the Status sheet. Tapping a button opens an [`OptionsOverlay`](options-overlay.md) listing only that control's own choices; the chevron disappears from a button that has nothing to offer, since there is no menu to promise. Choosing a Model, Effort or Permission row forwards the value to the thread's existing `onModelSelected` / `onEffortSelected` / `onPermissionModeSelected` handlers; the Actions menu is not a choice of value, so it dispatches differently — see [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884). Either way the overlay closes on selection; tapping outside the overlay dismisses it without selecting anything.
+The current footer shows Actions and context usage, then attachment and Run configuration icons. The separate Model, Effort and Permission buttons were removed by #1196; their choices live in the Run configuration sheet opened by the `Tune` icon. `footerMenu` still projects model options for tests and legacy callers, using the same `selectedChoice` as the sheet. The Actions button opens an [`OptionsOverlay`](options-overlay.md); see [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884).
 
 ## Sourcing
 
-The footer's values come from `ThreadUiState.runConfig: ThreadRunConfig` (`ThreadUiState.kt`) — the same daemon-sourced state the [`StatusSheet`](status-sheet.md) reads (for Model and Effort; see below for Permission), so the surfaces agree by construction. `ThreadRunConfig` folds `ConversationRepository.observeSessionSettings(conversationId)` (the saved `model` / `effort` / `permissionMode` plus the `sessionId` a write must address) and `observeModelMenu(conversationId)` (the models this conversation's daemon published, each with its own `effortLevels` and, since #650, `supportsAutoMode`) together with independent pending-write flags — `pendingModel: String?`, `pendingEffort: String?`, and `pendingPermission: String?` — each `null` when no write is outstanding for that control.
+Run configuration and the footer projections come from `ThreadUiState.runConfig: ThreadRunConfig` (`ThreadUiState.kt`). The sheet reads this state for Model, Effort and Permission, so its sections agree by construction. `ThreadRunConfig` folds `ConversationRepository.observeSessionSettings(conversationId)` (the saved `model` / `effort` / `permissionMode` plus the `sessionId` a write must address) and `observeModelMenu(conversationId)` (the models this conversation's daemon published, each with its own `effortLevels` and, since #650, `supportsAutoMode`) together with independent pending-write flags — `pendingModel: String?`, `pendingEffort: String?`, and `pendingPermission: String?` — each `null` when no write is outstanding for that control.
 
-Two computed properties resolve what each button shows:
+Two computed properties resolve the model and effort labels used by run configuration and its menu projection:
 
-- **`modelLabel`** — `"unknown"` when no settings reading is available yet; `"default"` when the reading is available but the saved value is `""` (the daemon's own "no override, inherited default"); otherwise the matching published row's `displayName`, made inert, or — when the menu names no matching row — the saved value itself, made inert.
+- **`modelLabel`** — `"unknown"` before this conversation's settings reply; otherwise the selected ordinary row's label. Explicit saved or pending values match only an exact raw `value`. A confirmed Claude inherited `""` or `"default"` resolves to a visible row only when the hidden default row has a usable concrete `resolvedModel` matching exactly one ordinary row in the full published list; otherwise it reads "Model unavailable" with no selected row. An unmatched explicit identifier reads as inert text with no selected row. Codex has no inherited resolution. Neither a previous conversation's settings nor the independent running-model reading supplies a fallback.
 - **`effortLabel`** — `"unknown"` when no settings reading is available yet; `EFFORT_PLACEHOLDER_LABEL` ("Effort") when nothing is selected; otherwise the selected value made inert, with no menu lookup: an effort level is its own label. Unlike the model label, an empty selection never reads as `"default"` — see [§ Applied effort](#applied-effort-889) for what "selected" means since #889.
 
-`modelLabel` reads `pendingModel` first and the saved reading second (`selectedModel = pendingModel ?: savedModel`) — a tap that has been sent but not yet confirmed by a fresh settings reading renders immediately, and the acknowledgement of the write does **not** by itself clear the pending flag; only an arriving `observeSessionSettings` emission does. A refused write needs no footer-side handling: the ViewModel clears the relevant `pending*` flow, and the label falls back to the saved reading on the next recomposition. `effortLabel` follows the same pending-renders-immediately / refusal-reverts shape, but its non-pending ranking is wider than a single saved reading — see below.
+`modelLabel` and `footerMenu(Model).selectedValue` both use `selectedChoice`, so the sheet and menu mark the same row. A tap sends that row's raw `value` and shows it pending. An acknowledgement alone does not confirm it: an arriving `observeSessionSettings` reading settles the choice, and reopening the conversation obtains a fresh reading. A rejected write clears pending and restores the last confirmed selection. `effortLabel` follows the same pending-renders-immediately / refusal-reverts shape, but its non-pending ranking is wider than a single saved reading — see below.
 
-Every daemon-authored string reaching `ThreadRunConfig` (`displayName`, the saved-value fallback) is passed through an internal `String.inert()` in `ThreadViewModel.kt` before it lands — dropping `Char.isISOControl()` characters and bounding length — because `ModelMenuRow` / `SessionSettings` text crosses the subprocess trust boundary unsanitized. The write argument (`ThreadModelChoice.value` / `ThreadEffortChoice.value`) skips that treatment and stays byte-identical, since it is sent back, never rendered. See [Options overlay § Trust boundary](options-overlay.md#trust-boundary) for the overlay's own floor on the same data. `inert()` was made `internal` (from file-private) by #650 so `permissionModeLabel` in this file can reuse it for an unrecognised `permissionMode` value.
+Published choices preserve agent order, omitting the `default` row only from visible options; its metadata still supplies inherited effort levels and Auto approval support. Claude labels use the bounded inert ASCII family derived from raw `value` (strip one `claude-`, take leading ASCII letters, capitalize the first), with inert `displayName` as fallback. Codex uses inert published `displayName` verbatim. The raw `value` stays byte-identical for exact matching and writes. Unmatched saved identifiers also pass through `String.inert()` before display. See [Options overlay § Trust boundary](options-overlay.md#trust-boundary).
 
 ### Remembered model choice (#1222)
 
@@ -67,7 +67,7 @@ combines [#890](https://github.com/pyrycode/pyrycode-mobile/issues/890)'s `obser
 `observeSessionFacts`, and `runConfigFlow` folds it in with one more
 `.combine(runningModel) { config, running -> config.copy(running = running) }` call. It is never derived
 from `savedModel` / `selectedModel` and nothing falls back to it — the
-[Status sheet](status-sheet-readings.md#runningmodelsection) is its only consumer; the footer's own model button and
+[Status sheet](status-sheet-readings.md#runningmodelsection) is its only consumer; the model selection and
 layout are unchanged.
 
 `internal fun reportedText(raw: String, truncated: Boolean): ThreadReportedText?` is the value-level
@@ -142,84 +142,50 @@ fun ThreadComposerFooter(
 
 `agent` ([#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115)) is `ThreadScreen`'s own `state.agent`, read only by the effort button's `effortNote?.text(agent)` — see [§ Applied effort](#applied-effort-889). Defaulting to `Claude` keeps every prior call site and preview compiling unchanged.
 
-`FooterControl` is the extension point for further controls, as Permission (#650) and Actions (#884) both show: each adds an entry here, a `footerMenu` branch, a `footerControlEnabled` case where its rule differs from the default, and a button in `ThreadComposerFooter` — nothing else about the shape needs to change.
+`FooterControl` still names the older Model, Effort and Permission projections and the visible Actions control. Only Actions has a footer button after #1196; Model, Effort and Permission are edited in Run configuration.
 
-`footerMenu(control, runConfig, mutationsSupported, absentActions)` is a pure function returning `null` when the control has nothing to offer. `mutationsSupported` and `absentActions` are defaulted so every pre-#884 call site still compiles; only the Actions branch reads them.
+`footerMenu(control, runConfig, mutationsSupported, absentActions)` is a pure option projection; only its Actions control has a visible footer button now. It returns `null` when a choice control has nothing to offer. `mutationsSupported` and `absentActions` are defaulted so every pre-#884 call site still compiles; only the Actions branch reads them.
 
-- **Model** — `null` unless `runConfig.menuAvailable && runConfig.choices.isNotEmpty()`. Options are `choices` mapped to `(value, label)` in daemon order; `selectedValue = runConfig.selectedModel`; `notListed = runConfig.droppedModels + runConfig.hiddenChoices` — the producer's own cut (`droppedModels`) plus this client's render cap (`hiddenChoices`, from `MAX_RENDERED_MODEL_CHOICES = 32`), summed for display exactly as the [`StatusSheet`](status-sheet.md) sums them. Neither figure is ever recomputed from `choices.size`.
-- **Effort** — `null` when `runConfig.effortChoices` is empty: the row backing the saved model — or, with no model override (`savedModel == ""`), the published `default` row (#972, mirroring desktop's `effortRowFor`) — publishes no levels, or no such row exists, or (#1111) a `capabilities` list is present and its `effortLevels` intersects the row's own levels to nothing. `effortChoices` is the row's levels filtered to the list when one is present, so a level a `multi_agent` daemon does not name never reaches the footer, the [Status sheet](status-sheet.md), or [effort recall](thread-composer-footer-effort-recall.md). `selectedValue = runConfig.selectedEffort`; `notListed = 0` always, since effort levels have no producer-side cut or client-side cap.
-- **Permission** (#650) — `null` when `runConfig.permissionMode` is `""`. Options are every `PermissionModeOption` `runConfig.offersPermission` allows (#1111) — `Auto` filtered out unless `runConfig.selectedChoice?.supportsAutoMode == true` (the same field the [Status sheet](status-sheet.md)'s Model section reads for its own rows), and, with a `capabilities` list present, every mode but `Bypass` must be in `capabilities.permissionModes`; `selectedValue = runConfig.permissionMode` — an unrecognised value therefore selects nothing in the overlay, since it matches no `PermissionModeOption.wire`; `notListed = 0` always, since the vocabulary is closed and client-owned. See [§ Sourcing — Permission mode](#permission-mode-650) for the label and write rules.
+- **Model** — `null` unless `runConfig.menuAvailable && runConfig.choices.isNotEmpty()`. Options are ordinary `choices` mapped to `(value, label)` in published order, with no `default` option; `selectedValue = runConfig.selectedChoice?.value.orEmpty()`, leaving none marked for unknown or unrepresented settings. The render cap of 32 applies after hiding `default`, but inherited uniqueness is checked against the full list. `notListed = runConfig.droppedModels + runConfig.hiddenChoices`; neither figure is inferred from the rendered row count. The Run configuration sheet reads `runConfig.choices` directly; this older footer projection remains testable.
+- **Effort** — `null` when the explicit row or inherited `default` metadata publishes no levels, or a present `capabilities` list filters them all out. Inherited metadata still applies when no ordinary row represents the resolved default model. `selectedValue = runConfig.selectedEffort`; `notListed = 0`. The Run configuration sheet reads `runConfig.effortChoices` directly; this older footer projection remains testable.
+- **Permission** (#650) — `null` when `runConfig.permissionMode` is `""`. Options are every `PermissionModeOption` `runConfig.offersPermission` allows (#1111) — `Auto` filtered out unless `runConfig.selectedMetadata?.supportsAutoMode == true` (the same field the [Status sheet](status-sheet.md)'s Model section reads for its own rows), and, with a `capabilities` list present, every mode but `Bypass` must be in `capabilities.permissionModes`; `selectedValue = runConfig.permissionMode` — an unrecognised value therefore selects nothing in the overlay, since it matches no `PermissionModeOption.wire`; `notListed = 0` always, since the vocabulary is closed and client-owned. See [§ Sourcing — Permission mode](#permission-mode-650) for the label and write rules.
 - **Actions** (#884) — never `null`. See [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884) for its options, the `mutationsSupported` gate on Reset session, and the `absentActions` enable rule; since #678 it also reads `backgroundTaskCount`, folded only into the background-tasks row's own label.
 
-`footerControlEnabled(control, runConfig)` is `runConfig.writable && !outstanding && footerMenu(control, runConfig) != null` for Model, Effort and Permission — the [`StatusSheet`](status-sheet.md)'s own `enabled && !pending` rule, plus the one rule specific to this surface: a control with nothing to offer does not open an empty overlay. `outstanding` is `runConfig.pending` (`pendingModel != null || pendingEffort != null`) for Model and Effort — a write in flight on either one disables both buttons, matching the sheet's own single `pending` gate — but `runConfig.pendingPermission != null` for Permission, its own gate (#650): a model or effort tap does not block the permission button, and a permission write does not block the other two. Actions (#884) skips this rule entirely and is always `true` — see [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884). `footerMenu` and `footerControlEnabled` are the one place these rules are written; `ThreadScreen`'s stale-overlay close (below) reads the same functions so the two surfaces cannot disagree.
+`footerControlEnabled` still gates the retained Model, Effort and Permission menu projections on a writable session, no relevant pending write and an available menu. Actions remains enabled without a session. The current sheet gates its own Model/Effort and Permission rows directly; the footer opens only Actions.
 
 ## How it works
 
-### `FooterButton` — one per control, plus a trailing icon for the sheet
+### `FooterButton` and Run configuration access
 
-Each button is a `Row` at least 32dp tall (Figma's own buttons are 16dp; this grows the touch target for a thumb) showing the resolved label (`bodySmall`, one line, ellipsized, width-capped at 140dp) followed by a 14dp up-chevron — the chevron is omitted when the button is neither enabled nor pending, since a disabled button with no pending write has nothing to promise. The button reports its own window bounds via `Modifier.onGloballyPositioned { onBounds(it.boundsInWindow()) }`; `ThreadScreen` uses this to place the overlay (below). A pending button (`pendingModel != null` for the model button, `pendingEffort != null` for the effort button, `pendingPermission != null` for the permission button — each read independently, not through `runConfig.pending`) renders at `0.55f` alpha and carries a `stateDescription` of `thread_footer_pending` ("Applying"), so a screen reader distinguishes "applying" from a plain disabled control. The trailing `Tune` icon is a 32dp tap target around a 16dp glyph with the existing `cd_thread_status_expand` content description — the design has no footer affordance for the Status sheet, which since #650 hosts Model, Effort and the Context-window section only (the permission control moved here and the YOLO switch was retired outright).
-
-The Actions button (#884) is drawn first, always enabled, with `label` and `clickLabel` `R.string.thread_footer_actions` / `R.string.thread_footer_open_actions` ("Actions" / "Open actions"). The permission button is drawn next, before Model and Effort (Figma `110:3494`'s `Actions · Auto · Opus · Max · Cxt` order), and only when `permissionModeLabel(runConfig)` is non-null — unlike Actions, Model and Effort, which always render (Model/Effort possibly disabled) once the footer itself is shown. The permission button's `clickLabel` is `R.string.thread_footer_change_permission` ("Change permission mode").
+The current footer renders an always-enabled Actions button, the `Cxt:` reading,
+the attachment button and the trailing `Tune` icon. The icon opens the
+[Run configuration sheet](status-sheet.md), where Model, Effort and Permission
+choices are rendered. The sheet receives `runConfig.selectedChoice?.value` for
+its model radio selection, `runConfig.modelSelectionNote` for an unrepresented
+confirmed choice, and each visible row's raw `value` for writes. It closes after
+a choice; a fresh conversation-scoped settings reading confirms the pending
+value. The old `FooterControl.Model`, `.Effort` and `.Permission` projections
+remain in `footerMenu`, but no separate footer button opens them after #1196.
 
 ### Trailing icons stay outside the weighted text region (#1032)
 
-The outer `Row` holds three top-level children: `FooterTextRow` (`Modifier.weight(1f)`), the paperclip `Box`, then the Status opener `Box`. A `Row` measures its non-weighted children first, in source order, before handing the rest to a weighted one — a fixed-size child placed *after* a weighted sibling in source order is not protected by that sibling's weight; it is measured exactly like every other non-weighted child, against whatever width is left once the row's earlier children have taken theirs. Before #1032 the two icon boxes sat after a weighted `ContextSegment` inside one flat `Row` with the buttons, so a full set of long labels (seen on a 1080px phone showing "Actions, Manual approval, default, medium") could still starve the icons to zero width — see [Thread composer footer — context usage segment](thread-composer-footer-context-usage.md) for that segment's corrected description. Moving the icon boxes to be siblings of the weighted region, not members of it, is what guarantees them their 32dp regardless of button count or label length.
-
-`FooterTextRow`, a private `Layout`, holds the buttons and, as its last child, `ContextSegment`. Each button is measured at `min(maxIntrinsicWidth, cap)`, where `internal fun footerShrinkCap(widths: List<Int>, available: Int): Int` (pure) is `Int.MAX_VALUE` when the buttons already fit, else the largest per-button cap that keeps every capped button's width sum within `available` — the widest labels shrink first, and no button is squeezed to nothing while another keeps its full label. `ContextSegment` gets whatever width the buttons leave, possibly none, same as before #1032. `FooterButton`'s label `Text` carries `Modifier.weight(1f, fill = false)` so a capped button's chevron is measured before the label and survives the ellipsis rather than being pushed off with it. A plain nested `Row` (buttons measured in source order with no shared cap) was rejected: at the full-footer width it would starve whichever button came last in the text region rather than sharing the shrink across the widest labels.
+The outer `Row` measures the paperclip and Run configuration opener as fixed
+32dp boxes beside the weighted `FooterTextRow`, preserving both tap targets
+when the Actions label or context reading grows. `FooterTextRow` gives the
+`ContextSegment` whatever width the Actions button leaves. See
+[context usage](thread-composer-footer-context-usage.md) for the original
+width failure and its measurement rule.
 
 ### Wiring in `ThreadScreen`
 
-```kotlin
-var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
-val footerAnchors = remember { mutableStateMapOf<FooterControl, Rect>() }
-var layerOrigin by remember { mutableStateOf(Offset.Zero) }
-val openMenu =
-    openControl
-        ?.takeIf { footerControlEnabled(it, state.runConfig) }
-        ?.let { control ->
-            footerMenu(control, state.runConfig, state.mutationsSupported, state.absentActions, state.backgroundTaskCount)
-                ?.let { control to it }
-        }
-LaunchedEffect(openControl, openMenu == null) {
-    if (openMenu == null) openControl = null
-}
-Box(modifier = modifier.onGloballyPositioned { layerOrigin = it.positionInWindow() }) {
-    Scaffold(modifier = Modifier.fillMaxSize()) { /* … topBar, bottomBar, body … */ }
-    openMenu?.let { (control, menu) ->
-        footerAnchors[control]?.let { anchor ->
-            OptionsOverlay(
-                options = menu.options,
-                selectedValue = menu.selectedValue,
-                notListed = menu.notListed,
-                anchor = anchor.translate(-layerOrigin),
-                onSelect = { value ->
-                    when (control) {
-                        FooterControl.Model -> onModelSelected(value)
-                        FooterControl.Effort -> onEffortSelected(value)
-                        FooterControl.Permission -> onPermissionModeSelected(value)
-                        FooterControl.Actions ->
-                            when (val action = ComposerAction.fromValue(value)) {
-                                null -> Unit
-                                ComposerAction.ResetSession -> onOverflowEvent(ThreadEvent.NewSession)
-                                ComposerAction.BackgroundTasks -> backgroundTasksOpen = true
-                                else -> onComposerCommand(action)
-                            }
-                    }
-                    openControl = null
-                },
-                onDismiss = { openControl = null },
-                actions = menu.actions,
-            )
-        }
-    }
-}
-```
-
-`Scaffold` moved inside a `Box` that records its own window origin (`onGloballyPositioned { layerOrigin = it.positionInWindow() }`), because [`OptionsOverlay`](options-overlay.md) draws in the screen's own window rather than a separate `Popup` window and needs its anchor in the `Box`'s own coordinates, not the device window's. `footerAnchors` is fed by the footer's `onAnchorChanged` callback and holds each control's **live window bounds**; the overlay call translates a control's window-space `Rect` into the `Box`'s layer-space `Rect` by subtracting `layerOrigin`. Because both `footerAnchors[control]` and `layerOrigin` are read every frame from live layout callbacks, the overlay follows the composer as it lifts with `imePadding()` — there is no separate "is the keyboard open" branch.
-
-`openControl` is a **plain `remember`, deliberately not `rememberSaveable`**, keyed on `state.conversationId`. Two things follow from that: switching conversations within one composition drops any open overlay (the `remember` key changes), and a process death / config change never restores an overlay a fresh screen instance never opened. `openMenu` re-derives `footerMenu(...)` on every composition from the **current** `state.runConfig` (plus, since #884, `state.mutationsSupported` and `state.absentActions`), gated by `footerControlEnabled`, rather than caching the menu captured at open time — so if a write goes pending, a fresh reading drops the selected model's effort levels, the session's `sessionId` empties out, or the published slash-command menu changes what it proves absent while the overlay is showing, `openMenu` is recomputed (or, for Model/Effort/Permission, becomes `null` and the `LaunchedEffect(openControl, openMenu == null)` clears `openControl` on the next frame) without an explicit "is my menu still valid" check anywhere else.
-
-`onSelect` dispatches straight through the existing `onModelSelected: (String) -> Unit` / `onEffortSelected: (String) -> Unit` parameters — unchanged since [#807](../codebase/807.md) — plus, since [#650](https://github.com/pyrycode/pyrycode-mobile/issues/650), `onPermissionModeSelected: (String) -> Unit`, and, since [#884](https://github.com/pyrycode/pyrycode-mobile/issues/884), `onComposerCommand: (ComposerAction) -> Unit` for a command row and the existing `onOverflowEvent(ThreadEvent.NewSession)` for Reset session — then closes the overlay; `onDismiss` only closes it. Model, Effort and Permission still round-trip through `ConversationRepository.setSessionSettings`, addressed to `SessionSettings.sessionId`, exactly as the sheet's own rows do; the permission handler additionally re-validates the value and picks the `yolo` vs. `permission_mode` field — see [§ Sourcing — Permission mode](#permission-mode-650). Actions sends a message or dispatches the reset event instead — see [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884).
+`openControl` is keyed by `state.conversationId`, so switching conversations
+closes an Actions overlay. The overlay re-derives `footerMenu` from current
+state rather than retaining an option captured when it opened. Its anchor
+comes from the button's live window bounds translated into the screen's
+`Box` coordinates; the menu follows the composer as the keyboard lifts it.
+The trailing `Tune` icon opens `StatusSheet`, whose Model selection uses the
+same `ThreadRunConfig` projection as `footerMenu(Model)`. Running-model text
+is a separate reading and never selects a model row.
 
 ## State + concurrency model
 
@@ -241,7 +207,7 @@ Split into [Thread composer footer — testing](thread-composer-footer-testing.m
 
 ## Previews
 
-Two `@Preview`s in `ThreadComposerFooter.kt` — `ThreadComposerFooterDarkPreview` (all three buttons resolved, dark theme) and `ThreadComposerFooterLightPendingPreview` (the effort button pending and, since #650, the permission button pending too, light theme) — both `widthDp = 372`. `previewRunConfig` carries `permissionMode = "plan"` so the permission button renders in both previews.
+Two `@Preview`s in `ThreadComposerFooter.kt` — `ThreadComposerFooterDarkPreview` and `ThreadComposerFooterLightPendingPreview` — both render the current Actions/context/icons footer at `widthDp = 372`. The preview config retains model and permission values for the shared state, though their separate footer buttons no longer render.
 
 ## Edge cases / limitations
 

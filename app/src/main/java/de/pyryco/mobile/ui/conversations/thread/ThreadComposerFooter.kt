@@ -101,7 +101,7 @@ internal enum class PermissionModeOption(
  * `yolo` and is never listed. The permission menu and the ViewModel's write guard both ask this.
  */
 internal fun ThreadRunConfig.offersPermission(mode: PermissionModeOption): Boolean {
-    if (mode == PermissionModeOption.Auto && selectedChoice?.supportsAutoMode != true) return false
+    if (mode == PermissionModeOption.Auto && selectedMetadata?.supportsAutoMode != true) return false
     val accepted = capabilities?.permissionModes ?: return true
     return mode == PermissionModeOption.Bypass || mode.wire in accepted
 }
@@ -167,7 +167,7 @@ internal fun footerMenu(
             runConfig.choices.takeIf { runConfig.menuAvailable && it.isNotEmpty() }?.let { choices ->
                 FooterMenu(
                     options = choices.map { OptionsOverlayOption(value = it.value, label = it.label) },
-                    selectedValue = runConfig.selectedModel,
+                    selectedValue = runConfig.selectedChoice?.value.orEmpty(),
                     notListed = runConfig.droppedModels + runConfig.hiddenChoices,
                 )
             }

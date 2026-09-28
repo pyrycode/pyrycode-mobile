@@ -101,7 +101,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
    Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981 / #966 / #967 / #955 / #1016 / #1020 / #1050 / #1021 / #1017)**
-   runs a **curated set of thirty-seven scenarios** (ping + create-workspace-folder + new-session + delete +
+   historically ran a **curated set of thirty-seven scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
    peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model +
    footer-context-usage + model-change + inherited-effort + chosen-effort + remembered-effort-recall +
@@ -167,11 +167,13 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`,
    `interactiveTurn_chosenEffort_appliesFromTheFirstTurn`,
    `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel`) is covered in its own
-   paragraph below, after the peer scenarios.
+   paragraph below, after the peer scenarios. [#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193)
+   extends the model-change method to select in Run configuration and verify selected radios after
+   fresh settings replies for both chats; it remains in `InteractiveStreamE2ETest`.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
-   turn. The curated thirty-seven-scenario gate does not cover cross-device Stop.
+   turn. The curated live gate does not cover cross-device Stop.
    An open thread recovering a peer's reconnect-window prompt on its own — the gap #850 found — is
    **shipped (#861)**: the still-open thread's reconnect history re-ask now waits for the repository to
    be published, so it reaches a live repository instead of a socket that is up but not yet handshaked.
@@ -708,9 +710,20 @@ session and cannot take a model or effort write; `create_conversation` binds one
 Every method restores the settings it changed with `set_session_settings` on the same session and clears
 the remembered level in `finally`, so a red run cannot leave a write behind for a later method.
 `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` (**zero** claude turns) picks three usable
-rows from the published model menu at run time — never a hard-coded model name — writes two conversations
-to two of them, changes one from the footer to the third, and asserts the change lands in a fresh settings
-reply, survives a reopen, and never touches the other conversation.
+ordinary rows from the published model menu at run time — never a hard-coded model name — writes two chats
+to two of them, opens Run configuration from the footer to select the third for one chat, and checks its
+selected radio after a fresh daemon settings reply. It leaves and reopens that chat, verifies the selected
+radio against another fresh reply, then opens the other chat and verifies its original row remains selected
+against its own fresh reply. The runnable scenario is in `InteractiveStreamE2ETest`; it does not depend on
+the separately reported running model.
+
+[#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193) temporarily excludes six other
+`InteractiveStreamE2ETest` methods from the curated live list while their bodies remain `@Ignore`d:
+five use Settings controls removed by #1239 ([#1245](https://github.com/pyrycode/pyrycode-mobile/issues/1245))
+and the operator-bypass permission case has a pre-existing settle-window assertion failure
+([#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246)). Two older workspace-switching methods
+are also ignored and excluded. `scripts/e2e-emulator.sh` lists only the 36 runnable methods; the
+`android-test-gate.py` execution floor is 36, with a script test checking that ignored methods are absent.
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
 `effective_effort` (an omitted key fails the method) and that the reopened footer's label and note match
@@ -738,7 +751,7 @@ recall rules these methods assert against.
 
 The **operator-bypass permission** scenario (#687 —
 `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`) rides the curated `LIVE=1`
-list like every scenario above (`LIVE_MINIMUM` is 34, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
+list in the earlier coverage state (`LIVE_MINIMUM` was 34, [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981)
 having restored it on top of #965's stop method, [#966](https://github.com/pyrycode/pyrycode-mobile/issues/966)
 having raised it again for the permission-answer and question-answer methods,
 [#967](https://github.com/pyrycode/pyrycode-mobile/issues/967) having raised it again for the reconnect and
@@ -1321,7 +1334,9 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the forty-four curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the current selector has 36 runnable `@Test` methods. The historical
+inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
+the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
 peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891; footer
@@ -1369,7 +1384,7 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** forty-four real claude turns across forty-four curated methods — five pings (ping,
+**Historical cost before #1193's exclusions:** forty-four real claude turns across forty-four curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
 ping, #850's peer offline turn, the status-sheet-running-model scenario's own ping, #891, the
@@ -1425,7 +1440,9 @@ with #1087 adding the workspace add-rename-archive method, then from 41 to 42 wi
 channel create-edit-archive method, then from 42 to 43 with #1089 adding the peer-set workspace label
 method, then from 43 to 44 with #1090 adding the attention-dot method, then from 44 to 45 with #1107
 re-adding the background-task-progress method once pyrycode/pyrycode#2661 closed the daemon parser gap,
-then from 45 to 44 when #1190 retired the host-row-only #1087 method.
+then from 45 to 44 when #1190 retired the host-row-only #1087 method, and from 44 to 36 when
+\#1193 removed eight ignored methods from the curated selector pending #1245/#1246 and the older
+workspace-switching follow-ups.
 `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
@@ -1481,7 +1498,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of forty-four rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 36 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1505,7 +1522,9 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Forty-four curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** The current curated selector passes 36 runnable methods as a comma-separated
+`class#method` list. The historical inventory below also names eight now ignored methods; the
+exact current list is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -1560,7 +1579,7 @@ the folder-use method now creates a chat before using the thread's picker, and t
 A's new chat into the chosen folder before relabeling it. The two-host defaults method now checks that
 Chats creation uses the daemon default independently of saved app defaults. The host-row-only #1087 method
 is retired; its selector and the executed-test floor were lowered together.
-The suite spends **forty-four real claude turns** per run — five pings, from ping, create-workspace-folder,
+The pre-#1193 forty-four-method suite spent **forty-four real claude turns** per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
 ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, #891's own
 ping, #946's own ping, the inherited-effort and chosen-effort scenarios' own turns and the
@@ -1643,7 +1662,7 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **forty-four real claude turns per run across forty-four curated methods** (ping + create-workspace-folder,
+Historical cost before #1193's exclusions: **forty-four real claude turns per run across forty-four curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
 \#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
 status-sheet-running-model scenario's own ping, #891 + the footer-context-usage scenario's own ping,
@@ -2547,6 +2566,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — shipped:** [#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193)
+  expands `InteractiveStreamE2ETest.interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+  to choose a published ordinary row in Run configuration and verify each chat's selected radio after
+  fresh daemon settings replies, including leaving and reopening the changed chat. The scenario stays
+  active in the rung-3 live list. Six unrelated methods remain ignored pending
+  [#1245](https://github.com/pyrycode/pyrycode-mobile/issues/1245) and
+  [#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246); two older workspace-switching
+  methods are also excluded. The curated list and `LIVE_MINIMUM` both contain 36 runnable methods.
 
 - **Coverage — shipped:** [#1190](https://github.com/pyrycode/pyrycode-mobile/issues/1190)
   moved `InteractiveStreamE2ETest` chat creation to each host's Chats plus and Create confirmation.
