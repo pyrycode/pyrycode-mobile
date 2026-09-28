@@ -42,3 +42,7 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md` § “Live 
 ## Open questions
 
 - Whether the focused live run can execute in this builder environment. Resolve through the dispatcher-owned live gate if Claude authentication is unavailable; do not claim a pass from compilation or skipped XML.
+
+## Revisions
+
+- Builder handoff: the shared practice assigns real-Claude execution to the dispatcher after verifier. The two selected method names and XML counts remain pending that live gate; compilation and curated-list checks establish only that the implementation is ready for it.

@@ -49,7 +49,7 @@ LIVE_MINIMUM += 3
 LIVE_MINIMUM += 1
 # #684 adds the Log data diagnostic-download method.
 LIVE_MINIMUM += 1
-# #1086 adds the two-host default-workspace and Archive method.
+# #1086 added the two-host Archive method, temporarily excluded by #1193.
 LIVE_MINIMUM += 1
 # #1088 adds the channel create, edit and archive method.
 LIVE_MINIMUM += 1
@@ -67,6 +67,8 @@ LIVE_MINIMUM -= 8
 LIVE_MINIMUM += 1
 # #1246 restores the operator-bypass permission proof after reply-based settlement diagnosis.
 LIVE_MINIMUM += 1
+# #1249 restores the discussion round trip and two-host Archive methods through the list toolbar.
+LIVE_MINIMUM += 2
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

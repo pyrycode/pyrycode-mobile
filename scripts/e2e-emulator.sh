@@ -1133,7 +1133,7 @@ elif [ -n "${LIVE}" ]; then
   # #977 temporarily removed the #687 method; #981 restored it after the missing reply fix.
   # #1193 excluded it again after the timing assertion failed; #1246 restores it with reply-based settlement.
   # Historical list-size counts in this block predate the temporary exclusions for #1245 and
-  # the two already ignored workspace-switching scenarios. The active list and gate floor contain 38 methods.
+  # the two already ignored workspace-switching scenarios. The active list and gate floor contain 40 methods.
   TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
   # #965: the stop method joins the list, so it holds 21 methods and 17 turns while #687 stays out.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain"
@@ -1194,6 +1194,9 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
   # #1223: the phone's acknowledged choice in one chat applies before the first real turn in a new chat.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
+  # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsArchive_staysPerHost"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
