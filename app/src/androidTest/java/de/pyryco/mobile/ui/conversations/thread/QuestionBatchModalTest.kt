@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
@@ -76,10 +77,7 @@ class QuestionBatchModalTest {
     private var observedDialogView: View? = null
 
     /** Keep the gate window found before the IME can move focus away from it. */
-    private fun dialogView(): View =
-        observedDialogView
-            ?: checkNotNull(WindowInspector.getGlobalWindowViews().lastOrNull { it.hasWindowFocus() })
-                .also { observedDialogView = it }
+    private fun dialogView(): View = checkNotNull(observedDialogView)
 
     private fun show(
         batch: QuestionBatch = batch(),
@@ -180,12 +178,36 @@ class QuestionBatchModalTest {
     @Test
     fun ime_keeps_the_last_other_field_and_actions_reachable_at_320_by_640() {
         show(batch(extra = 3), small = true)
-        rule.waitUntil(5_000) {
-            rule.runOnIdle {
-                WindowInspector.getGlobalWindowViews().size > 1 &&
-                    WindowInspector.getGlobalWindowViews().last().hasWindowFocus()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var focusEvidence = "no process windows observed"
+        try {
+            rule.waitUntil(10_000) {
+                val focused =
+                    rule.runOnIdle {
+                        val windows = WindowInspector.getGlobalWindowViews()
+                        focusEvidence = "windowCount=${windows.size}, focused=${windows.map { it.hasWindowFocus() }}"
+                        val dialog = windows.lastOrNull().takeIf { windows.size > 1 }
+                        if (dialog?.hasWindowFocus() == true) {
+                            observedDialogView = dialog
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                if (!focused) {
+                    ParcelFileDescriptor
+                        .AutoCloseInputStream(
+                            instrumentation.uiAutomation.executeShellCommand(
+                                "am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS",
+                            ),
+                        ).use { it.readBytes() }
+                }
+                focused
             }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("Question dialog did not gain focus: $focusEvidence", e)
         }
+        rule.runOnIdle { assertTrue("Question dialog lost focus: $focusEvidence", dialogView().hasWindowFocus()) }
         val last = "question_other_4"
         rule
             .onNodeWithTag(last)

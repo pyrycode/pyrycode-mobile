@@ -25,3 +25,7 @@ After `show` composes the question modal, inspect this process's windows until t
 ## Documentation handoff
 
 Pending for the documentation stage: update `docs/knowledge/features/question-batch-modal.md` § Testing and `docs/knowledge/features/mobile-modal.md` § Focus and verification with the recovered focus setup and verified device result. The issue contains no separate Documentation handoff section.
+
+## Revisions
+
+- 2026-09-28: The focused pre-change device run passed, so this local run did not reproduce the intermittent RED seen in PR #1234 and its merge base. The existing method remains the regression proof; the repaired focused run and full UI gate exercise its unchanged IME assertions.
