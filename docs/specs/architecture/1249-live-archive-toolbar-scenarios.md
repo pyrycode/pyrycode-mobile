@@ -46,3 +46,4 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md` § “Live 
 ## Revisions
 
 - Builder handoff: the shared practice assigns real-Claude execution to the dispatcher after verifier. The two selected method names and XML counts remain pending that live gate; compilation and curated-list checks establish only that the implementation is ready for it.
+- Verifier rework (2026-09-28): `createChatOn` and the discussion drive can create a chat before their UI and repository waits return. Each scenario now captures the host's ID set before creation and keeps it for `finally`; cleanup uses the known ID when available or waits for the single new ID on that host before bounded deletion. The two-host scenario captures A and B separately and removes B's pairing after both cleanup attempts. Cleanup failures remain logged by exception type without replacing the test failure.

@@ -1076,10 +1076,7 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
         } finally {
-            createdId?.let { id ->
-                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
-                    .onFailure { Log.w("E2E", "archive discussion cleanup failed: ${it::class.simpleName}") }
-            }
+            cleanupCreatedConversation(serverId, before, createdId, "archive discussion cleanup failed")
         }
     }
 
@@ -2009,7 +2006,8 @@ class InteractiveStreamE2ETest {
         val serverIdA = twoHostArg(ARG_SERVER_ID)
         val serverIdB = twoHostArg(ARG_SERVER_ID_B)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val createdChats = mutableListOf<Pair<String, String>>()
+        val beforeByHost = mutableMapOf<String, Set<String>>()
+        val createdByHost = mutableMapOf<String, String>()
         try {
             // 1. Pair host B by code, as #847 does.
             awaitChannelList()
@@ -2019,15 +2017,17 @@ class InteractiveStreamE2ETest {
 
             // 2. Create a uniquely named chat on A and a second chat on B.
             val chatName = TWO_HOST_ARCHIVE_CHAT_PREFIX + System.currentTimeMillis()
+            beforeByHost[serverIdA] = hostConversationIds(serverIdA)
             val chatA = createChatOn(serverIdA)
-            createdChats += serverIdA to chatA
+            createdByHost[serverIdA] = chatA
             renameOpenThread(chatName)
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitListText(chatName)
 
+            beforeByHost[serverIdB] = hostConversationIds(serverIdB)
             val chatB = createChatOn(serverIdB)
-            createdChats += serverIdB to chatB
+            createdByHost[serverIdB] = chatB
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
 
@@ -2081,11 +2081,16 @@ class InteractiveStreamE2ETest {
             assertEquals("restoring A's chat changed B's archive", archivedB, archivedBAfterRestore)
             assertEquals("restoring A's chat changed B's active list", activeB, hostConversationIds(serverIdB) - archivedBAfterRestore)
         } finally {
-            createdChats.forEach { (serverId, id) ->
-                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
-                    .onFailure { Log.w("E2E", "two-host archive chat cleanup failed: ${it::class.simpleName}") }
+            beforeByHost.forEach { (serverId, before) ->
+                cleanupCreatedConversation(serverId, before, createdByHost[serverId], "two-host archive chat cleanup failed")
             }
-            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
+            runCatching {
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB)
+                    }
+                }
+            }.onFailure { Log.w("E2E", "two-host archive pairing cleanup failed: ${it::class.simpleName}") }
         }
     }
 
@@ -5985,6 +5990,19 @@ class InteractiveStreamE2ETest {
         serverId: String,
         before: Set<String>,
     ): String = (hostConversationIds(serverId, "a new chat's id") { ids -> (ids - before).isNotEmpty() } - before).single()
+
+    /** Delete a created chat even if a UI or repository wait failed before its id was captured. */
+    private fun cleanupCreatedConversation(
+        serverId: String,
+        before: Set<String>,
+        knownId: String?,
+        failureMessage: String,
+    ) {
+        runCatching {
+            val id = knownId ?: newHostConversationId(serverId, before)
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } }
+        }.onFailure { Log.w("E2E", "$failureMessage: ${it::class.simpleName}") }
+    }
 
     /**
      * The first conversation-id set [serverId]'s repository lists that satisfies [ready], following the host's
