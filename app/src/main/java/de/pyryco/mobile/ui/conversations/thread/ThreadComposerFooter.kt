@@ -33,6 +33,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -259,6 +260,7 @@ fun ThreadComposerFooter(
     modifier: Modifier = Modifier,
     onAttach: () -> Unit = {},
     agent: ConversationAgent = ConversationAgent.Claude,
+    touchHeight: Dp = FooterButtonMinHeight,
 ) {
     // #1032: the text controls share one weighted slot, measured after the paperclip and the Status opener,
     // so a footer full of long labels shrinks the labels and never squeezes out the two icons.
@@ -276,6 +278,7 @@ fun ThreadComposerFooter(
                 pending = false,
                 onClick = { onOpen(FooterControl.Actions) },
                 onBounds = { onAnchorChanged(FooterControl.Actions, it) },
+                touchHeight = touchHeight,
             )
             ContextSegment(percent = runConfig.contextPercent)
         }
@@ -284,7 +287,7 @@ fun ThreadComposerFooter(
         Box(
             modifier =
                 Modifier
-                    .size(StatusOpenerSize)
+                    .size(width = StatusOpenerSize, height = touchHeight)
                     .clickable(role = Role.Button, onClick = onAttach),
             contentAlignment = Alignment.BottomCenter,
         ) {
@@ -298,7 +301,7 @@ fun ThreadComposerFooter(
         Box(
             modifier =
                 Modifier
-                    .size(StatusOpenerSize)
+                    .size(width = StatusOpenerSize, height = touchHeight)
                     .clickable(role = Role.Button, onClick = onStatusClick),
             contentAlignment = Alignment.BottomCenter,
         ) {
@@ -407,6 +410,7 @@ private fun FooterButton(
     pending: Boolean,
     onClick: () -> Unit,
     onBounds: (Rect) -> Unit,
+    touchHeight: Dp,
     note: String? = null,
 ) {
     val pendingDescription = stringResource(R.string.thread_footer_pending)
@@ -414,7 +418,7 @@ private fun FooterButton(
     Row(
         modifier =
             Modifier
-                .heightIn(min = FooterButtonMinHeight)
+                .heightIn(min = touchHeight)
                 .onGloballyPositioned { onBounds(it.boundsInWindow()) }
                 .clickable(enabled = enabled, onClickLabel = clickLabel, role = Role.Button, onClick = onClick)
                 .semantics(mergeDescendants = true) {

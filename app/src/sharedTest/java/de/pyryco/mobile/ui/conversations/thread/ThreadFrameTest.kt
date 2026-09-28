@@ -7,11 +7,13 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -25,6 +27,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * The Figma `16:8` frame (#643): the hand-rolled header, and the composer that now carries the
@@ -36,6 +39,7 @@ import org.junit.runner.RunWith
  * standalone foot-of-list stop control is gone rather than merely duplicated.
  */
 @RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ThreadFrameTest {
     @get:Rule
     val composeTestRule = createComposeRule()
@@ -101,6 +105,50 @@ class ThreadFrameTest {
         assertEquals(404f, overflow.right.value, 1f)
         val messages = composeTestRule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
         assertEquals(97f, messages.top.value, 2f)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun referenceFrame_footerTouchTargetsClearTheSendButton() {
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
+            }
+        }
+
+        val send =
+            composeTestRule
+                .onNodeWithContentDescription(
+                    string(R.string.cd_send_message),
+                    useUnmergedTree = true,
+                ).onParent()
+                .getUnclippedBoundsInRoot()
+        val attach =
+            composeTestRule
+                .onNodeWithContentDescription(
+                    string(R.string.cd_attach_files),
+                    useUnmergedTree = true,
+                ).onParent()
+                .getUnclippedBoundsInRoot()
+        val status =
+            composeTestRule
+                .onNodeWithContentDescription(
+                    string(R.string.cd_thread_status_expand),
+                    useUnmergedTree = true,
+                ).onParent()
+                .getUnclippedBoundsInRoot()
+        val field = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true).onParent().getUnclippedBoundsInRoot()
+        assertTrue("attachment touch target must clear send: send=$send attach=$attach", attach.top >= send.bottom)
+        assertTrue("status touch target must clear send", status.top >= send.bottom)
+        assertTrue("footer touch targets must clear the input surface", minOf(attach.top, status.top) >= field.bottom)
     }
 
     // AC#1: the title truncates inside its own slot. Both controls keep their full width and their

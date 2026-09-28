@@ -37,7 +37,10 @@ internal val BarGlyphSize = 24.dp
 internal val BarTouchSize = 48.dp
 internal val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
 internal val BarGutter = 20.dp
-internal val BarTopGap = 28.dp - BarTouchSlack
+
+// The reader retains its established top gap; only the thread moves down to the live 16:8 anchor.
+internal val BarTopGap = 24.dp - BarTouchSlack
+private val ThreadBarTopGap = 28.dp - BarTouchSlack
 internal val BarRuleGap = 16.dp - BarTouchSlack
 internal val BarBottomGap = 16.dp
 internal const val BAR_RULE_ALPHA = 0.60f
@@ -80,7 +83,7 @@ fun ThreadTopAppBar(
                     .padding(
                         start = BarGutter - BarTouchSlack,
                         end = BarGutter - BarTouchSlack,
-                        top = BarTopGap,
+                        top = ThreadBarTopGap,
                     ),
             verticalAlignment = Alignment.CenterVertically,
         ) {

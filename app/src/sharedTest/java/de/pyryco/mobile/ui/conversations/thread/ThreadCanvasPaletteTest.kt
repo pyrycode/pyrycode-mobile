@@ -147,6 +147,7 @@ class ThreadCanvasPaletteTest {
                 assertEquals("$location blue", expected.blue, actual.blue, 1f / 255f)
             }
             val canvas = if (reader) surface else background
+            val ruleY = if (reader) 64.5f else 68.5f
             if (dark && !wallpaper && !reader) {
                 val glow = Color(bitmap.getPixel((bounds.left + 2 * density).toInt(), (bounds.top + 200 * density).toInt()))
                 val rule = Color(bitmap.getPixel((bounds.left + 160 * density).toInt(), (bounds.top + 68.5f * density).toInt()))
@@ -156,10 +157,10 @@ class ThreadCanvasPaletteTest {
             } else {
                 pixel(2f, 30f, canvas)
                 pixel(2f, 200f, canvas)
-                pixel(160f, 68.5f, divider.compositeOver(canvas))
-                pixel(10f, 68.5f, canvas)
-                pixel(160f, 67f, canvas)
-                pixel(160f, 70f, canvas)
+                pixel(160f, ruleY, divider.compositeOver(canvas))
+                pixel(10f, ruleY, canvas)
+                pixel(160f, ruleY - 1.5f, canvas)
+                pixel(160f, ruleY + 1.5f, canvas)
             }
             pixel(2f, bounds.height / density - 30f, surface) // Composer surround or trailing reader space.
             if (!populated && (reader || !dark || wallpaper)) pixel(160f, 300f, canvas)

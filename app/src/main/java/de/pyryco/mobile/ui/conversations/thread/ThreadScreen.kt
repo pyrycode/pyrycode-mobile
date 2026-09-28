@@ -120,7 +120,10 @@ private val ComposerSectionGap = 8.dp
 private val ComposerTopGap = 12.dp
 private val ComposerBottomGap = 16.dp
 private val AttachmentStripTouchOverlap = 5.dp
-private val FooterTouchOverlap = 12.dp
+
+// A 28dp footer target may use 8dp above the 20dp visible band without reaching the input surface.
+private val FooterTouchOverlap = 8.dp
+private val FrameFooterTouchHeight = 28.dp
 
 // The three status indicators each carry their own 16dp horizontal padding, sized for the full-bleed
 // foot-of-list mount they had until #643. Inset them by the remainder so their content lands on the
@@ -452,6 +455,7 @@ fun ThreadScreen(
                                 .frameHeightWithTouchOverflow(top = FooterTouchOverlap),
                         onAttach = openAttachmentPicker,
                         agent = state.agent,
+                        touchHeight = FrameFooterTouchHeight,
                     )
                 }
             },
