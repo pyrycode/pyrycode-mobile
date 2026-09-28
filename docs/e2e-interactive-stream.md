@@ -170,6 +170,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    paragraph below, after the peer scenarios. [#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193)
    extends the model-change method to select in Run configuration and verify selected radios after
    fresh settings replies for both chats; it remains in `InteractiveStreamE2ETest`.
+   The **remembered-model new-chat** scenario (#1223 —
+   `interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`) chooses a published model in
+   one chat, creates another chat, verifies its model before the first send, receives a real Claude
+   reply, and checks the original chat's saved choice stayed put. It runs in `InteractiveStreamE2ETest`.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -717,13 +721,21 @@ radio against another fresh reply, then opens the other chat and verifies its or
 against its own fresh reply. The runnable scenario is in `InteractiveStreamE2ETest`; it does not depend on
 the separately reported running model.
 
+`InteractiveStreamE2ETest.interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`
+(#1223, **one** real Claude turn) chooses a nondefault model published for the source chat's agent,
+waits for its acknowledged session setting and persisted app preference, then creates a new chat through
+the Chats control. It reads the new chat's saved model before sending its first prompt, awaits the live
+reply, and reads both conversations' saved choices again. The 2026-09-28 post-verifier live gate passed
+all 37 selected methods with no failures or skips.
+
 [#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193) temporarily excludes six other
 `InteractiveStreamE2ETest` methods from the curated live list while their bodies remain `@Ignore`d:
 five use Settings controls removed by #1239 ([#1245](https://github.com/pyrycode/pyrycode-mobile/issues/1245))
 and the operator-bypass permission case has a pre-existing settle-window assertion failure
 ([#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246)). Two older workspace-switching methods
-are also ignored and excluded. `scripts/e2e-emulator.sh` lists only the 36 runnable methods; the
-`android-test-gate.py` execution floor is 36, with a script test checking that ignored methods are absent.
+are also ignored and excluded. `scripts/e2e-emulator.sh` lists 37 runnable methods; the
+`android-test-gate.py` execution floor is 37 after #1223, with a script test checking that ignored
+methods are absent.
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
 `effective_effort` (an omitted key fails the method) and that the reopened footer's label and note match
@@ -1334,7 +1346,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 36 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 37 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1442,7 +1454,8 @@ method, then from 43 to 44 with #1090 adding the attention-dot method, then from
 re-adding the background-task-progress method once pyrycode/pyrycode#2661 closed the daemon parser gap,
 then from 45 to 44 when #1190 retired the host-row-only #1087 method, and from 44 to 36 when
 \#1193 removed eight ignored methods from the curated selector pending #1245/#1246 and the older
-workspace-switching follow-ups.
+workspace-switching follow-ups, then from 36 to 37 when #1223 added the remembered-model first-turn
+scenario.
 `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
@@ -1498,7 +1511,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 36 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 37 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1522,7 +1535,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** The current curated selector passes 36 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 37 runnable methods as a comma-separated
 `class#method` list. The historical inventory below also names eight now ignored methods; the
 exact current list is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
@@ -1541,6 +1554,7 @@ exact current list is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_statusSheetShowsRunningModel` (#891),
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_footerShowsContextUsage` (#946),
 `InteractiveStreamE2ETest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation`,
+`InteractiveStreamE2ETest#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage` (#1223),
 `InteractiveStreamE2ETest#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`,
 `InteractiveStreamE2ETest#interactiveTurn_chosenEffort_appliesFromTheFirstTurn`,
 `InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` (#545),
@@ -1569,6 +1583,7 @@ exact current list is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`:
 `InteractiveStreamE2ETest#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost` (#1089), and
 `InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` (#1090), and
 `InteractiveStreamE2ETest#interactiveTurn_backgroundAgentProgress_showsOnRunningCard` (#1076/#1107).
+\#1223 adds the remembered-model method to this selector and raises `LIVE_MINIMUM` to 37.
 #1189 revised three existing methods: Create channel opens from an initially empty host Channels
 section and uses the daemon default; the peer workspace-label method checks the thread, Settings and
 cross-host state without a deleted tree-row assertion; the folder-settings method keeps the repository
@@ -2567,6 +2582,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **Coverage — shipped:** [#1223](https://github.com/pyrycode/pyrycode-mobile/issues/1223)
+  adds `InteractiveStreamE2ETest.interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`:
+  a model chosen in one chat is saved on a newly created chat before its first real Claude turn,
+  while the source chat retains its saved choice. The curated live selector and `LIVE_MINIMUM`
+  include 37 runnable methods; the 2026-09-28 gate executed all 37 without failures or skips.
+
 - **Coverage — shipped:** [#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193)
   expands `InteractiveStreamE2ETest.interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
   to choose a published ordinary row in Run configuration and verify each chat's selected radio after
@@ -2574,7 +2595,7 @@ The remaining checks here are specific to a real relay or real Claude execution:
   active in the rung-3 live list. Six unrelated methods remain ignored pending
   [#1245](https://github.com/pyrycode/pyrycode-mobile/issues/1245) and
   [#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246); two older workspace-switching
-  methods are also excluded. The curated list and `LIVE_MINIMUM` both contain 36 runnable methods.
+  methods are also excluded. This left 36 runnable methods before #1223 added one.
 
 - **Coverage — shipped:** [#1190](https://github.com/pyrycode/pyrycode-mobile/issues/1190)
   moved `InteractiveStreamE2ETest` chat creation to each host's Chats plus and Create confirmation.
