@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Figma Input footer button chevron; tinted by the caller. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="8dp"
+    android:height="4dp"
+    android:viewportWidth="8"
+    android:viewportHeight="4">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M3.59822,0.146303C3.82044,-0.0482491 4.18133,-0.0482491 4.40356,0.146303L7.81689,3.13463C8.03911,3.32918 8.03911,3.64514 7.81689,3.83969C7.59467,4.03424 7.23378,4.03424 7.01156,3.83969L4,1.20311L0.988445,3.83813C0.766222,4.03268 0.405333,4.03268 0.183111,3.83813C-0.0391111,3.64358 -0.0391111,3.32763 0.183111,3.13307L3.59644,0.144747L3.59822,0.146303Z" />
+</vector>

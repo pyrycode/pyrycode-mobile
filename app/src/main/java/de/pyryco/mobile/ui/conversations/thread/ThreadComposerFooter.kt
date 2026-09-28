@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -230,7 +229,8 @@ private val FooterHorizontalPadding = 16.dp
 private val FooterButtonGap = 16.dp
 private val FooterButtonMinHeight = 32.dp
 private val FooterChevronGap = 4.dp
-private val FooterChevronSize = 14.dp
+private val FooterChevronWidth = 8.dp
+private val FooterChevronHeight = 4.dp
 private val FooterLabelMaxWidth = 140.dp
 private val StatusOpenerSize = 32.dp
 private val StatusOpenerIconSize = 16.dp
@@ -265,7 +265,7 @@ fun ThreadComposerFooter(
     Row(
         modifier = modifier.fillMaxWidth().padding(horizontal = FooterHorizontalPadding),
         horizontalArrangement = Arrangement.spacedBy(FooterButtonGap),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Bottom,
     ) {
         // The buttons in order, then the `Cxt:` segment, which [FooterTextRow] gives the leftover width.
         FooterTextRow(modifier = Modifier.weight(1f)) {
@@ -286,7 +286,7 @@ fun ThreadComposerFooter(
                 Modifier
                     .size(StatusOpenerSize)
                     .clickable(role = Role.Button, onClick = onAttach),
-            contentAlignment = Alignment.Center,
+            contentAlignment = Alignment.BottomCenter,
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_attach_file),
@@ -300,7 +300,7 @@ fun ThreadComposerFooter(
                 Modifier
                     .size(StatusOpenerSize)
                     .clickable(role = Role.Button, onClick = onStatusClick),
-            contentAlignment = Alignment.Center,
+            contentAlignment = Alignment.BottomCenter,
         ) {
             Icon(
                 imageVector = Icons.Outlined.Tune,
@@ -338,7 +338,7 @@ private fun FooterTextRow(
         layout(constraints.maxWidth, height) {
             var x = 0
             all.forEach {
-                it.placeRelative(x, (height - it.height) / 2)
+                it.placeRelative(x, height - it.height)
                 x += it.width + gap
             }
         }
@@ -421,7 +421,7 @@ private fun FooterButton(
                     (if (pending) pendingDescription else note)?.let { stateDescription = it }
                 }.alpha(if (pending) PENDING_ALPHA else 1f),
         horizontalArrangement = Arrangement.spacedBy(FooterChevronGap),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Bottom,
     ) {
         Text(
             text = label,
@@ -433,12 +433,14 @@ private fun FooterButton(
             modifier = Modifier.weight(1f, fill = false).widthIn(max = FooterLabelMaxWidth),
         )
         if (enabled || pending) {
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowUp,
-                contentDescription = null,
-                tint = color,
-                modifier = Modifier.size(FooterChevronSize),
-            )
+            Box(modifier = Modifier.size(FooterChevronWidth, 10.dp), contentAlignment = Alignment.TopCenter) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_footer_chevron_up),
+                    contentDescription = null,
+                    tint = color,
+                    modifier = Modifier.size(FooterChevronWidth, FooterChevronHeight).testTag("footer_actions_chevron"),
+                )
+            }
         }
     }
 }
