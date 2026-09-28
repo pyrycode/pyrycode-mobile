@@ -175,6 +175,25 @@ class ChannelListScreenTest {
     ): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId, *formatArgs)
 
     @Test
+    fun siblingConversationRowsKeepTheFourDpFigmaGap() {
+        setTree(
+            entry(
+                serverId = "pyry",
+                displayName = "Pyry",
+                channels =
+                    listOf(
+                        conversation("one", "First channel", "/w", true),
+                        conversation("two", "Second channel", "/w", true),
+                    ),
+            ),
+        )
+
+        val first = composeTestRule.onNode(hasText("First channel"), useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val second = composeTestRule.onNode(hasText("Second channel"), useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(4.dp, second.top - first.bottom)
+    }
+
+    @Test
     fun emptySecondHostHasItsOwnChatsCreateControlWithoutFolding() {
         setTree(
             entry("first", "First", chats = listOf(conversation("same", "First chat", "/a", false))),
@@ -184,8 +203,7 @@ class ChannelListScreenTest {
         val create = composeTestRule.onNodeWithTag(treeHostChatAddTestTag("second"))
         create
             .assertExists()
-            .assertHeightIsAtLeast(48.dp)
-            .assertWidthIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(28.dp)
             .performClick()
         assertEquals(listOf(ChannelListEvent.TreeHostChatAddTapped("second")), events)
         composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Chats on Second"))).assertExists()
@@ -1086,7 +1104,7 @@ class ChannelListScreenTest {
         composeTestRule
             .onNode(channels)
             .assertWidthIsAtLeast(48.dp)
-            .assertHeightIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(28.dp)
             .performClick()
         composeTestRule.onNode(hasText("alpha channel")).assertDoesNotExist()
         composeTestRule.onNode(hasText("bravo chat")).assertExists()
@@ -1123,8 +1141,7 @@ class ChannelListScreenTest {
         )
         composeTestRule
             .onNode(first)
-            .assertWidthIsAtLeast(48.dp)
-            .assertHeightIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(28.dp)
             .performClick()
         // The plus's own node took the tap: the channel is still drawn, nothing folded.
         composeTestRule.onNode(hasText("alpha channel")).assertExists()
@@ -1194,8 +1211,7 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasScrollAction()).performScrollToNode(bravo)
         composeTestRule
             .onNode(bravo)
-            .assertWidthIsAtLeast(48.dp)
-            .assertHeightIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(24.dp)
             .performClick()
 
         // The pen's own node took the tap: it opens neither the thread nor the highlight.

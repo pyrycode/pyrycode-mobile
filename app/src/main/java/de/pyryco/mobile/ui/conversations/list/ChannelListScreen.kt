@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -98,6 +99,8 @@ internal const val PLAY_STORE_URL: String = "https://play.google.com/store/apps/
 // Host containers share one scrollable list and keep the Figma spacing.
 private val TreeGutter = 20.dp
 private val TreeHostGap = 16.dp
+private val TreeConversationGap = 4.dp
+private val TreeConversationInset = 12.dp
 
 // The outer Scaffold in MainActivity owns the system-bar insets.
 private val TreeBottomInset = 16.dp
@@ -699,36 +702,45 @@ private fun LazyListScope.treeHost(
         }
         if (sectionKey in hostState.collapsed) continue
         val conversations = if (section == ConversationTreeSection.Channels) host.channels else host.chats
-        items(
+        itemsIndexed(
             items = conversations,
-            key = { conversation -> treeItemKey("conversation", section.name, host.serverId, conversation.id) },
-        ) { conversation ->
+            key = { _, conversation -> treeItemKey("conversation", section.name, host.serverId, conversation.id) },
+        ) { rowIndex, conversation ->
             val target = HostConversationTarget(host.serverId, conversation.id)
-            TreeConversationRow(
-                conversationName =
-                    conversation.name?.takeIf { it.isNotBlank() }
-                        ?: stringResource(R.string.untitled_discussion),
-                selected = target == hostState.selected,
-                onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
-                modifier = Modifier.testTag(section.rowTestTag),
-                attention = entry.attentionFor(conversation.id),
-                onEditTapped =
-                    when (section) {
-                        ConversationTreeSection.Host -> error("Host is not a conversation section")
-                        ConversationTreeSection.Channels -> {
-                            { onEvent(ChannelListEvent.TreeChannelEditTapped(target)) }
-                        }
-                        ConversationTreeSection.Chats -> {
-                            { onEvent(ChannelListEvent.TreeChatEditTapped(target)) }
-                        }
-                    },
-                editDescription =
-                    when (section) {
-                        ConversationTreeSection.Host -> error("Host is not a conversation section")
-                        ConversationTreeSection.Channels -> R.string.cd_tree_channel_edit
-                        ConversationTreeSection.Chats -> R.string.cd_tree_chat_edit
-                    },
-            )
+            Box(
+                modifier =
+                    Modifier.padding(
+                        start = TreeConversationInset,
+                        end = TreeConversationInset,
+                        top = if (rowIndex == 0) 0.dp else TreeConversationGap,
+                    ),
+            ) {
+                TreeConversationRow(
+                    conversationName =
+                        conversation.name?.takeIf { it.isNotBlank() }
+                            ?: stringResource(R.string.untitled_discussion),
+                    selected = target == hostState.selected,
+                    onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
+                    modifier = Modifier.testTag(section.rowTestTag),
+                    attention = entry.attentionFor(conversation.id),
+                    onEditTapped =
+                        when (section) {
+                            ConversationTreeSection.Host -> error("Host is not a conversation section")
+                            ConversationTreeSection.Channels -> {
+                                { onEvent(ChannelListEvent.TreeChannelEditTapped(target)) }
+                            }
+                            ConversationTreeSection.Chats -> {
+                                { onEvent(ChannelListEvent.TreeChatEditTapped(target)) }
+                            }
+                        },
+                    editDescription =
+                        when (section) {
+                            ConversationTreeSection.Host -> error("Host is not a conversation section")
+                            ConversationTreeSection.Channels -> R.string.cd_tree_channel_edit
+                            ConversationTreeSection.Chats -> R.string.cd_tree_chat_edit
+                        },
+                )
+            }
         }
     }
 }
