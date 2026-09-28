@@ -659,6 +659,11 @@ local Claude memory is not a substitute for a reviewed repository document.
 
 The live archive test on 2026-09-20 exposed a list decoder that discarded
 `is_archived` and reset every row to active on a refresh. List summaries now
-preserve that field, with an active default for older server replies. The archive
-E2E also scrolls its Settings row into view before tapping. Preserve both checks
-when changing the list mapping or Settings layout.
+preserve that field, with an active default for older server replies. The live
+archive and restore scenarios enter through the list toolbar for the selected
+host and wait for the restore success snackbar before leaving Archive: the
+restore coroutine belongs to that destination's ViewModel. A conversation can
+be created before the test's UI or repository wait returns, so fixture cleanup
+records each host's conversation IDs before creation and recovers a new ID for
+bounded deletion if setup fails. Preserve these checks when changing the list
+mapping, Archive navigation or live fixtures. See the [rung-3 Archive coverage](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay).
