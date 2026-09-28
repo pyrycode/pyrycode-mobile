@@ -376,13 +376,9 @@ fun ThreadScreen(
                 onOverflowEvent(ThreadEvent.Rename)
                 onOverflowEvent(ThreadEvent.ChannelInfoDismiss)
             },
-            onChangeWorkspace = {
-                onOverflowEvent(ThreadEvent.ChangeWorkspace)
-                onOverflowEvent(ThreadEvent.ChannelInfoDismiss)
-            },
             onArchive = { onOverflowEvent(ThreadEvent.Archive) },            // close + archive + pop, since #227
             onDelete = { onOverflowEvent(ThreadEvent.Delete) },              // opens DeleteConfirmationDialog, since #227
-            onInstallMemoryPlugin = { /* TODO: Phase 3+ */ },                // no event, no dismiss
+            onInstallMemoryPlugin = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) }, // absent only
             onDismiss = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
         )
     }
@@ -484,7 +480,7 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         lastActivityLabel = lastUsedAt?.let { formatRelativeTime(it, now) } ?: "—",
         sessionCount = sessionCount,
         messageCount = items.count { it is ThreadItem.MessageItem },
-        memoryPlugins = emptyList(),
+        memorySearch = runConfig.memorySearch,
         channelId = conversationId,
     )
 

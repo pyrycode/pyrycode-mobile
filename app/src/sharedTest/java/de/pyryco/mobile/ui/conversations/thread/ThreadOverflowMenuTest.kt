@@ -10,6 +10,9 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.repository.MemorySearchAvailability
+import de.pyryco.mobile.data.repository.MemorySearchProvider
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -24,6 +27,8 @@ private const val RETIRED_LITERAL_SCREEN_ITEM = "Show the literal screen"
 class ThreadOverflowMenuTest {
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    private val absent = MemorySearchReport(MemorySearchAvailability.Absent, emptyList())
 
     private fun string(resId: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
 
@@ -42,6 +47,7 @@ class ThreadOverflowMenuTest {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,
+                    memorySearch = absent,
                     onDismiss = {},
                     onEvent = {},
                 )
@@ -89,6 +95,7 @@ class ThreadOverflowMenuTest {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,
+                    memorySearch = absent,
                     mutationsSupported = false,
                     onDismiss = {},
                     onEvent = {},
@@ -212,6 +219,7 @@ class ThreadOverflowMenuTest {
                     ThreadOverflowMenu(
                         expanded = true,
                         isPromoted = true,
+                        memorySearch = absent,
                         onDismiss = { log.add("dismiss") },
                         onEvent = { log.add("event:$it") },
                     )
@@ -223,5 +231,33 @@ class ThreadOverflowMenuTest {
 
         assertEquals(listOf("dismiss"), log)
         assertEquals(listOf(MEMORY_PLUGIN_DOCS_URL), fakeHandler.openedUris)
+    }
+
+    @Test
+    fun channel_install_item_tracks_current_report() {
+        val available =
+            MemorySearchReport(
+                MemorySearchAvailability.Available,
+                listOf(MemorySearchProvider("p", "Search", true, true, MemorySearchAvailability.Available)),
+            )
+        val report = androidx.compose.runtime.mutableStateOf(available)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadOverflowMenu(
+                    expanded = true,
+                    isPromoted = true,
+                    memorySearch = report.value,
+                    onDismiss = {},
+                    onEvent = {},
+                )
+            }
+        }
+
+        val install = string(R.string.thread_overflow_install_memory_plugin)
+        composeTestRule.onNodeWithText(install).assertDoesNotExist()
+        composeTestRule.runOnIdle { report.value = MemorySearchReport.Unknown }
+        composeTestRule.onNodeWithText(install).assertDoesNotExist()
+        composeTestRule.runOnIdle { report.value = absent }
+        composeTestRule.onNodeWithText(install).assertIsDisplayed()
     }
 }

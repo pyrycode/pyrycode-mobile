@@ -8,7 +8,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
+import de.pyryco.mobile.ui.conversations.components.shouldOfferMemoryInstall
 
 @Composable
 fun ThreadOverflowMenu(
@@ -20,6 +22,7 @@ fun ThreadOverflowMenu(
     // Gated on the thread state's "mutations supported" signal (#507): false in relay mode, where these
     // actions throw or no-op. Defaulted for previews/tests only — production always threads the real value.
     mutationsSupported: Boolean = true,
+    memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
 ) {
     val uriHandler = LocalUriHandler.current
     DropdownMenu(
@@ -66,7 +69,7 @@ fun ThreadOverflowMenu(
                 onEvent(ThreadEvent.ChannelInfo)
             },
         )
-        if (isPromoted) {
+        if (isPromoted && memorySearch.shouldOfferMemoryInstall()) {
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.thread_overflow_install_memory_plugin)) },
                 onClick = {
