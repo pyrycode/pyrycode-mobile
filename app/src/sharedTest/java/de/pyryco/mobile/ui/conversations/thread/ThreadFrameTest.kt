@@ -1,11 +1,14 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -15,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -149,6 +153,48 @@ class ThreadFrameTest {
         assertTrue("attachment touch target must clear send: send=$send attach=$attach", attach.top >= send.bottom)
         assertTrue("status touch target must clear send", status.top >= send.bottom)
         assertTrue("footer touch targets must clear the input surface", minOf(attach.top, status.top) >= field.bottom)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun referenceFrame_pointerAtInputFooterBoundaryGoesToInputControls() {
+        var interrupts = 0
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        isBusy = true,
+                        onInterrupt = { interrupts++ },
+                    )
+                }
+            }
+        }
+
+        val send =
+            composeTestRule
+                .onNodeWithContentDescription(string(R.string.cd_thread_interrupt), useUnmergedTree = true)
+                .onParent()
+        val field = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
+        send.performTouchInput {
+            click(bottomCenter + Offset(0f, -2.dp.toPx()))
+        }
+        assertEquals("the stop control owns its lower edge", 1, interrupts)
+
+        field.onParent().performTouchInput {
+            click(bottomLeft + Offset(48.dp.toPx(), -2.dp.toPx()))
+        }
+        field.assertIsFocused()
+
+        composeTestRule
+            .onNodeWithContentDescription(string(R.string.cd_thread_status_expand), useUnmergedTree = true)
+            .onParent()
+            .performTouchInput { click(center) }
+        composeTestRule.onNodeWithText("Run configuration").assertIsDisplayed()
     }
 
     // AC#1: the title truncates inside its own slot. Both controls keep their full width and their

@@ -121,9 +121,10 @@ private val ComposerTopGap = 12.dp
 private val ComposerBottomGap = 16.dp
 private val AttachmentStripTouchOverlap = 5.dp
 
-// A 28dp footer target may use 8dp above the 20dp visible band without reaching the input surface.
-private val FooterTouchOverlap = 8.dp
-private val FrameFooterTouchHeight = 28.dp
+// The footer's 32dp boxes start below the input gap. Compose expands them to 48dp, using that gap
+// without entering the input surface. The visible controls stay in their 20dp design band.
+private val FooterTouchBottomOverflow = 12.dp
+private val FrameFooterTouchHeight = 32.dp
 
 // The three status indicators each carry their own 16dp horizontal padding, sized for the full-bleed
 // foot-of-list mount they had until #643. Inset them by the remainder so their content lands on the
@@ -138,11 +139,15 @@ private const val FRAME_SCRIM_ALPHA = 0.30f
 
 // Reserve the design's visible band height while allowing an existing control's touch area to extend
 // into the adjacent gap. Neither extension reaches the next visible control.
-private fun Modifier.frameHeightWithTouchOverflow(top: Dp): Modifier =
+private fun Modifier.frameHeightWithTouchOverflow(
+    top: Dp = 0.dp,
+    bottom: Dp = 0.dp,
+): Modifier =
     layout { measurable, constraints ->
         val placeable = measurable.measure(constraints)
         val topPx = top.roundToPx()
-        layout(placeable.width, (placeable.height - topPx).coerceAtLeast(0)) {
+        val bottomPx = bottom.roundToPx()
+        layout(placeable.width, (placeable.height - topPx - bottomPx).coerceAtLeast(0)) {
             placeable.placeRelative(0, -topPx)
         }
     }
@@ -452,10 +457,11 @@ fun ThreadScreen(
                         modifier =
                             Modifier
                                 .padding(horizontal = ComposerGutter)
-                                .frameHeightWithTouchOverflow(top = FooterTouchOverlap),
+                                .frameHeightWithTouchOverflow(bottom = FooterTouchBottomOverflow),
                         onAttach = openAttachmentPicker,
                         agent = state.agent,
                         touchHeight = FrameFooterTouchHeight,
+                        contentBottomPadding = FooterTouchBottomOverflow,
                     )
                 }
             },

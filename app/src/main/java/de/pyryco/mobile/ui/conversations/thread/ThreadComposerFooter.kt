@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -261,6 +262,7 @@ fun ThreadComposerFooter(
     onAttach: () -> Unit = {},
     agent: ConversationAgent = ConversationAgent.Claude,
     touchHeight: Dp = FooterButtonMinHeight,
+    contentBottomPadding: Dp = 0.dp,
 ) {
     // #1032: the text controls share one weighted slot, measured after the paperclip and the Status opener,
     // so a footer full of long labels shrinks the labels and never squeezes out the two icons.
@@ -279,8 +281,9 @@ fun ThreadComposerFooter(
                 onClick = { onOpen(FooterControl.Actions) },
                 onBounds = { onAnchorChanged(FooterControl.Actions, it) },
                 touchHeight = touchHeight,
+                contentBottomPadding = contentBottomPadding,
             )
-            ContextSegment(percent = runConfig.contextPercent)
+            ContextSegment(percent = runConfig.contextPercent, modifier = Modifier.padding(bottom = contentBottomPadding))
         }
         // Figma's `Attachment` (115:3654): the paperclip at the footer's trailing end, before the Status opener
         // the design does not have.
@@ -295,7 +298,7 @@ fun ThreadComposerFooter(
                 painter = painterResource(R.drawable.ic_attach_file),
                 contentDescription = stringResource(R.string.cd_attach_files),
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(AttachIconWidth, AttachIconHeight),
+                modifier = Modifier.size(AttachIconWidth, AttachIconHeight).offset(y = -contentBottomPadding),
             )
         }
         Box(
@@ -309,7 +312,7 @@ fun ThreadComposerFooter(
                 imageVector = Icons.Outlined.Tune,
                 contentDescription = stringResource(R.string.cd_thread_status_expand),
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(StatusOpenerIconSize),
+                modifier = Modifier.size(StatusOpenerIconSize).offset(y = -contentBottomPadding),
             )
         }
     }
@@ -411,6 +414,7 @@ private fun FooterButton(
     onClick: () -> Unit,
     onBounds: (Rect) -> Unit,
     touchHeight: Dp,
+    contentBottomPadding: Dp,
     note: String? = null,
 ) {
     val pendingDescription = stringResource(R.string.thread_footer_pending)
@@ -423,7 +427,8 @@ private fun FooterButton(
                 .clickable(enabled = enabled, onClickLabel = clickLabel, role = Role.Button, onClick = onClick)
                 .semantics(mergeDescendants = true) {
                     (if (pending) pendingDescription else note)?.let { stateDescription = it }
-                }.alpha(if (pending) PENDING_ALPHA else 1f),
+                }.alpha(if (pending) PENDING_ALPHA else 1f)
+                .padding(bottom = contentBottomPadding),
         horizontalArrangement = Arrangement.spacedBy(FooterChevronGap),
         verticalAlignment = Alignment.Bottom,
     ) {
