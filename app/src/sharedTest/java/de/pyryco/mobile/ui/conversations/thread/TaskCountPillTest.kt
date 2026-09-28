@@ -3,13 +3,18 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -96,6 +101,43 @@ class TaskCountPillTest {
                 isStreaming = false,
             ),
         )
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun figmaVariant_anchorsTaskPillAtTheInputAreasTopRight() {
+        val roster = BackgroundTaskRoster(listOf(BackgroundTask("t1", "toolu_t1", "local_bash", "sleep 300", null, null, null, false)), 0)
+        val attachment = PendingAttachment(1, "content://frame/test", "fixture.pdf", "application/pdf", 1)
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    ThreadScreen(
+                        state =
+                            ThreadUiState(
+                                "c1",
+                                "Reference thread",
+                                isPromoted = true,
+                                hasMessages = true,
+                                items = listOf(newestMessage),
+                                backgroundTasks = roster,
+                                backgroundTaskCount = 2,
+                            ),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        isThinking = true,
+                        attachments = listOf(attachment),
+                    )
+                }
+            }
+        }
+        val bounds = pill("2 tasks running").getUnclippedBoundsInRoot()
+        assertEquals(392f, bounds.right.value, 2f)
+        assertEquals(696f, bounds.top.value, 2f)
+        val editor = composeTestRule.onNode(hasSetTextAction()).getUnclippedBoundsInRoot()
+        val footerActions = composeTestRule.onNodeWithText(string(R.string.thread_footer_actions)).getUnclippedBoundsInRoot()
+        assertTrue("footer actions must clear the editor", editor.bottom <= footerActions.top)
+    }
 
     // The list is laid out from its newest end, so the newest message follows the message area's bottom,
     // which is the composer's top: the band's height moves it.

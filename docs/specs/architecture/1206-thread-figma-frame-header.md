@@ -56,3 +56,9 @@ No new I/O or failure path. Existing connection notices, snackbar paths and keyb
 ## Documentation handoff
 
 No documentation-only acceptance criterion or `Documentation handoff` section was supplied. The later documentation stage owns any update to `docs/knowledge/features/thread-screen.md` about the final frame geometry.
+
+## Revisions
+
+- 2026-09-29: The new `TaskCountPillTest` showed the Figma variant's pill 19 dp above its y=696 anchor. `ComposerAttachmentStrip` reserves 5 dp above each tile for the remove control, and `ThreadComposerFooter` lays out 32 dp touch targets for a 20 dp visible footer. The frame now reports their visible band heights while placing those existing controls into the adjacent gaps; the controls and their callbacks remain unchanged. This closes the open task-anchor question without restyling either owned component.
+- 2026-09-29: The back and overflow SVG paths use `onSurface` and `primary`, respectively, matching their static dark source colors. This closes the glyph-tint question.
+- 2026-09-29: Full-emulator capture revealed a flat thread canvas while the live `16:8` root has a radial `primaryContainer` glow under its 30% scrim. `ThreadColors` now exposes an optional glow for static dark; `ThreadScreen` draws the Figma's radial background behind a transparent Scaffold in that mode. Other theme modes retain their existing flat canvas.

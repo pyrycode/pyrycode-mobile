@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -7,8 +10,11 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -69,6 +75,34 @@ class ThreadFrameTest {
         }
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun referenceFrame_placesHeaderAndMessageRegionAtFigmaAnchors() {
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    ThreadScreen(
+                        state = state("pyrycode discord integration"),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
+            }
+        }
+
+        val title = composeTestRule.onNodeWithText("pyrycode discord integration").getUnclippedBoundsInRoot()
+        val back = composeTestRule.onNodeWithContentDescription(string(R.string.cd_back)).getUnclippedBoundsInRoot()
+        val overflow = composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).getUnclippedBoundsInRoot()
+        assertEquals(56f, title.left.value, 1f)
+        assertEquals(8f, back.left.value, 1f)
+        assertEquals(16f, back.top.value, 1f)
+        assertEquals(404f, overflow.right.value, 1f)
+        val messages = composeTestRule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
+        assertEquals(97f, messages.top.value, 2f)
+    }
+
     // AC#1: the title truncates inside its own slot. Both controls keep their full width and their
     // descriptions, and neither is overlapped by the title — asserted on unclipped bounds, which is
     // where an over-wide title would actually show up.
@@ -110,6 +144,7 @@ class ThreadFrameTest {
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
     }
 
     // AC#3: text present wins over the in-flight turn, so the tap that queues a message while the

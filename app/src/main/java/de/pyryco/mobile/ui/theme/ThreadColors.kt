@@ -13,6 +13,7 @@ internal data class ThreadColors(
     val background: Color,
     val surface: Color,
     val headerRule: Color,
+    val glow: Color?,
 )
 
 internal val LocalThreadColors =

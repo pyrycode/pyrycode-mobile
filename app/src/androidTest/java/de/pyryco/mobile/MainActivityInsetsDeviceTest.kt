@@ -317,8 +317,10 @@ class MainActivityInsetsDeviceTest {
                 if (index == 0) field.performTextInput("Keyboard draft")
                 rule.waitForIdle()
                 capture("$prefix-open")
-                assertEquals("header stays stationary", headerBefore.top, screenBounds(header).top, 1f)
-                assertTrue("header below status bar", screenBounds(header).top >= bars.top)
+                val headerTop = screenBounds(header).top
+                assertEquals("header stays stationary", headerBefore.top, headerTop, 1f)
+                val openBars = insets().getInsets(WindowInsetsCompat.Type.systemBars())
+                assertTrue("header top $headerTop below status bar ${openBars.top}", headerTop >= openBars.top)
                 val ime = insets().getInsets(WindowInsetsCompat.Type.ime()).bottom
                 assertTrue("actual nonzero keyboard inset", ime > 0)
                 assertEquals("one keyboard reservation with normal footer gap", footerGap, height - ime - screenBounds(footer).bottom, 1f)
