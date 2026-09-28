@@ -5,12 +5,23 @@ import android.graphics.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -24,6 +35,111 @@ import kotlin.math.roundToInt
 @RunWith(AndroidJUnit4::class)
 class OptionsOverlayColoursTest {
     @get:Rule val rule = createComposeRule()
+
+    @Test fun lightMenuKeepsReadableIdleRows() = assertReadableLightMenu(dynamic = false)
+
+    @Test fun dynamicLightMenuKeepsReadableIdleRows() = assertReadableLightMenu(dynamic = true)
+
+    private fun assertReadableLightMenu(dynamic: Boolean) {
+        var label = Color.Unspecified
+        var detail = Color.Unspecified
+        var idle = Color.Unspecified
+        var view: android.view.View? = null
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = false, dynamicColor = dynamic) {
+                val colors = MaterialTheme.colorScheme
+                label = colors.primary
+                detail = colors.onSurfaceVariant
+                idle = colors.surfaceContainerLowest
+                view = LocalView.current
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    OptionsOverlay(
+                        options = listOf(OptionsOverlayOption("idle", "Idle", detail = "Detail")),
+                        selectedValue = "none",
+                        notListed = 0,
+                        anchor = Rect(40f, 300f, 100f, 340f),
+                        onSelect = {},
+                        onDismiss = {},
+                    )
+                }
+            }
+        }
+        val bitmap =
+            rule.runOnIdle {
+                val root = checkNotNull(view)
+                Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
+            }
+        val bounds = rule.onNodeWithText("Idle").fetchSemanticsNode().boundsInRoot
+        val actualIdle = Color(bitmap.getPixel(bounds.left.roundToInt() + 6, bounds.center.y.roundToInt()))
+        rule.runOnIdle {
+            assertEquals(idle.toArgb(), actualIdle.toArgb())
+            assertEquals(true, contrast(label, idle) >= 4.5)
+            assertEquals(true, contrast(detail, idle) >= 4.5)
+        }
+    }
+
+    private fun contrast(
+        foreground: Color,
+        background: Color,
+    ): Double {
+        val a = android.graphics.Color.luminance(foreground.toArgb()) + 0.05
+        val b = android.graphics.Color.luminance(background.toArgb()) + 0.05
+        return maxOf(a, b) / minOf(a, b)
+    }
+
+    @Test fun compactViewportWithLargeTextCanReachLastOption() {
+        rule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(280.dp, 400.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
+                    PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                        val density = LocalDensity.current
+                        OptionsOverlay(
+                            options =
+                                (1..12).map { index ->
+                                    OptionsOverlayOption(index.toString(), "Option $index", detail = "Description for option $index")
+                                },
+                            selectedValue = "1",
+                            notListed = 0,
+                            anchor =
+                                with(density) {
+                                    Rect(16.dp.toPx(), 300.dp.toPx(), 100.dp.toPx(), 340.dp.toPx())
+                                },
+                            onSelect = {},
+                            onDismiss = {},
+                        )
+                    }
+                }
+            }
+        }
+        rule.onNodeWithText("Option 12").performScrollTo().assertIsDisplayed()
+        val last = rule.onNodeWithText("Option 12").getUnclippedBoundsInRoot()
+        assertEquals(true, last.bottom <= 296.dp)
+        assertEquals(true, last.left >= 8.dp)
+    }
+
+    @Test fun rowsMatchFigmaHeightAndStayAboveAnchor() {
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                val density = LocalDensity.current
+                OptionsOverlay(
+                    options = listOf(OptionsOverlayOption("selected", "Selected"), OptionsOverlayOption("other", "Other")),
+                    selectedValue = "selected",
+                    notListed = 0,
+                    anchor =
+                        with(density) {
+                            Rect(40.dp.toPx(), 300.dp.toPx(), 100.dp.toPx(), 340.dp.toPx())
+                        },
+                    onSelect = {},
+                    onDismiss = {},
+                )
+            }
+        }
+        val selected = rule.onNodeWithText("Selected").getUnclippedBoundsInRoot()
+        val other = rule.onNodeWithText("Other").getUnclippedBoundsInRoot()
+        assertEquals(28.dp, selected.bottom - selected.top)
+        assertEquals(28.dp, other.bottom - other.top)
+        assertEquals(4.dp, 300.dp - other.bottom - 2.dp)
+    }
 
     @Test fun staticDarkMenuUsesBoundFixedAndOnPrimaryRoles() {
         var view: android.view.View? = null
