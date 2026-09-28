@@ -66,3 +66,9 @@ Pending for the documentation stage: update `docs/knowledge/features/mobile-moda
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-28
+
+## Revisions
+
+- 2026-09-28: Pixel comparison resolved the button measurement question: `minimumInteractiveComponentSize` preserves an invisible 48 dp target around the 40 dp surface; a 4 dp local offset places that surface 24 dp above the modal's safe-area bottom. The existing 28 dp vector path matches the exported Figma foreground exactly; its circle uses the current theme roles. Android's real status and navigation bars occupy 24 dp each in the capture, while the Figma render omits them.
+- 2026-09-28: The gate device test's `Espresso.pressBack` selected the unfocused activity root while the dialog held focus. A real device Back key preserves the intended security assertion and passed on the focused rerun.
+- 2026-09-28: Figma `489:1876` has Hover roles. Material's default hover ripple layered a second color over the referenced fill, so the action functions use a controlled hover interaction source and suppress that ripple only while hovered; touch press feedback remains native. The focused pixel test drives HoverInteraction directly because Robolectric does not deliver a synthetic mouse-enter event to the dialog.
