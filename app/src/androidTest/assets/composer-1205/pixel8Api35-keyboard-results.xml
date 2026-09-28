@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="43.901" timestamp="2026-09-28T21:12:05" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.MainActivityInsetsDeviceTest" tests="1" failures="0" errors="0" skipped="0" time="38.721" timestamp="2026-09-28T21:12:05" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="populatedThreadKeyboardAt412By892" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="38.721" />
+  </testsuite>
+</testsuites>

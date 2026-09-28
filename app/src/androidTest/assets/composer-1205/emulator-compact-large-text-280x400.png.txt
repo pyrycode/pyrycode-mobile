@@ -1,0 +1,1 @@
+api=35 sizeDp=280x400 density=1.0 fontScale=1.6 staticDark=true capture=decorView.draw design=533:1957,347:6446,113:3543 date=2026-09-29

@@ -46,3 +46,8 @@ This visual change introduces no new I/O or error path. Send and interrupt callb
 ## Documentation handoff
 
 Pending documentation stage: update `docs/knowledge/features/thread-input-bar.md` sections “The message-input button” and “Previews” with the custom send vector, disabled tint, and verified dark field geometry. Do not edit that shared overview in this builder run.
+
+## Revisions
+
+- 2026-09-29: The Pixel 8 capture at 412 × 892 confirms the existing field geometry and baseline need no adjustment. With field tops aligned, its 372 × 52 field differs from the current Figma render by a mean 1.69 RGB levels per channel out of 255. The full-frame field sits 12dp higher in the capture because this fixture omits the separately owned status and attachment bands.
+- 2026-09-29: The inspected Figma nodes expose Send only. The existing Stop icon remains for the preserved action, and disabled Send uses Material 3's disabled content alpha; neither is claimed as a Figma-matched state.

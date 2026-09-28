@@ -22,7 +22,9 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertHeightIsEqualTo
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -53,11 +55,18 @@ class ThreadInputBarStyleTest {
 
     private var view: View? = null
     private var expectedWell = Color.Unspecified
+    private var sends = 0
+    private var stops = 0
 
     private fun show(
         dark: Boolean,
         wallpaper: Boolean = false,
+        busy: Boolean = false,
+        attachments: Boolean = false,
+        sending: Boolean = false,
     ) {
+        sends = 0
+        stops = 0
         var draft by mutableStateOf("")
         rule.setContent {
             // The app explicitly chooses the opposite of the system in every case.
@@ -83,8 +92,12 @@ class ThreadInputBarStyleTest {
                             ThreadInputBar(
                                 text = draft,
                                 onTextChange = { draft = it },
-                                onSend = {},
+                                onSend = { sends++ },
                                 modifier = Modifier.testTag("composer"),
+                                isBusy = busy,
+                                onInterrupt = { stops++ },
+                                hasAttachments = attachments,
+                                sending = sending,
                             )
                         }
                     }
@@ -154,6 +167,54 @@ class ThreadInputBarStyleTest {
     @Test fun staticDarkOverridesLightSystem() {
         show(dark = true)
         assertEmptyFocusedAndTyped()
+    }
+
+    @Test fun darkSendCircleIsFilledAndDisabledStateIsVisiblyDimmed() {
+        show(dark = true)
+        val send = rule.onNodeWithContentDescription("Send message")
+        send.assertIsNotEnabled()
+        val disabled = sampleSendCircle(send)
+
+        rule.onNode(hasSetTextAction()).performTextInput("My message")
+        send.assertIsEnabled()
+        val active = sampleSendCircle(send)
+        assertTrue("enabled send circle should be visibly brighter", active.red > disabled.red)
+        assertTrue("designed send icon has a filled top-center edge", active.blue > 0.65f)
+    }
+
+    @Test fun busyEmptyStopsButTypedTextSends() {
+        show(dark = true, busy = true)
+        rule.onNodeWithContentDescription("Stop the running turn").assertIsEnabled().performClick()
+        assertEquals(1, stops)
+        rule.onNode(hasSetTextAction()).performTextInput("queued message")
+        rule.onNodeWithContentDescription("Send message").assertIsEnabled().performClick()
+        assertEquals(1, sends)
+        assertEquals(1, stops)
+    }
+
+    @Test fun pendingAttachmentSendsWhileBusy() {
+        show(dark = true, busy = true, attachments = true)
+        rule.onNodeWithContentDescription("Send message").assertIsEnabled().performClick()
+        assertEquals(1, sends)
+        assertEquals(0, stops)
+    }
+
+    @Test fun sendingAttachmentDisablesDuplicateTap() {
+        show(dark = true, busy = true, attachments = true, sending = true)
+        rule.onNodeWithContentDescription("Send message").assertIsNotEnabled()
+    }
+
+    private fun sampleSendCircle(send: SemanticsNodeInteraction): Color {
+        val bounds = send.fetchSemanticsNode().boundsInRoot
+        return rule.runOnIdle {
+            val root = checkNotNull(view)
+            val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+            root.draw(Canvas(bitmap))
+            val color =
+                Color(bitmap.getPixel(bounds.center.x.toInt(), (bounds.top + 11).toInt()))
+            bitmap.recycle()
+            color
+        }
     }
 
     @Test fun staticLightOverridesDarkSystem() {
