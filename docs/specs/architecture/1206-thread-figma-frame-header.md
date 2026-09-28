@@ -1,0 +1,58 @@
+# Thread Figma frame and header (#1206)
+
+## Files read
+
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt` → `ThreadScreen`, `ThreadStatusArea`: Scaffold slots, reverse-layout list, top overlay, composer and task-count pill anchors.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadTopAppBar.kt` → `ThreadTopAppBar`: header geometry, controls, divider and menu anchor.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadTopOverlay.kt` → `ThreadTopOverlay`: right-aligned notices that overlap the message region.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageBubble.kt` → `MessageBubble`: row types already apply their own 20 dp outer gutter, so the list must not gain another inset.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadOverflowMenu.kt` → `ThreadOverflowMenu`: current reachable actions; no workspace action in the overflow menu.
+- `app/src/main/java/de/pyryco/mobile/ui/theme/ThreadColors.kt` and `Theme.kt` → `threadColors`: existing static dark canvas, composer surface and rule roles.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadFrameTest.kt` → `ThreadFrameTest`: header action and long-title regression coverage.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/TaskCountPillTest.kt` → `TaskCountPillTest`: pill position and callback coverage.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadCanvasPaletteTest.kt` → `ThreadCanvasPaletteTest`: canvas pixel checks, including the divider.
+- `app/src/androidTest/java/de/pyryco/mobile/MainActivityInsetsDeviceTest.kt` → `populatedThreadKeyboardAt412By892`, `populatedThreadKeyboardAt360By640`: real IME, scroll and capture fixture.
+- `docs/knowledge/features/thread-screen.md` and `thread-screen-how-it-works-overlays-and-app-bar.md` → thread frame history; #643 already established the current composer and bubble ownership seams.
+- `docs/knowledge/features/development-verification.md` → Compose evidence and real-system-bar capture guidance.
+
+## Design source
+
+**Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8
+
+Inspected on 2026-09-29: `16:8`, `533:1946`, `533:1948`, `533:1956`, `533:1957`, `568:3139`, and `568:3162`. The dark 412 × 892 frame has a 20 dp content gutter, a 61 dp top-bar frame at (20, 24), a thin inset rule at y=68, a message region starting at (20, 97), and an input-area frame at (20, 696). The bar uses M3 titleLarge and theme roles for text and rule; its 24 dp back-arrow and 6 × 24 dp ellipsis are supplied SVG paths. The task pill's right edge is at x=392 and its top is y=696 in the populated, attachment-bearing variant.
+
+## Context
+
+The present header's rule and the transcript's top edge sit above the live design, and Material stock glyphs differ from the Figma vectors. Frame geometry must change without moving the existing message internals, footer treatment, or the reverse-layout list's scroll state. Figma supplies a populated attachment/thinking state; it does not supply an empty, keyboard-open, compact-width, enlarged-text or menu-open reference. Those states use the same responsive frame contract and are verified against clipping and reachability rather than an invented pixel target.
+
+## Design
+
+- Keep `ThreadScreen`'s Scaffold, `topBar`, `bottomBar`, `LazyColumn` state and callbacks. Raise the top bar's geometry to the Figma rule and create the 12 dp message-area separation below the completed bar. Retain the message rows' existing 20 dp gutters. The top overlay remains pinned over the scrolling region and ends at the same x=392 right gutter.
+- In `ThreadTopAppBar`, preserve 48 dp invisible targets while positioning the visible back vector, title and overflow vector at Figma's locations. Use the downloaded Figma vectors as Android vector drawables, tinting through Material theme roles. Keep text truncation inside the middle slot, the menu anchored to its existing `Box`, and the theme's `threadColors.headerRule` with 60% opacity.
+- `ThreadStatusArea` stays in the composer column. Its task pill uses the existing 24 dp band and x=392 right anchor. The baseline y=696 is conditional on the Figma attachment/thinking state; shorter composers naturally rise from the screen bottom. No task-pill styling changes.
+- Keep workspace chrome absent from the frame and overflow. Do not touch Channel Info's separate content or the existing callback/data contracts in this pass.
+
+## State and concurrency model
+
+No new state, flow or job. The existing remembered `LazyListState`, draft binding and `imePadding` in the bottom bar remain responsible for reader position and keyboard lift. Only stable layout parameters and the two visible vector resources change.
+
+## Error handling
+
+No new I/O or failure path. Existing connection notices, snackbar paths and keyboard behavior retain their current owners. Figma asset availability is resolved before implementation by checking both SVG paths locally.
+
+## Testing strategy
+
+- Add failing `ThreadFrameTest` geometry assertions for the bar and message-area relationship at a forced 412 × 892 logical viewport, plus compact width and enlarged text checks. Keep its action and long-title tests.
+- Update `TaskCountPillTest` with the Figma variant's right/top anchor while preserving its interaction test. Update `ThreadCanvasPaletteTest` rule sampling to the live y=68 location.
+- Run scoped Robolectric screen tests, Android lint, debug assembly and Android-test compilation. Run focused real-device `MainActivityInsetsDeviceTest` methods for populated keyboard reopen and frame captures, checking nonzero real bars on the full emulator image for visual evidence. Keep the existing 360 dp keyboard regression.
+- Commit 412 × 892 emulator renders beside the current Figma renders and a labelled scope overlay or difference image under `app/src/androidTest/assets/frame-1206/`; record fixture differences, inspected nodes and capture date in the PR. These captures also serve the visual comparison for empty/populated, compact, enlarged-text, keyboard and open-menu checks where a matching Figma state is missing.
+- No rung-3 scenario: this is a static frame correction without a new operator-to-daemon flow.
+
+## Open questions
+
+- Confirm the exact header glyph tint from the dark node against the project's Material roles while implementing; use the role that reproduces the live render.
+- The Figma task-pill anchor is shown with attachments and a live reading. Confirm the existing composer column reproduces y=696 for that state before changing its placement.
+
+## Documentation handoff
+
+No documentation-only acceptance criterion or `Documentation handoff` section was supplied. The later documentation stage owns any update to `docs/knowledge/features/thread-screen.md` about the final frame geometry.
