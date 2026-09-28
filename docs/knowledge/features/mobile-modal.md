@@ -237,6 +237,13 @@ caller needs initial field focus, place its focus effect inside `content`, in
 the same dialog subcomposition as the field; see
 [CreateFolderDialog's focus contract](create-folder-dialog.md#internal-state).
 
+The [question batch modal's device test](question-batch-modal.md#testing) must positively identify
+the dialog's own focused window before it opens the IME. On the managed API 33 image, it sends
+`CLOSE_SYSTEM_DIALOGS` while waiting for focus, then rechecks and retains that view for keyboard
+inset assertions; unresolved focus loss reports the process-window focus states. The #1235 full UI gate
+ran 78 tests with no failures or skips, including the question modal's 320 × 640 dp keyboard case.
+The external dialog did not recur during that run, so recovery itself remains unobserved there.
+
 [`MobileModalTest`](../../../app/src/androidTest/java/de/pyryco/mobile/ui/components/MobileModalTest.kt)
 uses local editable hosts to cover callback counts, disabled/loading states,
 retained values and focus, live-region semantics, 48 dp button roles/targets,

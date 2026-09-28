@@ -153,7 +153,11 @@ text alone. No ticket currently owns adding it.
   [Shared mobile modal § Focus and verification](mobile-modal.md#focus-and-verification)). The test also
   passes `modifier` through to `QuestionBatchModal`, forwarded into the gate, so
   `DeviceConfigurationOverride.ForcedSize` — which does not by itself constrain a `Dialog`'s own window —
-  can size it.
+  can size it. Before touching the IME, the test waits for that dialog window itself to gain focus,
+  sends `CLOSE_SYSTEM_DIALOGS` when focus is absent, and checks focus again before using the cached
+  view for inset measurements. A timeout reports the process windows' focus states. The managed API 33
+  full UI run for #1235 executed all 78 tests, including this case, with no failures or skips; the
+  intermittent external-dialog recovery path did not occur in that run.
 
 ## Related
 
