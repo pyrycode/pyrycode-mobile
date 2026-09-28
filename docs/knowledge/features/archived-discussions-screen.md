@@ -27,7 +27,7 @@ Manual verification path (post-#715):
 3. Tap the **Channels** tab → "No archived channels" centered empty body; tab header stays visible, count badges unchanged.
 4. Tap back to **Discussions** → row reappears. Tap the trailing restore icon-button (one tap, no long-press) → row animates out, `Snackbar` appears at the bottom reading `Restored Untitled discussion` (or the configured name if non-null), Discussions tab body shows "No archived discussions".
 5. Back-arrow twice → channel list → restored discussion appears under Recent discussions.
-6. Toggle dark mode via Settings → Theme; revisit (kill + relaunch to reseed). Both light + dark variants render.
+6. Relaunch after saving Light or System in Settings and verify the archive remains in the static dark palette. The light variant remains covered by isolated layout tests and previews.
 
 Tab selection survives recomposition / rotation (`MutableStateFlow` in the VM, VM survives configuration change). Leaving the screen lets `WhileSubscribed(5_000L)` keep the VM warm for 5s; popping the back-stack within that grace window restores the previously-selected tab, popping after re-creates the VM with `Discussions` again. Acceptable per the #176 spec — `rememberSaveable` was the alternative and was deliberately not chosen so unit tests can assert tab-selection deterministically.
 

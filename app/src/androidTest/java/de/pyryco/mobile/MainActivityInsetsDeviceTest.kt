@@ -1,7 +1,9 @@
 package de.pyryco.mobile
 
 import android.Manifest
+import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.Settings
@@ -81,6 +83,8 @@ class MainActivityInsetsDeviceTest {
     private lateinit var preferences: AppPreferences
     private lateinit var oldTheme: ThemeMode
     private var oldWallpaper = false
+    private var oldYolo = false
+    private var oldNightMode: String? = null
     private val drafts get() = GlobalContext.get().get<ComposerDraftStore>()
     private var keyboardConversationId: String? = null
     private val output by lazy {
@@ -106,6 +110,7 @@ class MainActivityInsetsDeviceTest {
         runBlocking {
             oldTheme = preferences.themeMode.first()
             oldWallpaper = preferences.useWallpaperColors.first()
+            oldYolo = preferences.defaultYolo.first()
         }
         // Only control the startup snapshot. Demo destinations use their existing fake repository;
         // no synthetic record is saved and no real connection or credential is needed.
@@ -128,8 +133,10 @@ class MainActivityInsetsDeviceTest {
             runBlocking {
                 preferences.setThemeMode(oldTheme)
                 preferences.setUseWallpaperColors(oldWallpaper)
+                preferences.setDefaultYolo(oldYolo)
             }
         }
+        oldNightMode?.let { shell("cmd uimode night $it") }
         if (::originalStore.isInitialized) loadKoinModules(module { single { originalStore } })
         shell("wm size $oldSize")
         shell("wm density $oldDensity")
@@ -140,6 +147,56 @@ class MainActivityInsetsDeviceTest {
     }
 
     @Test fun activityAt412By892() = exercise(412, 892)
+
+    @Test fun savedAppearanceAndAndroidModeCannotChangeStaticDarkPalette() {
+        evidenceFolder = "palette-1238"
+        width = 412
+        height = 892
+        shell("wm density 160")
+        shell("wm size ${width}x$height")
+        oldNightMode = Regex("\\b(auto|yes|no)\\b").find(shell("cmd uimode night"))?.value
+        assertTrue("original night mode must be known before changing it", oldNightMode != null)
+        paired = true
+        runBlocking { preferences.setDefaultYolo(true) }
+        val cases =
+            listOf(
+                Triple("no", ThemeMode.LIGHT, true),
+                Triple("no", ThemeMode.LIGHT, false),
+                Triple("yes", ThemeMode.SYSTEM, false),
+                Triple("no", ThemeMode.SYSTEM, true),
+                Triple("yes", ThemeMode.DARK, true),
+            )
+        cases.forEachIndexed { index, (night, theme, wallpaper) ->
+            scenario?.close()
+            scenario = null
+            shell("cmd uimode night $night")
+            runBlocking {
+                preferences.setThemeMode(theme)
+                preferences.setUseWallpaperColors(wallpaper)
+            }
+            instrumentation.waitForIdleSync()
+            launch()
+            scenario?.onActivity { activity ->
+                val actualNight = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+                val expectedNight = if (night == "yes") Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
+                assertEquals("Android mode applied for case $index", expectedNight, actualNight)
+            }
+            rule.onNodeWithContentDescription("Open settings").assertIsDisplayed()
+            assertEquals(theme, runBlocking { preferences.themeMode.first() })
+            assertEquals(wallpaper, runBlocking { preferences.useWallpaperColors.first() })
+            assertTrue(runBlocking { preferences.defaultYolo.first() })
+            // Sample the shared lower canvas, clear of Figma's decorative glow and fixture-specific rows.
+            val pixel =
+                rule.runOnIdle {
+                    Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).let { image ->
+                        view.draw(Canvas(image))
+                        image.getPixel(400, 800).also { image.recycle() }
+                    }
+                }
+            assertEquals("case $index: static-dark channel-list canvas", 0xFF0B0E11.toInt(), pixel)
+            if (index == 0) capture("light-wallpaper-android-light")
+        }
+    }
 
     @Test fun activityAt360By800() = exercise(360, 800)
 

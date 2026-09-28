@@ -85,9 +85,10 @@ The root is a bare `Surface(shape = FieldCorner /* 6.dp */, color = MaterialThem
 is a `ColorScheme` extension backed by `LocalComposerFieldContainer`.
 `PyrycodeMobileTheme` provides `onPrimaryDark.copy(alpha = 0.41f)` only when
 `darkTheme && !dynamicColor`; otherwise it provides the selected scheme's
-`surfaceContainerHigh`. Resolve this from the effective app theme, not a fresh
-system-theme check in the field: a user-selected Dark or Light mode must win over
-the opposite system setting. Keep the role separate from
+`surfaceContainerHigh`. Resolve this from the `PyrycodeMobileTheme` provider,
+not a fresh system-theme check in the field. The app root now always provides
+the static dark variant; explicit light and wallpaper variants remain in tests
+and previews. Keep the role separate from
 [modal field colours](mobile-modal.md#layout-and-theme), which derive their tint
 from the active palette even with wallpaper colours enabled. Shared Material
 palette and typography tokens retain their values. See the

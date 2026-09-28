@@ -14,7 +14,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -51,7 +50,6 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
-import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
@@ -109,17 +107,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
-            val themeMode by appPreferences.themeMode
-                .collectAsStateWithLifecycle(initialValue = ThemeMode.DARK)
-            val useWallpaperColors by appPreferences.useWallpaperColors
-                .collectAsStateWithLifecycle(initialValue = false)
-            val darkTheme =
-                when (themeMode) {
-                    ThemeMode.SYSTEM -> isSystemInDarkTheme()
-                    ThemeMode.LIGHT -> false
-                    ThemeMode.DARK -> true
-                }
-            PyrycodeMobileTheme(darkTheme = darkTheme, dynamicColor = useWallpaperColors) {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val paired: Boolean? by produceState<Boolean?>(
                         initialValue = null,

@@ -32,11 +32,11 @@ the operator on the thread with `AttachmentNotice.OPEN_FAILED` (see [Load and na
 thread](#load-and-navigate-from-the-thread)). A failed Refresh retains the open document and shows the
 same notice inside the reader; see [Copy and refresh menu](#copy-and-refresh-menu-since-1067).
 
-With app dark mode selected and wallpaper colours off, the full-size reader `Surface` uses
+Under the app root's static dark palette, the full-size reader `Surface` uses
 `#0B0E11` (30% black over `#101418`), including the transparent header's background and blank space
 below short notes or around scrolling content. The existing 1dp rule, inset 20dp, uses `inversePrimary`
-(`#32628D`) at 60% alpha. Static light and wallpaper light/dark retain the `surface` canvas and an
-`outlineVariant` rule at 60%. This is the shared screen-local `ThreadColors` mapping from `PyrycodeMobileTheme`, following
+(`#32628D`) at 60% alpha. Explicit static light and wallpaper light/dark variants in isolated tests retain
+the `surface` canvas and an `outlineVariant` rule at 60%. This is the shared screen-local `ThreadColors` mapping from `PyrycodeMobileTheme`, following
 the app's resolved mode even when it differs from the system; global Material roles stay unchanged.
 See [thread canvas and header](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome)
 and the [palette plan](../../specs/architecture/1162-thread-reader-canvas.md).
