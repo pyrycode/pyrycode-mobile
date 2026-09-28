@@ -154,3 +154,20 @@ on its own rather than reading `conversationAgent`, so holding a question batch 
 passed it as a SHOULD FIX rather than blocking the merge — see [Question batch modal § Title names the
 conversation's agent (#1116)](question-batch-modal.md#title-names-the-conversations-agent-1116). Fold that
 collector onto this file's `conversationAgent` before adding another such lookup.
+
+### Memory search in the current run configuration
+
+`ThreadRunConfig.memorySearch` carries the decoded `SessionSettings.memorySearch` for this conversation's
+current session. The existing `sessionSettings` flow supplies it through `runConfig`; a `null` settings
+reading gives `MemorySearchReport.Unknown`. Opening another conversation creates its own ViewModel and
+settings subscription. On reconnect or host replacement, the repository emits `null` before the new
+read, so the previous report cannot appear as the new host's reading. A session transition refreshes the
+same subscription; `forLiveSession` immediately masks a reading whose nonempty current session ID differs
+from the settings session ID, then accepts the replacement reading when it arrives. This mask matters
+because the conversation row can name the new session before its settings reply arrives.
+
+`Unknown` means unconfirmed, even with no providers; only an explicit aggregate `Absent` confirms no
+installation. The report describes search access, not knowledge capture. No UI renders this field yet;
+the dependent UI must treat daemon display names as inert text. See [Conversation repository](conversation-repository.md)
+for the portable types and [Application payloads](mobile-protocol-v2-wire-layer-application-payloads.md#the-session-settings-read-exchange-590)
+for decode behavior.

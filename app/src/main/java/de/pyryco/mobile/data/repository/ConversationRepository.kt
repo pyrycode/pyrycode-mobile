@@ -1014,6 +1014,8 @@ data class HistoryEntry(
  *   window — do not render a percentage from it.
  * @param capabilities What the session accepts (#1111), or `null` when the reply carried no list — a conn
  *   without `multi_agent`, or a reply that resolved no session. `null` narrows nothing.
+ * @param memorySearch Search access reported for this session, or unknown when omitted or invalid. This
+ *   says nothing about knowledge capture; only explicit aggregate `Absent` confirms no installation.
  */
 data class SessionSettings(
     val sessionId: String,
@@ -1025,7 +1027,30 @@ data class SessionSettings(
     val usedTokens: Long,
     val windowTokens: Long,
     val capabilities: SessionCapabilities? = null,
+    val memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
 )
+
+/** Search access for the selected session's agent and workspace, not knowledge capture. */
+enum class MemorySearchAvailability { Available, Unavailable, Absent, Unknown }
+
+/** A detected provider; installed and enabled are independent of effective availability. */
+data class MemorySearchProvider(
+    val id: String,
+    val displayName: String,
+    val installed: Boolean,
+    val enabled: Boolean,
+    val availability: MemorySearchAvailability,
+)
+
+/** Only an explicit [MemorySearchAvailability.Absent] confirms no installation. */
+data class MemorySearchReport(
+    val availability: MemorySearchAvailability,
+    val providers: List<MemorySearchProvider>,
+) {
+    companion object {
+        val Unknown = MemorySearchReport(MemorySearchAvailability.Unknown, emptyList())
+    }
+}
 
 /**
  * The part of a `session_settings` reply's `capabilities` object this client reads (#1111). The daemon
