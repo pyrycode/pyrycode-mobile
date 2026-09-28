@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -137,6 +138,8 @@ class ThreadViewModel(
     // #686: the phone's one remembered effort level, recalled once per opening by [effortRecall].
     // Defaulted to a store that remembers nothing, so the demo path and existing tests stay inert.
     rememberedEffort: RememberedEffortStore = RememberedEffortStore.None,
+    // #1222: production persists an acknowledged model choice; fake and demo threads stay inert.
+    private val rememberModel: suspend (String) -> Unit = {},
     // #1027: where a markdown attachment's kept file is read before the reader opens.
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
@@ -1921,6 +1924,7 @@ class ThreadViewModel(
         viewModelScope.launch {
             try {
                 repository.setSessionSettings(sessionId, model, effort)
+                if (model != null) rememberModel(model)
                 // #686: an acknowledged effort write is the only thing that sets the remembered level.
                 if (effort != null) effortRecall.remember(effort)
                 // #807: the ack echoes only the input session id and confirms no value, so a settled write
@@ -2240,6 +2244,7 @@ private fun runConfig(
         pendingPermission = pendingPermission,
         appliedEffort = settings?.effectiveEffort ?: EffectiveEffort.Unavailable,
         capabilities = settings?.capabilities,
+        memorySearch = settings?.memorySearch ?: MemorySearchReport.Unknown,
     )
 }
 
@@ -2256,7 +2261,7 @@ private fun ModelMenu.forAgent(agent: ConversationAgent): ModelMenu =
     )
 
 /**
- * Hides a permission mode (#650) and an applied effort (#889) left over from a replaced session. A
+ * Hides a permission mode (#650), applied effort (#889), and memory search report left over from a replaced session. A
  * `session_transition` updates the conversation's current session before the settings re-read lands, so
  * until a reading for [liveSessionId] arrives, the reading on hand describes a session that is gone. An
  * empty [liveSessionId] is the v2 summary's placeholder and proves nothing. The saved model and effort are
@@ -2264,7 +2269,7 @@ private fun ModelMenu.forAgent(agent: ConversationAgent): ModelMenu =
  */
 private fun ThreadRunConfig.forLiveSession(liveSessionId: String): ThreadRunConfig =
     if (liveSessionId.isNotEmpty() && liveSessionId != sessionId) {
-        copy(permissionMode = "", appliedEffort = EffectiveEffort.Unavailable)
+        copy(permissionMode = "", appliedEffort = EffectiveEffort.Unavailable, memorySearch = MemorySearchReport.Unknown)
     } else {
         this
     }

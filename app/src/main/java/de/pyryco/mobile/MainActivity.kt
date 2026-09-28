@@ -14,7 +14,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -51,7 +50,6 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
-import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
@@ -87,11 +85,8 @@ import de.pyryco.mobile.ui.settings.AboutScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
-import de.pyryco.mobile.ui.settings.DEBUG_BUNDLE_FILE_NAME
-import de.pyryco.mobile.ui.settings.DEBUG_BUNDLE_MEDIA_TYPE
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
-import de.pyryco.mobile.ui.settings.documentArchiveDestination
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -109,17 +104,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
-            val themeMode by appPreferences.themeMode
-                .collectAsStateWithLifecycle(initialValue = ThemeMode.DARK)
-            val useWallpaperColors by appPreferences.useWallpaperColors
-                .collectAsStateWithLifecycle(initialValue = false)
-            val darkTheme =
-                when (themeMode) {
-                    ThemeMode.SYSTEM -> isSystemInDarkTheme()
-                    ThemeMode.LIGHT -> false
-                    ThemeMode.DARK -> true
-                }
-            PyrycodeMobileTheme(darkTheme = darkTheme, dynamicColor = useWallpaperColors) {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val paired: Boolean? by produceState<Boolean?>(
                         initialValue = null,
@@ -595,126 +580,22 @@ internal fun PyryNavHost(
                 )
             }
         }
-        // Deliberately not wrapped in HostDestination: that guard returns an unknown host to the
-        // channel list, and this destination has to stay open for one instead — Settings is where an
-        // unpaired or newly-unpaired phone goes to pair (#749).
+        // Keep the optional route for existing entry points; the modal itself has no host content.
         composable(
             route = Routes.SETTINGS,
             arguments = Routes.settingsArguments(),
-        ) { backStackEntry ->
-            // Archive inherits this destination's own captured owner (#715), read back from the
-            // route rather than from selection, so the archive opened is the one this screen's
-            // count describes. A destination owning no host passes null, which draws the row inert
-            // rather than offering a tap that could only be rejected — and keeps a blank id, which
-            // matches no destination, out of `Routes.archive`.
-            val settingsOwner = Routes.settingsOwner(backStackEntry.arguments)
+        ) {
             val vm = koinViewModel<SettingsViewModel>()
-            val connection by vm.connection.collectAsStateWithLifecycle()
-            val themeMode by vm.themeMode.collectAsStateWithLifecycle()
-            val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
-            val archivedDiscussionCount by vm.archivedDiscussionCount.collectAsStateWithLifecycle()
-            val defaultModel by vm.defaultModel.collectAsStateWithLifecycle()
-            val defaultEffort by vm.defaultEffort.collectAsStateWithLifecycle()
-            val defaultYolo by vm.defaultYolo.collectAsStateWithLifecycle()
             val pushNotifications by vm.pushNotifications.collectAsStateWithLifecycle()
-            val defaultWorkspace by vm.defaultWorkspace.collectAsStateWithLifecycle()
-            // Resolved against this destination's own host's conversations (#723); the row renders
-            // the two through the shared display rule, and the path above stays the stored one.
-            val defaultWorkspaceLabel by vm.defaultWorkspaceLabel.collectAsStateWithLifecycle()
-            // One value drives both the picker's repository and whether it is on screen at all
-            // (#714), the way the flat list already drives its own picker: the sheet cannot be
-            // visible without a host bound, so it can never fall back to the compatibility
-            // repository and show — or create a folder on — whichever host was selected last.
-            val workspacePickerOwner by vm.workspacePickerServerId.collectAsStateWithLifecycle()
-            // The editor this destination opens on its own host (#751), driven by the same machine
-            // the channel list drives — the view model holds its own instance of it, not a shared one.
-            val hostEditor by vm.hostEditor.collectAsStateWithLifecycle()
-            // The Log data download (#683). The picker is a document-creation contract rather than a
-            // path: the operator names the destination, the app never builds one, and the suggested
-            // name and media type are fixed constants no daemon field can influence.
-            val logData by vm.logDataDownload.collectAsStateWithLifecycle()
-            val resolver = LocalContext.current.contentResolver
             val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
-            val archiveLauncher =
-                rememberLauncherForActivityResult(
-                    ActivityResultContracts.CreateDocument(DEBUG_BUNDLE_MEDIA_TYPE),
-                ) { uri ->
-                    // A null Uri is a cancelled picker, which the controller reports without
-                    // touching the archive it is still holding for the retry.
-                    vm.onLogArchiveDestination(uri?.let { documentArchiveDestination(resolver, it) })
-                }
-            HostWorkspaceRepository(workspacePickerOwner, destinations) {
-                SettingsScreen(
-                    connection = connection,
-                    themeMode = themeMode,
-                    useWallpaperColors = useWallpaperColors,
-                    archivedDiscussionCount = archivedDiscussionCount,
-                    defaultModel = defaultModel,
-                    defaultEffort = defaultEffort,
-                    defaultYolo = defaultYolo,
-                    pushNotifications = pushNotifications,
-                    defaultWorkspace = defaultWorkspace,
-                    defaultWorkspaceLabel = defaultWorkspaceLabel,
-                    // Read off the picker's own target, as the flat channel screen reads off its.
-                    workspacePickerVisible = workspacePickerOwner != null,
-                    onSelectTheme = vm::onSelectTheme,
-                    onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
-                    onSelectDefaultModel = vm::onSelectDefaultModel,
-                    onSelectDefaultEffort = vm::onSelectDefaultEffort,
-                    onToggleDefaultYolo = vm::onToggleDefaultYolo,
-                    onTogglePushNotifications = { enabled ->
-                        vm.onTogglePushNotifications(enabled)
-                        if (enabled) requestNotifications()
-                    },
-                    onDefaultWorkspaceTapped = vm::onDefaultWorkspaceTapped,
-                    onSelectDefaultWorkspace = vm::onSelectDefaultWorkspace,
-                    onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
-                    // Host-to-host is lateral movement between two instances of one destination, not
-                    // descent, so the hop replaces this entry instead of stacking on it (#750): Back
-                    // from any host's Settings returns to the list it was opened from, and hopping
-                    // between two hosts cannot grow the stack a tap at a time. Returning to the host
-                    // left behind costs one tap on a row that is still on screen.
-                    //
-                    // Not launchSingleTop: that reuses this NavBackStackEntry, so the ViewModel — and
-                    // the owner it captured at creation — would survive while the arguments changed
-                    // underneath it. popUpTo-inclusive destroys the entry, which is what makes the new
-                    // capture real.
-                    onOpenHost = { serverId ->
-                        navController.navigate(Routes.settings(serverId)) {
-                            popUpTo(Routes.SETTINGS) { inclusive = true }
-                        }
-                    },
-                    hostEditor = hostEditor,
-                    // The owner's row is the only caller, and the view model opens on the id this
-                    // destination captured — never on a row's own id and never on selection (#751).
-                    // Nothing here reacts to the removal that follows a confirmation: the host list
-                    // re-emits without it, this destination stays put and falls back to the copy #750
-                    // already ships for an owner that is no longer paired.
-                    onEditHost = vm::openOwnerHostEditor,
-                    onEditHostNameSubmitted = vm::submitHostName,
-                    onHostUnpairRequested = vm::requestHostUnpair,
-                    onHostUnpairConfirmed = vm::confirmHostUnpair,
-                    onHostUnpairDeclined = vm::declineHostUnpair,
-                    onEditHostDismissed = vm::dismissHostEditor,
-                    // The same destination the channel list's own pairing entry opens (#738), so an
-                    // unpaired phone has a working way out of this screen's no-host state.
-                    onPairServer = { navController.navigate(Routes.SCANNER) },
-                    onBack = { navController.popBackStack() },
-                    onOpenArchivedDiscussions =
-                        settingsOwner.takeIf { it.isNotEmpty() }?.let { owner ->
-                            { navController.navigate(Routes.archive(owner)) }
-                        },
-                    // Null for a destination owning no host, exactly as the Archive row above is
-                    // (#715): there is no host to ask, so the row offers no tap rather than one
-                    // the view model could only reject. The view model keeps its own guard anyway.
-                    onOpenLogData = settingsOwner.takeIf { it.isNotEmpty() }?.let { { vm.openLogData() } },
-                    logData = logData,
-                    onLogDataRequested = vm::requestLogArchive,
-                    onLogDataSaveRequested = { archiveLauncher.launch(DEBUG_BUNDLE_FILE_NAME) },
-                    onLogDataDismissed = vm::dismissLogData,
-                    onOpenAbout = { navController.navigate(Routes.ABOUT) },
-                )
-            }
+            SettingsScreen(
+                pushNotifications = pushNotifications,
+                onTogglePushNotifications = { enabled ->
+                    vm.onTogglePushNotifications(enabled)
+                    if (enabled) requestNotifications()
+                },
+                onDismissRequest = { navController.popBackStack() },
+            )
         }
         // Wrapped in HostDestination, unlike Settings and like the thread (#715): returning an
         // unknown or newly-unpaired host to the channel list is exactly what keeps one host's

@@ -21,6 +21,12 @@ Two computed properties resolve what each button shows:
 
 Every daemon-authored string reaching `ThreadRunConfig` (`displayName`, the saved-value fallback) is passed through an internal `String.inert()` in `ThreadViewModel.kt` before it lands — dropping `Char.isISOControl()` characters and bounding length — because `ModelMenuRow` / `SessionSettings` text crosses the subprocess trust boundary unsanitized. The write argument (`ThreadModelChoice.value` / `ThreadEffortChoice.value`) skips that treatment and stays byte-identical, since it is sent back, never rendered. See [Options overlay § Trust boundary](options-overlay.md#trust-boundary) for the overlay's own floor on the same data. `inert()` was made `internal` (from file-private) by #650 so `permissionModeLabel` in this file can reuse it for an unrecognised `permissionMode` value.
 
+### Remembered model choice (#1222)
+
+`ThreadViewModel.onModelSelected` forwards the tapped published value to the current session. In `sendSessionSettings`, a successful `setSessionSettings` response triggers the app-wide [raw remembered-model write](app-preferences.md) before the passive refresh. Real-host threads receive that writer from `AppModule`; the demo path leaves it inert. A same-value tap, read-only thread, passive settings reading or effort-only write does not update the remembered model. Rejection, connection failure or cancellation before acknowledgement also leaves the previous value intact. A local DataStore IO failure is logged by the preference setter; it does not turn an acknowledged session change into a daemon error.
+
+This preference is for a future chat's initial model choice. Opening an existing conversation still uses that conversation's daemon session settings; it never recalls or applies the remembered model. Keep this distinct from [remembered effort recall](thread-composer-footer-effort-recall.md), which can issue a write on thread opening.
+
 ### Permission mode (#650)
 
 The permission button reads `ThreadRunConfig.permissionMode: String` — the **latest confirmed reading's** `SessionSettings.permissionMode`, verbatim, `""` meaning no current-child confirmation (no reading yet, a dormant session, or a live child that has not confirmed). There is no fallback to stored settings, `yolo`, or `session_facts`: a non-empty `session_id` with `yolo=false` still hides the button when `permissionMode` is `""`. Unlike model/effort there is **no optimistic value** — `pendingPermission: String?` only marks a write's request-or-settle as outstanding (drives the pending dim + `stateDescription`, and blocks a second write); the label itself never reads it.
@@ -252,7 +258,7 @@ Two `@Preview`s in `ThreadComposerFooter.kt` — `ThreadComposerFooterDarkPrevie
 - [Thread screen — the list, chip, empty state and status row](thread-screen-how-it-works-list-and-status-row.md#status-row-wiring-post-145) — the historical `bottomBar` wiring narrative through [#145](../codebase/145.md)–[#807](../codebase/807.md), before this ticket's replacement.
 - [Thread input bar](thread-input-bar.md) — the composer this footer stacks below, inside the same `bottomBar` column.
 - [Thread overflow menu](thread-overflow-menu.md) — owns the Reset session item the Actions menu's own Reset row dispatches through, and the `mutationsSupported` gate both share.
-- [Shared mobile modal § Callers](mobile-modal.md#callers) — `BackgroundTaskPanel` (#678), the read-only panel the Actions menu's background-tasks row opens.
+- [Shared mobile modal § Callers](mobile-modal-callers.md#callers) — `BackgroundTaskPanel` (#678), the read-only panel the Actions menu's background-tasks row opens.
 - [Thread composer footer — testing](thread-composer-footer-testing.md) — the full test-case list for every control, split out to keep this document under the size cap.
 - [Thread composer footer — Actions menu](thread-composer-footer-actions-menu.md) — `ComposerAction`, the live background-task count, the absence proof (including #1111's `slashCommands` capability rule) and the dispatch/send path, split out to keep this document under the size cap.
 - [Thread composer footer — remembered effort recall](thread-composer-footer-effort-recall.md) — `EffortRecall`'s once-per-opening decision, cancel, remember-only-successes and isolation rules, split out to keep this document under the size cap.

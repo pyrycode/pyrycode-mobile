@@ -8,6 +8,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -24,9 +25,11 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -38,6 +41,7 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -84,12 +88,15 @@ class EditHostModalTest {
         serverIdentity: String = identity,
         relayAddress: String = relay,
         small: Boolean = false,
+        fontScale: Float = 1f,
     ) {
         rule.setContent {
             PyrycodeMobileTheme {
                 if (small) {
                     DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(smallSize)) {
-                        Modal(serverIdentity, relayAddress, Modifier.size(smallSize))
+                        DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
+                            Modal(serverIdentity, relayAddress, Modifier.size(smallSize))
+                        }
                     }
                 } else {
                     Modal(serverIdentity, relayAddress)
@@ -139,6 +146,15 @@ class EditHostModalTest {
         height: Dp,
         what: String,
     ) = assertTrue("$what is $height tall, so it wrapped instead of truncating", height <= singleLineCeiling)
+
+    private fun assertNoTextOverflow(text: String) {
+        val layouts = mutableListOf<TextLayoutResult>()
+        rule
+            .onNodeWithText(text, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val layout = layouts.single()
+        assertFalse("$text is clipped (lines=${layout.lineCount}, size=${layout.size})", layout.hasVisualOverflow)
+    }
 
     @Test
     fun rendersTheFrameWithInertIdentityRowsAndAPrefilledName() {
@@ -309,5 +325,31 @@ class EditHostModalTest {
             .assertIsDisplayed()
             .assertWidthIsAtLeast(48.dp)
             .assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun enlargedTextAtCompactWidthKeepsLabelsValuesAndActionsReachable() {
+        show(serverIdentity = oversizedIdentity, relayAddress = oversizedRelay, small = true, fontScale = 1.5f)
+
+        listOf(
+            string(R.string.edit_host_server_identity_label) to oversizedIdentity.take(MAX_WORKSPACE_LABEL_CHARS),
+            string(R.string.edit_host_relay_address_label) to oversizedRelay.take(MAX_WORKSPACE_LABEL_CHARS),
+        ).forEach { (label, value) ->
+            val labelBounds = rule.onNodeWithText(label, useUnmergedTree = true).performScrollTo().getUnclippedBoundsInRoot()
+            val valueBounds = valueNode(value).getUnclippedBoundsInRoot()
+            assertNoTextOverflow(label)
+            assertTrue("$label overlaps its value", labelBounds.right <= valueBounds.left)
+            assertWithin(valueBounds.right, value)
+            val layouts = mutableListOf<TextLayoutResult>()
+            valueNode(value).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertEquals(1, layouts.single().lineCount)
+            assertTrue("$label value did not ellipsize", layouts.single().isLineEllipsized(0))
+        }
+        assertNoTextOverflow(string(R.string.edit_host_title))
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText(string(R.string.edit_host_unpair)).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Cancel").assertIsDisplayed()
+        rule.onNodeWithText("OK").assertIsDisplayed().performClick()
+        rule.runOnIdle { assertEquals(listOf(hostName), submitted) }
     }
 }

@@ -283,7 +283,7 @@ panel — the footer Close button, the close glyph, or Back, all routed through 
 `ThreadUiState` from two defaulted `ThreadViewModel` constructor lambdas bound in `AppModule` to the open
 host's `RelayRepositoryCoordinator.observeBackgroundTasks` / `observeLiveBackgroundTaskCount` — the same
 per-conversation binding shape `questionBatch` uses — and default to `null` / `0` on the demo destination.
-See [Shared mobile modal § Callers](mobile-modal.md#callers) for the panel's own content and trust-boundary
+See [Shared mobile modal § Callers](mobile-modal-callers.md#callers) for the panel's own content and trust-boundary
 handling.
 
 ### `fun retry()` — non-suspend, VM owns the launch
@@ -318,11 +318,11 @@ val connectionState: StateFlow<ConnectionState> =
 - **Rule** — a `HorizontalDivider` closing the bar, **inset 20dp on both sides** (not full-width — the plan's design-source prose said "full-width rule", but the Figma frame has the rule at the same `x=20 w=372` as the content row, and the shipped code and `ChannelListTopBar` both draw it inset; don't repeat "full-width" elsewhere). The existing 1dp thickness and geometry are retained. Colour comes from `threadColors.headerRule` at 60% alpha: `inversePrimary` (`#32628D`) in static dark, and the existing `outlineVariant` in static light and wallpaper light/dark.
 - **Touch-slack derivation.** Back and overflow keep 48dp `IconButton` touch targets around the design's 24dp glyphs; the bar's own paddings are the design's offsets **less the touch slack** `(48dp − 24dp) / 2 = 12dp`, the identical derivation `ChannelListTopBar` uses for the list's own bar, so both bars land their glyphs on the same 20dp gutter. The constants (`BarGlyphSize`, `BarTouchSize`, `BarGutter`, `BarTopGap`, `BarRuleGap`, `BarBottomGap`, `BAR_RULE_ALPHA`) are file-private here exactly as `ChannelListTopBar`'s are file-private there — deliberately not shared between the two files.
 
-With app dark mode selected and wallpaper colours off, the thread canvas is `#0B0E11`
+Under the app root's static dark palette, the thread canvas is `#0B0E11`
 (30% black scrim over `#101418`). `ThreadScreen` uses `threadColors.background` for its `Scaffold`
 and `threadColors.surface` for the composer surround, covering the transparent header and blank
-space in both empty and populated threads. Static light and wallpaper light/dark retain the scheme's
-`background` for the Scaffold and `surface` for the composer surround.
+space in both empty and populated threads. Explicit static light and wallpaper light/dark variants in isolated tests retain
+the scheme's `background` for the Scaffold and `surface` for the composer surround.
 
 `PyrycodeMobileTheme` provides the immutable `ThreadColors` palette from the resolved app mode and
 wallpaper setting, also used by the [markdown reader](markdown-reader-screen.md#what-it-does).

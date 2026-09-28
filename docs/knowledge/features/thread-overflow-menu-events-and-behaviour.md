@@ -54,7 +54,7 @@ Renders one M3 `DropdownMenu` containing the five common `DropdownMenuItem`s, wr
 | 4 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_change_workspace`| Change workspace…  | `onEvent(ThreadEvent.ChangeWorkspace)`                     |
 | 5 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_archive`         | Archive            | `onEvent(ThreadEvent.Archive)`                             |
 | 6 (always)        | —                   | `R.string.thread_overflow_channel_info`    | Channel info       | `onEvent(ThreadEvent.ChannelInfo)`                         |
-| 7 (channel)       | `isPromoted`        | `R.string.thread_overflow_install_memory_plugin` | Install memory plugin | `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (no event)    |
+| 7 (channel)       | `isPromoted && memorySearch.shouldOfferMemoryInstall()` | `R.string.thread_overflow_install_memory_plugin` | Install memory plugin | `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (no event)    |
 
 [#382](../codebase/382.md) had added an eighth, leading, unconditional **Show the literal screen** item, purely navigating via `onShowLiteralScreen()`. [#883](../../specs/architecture/883-retire-literal-screen.md) removed it along with the server-side render path it opened; the table above reflects the current, post-#883 order.
 
@@ -66,12 +66,12 @@ is not a reset prerequisite.
 With mutations supported, the final orders are:
 
 - **Discussion:** Save as channel… → Reset session → Rename → Change workspace… → Archive → Channel info.
-- **Channel:** Reset session → Rename → Change workspace… → Archive → Channel info → Install memory plugin.
+- **Channel with confirmed absent memory search:** Reset session → Rename → Change workspace… → Archive → Channel info → Install memory plugin. Other reports stop at Channel info.
 
 When `mutationsSupported == false`, the four mutation items are hidden; the other
 items retain their order.
 
-The two context-aware items render as two `if` blocks around the five common items — `if (!isPromoted) { ... }` prepended; `if (isPromoted) { ... }` appended. A `when (isPromoted)` over the entire menu body was considered and rejected — it would either duplicate the five common items in both branches or collapse to the same `if` pair around two extra items, and the `if`-pair shape directly expresses the AC wording ([per-ticket rationale](../codebase/204.md#patterns-established)).
+The two context-aware items render as two `if` blocks around the five common items — `if (!isPromoted) { ... }` prepended; `if (isPromoted && memorySearch.shouldOfferMemoryInstall()) { ... }` appended. A `when (isPromoted)` over the entire menu body was considered and rejected — it would either duplicate the five common items in both branches or collapse to the same `if` pair around two extra items, and the `if`-pair shape directly expresses the AC wording ([per-ticket rationale](../codebase/204.md#patterns-established)).
 
 **`save_as_channel_action` is reused, not duplicated** ([#204](../codebase/204.md)). The same `strings.xml:11` key serves [`DiscussionListScreen`](discussion-list-screen.md)'s long-press promote menu ([#25](../codebase/25.md)) and this menu's first item — same English copy, same semantic action, one localization entry.
 

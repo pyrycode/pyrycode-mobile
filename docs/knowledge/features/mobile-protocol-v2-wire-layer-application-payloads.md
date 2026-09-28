@@ -125,7 +125,7 @@ reply, `conversationId`, and decoded `text` are never logged), not this zero-log
   silently-defaulted one, and each zero (`permission_mode: ""` especially) is a *read* answer, not a
   manufactured one. `used_tokens`/`window_tokens` decode as `Long` (the pyrycode#720 64-bit-Go-`int` width
   trap, same posture as `HistoryEntry.id`). [#1111](https://github.com/pyrycode/pyrycode-mobile/issues/1111)
-  added a ninth key, `capabilities`, as `val capabilities: SessionCapabilitiesDto? = null` directly on the
+  added `capabilities` as `val capabilities: SessionCapabilitiesDto? = null` directly on the
   same DTO — unlike `effective_effort`, it needs no manual presence read, because the wire omits the whole
   object rather than punning an omission into a defaulted scalar. `SessionCapabilitiesDto` in turn requires
   its own `effort_levels` and `permission_modes` arrays (the daemon always sends both when it sends the
@@ -134,7 +134,17 @@ reply, `conversationId`, and decoded `text` are never logged), not this zero-log
   structural step as the seven originals. See [Conversation repository](conversation-repository.md) for the
   domain `SessionCapabilities` type and [Thread composer footer § Sourcing — Permission mode](thread-composer-footer.md#permission-mode-650)
   for what reads it.
-- **The reply is decoded in two steps, and the order is load-bearing — the reason it is not one DTO.**
+- **`memory_search` is an optional, independently decoded report.** The DTO holds its raw `JsonElement`;
+  `toSessionSettings()` validates it separately after the required settings. Omission (including an older
+  daemon), `null`, malformed or incomplete content, and future availability values produce
+  `MemorySearchReport.Unknown` without discarding the model, effort, token counts or other optional
+  readings. A valid `unknown` report with no providers is still unknown; only an explicit valid aggregate
+  `absent` confirms no installation. Provider `installed` and `enabled` remain separate from availability,
+  so an installed but disabled provider is not presented as usable. The report describes search access,
+  never knowledge capture. See the [daemon protocol](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md)
+  § `session_settings` → `memory_search` for the wire contract and [Conversation repository](conversation-repository.md)
+  for the portable reading.
+- **The required settings and effective effort decode in two ordered steps — the reason they are not one DTO.**
   `MobileJson`'s `explicitNulls = false` means a `String?`-with-`null`-default field cannot tell an omitted
   key from an explicit `null` apart; both decode to the same Kotlin `null`. That is exactly the collapse
   [`WorkspaceUpdatedPayloadDto`](#workspace-label-pushes-721-a-new-dto-and-conversation_updateds-second-producer)

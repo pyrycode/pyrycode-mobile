@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.threadColors
 
@@ -72,6 +73,7 @@ fun ThreadTopAppBar(
     isPromoted: Boolean,
     modifier: Modifier = Modifier,
     mutationsSupported: Boolean = true,
+    memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
@@ -116,6 +118,7 @@ fun ThreadTopAppBar(
                     expanded = overflowExpanded,
                     isPromoted = isPromoted,
                     mutationsSupported = mutationsSupported,
+                    memorySearch = memorySearch,
                     onDismiss = onOverflowDismiss,
                     onEvent = onOverflowEvent,
                 )

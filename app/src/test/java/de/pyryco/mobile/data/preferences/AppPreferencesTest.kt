@@ -192,6 +192,21 @@ class AppPreferencesTest {
         }
 
     @Test
+    fun notificationsEnabled_survivesDataStoreRecreation() =
+        runBlocking {
+            prefs.setNotificationsEnabled(false)
+            scope.coroutineContext[Job]?.cancelAndJoin()
+            scope = CoroutineScope(Dispatchers.IO + Job())
+            dataStore =
+                PreferenceDataStoreFactory.create(
+                    scope = scope,
+                    produceFile = { tmp.root.resolve("app_prefs.preferences_pb") },
+                )
+            prefs = AppPreferences(dataStore)
+            assertEquals(false, prefs.notificationsEnabled.first())
+        }
+
+    @Test
     fun notificationPermissionAsked_defaultsToFalseAndStaysSet() =
         runBlocking {
             assertEquals(false, prefs.notificationPermissionAsked.first())
@@ -311,6 +326,40 @@ class AppPreferencesTest {
             val scope2 = CoroutineScope(Dispatchers.IO + job2)
             val store2 = PreferenceDataStoreFactory.create(scope = scope2, produceFile = { file })
             assertEquals("max", AppPreferences(store2).rememberedEffort.first())
+            scope2.cancel()
+        }
+
+    @Test
+    fun rememberedModel_isAbsentAndIndependentOfSettingsDefault() =
+        runBlocking {
+            assertNull(prefs.rememberedModel.first())
+            prefs.setDefaultModel(Model.HAIKU_4_5)
+            assertNull(prefs.rememberedModel.first())
+
+            assertTrue(prefs.setRememberedModel("published-model-outside-enum").isSuccess)
+            assertEquals("published-model-outside-enum", prefs.rememberedModel.first())
+            assertEquals(Model.HAIKU_4_5, prefs.defaultModel.first())
+            assertTrue("the model value is never logged", synchronized(logs) { logs.none { "published-model-outside-enum" in it } })
+        }
+
+    @Test
+    fun rememberedModel_survivesProcessDeathVerbatim() =
+        runBlocking {
+            val file = tmp.newFile("remembered_model_persist.preferences_pb")
+            val job1 = Job()
+            val scope1 = CoroutineScope(Dispatchers.IO + job1)
+            val value = "claude-published-model[1m]"
+            assertTrue(
+                AppPreferences(PreferenceDataStoreFactory.create(scope = scope1, produceFile = { file }))
+                    .setRememberedModel(value)
+                    .isSuccess,
+            )
+            scope1.cancel()
+            job1.join()
+
+            val scope2 = CoroutineScope(Dispatchers.IO + Job())
+            val reopened = AppPreferences(PreferenceDataStoreFactory.create(scope = scope2, produceFile = { file }))
+            assertEquals(value, reopened.rememberedModel.first())
             scope2.cancel()
         }
 }

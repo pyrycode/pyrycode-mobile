@@ -89,7 +89,7 @@ is a KDoc obligation on the caller rather than a compiler-checked one (flagged a
   This clamp is a plain `take` and can still split a UTF-16 surrogate pair in an operator-*typed*
   name at the 128-char boundary — #851 fixed the daemon-written seed/round-trip clamps in
   `EditHostModal` and `workspaceDisplayName` but left this one out of scope; see
-  [mobile modal § Callers](mobile-modal.md#callers) for the fuller account.
+  [mobile modal § Callers](mobile-modal-callers.md#callers) for the fuller account.
 - `requestUnpair()` / `declineUnpair()` arm and disarm the confirmation without writing. Both — and
   `confirmUnpair()` itself — carry the same `if (target.saving) return` guard `submitName` uses: the
   shell disables its OK while loading but leaves Cancel and the content live, so a decline or a second
@@ -139,7 +139,7 @@ a relay address to reach the shell's live region from either caller.
   owner rather than a row id (see that document for the gate).
 - `ChannelListScreen` and `SettingsScreen` both call `HostEditorModal(state = …, onSubmit = …, …)`
   directly, replacing what was, before #751, an inline `EditHostModal` call in `ChannelListScreen` with
-  its own copy of the failure-string resolution — see [Shared mobile modal § Callers](mobile-modal.md#callers).
+  its own copy of the failure-string resolution — see [Shared mobile modal § Callers](mobile-modal-callers.md#callers).
 
 ## Testing
 

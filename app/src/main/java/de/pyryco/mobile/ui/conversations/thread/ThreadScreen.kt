@@ -49,6 +49,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
@@ -73,6 +74,7 @@ import de.pyryco.mobile.ui.conversations.components.CompactingIndicator
 import de.pyryco.mobile.ui.conversations.components.CompactionBoundaryDivider
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
+import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.ModelRefusalRow
 import de.pyryco.mobile.ui.conversations.components.NoticePill
@@ -327,6 +329,7 @@ fun ThreadScreen(
                     onOverflowEvent = onOverflowEvent,
                     isPromoted = state.isPromoted,
                     mutationsSupported = state.mutationsSupported,
+                    memorySearch = state.runConfig.memorySearch,
                 )
             },
             // Figma 16:8's `Input area` (533:1957): a gap-8 column of the status area, the input field and
@@ -566,7 +569,11 @@ fun ThreadScreen(
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
-                                                    SessionBoundaryDelimiter(boundary = item, agent = state.agent)
+                                                    SessionBoundaryDelimiter(
+                                                        boundary = item,
+                                                        agent = state.agent,
+                                                        memorySearch = state.runConfig.memorySearch,
+                                                    )
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
                                                 is ThreadItem.Banner -> BannerNoticeRow(item = item, agent = state.agent)
@@ -731,6 +738,7 @@ fun ThreadScreen(
         )
     }
     if (state.channelInfoOpen) {
+        val uriHandler = LocalUriHandler.current
         ChannelInfoSheet(
             model = state.toChannelInfoUiModel(),
             mutationsSupported = state.mutationsSupported,
@@ -740,7 +748,7 @@ fun ThreadScreen(
             },
             onArchive = { onOverflowEvent(ThreadEvent.Archive) },
             onDelete = { onOverflowEvent(ThreadEvent.Delete) },
-            onInstallMemoryPlugin = { /* TODO: Phase 3+ */ },
+            onInstallMemoryPlugin = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) },
             onDismiss = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
         )
     }
@@ -925,7 +933,7 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         lastActivityLabel = lastUsedAt?.let { formatRelativeTime(it, now) } ?: "—",
         sessionCount = sessionCount,
         messageCount = items.count { it is ThreadItem.MessageItem },
-        memoryPlugins = emptyList(),
+        memorySearch = runConfig.memorySearch,
         channelId = conversationId,
     )
 

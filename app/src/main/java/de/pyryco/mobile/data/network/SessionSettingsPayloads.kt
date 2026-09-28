@@ -1,6 +1,9 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.MemorySearchAvailability
+import de.pyryco.mobile.data.repository.MemorySearchProvider
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.data.repository.SessionSettings
 import kotlinx.serialization.SerialName
@@ -95,15 +98,15 @@ data class RequestSessionSettingsPayloadDto(
  * boundary that turns the untrusted [Envelope.payload] of a `session_settings` envelope into a domain
  * [SessionSettings] via [toSessionSettings].
  *
- * **Every original field here is required, with no default** — only #1111's [capabilities] object is
- * optional. The wire emits all seven originals unconditionally (no omission tag), so an absent key is a malformed reply rather than a silently-defaulted one — and each
+ * **Every original field here is required, with no default**. The wire emits all seven originals
+ * unconditionally (no omission tag), so an absent key is a malformed reply rather than a silently-defaulted one — and each
  * zero is a *read* answer rather than a manufactured one. That matters most for [permissionMode], whose
  * `""` means "no current-child confirmation is available" and must never be punned into the write half's
  * `"default"`; a defaulted field would report Manual approval for a session whose posture is unknown.
  * [HistoryPagePayloadDto] takes the same no-defaults posture for the same reason.
  *
- * **It carries no `effective_effort` field, deliberately.** That key is the wire's one optional member
- * and has three states a consumer must keep apart — omitted, explicit `null`, a string — which no single
+ * **It carries no `effective_effort` field, deliberately.** That key has three states a consumer must
+ * keep apart — omitted, explicit `null`, a string — which no single
  * Kotlin field can express under [MobileJson]'s `explicitNulls = false`: a `String?` decodes an omitted
  * key and an explicit `null` identically. It is read by presence off the same [JsonObject] in
  * [toSessionSettings] instead; see [readEffectiveEffort].
@@ -126,10 +129,27 @@ data class SessionSettingsPayloadDto(
     @SerialName("used_tokens") val usedTokens: Long,
     @SerialName("window_tokens") val windowTokens: Long,
     /**
-     * #1111: the one optional object key. The wire omits it for a conn without `multi_agent` and for a
+     * #1111: the optional capabilities object. The wire omits it for a conn without `multi_agent` and for a
      * reply that resolved no session, so absence decodes as "no list" rather than failing the frame.
      */
     val capabilities: SessionCapabilitiesDto? = null,
+    /** Optional raw report: malformed additions must not discard the original session settings. */
+    @SerialName("memory_search") val memorySearch: JsonElement? = null,
+)
+
+@Serializable
+internal data class MemorySearchReportDto(
+    val availability: String,
+    val providers: List<MemorySearchProviderDto>,
+)
+
+@Serializable
+internal data class MemorySearchProviderDto(
+    val id: String,
+    @SerialName("display_name") val displayName: String,
+    val installed: Boolean,
+    val enabled: Boolean,
+    val availability: String,
 )
 
 /**
@@ -164,8 +184,8 @@ data class SessionCapabilitiesDto(
  * DTO no longer carries — the [HistoryEntryDto] idea (keep the raw element where decoding must not
  * flatten the wire) applied to one field instead of a whole entry.
  *
- * Throws [SerializationException] on either step and produces **no partial value**: all eight fields
- * decode or none do. Emits no log, and the message it authors carries no payload content.
+ * Required settings still decode atomically. The optional memory-search report degrades to unknown on
+ * malformed or future values, so the other settings survive. Emits no log or payload content.
  */
 fun JsonElement.toSessionSettings(): SessionSettings {
     val dto = MobileJson.decodeFromJsonElement<SessionSettingsPayloadDto>(this)
@@ -179,8 +199,44 @@ fun JsonElement.toSessionSettings(): SessionSettings {
         usedTokens = dto.usedTokens,
         windowTokens = dto.windowTokens,
         capabilities = dto.capabilities?.let { SessionCapabilities(it.effortLevels, it.permissionModes, it.slashCommands) },
+        memorySearch = dto.memorySearch.readMemorySearch(),
     )
 }
+
+/** A malformed optional report is an unknown reading, never a failed settings reply. */
+private fun JsonElement?.readMemorySearch(): MemorySearchReport {
+    if (this == null || this is JsonNull) return MemorySearchReport.Unknown
+    val report =
+        try {
+            MobileJson.decodeFromJsonElement<MemorySearchReportDto>(this)
+        } catch (_: SerializationException) {
+            return MemorySearchReport.Unknown
+        }
+    val availability = report.availability.memorySearchAvailability() ?: return MemorySearchReport.Unknown
+    val providers =
+        report.providers.map { provider ->
+            val providerAvailability = provider.availability.memorySearchAvailability() ?: return MemorySearchReport.Unknown
+            if (providerAvailability == MemorySearchAvailability.Absent) return MemorySearchReport.Unknown
+            MemorySearchProvider(
+                id = provider.id,
+                displayName = provider.displayName,
+                installed = provider.installed,
+                enabled = provider.enabled,
+                availability = providerAvailability,
+            )
+        }
+    if (availability == MemorySearchAvailability.Absent && providers.isNotEmpty()) return MemorySearchReport.Unknown
+    return MemorySearchReport(availability, providers)
+}
+
+private fun String.memorySearchAvailability(): MemorySearchAvailability? =
+    when (this) {
+        "available" -> MemorySearchAvailability.Available
+        "unavailable" -> MemorySearchAvailability.Unavailable
+        "absent" -> MemorySearchAvailability.Absent
+        "unknown" -> MemorySearchAvailability.Unknown
+        else -> null
+    }
 
 /**
  * Read `effective_effort`'s three wire states off a decoded `session_settings` object (#590): an

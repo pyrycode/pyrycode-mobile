@@ -6,7 +6,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// Figma Schemes/On Primary Fixed. Scoped to bubbles, leaving Material's global roles intact.
+// Figma Schemes/On Primary Fixed. Keep the bubble's fill scoped even though static dark now maps the Material role too.
 internal val assistantBubbleContainerDark = Color(0xFF001D34)
 
 internal val LocalUserBubbleContainer =
