@@ -45,10 +45,11 @@ task-list text gaps include a taller task mark, and a status pill's height follo
 its text. Geometry assertions should measure those rendered elements rather than
 assume a fixed text-node gap or pill height.
 
-At 320 dp width and 1.5× Android text, the Edit host `IdentityRow` clips
-“Server identity:”. The ignored
+At 320 dp width and 1.5× Android text, Edit host's bounded identity labels
+wrap fully while their values remain one-line ellipsized. The enabled
 [`EditHostModalTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/components/EditHostModalTest.kt)
-retains the failing reachability assertion for [#1229](https://github.com/pyrycode/pyrycode-mobile/issues/1229).
-The shared metrics and compact modal behavior are covered, but enlarged-label
-readability remains open until that component's layout is fixed and the test
-is enabled.
+checks both labels' text layout for visual overflow, their bounds against the
+values, and the reachability of the name field and actions under Robolectric
+native graphics and on the managed API 33 device. A node can be displayed
+while its glyphs overflow its measured bounds, so visibility and bounds checks
+alone would miss the original clipping.
