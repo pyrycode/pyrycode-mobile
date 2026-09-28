@@ -73,9 +73,13 @@ class QuestionBatchModalTest {
     private val answers = mutableListOf<List<QuestionAnswer>>()
     private val refusals = mutableListOf<String>()
     private var failure: Throwable? = null
+    private var observedDialogView: View? = null
 
-    /** The gate's own window: the focused global view that is not the activity's. */
-    private fun dialogView(): View = checkNotNull(WindowInspector.getGlobalWindowViews().lastOrNull { it.hasWindowFocus() })
+    /** Keep the gate window found before the IME can move focus away from it. */
+    private fun dialogView(): View =
+        observedDialogView
+            ?: checkNotNull(WindowInspector.getGlobalWindowViews().lastOrNull { it.hasWindowFocus() })
+                .also { observedDialogView = it }
 
     private fun show(
         batch: QuestionBatch = batch(),

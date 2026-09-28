@@ -256,7 +256,7 @@ picker's captured owner (the thread's route host, `SettingsViewModel.workspacePi
 recent folders, folder creation and the final workspace/create action agree on ownership. Binding
 only the ViewModel leaves the picker's independent repository lookup exposed to selection changes.
 **Since #904, the channel list is no longer one of these wrappers.** The host row's long-press now
-opens [`AddWorkspaceModal`](mobile-modal.md#callers) instead of `WorkspacePicker`, and
+opens [`AddWorkspaceModal`](mobile-modal-callers.md#callers) instead of `WorkspacePicker`, and
 `ChannelListViewModel` resolves `hostSource.repositoryFor(serverId)` itself, at the press, the same
 host-resolved-write shape `submitChatName` uses — so this screen's `Routes.CHANNEL_LIST` destination
 no longer wraps `ChannelListScreen` in `HostWorkspaceRepository` at all; nothing on it reads

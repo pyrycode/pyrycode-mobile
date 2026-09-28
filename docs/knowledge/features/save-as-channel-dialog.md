@@ -39,7 +39,7 @@ fun SaveAsChannelDialog(
 - **Presentation only.** It does no I/O and no logging beyond the shell's own events; every write and
   every retry decision lives on [`ThreadViewModel`](#threadviewmodel-the-two-write-state-machine).
 - **`conversationId`** keys both typed-value buffers (`remember(conversationId)`), the same posture
-  [`EditChatModal`](mobile-modal.md#callers) uses for its name buffer. Neither buffer is keyed on
+  [`EditChatModal`](mobile-modal-callers.md#callers) uses for its name buffer. Neither buffer is keyed on
   `initialName`, `loading` or `error`, so a failed write leaves the operator's typed values in place for
   OK to retry.
 - **`initialName`** seeds the name field, clamped surrogate-safe to `MAX_WORKSPACE_LABEL_CHARS`
@@ -263,7 +263,7 @@ against the ellipsis-bearing menu item) replace them, alongside `SAVE_AS_CHANNEL
 
 - Shell contract: [Shared mobile modal](mobile-modal.md) — this is one of its direct `MobileModal`
   callers (§ Callers).
-- Nearest analogue: [`EditChatModal`](mobile-modal.md#callers) (#827) — the field styling, the
+- Nearest analogue: [`EditChatModal`](mobile-modal-callers.md#callers) (#827) — the field styling, the
   identity-keyed buffer and the surrogate-safe clamp of a daemon-authored name are all lifted from it.
 - [`ThreadOverflowMenu`](thread-overflow-menu.md) — the sole entry point.
 - [`ConversationRepository.promote`](conversation-repository.md) / `setSystemPrompt` /
