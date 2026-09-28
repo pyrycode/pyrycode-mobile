@@ -42,3 +42,7 @@ State and concurrency stay as implemented: the footer is stateless; `ThreadScree
 ## Documentation handoff
 
 Pending for the documentation stage: update `docs/knowledge/features/thread-composer-footer.md` in the visual design and testing sections with the current `533:1957` footer geometry, the required Run configuration conflict, and capture evidence. No shared documentation changes in this builder run.
+
+## Revisions
+
+- 2026-09-28, verifier rework: `compactWidthAndEnlargedText_keepThreeActionsSeparate` now checks the actual Actions and context text layouts, including glyph bounds, ellipsis, and separation from the trailing controls. Compose reports `didOverflowWidth` for the context text at 320 dp and 1.5× even though its glyph right edge is within its measured width and the line is not ellipsized. The test checks the visible clipping conditions directly; no production geometry change is needed.

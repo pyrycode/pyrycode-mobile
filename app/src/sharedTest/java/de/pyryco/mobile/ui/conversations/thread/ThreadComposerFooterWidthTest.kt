@@ -5,6 +5,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
@@ -17,7 +18,10 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -134,6 +138,23 @@ class ThreadComposerFooterWidthTest {
         val attach = composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files))
         val status = composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand))
         val footer = composeTestRule.onNodeWithTag(FOOTER).getUnclippedBoundsInRoot()
+        val actionsText = composeTestRule.onNodeWithText("Actions", useUnmergedTree = true)
+        val contextText = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true)
+        val actionsBounds = actionsText.getUnclippedBoundsInRoot()
+        val contextBounds = contextText.getUnclippedBoundsInRoot()
+        for ((label, node) in listOf("Actions" to actionsText, "Cxt: 84%" to contextText)) {
+            val layouts = mutableListOf<TextLayoutResult>()
+            node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val layout = layouts.single()
+            assertEquals("$label wraps at enlarged text", 1, layout.lineCount)
+            assertFalse("$label is clipped vertically at enlarged text", layout.didOverflowHeight)
+            assertTrue("$label clips on the left at enlarged text", layout.getLineLeft(0) >= 0f)
+            assertTrue("$label clips on the right at enlarged text", layout.getLineRight(0) <= layout.size.width)
+            assertFalse("$label ellipsizes at enlarged text", layout.isLineEllipsized(0))
+        }
+        assertTrue("context text must remain visible", contextBounds.right > contextBounds.left)
+        assertTrue("Actions and context text overlap", actionsBounds.right < contextBounds.left)
+        assertTrue("context text overlaps Attach", contextBounds.right < attach.getUnclippedBoundsInRoot().left)
         assertTrue(action.getUnclippedBoundsInRoot().right < attach.getUnclippedBoundsInRoot().left)
         assertTrue(attach.getUnclippedBoundsInRoot().right <= status.getUnclippedBoundsInRoot().left)
         assertTrue(status.getUnclippedBoundsInRoot().right <= footer.right)
