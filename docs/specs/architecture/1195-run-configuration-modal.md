@@ -50,3 +50,8 @@ Pending documentation stage: update `docs/knowledge/features/status-sheet.md` un
 ## Open questions
 
 - Whether the existing `MobileDismissModal` can keep the Done action visible with the longest published menus at enlarged text. Resolve by a focused layout test and record any adjustment below.
+
+## Revisions
+
+- 2026-09-28: The first 412 × 892 real-device capture showed the old Context window explanation beneath the reading, where the current dark frame has a single line. Remove that helper and use the frame's "Not reported yet" for both absent reported readings; no reading is synthesized. The compact published-list test confirms the last choice scrolls into view while Done stays pinned. Permission remains below the designed sections because Figma has no corresponding state.
+- 2026-09-28: The corrected emulator capture showed each successive section about 6 dp higher than the Figma render after accounting for the system bar. Use 34 dp Compose group spacing to align Effort, Running model and Context window at the 412 × 892 viewport; the Figma frame's nominal content gap is 28 px, but Compose text measurement makes the rendered groups shorter.

@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
@@ -16,6 +19,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.conversations.thread.ThreadEffortChoice
 import de.pyryco.mobile.ui.conversations.thread.ThreadModelChoice
@@ -23,13 +27,15 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadReportedText
 import de.pyryco.mobile.ui.conversations.thread.ThreadRunningModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
 
 @RunWith(AndroidJUnit4::class)
 class StatusSheetTest {
-    @get:Rule
+    @Rule @JvmField
     val composeTestRule = createComposeRule()
 
     // ---- #807 fixtures ---------------------------------------------------------------------------
@@ -58,6 +64,67 @@ class StatusSheetTest {
     private val haiku =
         ThreadModelChoice(value = "haiku", label = "Haiku 4.5", detail = "", effortChoices = emptyList())
 
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Test
+    fun sharedModalDoneDismissesWithoutWritingSettings() {
+        var dismissals = 0
+        val writes = mutableListOf<String>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheet(
+                    choices = listOf(opus, sonnet),
+                    menuAvailable = true,
+                    notListedModels = 0,
+                    selectedModel = "opus",
+                    onModelSelected = writes::add,
+                    effortChoices = opus.effortChoices,
+                    selectedEffort = "high",
+                    onEffortSelected = writes::add,
+                    pending = false,
+                    enabled = true,
+                    onDismiss = { dismissals++ },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Done").performClick()
+        assertEquals(1, dismissals)
+        assertEquals(emptyList<String>(), writes)
+    }
+
+    @Config(qualifiers = "w320dp-h640dp")
+    @Test
+    fun compactModalWithEnlargedTextScrollsThroughPublishedChoicesWhileDoneStaysReachable() {
+        val models =
+            (0..11).map { index ->
+                ThreadModelChoice("model-$index", "Model $index", "", emptyList())
+            }
+        composeTestRule.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 1.6f)) {
+                PyrycodeMobileTheme {
+                    StatusSheet(
+                        choices = models,
+                        menuAvailable = true,
+                        notListedModels = 0,
+                        selectedModel = models.first().value,
+                        onModelSelected = {},
+                        effortChoices = (0..7).map { ThreadEffortChoice("level-$it", "Level $it") },
+                        selectedEffort = "level-7",
+                        onEffortSelected = {},
+                        pending = false,
+                        enabled = true,
+                        onDismiss = {},
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("Model 11").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Level 7").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Done").assertIsDisplayed()
+    }
+
     private fun ComposeContentTestRule.setSheet(
         choices: List<ThreadModelChoice> = listOf(opus, sonnet, haiku),
         menuAvailable: Boolean = true,
@@ -70,7 +137,6 @@ class StatusSheetTest {
         onEffortSelected: (String) -> Unit = {},
         pending: Boolean = false,
         enabled: Boolean = true,
-        onDismiss: () -> Unit = {},
         effortNote: String? = null,
         running: ThreadRunningModel = ThreadRunningModel(),
         contextPercent: Int? = null,
@@ -93,7 +159,6 @@ class StatusSheetTest {
                 onEffortSelected = onEffortSelected,
                 pending = pending,
                 enabled = enabled,
-                onDismiss = onDismiss,
                 effortNote = effortNote,
                 running = running,
                 contextPercent = contextPercent,
@@ -110,10 +175,10 @@ class StatusSheetTest {
     @Test
     fun permissionChoiceIsAvailableInRunConfiguration() {
         val selected = mutableListOf<String>()
-        composeTestRule.setSheet(onPermissionSelected = selected::add)
+        composeTestRule.setSheet(choices = listOf(opus), effortChoices = emptyList(), onPermissionSelected = selected::add)
 
         composeTestRule.onNode(hasText("Plan") and isSelectable()).assertIsSelected()
-        composeTestRule.onNode(hasText("Manual approval") and isSelectable()).performScrollTo().performClick()
+        composeTestRule.onNode(hasText("Manual approval") and isSelectable()).performClick()
 
         assertEquals(listOf("default"), selected)
     }
@@ -155,6 +220,16 @@ class StatusSheetTest {
 
         composeTestRule.onNode(isSelectable() and hasText("Sonnet 4.6")).assertIsSelected()
         composeTestRule.onNode(isSelectable() and hasText("Opus 4.7")).assertIsNotSelected()
+    }
+
+    @Test
+    fun radioRowsKeepExpandedTouchTargetsAroundCompactVisibleCircles() {
+        composeTestRule.setSheet()
+
+        val model = composeTestRule.onNode(isSelectable() and hasText("Opus 4.7")).fetchSemanticsNode()
+        val effort = composeTestRule.onNode(isSelectable() and hasText("high")).fetchSemanticsNode()
+        assertTrue(model.touchBoundsInRoot.height >= 48f)
+        assertTrue(effort.touchBoundsInRoot.height >= 48f)
     }
 
     @Test
@@ -299,7 +374,7 @@ class StatusSheetTest {
         composeTestRule.setSheet(selectedModel = "opus")
 
         composeTestRule.onNode(hasText("Running model")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("Not announced yet")).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("Not reported yet")).assertCountEquals(2)
         composeTestRule.onNode(hasTestTag(RUNNING_MODEL_TEST_TAG)).assertDoesNotExist()
         composeTestRule.onAllNodes(hasText("Claude Code", substring = true)).assertCountEquals(0)
     }
@@ -343,10 +418,27 @@ class StatusSheetTest {
 
     // ---- Unchanged sections ----------------------------------------------------------------------
 
+    @OptIn(ExperimentalMaterial3Api::class)
     @Test
     fun tapping_close_icon_invokes_onDismiss() {
         var invoked = 0
-        composeTestRule.setSheet(onDismiss = { invoked++ })
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheet(
+                    choices = listOf(opus),
+                    menuAvailable = true,
+                    notListedModels = 0,
+                    selectedModel = "opus",
+                    onModelSelected = {},
+                    effortChoices = opus.effortChoices,
+                    selectedEffort = "high",
+                    onEffortSelected = {},
+                    pending = false,
+                    enabled = true,
+                    onDismiss = { invoked++ },
+                )
+            }
+        }
 
         composeTestRule.onNode(hasContentDescription("Close")).performClick()
 
@@ -363,34 +455,27 @@ class StatusSheetTest {
     }
 
     @Test
-    fun renders_context_window_section_as_unavailable_with_header_and_caption() {
+    fun renders_context_window_section_as_unavailable_without_old_helper() {
         composeTestRule.setSheet()
 
         composeTestRule.onNode(hasText("Context window")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("Context usage unavailable")).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("Not reported yet")).assertCountEquals(2)
         composeTestRule
-            .onNode(
-                hasText(
-                    "When full, oldest messages get dropped from claude's view " +
-                        "(delimiter still shows; old messages stay in your scroll).",
-                ),
-            ).assertIsDisplayed()
+            .onAllNodes(hasText("When full, oldest messages get dropped", substring = true))
+            .assertCountEquals(0)
         // No progress bar anywhere in the sheet: the figure is unknown, so no severity is shown.
         composeTestRule
             .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo))
             .assertCountEquals(0)
     }
 
-    // #946: Claude's reported percentage replaces the unavailable line; the caption stays.
+    // #946: Claude's reported percentage replaces the unavailable line.
     @Test
     fun renders_the_reported_context_percentage_in_place_of_the_unavailable_line() {
         composeTestRule.setSheet(contextPercent = 84)
 
         composeTestRule.onNode(hasText("Context window")).assertIsDisplayed()
         composeTestRule.onNode(hasText("84% used")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("Context usage unavailable")).assertDoesNotExist()
-        composeTestRule
-            .onNode(hasText("When full, oldest messages get dropped from claude's view", substring = true))
-            .assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("Not reported yet")).assertCountEquals(1)
     }
 }
