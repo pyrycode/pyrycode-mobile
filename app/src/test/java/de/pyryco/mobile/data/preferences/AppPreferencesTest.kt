@@ -192,6 +192,21 @@ class AppPreferencesTest {
         }
 
     @Test
+    fun notificationsEnabled_survivesDataStoreRecreation() =
+        runBlocking {
+            prefs.setNotificationsEnabled(false)
+            scope.coroutineContext[Job]?.cancelAndJoin()
+            scope = CoroutineScope(Dispatchers.IO + Job())
+            dataStore =
+                PreferenceDataStoreFactory.create(
+                    scope = scope,
+                    produceFile = { tmp.root.resolve("app_prefs.preferences_pb") },
+                )
+            prefs = AppPreferences(dataStore)
+            assertEquals(false, prefs.notificationsEnabled.first())
+        }
+
+    @Test
     fun notificationPermissionAsked_defaultsToFalseAndStaysSet() =
         runBlocking {
             assertEquals(false, prefs.notificationPermissionAsked.first())

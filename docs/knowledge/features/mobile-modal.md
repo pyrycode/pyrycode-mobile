@@ -2,7 +2,7 @@
 
 [`MobileModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/MobileModal.kt)
 is the shared full-height editing shell. `MobileGateModal` applies decision-gate
-window security; `MobileReadOnlyModal` omits submit. All three share the same
+window security; `MobileReadOnlyModal` omits submit; `MobileDismissModal` provides a single filled dismissal action for Settings. All four share the same
 header, content area and footer layout. Callers own visibility, form values,
 validation, submission and operation cancellation.
 
@@ -119,6 +119,10 @@ same private `MobileModalShell(gate = false, error = null)` call for the two non
 glyph, that one footer button and Back all route to `onDismissRequest`, exactly as `MobileModal`'s Cancel
 does — there is no submit action, so a caller with nothing to send never inherits an unused OK button.
 Outside taps still do not dismiss, matching every other entry point on this shell.
+
+## The single-action dismissal: `MobileDismissModal`
+
+[Settings](settings-screen.md) uses this fourth entry point. It keeps the shared header, divider, safe-area padding, Back handling and scrolling. Its content starts at the top, its lone filled Done action sits at the footer’s right edge, and that action uses the same dismissal callback as Close and Back. The other entry points retain their centered content and footer defaults.
 
 ## Layout and theme
 
