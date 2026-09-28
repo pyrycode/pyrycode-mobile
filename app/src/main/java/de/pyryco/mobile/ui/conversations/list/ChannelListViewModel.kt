@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Rows, preview keys and workspace groups are local to [host]; never flatten them across hosts. */
 data class HostChannelListEntry(
@@ -330,6 +331,8 @@ class ChannelListViewModel(
     private val createChannel = MutableStateFlow<CreateChannelState?>(null)
     private val createChat = MutableStateFlow<CreateChatState?>(null)
     private var nextCreateChatRequestId = 0L
+    private val pendingNewChatModels = mutableSetOf<HostConversationTarget>()
+    private val tappedPendingNewChats = mutableSetOf<HostConversationTarget>()
 
     // #667: the editor's own prompt stays at its default here; the reading lives apart, tagged with the
     // channel it was read for, so a read landing mid-write never breaks that write's `compareAndSet` and no
@@ -428,12 +431,98 @@ class ChannelListViewModel(
     val hostNavigationEvents: Flow<HostConversationTarget> = hostNavigationChannel.receiveAsFlow()
 
     fun onHostRowTapped(target: HostConversationTarget) {
+        if (target in pendingNewChatModels) {
+            tappedPendingNewChats += target
+            RelayLog.d { "event=new_chat_open_deferred" }
+            return
+        }
         // Recorded before the send so the row highlights on the tap, not a dispatch later.
         lastOpenedTarget.value = target
         // The list's open path clears that host's unread and failed marks at the tap (#877); the thread's
         // viewing handle keeps it read while it is open.
         hostSource.markOpened(target.serverId, target.conversationId)
         viewModelScope.launch { hostNavigationChannel.send(target) }
+    }
+
+    private suspend fun prepareNewChatModel(
+        repository: ConversationRepository,
+        conversation: Conversation,
+        serverId: String,
+    ): HostConversationTarget {
+        val target = HostConversationTarget(serverId, conversation.id)
+        pendingNewChatModels += target
+        var settled = false
+        try {
+            applyRememberedModel(repository, conversation)
+            settled = true
+        } finally {
+            pendingNewChatModels -= target
+            if (!settled) tappedPendingNewChats -= target
+        }
+        return target
+    }
+
+    /** A newly created chat alone may inherit the phone's last acknowledged model choice. */
+    private suspend fun applyRememberedModel(
+        repository: ConversationRepository,
+        conversation: Conversation,
+    ) {
+        val remembered =
+            try {
+                appPreferences.rememberedModel.first()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                RelayLog.d { "event=new_chat_model outcome=preference_unavailable" }
+                return
+            }
+        if (remembered.isNullOrEmpty() || remembered == "default") return
+        val menu =
+            try {
+                withTimeoutOrNull(5_000) {
+                    repository.observeModelMenu(conversation.id).filterNotNull().first()
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                null
+            }
+        if (menu == null) {
+            RelayLog.d { "event=new_chat_model outcome=menu_unavailable" }
+            return
+        }
+        val offered =
+            menu.rows.any { row ->
+                row.agent == conversation.agent && row.value == remembered && "value" !in row.truncatedFields.orEmpty()
+            }
+        if (!offered) {
+            RelayLog.d { "event=new_chat_model outcome=not_applicable" }
+            return
+        }
+        // A relay create reply contains no session id. Read the new conversation's
+        // authoritative settings before the thread opens so the first send uses this model.
+        val sessionId =
+            try {
+                withTimeoutOrNull(5_000) {
+                    repository
+                        .observeSessionSettings(conversation.id)
+                        .filterNotNull()
+                        .first()
+                        .sessionId
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                null
+            }
+        if (sessionId.isNullOrEmpty()) {
+            RelayLog.d { "event=new_chat_model outcome=settings_unavailable" }
+            return
+        }
+        try {
+            repository.setSessionSettings(sessionId, model = remembered)
+            RelayLog.d { "event=new_chat_model outcome=applied" }
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            RelayLog.d { "event=new_chat_model outcome=write_failed" }
+        }
     }
 
     /** Create on the clicked host immediately, using its daemon default folder. */
@@ -466,8 +555,9 @@ class ChannelListViewModel(
                     RelayLog.d { "event=create_chat_failed code=request" }
                     return@launch
                 }
+            val target = prepareNewChatModel(live, conversation, serverId)
             createChat.compareAndSet(state, null)
-            val target = HostConversationTarget(serverId, conversation.id)
+            tappedPendingNewChats -= target
             lastOpenedTarget.value = target
             hostNavigationChannel.send(target)
             RelayLog.d { "event=create_chat_created" }
@@ -575,11 +665,12 @@ class ChannelListViewModel(
                     addWorkspace.compareAndSet(pending, pending.copy(busy = false, startFailed = true))
                     return@launch
                 }
-            if (!addWorkspace.compareAndSet(pending, null)) {
+            val target = prepareNewChatModel(live, conversation, state.serverId)
+            val tapped = tappedPendingNewChats.remove(target)
+            if (!addWorkspace.compareAndSet(pending, null) && !tapped) {
                 RelayLog.d { "event=add_workspace_started code=dismissed" }
                 return@launch
             }
-            val target = HostConversationTarget(state.serverId, conversation.id)
             lastOpenedTarget.value = target
             hostNavigationChannel.send(target)
             RelayLog.d { "event=add_workspace_started" }

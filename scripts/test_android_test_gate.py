@@ -115,6 +115,7 @@ class AndroidGateTest(unittest.TestCase):
         # The LIVE branch may build the list over several assignments, so count across all of them.
         branch = live[: live.index("\nelse\n")]
         targets = [line for line in branch.split("\n") if line.lstrip().startswith('TEST_TARGET="')]
+        self.assertTrue(any("#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage" in target for target in targets))
         self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))

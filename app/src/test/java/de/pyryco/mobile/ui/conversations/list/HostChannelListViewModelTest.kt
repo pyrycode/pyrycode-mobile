@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStoreException
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
@@ -27,8 +28,12 @@ import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.ModelMenu
+import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionPromptStatus
+import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.SystemPromptReading
@@ -64,6 +69,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -418,6 +424,189 @@ class HostChannelListViewModelTest {
             runCurrent()
             assertEquals(listOf<String?>(null), f.b.repo.workspaces)
             assertEquals(HostConversationTarget("host", "returned-id"), f.nav.last())
+        }
+
+    @Test
+    fun rememberedModelAppliesToNewChatBeforeNavigationOnDestinationHost() =
+        runTest(dispatcher) {
+            val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.modelMenu.value =
+                ModelMenu(
+                    listOf(modelRow("opus", ConversationAgent.Codex), modelRow("opus", ConversationAgent.Claude)),
+                    0,
+                )
+            f.a.repo.settingsGate = CompletableDeferred()
+
+            f.vm.createChat("Host")
+            runCurrent()
+            assertEquals(listOf("returned-id"), f.a.repo.menuReads)
+            assertEquals(listOf("session" to "opus"), f.a.repo.modelWrites)
+            assertTrue("navigation must wait for the settings acknowledgement", f.nav.isEmpty())
+            assertTrue(
+                f.b.repo.modelWrites
+                    .isEmpty(),
+            )
+
+            f.a.repo.settingsGate
+                ?.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+        }
+
+    @Test
+    fun relayCreateReplyWithoutSessionIdStillAppliesModelBeforeNavigation() =
+        runTest(dispatcher) {
+            val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.createdSessionId = ""
+            f.a.repo.modelMenu.value = ModelMenu(listOf(modelRow("opus", ConversationAgent.Claude)), 0)
+            f.a.repo.settingsGate = CompletableDeferred()
+
+            f.vm.createChat("Host")
+            runCurrent()
+            assertEquals(listOf("returned-id"), f.a.repo.settingsReads)
+            assertEquals(listOf("session" to "opus"), f.a.repo.modelWrites)
+            assertTrue("navigation must wait for the settings acknowledgement", f.nav.isEmpty())
+
+            f.a.repo.settingsGate
+                ?.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+        }
+
+    @Test
+    fun newlyPublishedChatRowWaitsForModelWriteBeforeItCanOpen() =
+        runTest(dispatcher) {
+            val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.publishOnCreate = true
+            f.a.repo.modelMenu.value = ModelMenu(listOf(modelRow("opus", ConversationAgent.Claude)), 0)
+            f.a.repo.settingsGate = CompletableDeferred()
+
+            f.vm.createChat("Host")
+            runCurrent()
+            val created = HostConversationTarget("Host", "returned-id")
+            assertEquals(
+                "returned-id",
+                f.vm.hostState.value.hosts
+                    .first()
+                    .recentChats
+                    .first()
+                    .id,
+            )
+            assertEquals(listOf("session" to "opus"), f.a.repo.modelWrites)
+            f.vm.onHostRowTapped(created)
+            runCurrent()
+            assertTrue("the first send cannot start before thread navigation", f.nav.isEmpty())
+
+            f.vm.onHostRowTapped(HostConversationTarget("Host", "existing"))
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "existing")), f.nav)
+
+            f.a.repo.settingsGate
+                ?.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "existing"), created), f.nav)
+        }
+
+    @Test
+    fun dismissedWorkspaceChatRowOpensAfterPendingModelWriteWhenTapped() =
+        runTest(dispatcher) {
+            val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.publishOnCreate = true
+            f.a.repo.modelMenu.value = ModelMenu(listOf(modelRow("opus", ConversationAgent.Claude)), 0)
+            f.a.repo.settingsGate = CompletableDeferred()
+            f.vm.openAddWorkspace("Host")
+            f.vm.selectAddWorkspaceFolder("/chosen")
+            f.vm.submitAddWorkspace()
+            runCurrent()
+
+            f.vm.dismissAddWorkspace()
+            f.vm.onHostRowTapped(HostConversationTarget("Host", "returned-id"))
+            runCurrent()
+            assertTrue(f.nav.isEmpty())
+
+            f.a.repo.settingsGate
+                ?.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+        }
+
+    @Test
+    fun rememberedModelNeverOverridesAnExistingChatOrUsesAnotherAgentsRow() =
+        runTest(dispatcher) {
+            val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.modelMenu.value = ModelMenu(listOf(modelRow("opus", ConversationAgent.Codex)), 0)
+
+            f.vm.onHostRowTapped(HostConversationTarget("Host", "existing"))
+            runCurrent()
+            assertTrue(
+                f.a.repo.modelWrites
+                    .isEmpty(),
+            )
+            assertTrue(
+                f.a.repo.menuReads
+                    .isEmpty(),
+            )
+
+            f.vm.createChat("Host")
+            runCurrent()
+            assertTrue(
+                f.a.repo.modelWrites
+                    .isEmpty(),
+            )
+            assertEquals(HostConversationTarget("Host", "returned-id"), f.nav.last())
+        }
+
+    @Test
+    fun unavailableOrTruncatedDestinationMenuKeepsInheritedModel() =
+        runTest(dispatcher) {
+            val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.modelMenu.value =
+                ModelMenu(listOf(modelRow("opus", ConversationAgent.Claude).copy(truncatedFields = listOf("value"))), 1)
+
+            f.vm.createChat("Host")
+            runCurrent()
+            assertTrue(
+                f.a.repo.modelWrites
+                    .isEmpty(),
+            )
+            assertEquals(1, f.nav.size)
+
+            f.a.repo.modelMenu.value = null
+            f.vm.createChat("Host")
+            runCurrent()
+            assertEquals(1, f.nav.size)
+            advanceTimeBy(5_000)
+            runCurrent()
+            assertTrue(
+                f.a.repo.modelWrites
+                    .isEmpty(),
+            )
+            assertEquals(2, f.nav.size)
+        }
+
+    @Test
+    fun rememberedModelAppliesThroughAddWorkspaceAndFailedWriteStillNavigates() =
+        runTest(dispatcher) {
+            val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.modelMenu.value = ModelMenu(listOf(modelRow("opus", ConversationAgent.Claude)), 0)
+            f.a.repo.settingsFailure = true
+            f.vm.openAddWorkspace("Host")
+            f.vm.selectAddWorkspaceFolder("/chosen")
+
+            f.vm.submitAddWorkspace()
+            runCurrent()
+            assertEquals(listOf("/chosen"), f.a.repo.workspaces)
+            assertEquals(listOf("session" to "opus"), f.a.repo.modelWrites)
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+            assertTrue(logs.none { "opus" in it })
         }
 
     @Test
@@ -2929,6 +3118,47 @@ class HostChannelListViewModelTest {
         val recents = MutableStateFlow<List<String>>(emptyList())
         val createdFolders = mutableListOf<String>()
         var folderGate: CompletableDeferred<Unit>? = null
+        val modelMenu = MutableStateFlow<ModelMenu?>(null)
+        val menuReads = mutableListOf<String>()
+        val modelWrites = mutableListOf<Pair<String, String>>()
+        val settingsReads = mutableListOf<String>()
+        var createdSessionId = "session"
+        var settingsGate: CompletableDeferred<Unit>? = null
+        var settingsFailure = false
+        var publishOnCreate = false
+
+        override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> {
+            menuReads += conversationId
+            return modelMenu
+        }
+
+        override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> {
+            settingsReads += conversationId
+            return flowOf(
+                SessionSettings(
+                    sessionId = "session",
+                    model = "",
+                    effort = "",
+                    effectiveEffort = EffectiveEffort.Unavailable,
+                    permissionMode = "",
+                    yolo = false,
+                    usedTokens = 0,
+                    windowTokens = 0,
+                ),
+            )
+        }
+
+        override suspend fun setSessionSettings(
+            sessionId: String,
+            model: String?,
+            effort: String?,
+            yolo: Boolean?,
+            permissionMode: String?,
+        ) {
+            if (model != null) modelWrites += sessionId to model
+            settingsGate?.await()
+            if (settingsFailure) error("server-secret")
+        }
 
         override fun recentWorkspaces(): Flow<List<String>> = recents
 
@@ -2958,7 +3188,9 @@ class HostChannelListViewModelTest {
             workspaces += workspace
             failure?.let { throw it }
             createGate?.await()
-            return row("returned-id")
+            return row("returned-id").copy(currentSessionId = createdSessionId).also {
+                if (publishOnCreate) rows.value = listOf(it)
+            }
         }
 
         // Records every rename and applies it to this repo's own rows, as the daemon's re-emitted list would.
@@ -3110,6 +3342,11 @@ class HostChannelListViewModelTest {
             Instant.parse("2026-09-01T00:00:00Z"),
             workspaceLabel = label,
         )
+
+        private fun modelRow(
+            value: String,
+            agent: ConversationAgent,
+        ) = ModelMenuRow(value, value, value, emptyList(), false, null, agent)
 
         private fun message(content: String) =
             Message("message", "session", Role.Assistant, content, Instant.parse("2026-09-01T00:00:00Z"), false)

@@ -63,6 +63,8 @@ LIVE_MINIMUM += 1
 # follow-ups #1245/#1246; two older workspace-switching methods were already ignored. The floor
 # tracks the runnable list and still fails if any selected method silently skips.
 LIVE_MINIMUM -= 8
+# #1223 adds the remembered-model first-turn proof.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

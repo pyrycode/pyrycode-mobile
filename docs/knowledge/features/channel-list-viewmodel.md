@@ -38,6 +38,18 @@ host, and `submitCreateChat()` sends `createDiscussion(null)` through that host'
 daemon selects the folder independently of app preferences. The retained Add workspace state is no
 longer opened from the host row; the thread's picker remains available for folder changes.
 
+Both chat creation paths read the persisted app-wide remembered raw model after creation, including
+after an app restart. They apply it only when the created conversation's own host publishes an
+untruncated exact-value row for its agent;
+otherwise the new session keeps its inherited model. The relay's create reply has no session ID, so
+the list reads that conversation's session settings for the authoritative ID, then awaits the model
+write before opening the thread. An absent or default remembered value, a missing menu or settings
+reply, or a failed write still lets the created chat open. A failed write can leave the server's final
+choice unknown; the thread reads its saved setting when it opens. Opening or switching to an existing
+chat or channel never uses the remembered model, even when its saved choice is intentionally empty. See
+[Remembered model choice](thread-composer-footer.md#remembered-model-choice-1222) for how a successful
+thread selection updates the preference.
+
 ## Shape
 
 ```kotlin
@@ -354,9 +366,10 @@ the selected host, and both writes publish a `busy = true` pending state before 
 `compareAndSet(pending, …)` terminal transitions so a write finishing after a dismissal or a
 retarget cannot touch a newer state. Creating a folder only ever sets `selected`; only
 `submitAddWorkspace` starts the chat, via `createDiscussion(selected)`, and only records
-`lastOpenedTarget` / sends on `hostNavigationChannel` if `compareAndSet(pending, null)` succeeds —
-so a chat started right before a Cancel lands in the list unopened rather than reopening the modal
-or navigating. `dismissAddWorkspace()` sets the state to `null` unguarded and sends nothing.
+`lastOpenedTarget` / sends on `hostNavigationChannel` if `compareAndSet(pending, null)` succeeds, or
+if its newly published row was tapped while the model decision was pending. Otherwise a chat started
+right before a Cancel lands in the list unopened. `dismissAddWorkspace()` sets the state to `null`
+unguarded and sends nothing.
 Failures publish `createFailed` / `startFailed` flags, never the exception's message.
 
 **The tagged recents combine.** `addWorkspaceRecent: Flow<Pair<String?, List<String>>>` derives from
@@ -402,6 +415,9 @@ coverage of everything under [Wiring](#wiring) above, host by host and editor by
   survives state copies so a delayed reply from a dismissed dialog cannot close a reopened one for the
   same host; this needs a same-host completion-order test because different-host tests would pass with
   value-equal dialog states.
+- **A new row can appear before its model write settles.** A tap on that host-qualified target waits for
+  the model decision; ordinary existing rows still open immediately. A create-path-only navigation wait
+  would let the first message race the pending write through the row instead.
 - **No `flowOn(Dispatchers.IO)`.** Upstream host projection inherits the collector's dispatcher (`Dispatchers.Main.immediate` from `viewModelScope`). The fake's projection is pure CPU map manipulation; Phase 4's remote impl decides its own dispatcher internally. The VM stays dispatcher-agnostic.
 - **Content-free host logging.** Host projection logs a host count; picker and creation paths log static lifecycle/failure events through `RelayLog`. Preview failures never log exception text or decrypted content.
 

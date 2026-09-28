@@ -2906,6 +2906,66 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** A phone-selected model follows only a newly created chat into its first real Claude turn (#1223). */
+    @Test
+    fun interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage() {
+        val originals = mutableMapOf<String, SessionSettings>()
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val previousChoice = runBlocking { preferences.rememberedModel.first() }
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val originalName = "e2e1223-source-${System.currentTimeMillis()}"
+            val original = prepareChat(originalName, originals)
+            val initial = originals.getValue(original.id).model
+            val target =
+                checkNotNull(
+                    usableRows(publishedMenu(original.id)).firstOrNull {
+                        it.agent == original.agent && it.value != INHERITED_MODEL_VALUE && it.value != initial
+                    },
+                ) { "the host publishes no different nondefault model for the conversation agent" }
+
+            openChatRow(originalName)
+            openRunConfiguration()
+            val family =
+                target.value
+                    .removePrefix("claude-")
+                    .takeWhile { it.isLetter() }
+                    .replaceFirstChar { it.uppercaseChar() }
+                    .inert()
+            val label =
+                listOf(target.displayName.inert(), family).firstOrNull { candidate ->
+                    composeTestRule.onAllNodes(hasText(candidate) and hasClickAction() and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                } ?: error("the published model has no selectable row")
+            composeTestRule
+                .onAllNodes(hasText(label) and hasClickAction() and isEnabled())
+                .onFirst()
+                .performScrollTo()
+                .performClick()
+            awaitFooter(changeModelLabel, label)
+            assertEquals("the source choice was acknowledged", target.value, freshSettings(original.id).model)
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    preferences.rememberedModel.first { it == target.value }
+                }
+            }
+            leaveThread()
+
+            val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+            val newId = createChatOn(serverId)
+            assertEquals("new chat model before its first send", target.value, freshSettings(newId).model)
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            assertEquals("new chat model after a real turn", target.value, freshSettings(newId).model)
+            assertEquals("original conversation retained its choice", target.value, freshSettings(original.id).model)
+        } finally {
+            restoreSettings(originals)
+            runCatching {
+                runBlocking { preferences.setRememberedModel(previousChoice.orEmpty()).getOrThrow() }
+            }.onFailure { Log.w("E2E", "remembered model restore failed: ${it::class.simpleName}") }
+        }
+    }
+
     /**
      * Claude's applied effort reaches the footer after a real turn, starting from nothing saved and nothing
      * remembered (#545, #889). The reply to the first fresh read after the turn must carry
