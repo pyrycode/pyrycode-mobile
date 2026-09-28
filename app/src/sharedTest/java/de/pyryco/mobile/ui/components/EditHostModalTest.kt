@@ -43,7 +43,6 @@ import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -328,21 +327,23 @@ class EditHostModalTest {
             .assertHeightIsAtLeast(48.dp)
     }
 
-    // Re-enable with https://github.com/pyrycode/pyrycode-mobile/issues/1229.
-    @Ignore("blocked on #1229 — IdentityRow clips its label at 320 dp and 1.5× text")
     @Test
     fun enlargedTextAtCompactWidthKeepsLabelsValuesAndActionsReachable() {
-        show(small = true, fontScale = 1.5f)
+        show(serverIdentity = oversizedIdentity, relayAddress = oversizedRelay, small = true, fontScale = 1.5f)
 
         listOf(
-            string(R.string.edit_host_server_identity_label) to identity,
-            string(R.string.edit_host_relay_address_label) to relay,
+            string(R.string.edit_host_server_identity_label) to oversizedIdentity.take(MAX_WORKSPACE_LABEL_CHARS),
+            string(R.string.edit_host_relay_address_label) to oversizedRelay.take(MAX_WORKSPACE_LABEL_CHARS),
         ).forEach { (label, value) ->
             val labelBounds = rule.onNodeWithText(label, useUnmergedTree = true).performScrollTo().getUnclippedBoundsInRoot()
             val valueBounds = valueNode(value).getUnclippedBoundsInRoot()
             assertNoTextOverflow(label)
             assertTrue("$label overlaps its value", labelBounds.right <= valueBounds.left)
             assertWithin(valueBounds.right, value)
+            val layouts = mutableListOf<TextLayoutResult>()
+            valueNode(value).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertEquals(1, layouts.single().lineCount)
+            assertTrue("$label value did not ellipsize", layouts.single().isLineEllipsized(0))
         }
         assertNoTextOverflow(string(R.string.edit_host_title))
         rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performScrollTo().assertIsDisplayed()
