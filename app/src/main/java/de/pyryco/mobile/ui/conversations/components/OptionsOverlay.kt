@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
@@ -38,6 +39,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlin.math.roundToInt
 
@@ -84,8 +86,9 @@ private const val DETAIL_MAX_LINES = 2
  * overlay follows the composer's keyboard lift. The option column's height is capped at the space
  * above the anchor, and it scrolls when there are more options than fit.
  *
- * The design's `Schemes/On Primary` fills the surface and selected row, with
- * `Schemes/On Primary Fixed` on unselected rows in each theme mode.
+ * Static dark follows the design's `Schemes/On Primary` surface and selected row,
+ * with `Schemes/On Primary Fixed` on idle rows. Other theme paths use their
+ * established surface and selection colors to keep text readable.
  *
  * Every [OptionsOverlayOption.label] and [OptionsOverlayOption.detail] may be daemon-authored. They are
  * drawn through [Text] only: the label in one line, the detail in at most two, both ellipsized. [notListed] > 0 adds a caption that marks the list as a subset, so a cut menu never
@@ -170,9 +173,10 @@ private fun OptionsColumn(
     actions: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
+    val staticDark = LocalStaticDarkPalette.current
     Surface(
         shape = OverlayShape,
-        color = colors.onPrimary,
+        color = if (staticDark) colors.onPrimary else colors.surfaceContainerLowest,
         shadowElevation = 0.dp,
     ) {
         Column(
@@ -191,8 +195,13 @@ private fun OptionsColumn(
                     Modifier
                         .fillMaxWidth()
                         .heightIn(min = OptionMinHeight)
-                        .background(if (selected) colors.onPrimary else colors.onPrimaryFixed)
-                        .then(
+                        .background(
+                            if (staticDark) {
+                                if (selected) Color.Transparent else colors.onPrimaryFixed
+                            } else {
+                                if (selected) colors.primaryContainer else Color.Transparent
+                            },
+                        ).then(
                             if (actions) {
                                 Modifier.clickable(enabled = option.enabled, role = Role.Button, onClick = onClick)
                             } else {
