@@ -6,7 +6,6 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -79,14 +78,14 @@ class ArchiveNavigationTest {
     }
 
     /**
-     * The owner captured from Settings outlives a compatibility-selection change, a saved-state
+     * The owner captured from the channel list outlives a compatibility-selection change, a saved-state
      * restoration and a Back, and reopening under the other host captures afresh. Alpha's id carries
      * reserved characters, so the path segment is proven encoded rather than assumed.
      */
     @Test fun archiveKeepsItsCapturedOwnerAcrossSelectionChangeAndRestoration() {
         val restoration = start()
         select(ALPHA_ID)
-        openArchive()
+        openArchiveFromTheList()
         assertOwner(ALPHA_ID)
         assertShowsOnly(ALPHA_ARCHIVED, other = BRAVO_ARCHIVED)
 
@@ -99,11 +98,10 @@ class ArchiveNavigationTest {
         assertOwner(ALPHA_ID)
         assertShowsOnly(ALPHA_ARCHIVED, other = BRAVO_ARCHIVED)
 
-        // Back twice: Archive -> Settings, Settings -> list. Reopening under Bravo captures Bravo.
-        compose.runOnIdle { nav.popBackStack() }
+        // Back returns to the list. Reopening under Bravo captures Bravo.
         compose.runOnIdle { nav.popBackStack() }
         compose.waitForIdle()
-        openArchive()
+        openArchiveFromTheList()
         assertOwner(BRAVO_ID)
         assertShowsOnly(BRAVO_ARCHIVED, other = ALPHA_ARCHIVED)
     }
@@ -116,7 +114,7 @@ class ArchiveNavigationTest {
     @Test fun restoreReachesOnlyTheOwnerAndLeavesTheOtherHostsMatchingIdArchived() {
         start()
         select(ALPHA_ID)
-        openArchive()
+        openArchiveFromTheList()
         assertOwner(ALPHA_ID)
         // Point compatibility selection at Bravo before restoring, so a restore that followed
         // selection would land on Bravo's identically-numbered row instead of Alpha's.
@@ -136,10 +134,9 @@ class ArchiveNavigationTest {
 
         // Bravo's matching id is untouched: open its own archive and find the row still there.
         compose.runOnIdle { nav.popBackStack() }
-        compose.runOnIdle { nav.popBackStack() }
         compose.waitForIdle()
         select(BRAVO_ID)
-        openArchive()
+        openArchiveFromTheList()
         assertOwner(BRAVO_ID)
         assertShowsOnly(BRAVO_ARCHIVED, other = ALPHA_ARCHIVED)
     }
@@ -153,7 +150,7 @@ class ArchiveNavigationTest {
     @Test fun removingTheOwnerLeavesTheDestinationRatherThanShowingAnotherHost() {
         start()
         select(ALPHA_ID)
-        openArchive()
+        openArchiveFromTheList()
         assertOwner(ALPHA_ID)
 
         compose.runOnIdle { runBlocking { store.remove(ALPHA_ID) } }
@@ -162,11 +159,9 @@ class ArchiveNavigationTest {
     }
 
     /**
-     * The channel list's own archive entry — the second door onto this destination (#737) — opens on
-     * the selected host. It needs its own case because the Settings door cannot stand in for it: the
-     * two capture their owner from different sources, and only this one reads selection. Nor can
-     * `ChannelListScreenTest` stand in, which asserts that the tap emits `ArchiveTapped` and never
-     * where that lands. Before the repair this navigated to the route *pattern*, so the literal text
+     * The channel list's archive entry opens on the selected host. `ChannelListScreenTest` asserts
+     * that the tap emits `ArchiveTapped`, but not where that lands. Before the repair this navigated
+     * to the route *pattern*, so the literal text
      * `{serverId}` bound as the owner and `HostDestination` bounced the tap back to the list it came
      * from — an unconditional operator-facing affordance that went nowhere.
      */
@@ -177,8 +172,7 @@ class ArchiveNavigationTest {
         assertOwner(ALPHA_ID)
         assertShowsOnly(ALPHA_ARCHIVED, other = BRAVO_ARCHIVED)
 
-        // Where Settings' door hands on the owner its own destination already holds, this one reads
-        // selection afresh on every tap — so a later selection change opens the other host's archive.
+        // The list reads selection afresh on every tap, including after Back.
         compose.runOnIdle { nav.popBackStack() }
         compose.waitForIdle()
         select(BRAVO_ID)
@@ -189,18 +183,9 @@ class ArchiveNavigationTest {
 
     // --- helpers ---
 
-    /** The archive entry on the channel list's own bar, the door beside the settings gear. */
+    /** The archive entry on the channel list's own bar, beside the settings gear. */
     private fun openArchiveFromTheList() {
         compose.onNodeWithContentDescription("Open archive").performClick()
-        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.ARCHIVED_DISCUSSIONS }
-        compose.waitForIdle()
-    }
-
-    /** Through the real Settings row, so the capture under test is the production one. */
-    private fun openArchive() {
-        compose.onNodeWithContentDescription("Open settings").performClick()
-        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.SETTINGS }
-        compose.onNodeWithText("Archived discussions").performScrollTo().performClick()
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.ARCHIVED_DISCUSSIONS }
         compose.waitForIdle()
     }
