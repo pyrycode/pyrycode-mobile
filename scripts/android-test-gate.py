@@ -65,6 +65,8 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM -= 8
 # #1223 adds the remembered-model first-turn proof.
 LIVE_MINIMUM += 1
+# #1246 restores the operator-bypass permission proof after reply-based settlement diagnosis.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

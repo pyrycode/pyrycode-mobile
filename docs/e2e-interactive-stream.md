@@ -728,14 +728,14 @@ the Chats control. It reads the new chat's saved model before sending its first 
 reply, and reads both conversations' saved choices again. The 2026-09-28 post-verifier live gate passed
 all 37 selected methods with no failures or skips.
 
-[#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193) temporarily excludes six other
-`InteractiveStreamE2ETest` methods from the curated live list while their bodies remain `@Ignore`d:
-five use Settings controls removed by #1239 ([#1245](https://github.com/pyrycode/pyrycode-mobile/issues/1245))
-and the operator-bypass permission case has a pre-existing settle-window assertion failure
-([#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246)). Two older workspace-switching methods
-are also ignored and excluded. `scripts/e2e-emulator.sh` lists 37 runnable methods; the
-`android-test-gate.py` execution floor is 37 after #1223, with a script test checking that ignored
-methods are absent.
+[#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193) temporarily excluded six other
+`InteractiveStreamE2ETest` methods from the curated live list: five use Settings controls removed by
+\#1239 ([#1245](https://github.com/pyrycode/pyrycode-mobile/issues/1245)), and the operator-bypass
+permission case had a settle-window assertion failure now diagnosed by
+[#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246). Two older workspace-switching methods
+remain ignored and excluded. With the bypass method restored, `scripts/e2e-emulator.sh` lists 38 runnable
+methods and `android-test-gate.py` requires 38 executed tests. Script tests check both the floor and the
+bypass method's explicit presence, as well as excluding ignored methods.
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
 `effective_effort` (an omitted key fails the method) and that the reopened footer's label and note match
@@ -795,11 +795,12 @@ not assumed.
 Three acceptance steps, all against pyrycode#2510 (`475c406a`)'s `session_settings` reporting the mode
 Claude last confirmed for the running child, not merely `yolo`: after a tool-free ping, a fresh reading
 reports `bypassPermissions` and the reopened footer settles on Bypass approvals, proving the daemon and
-the #650 footer agree from a cold read; choosing Manual approval sends a `default` write the daemon
-acknowledges without touching a child whose stored mode is already `default` — the control stays pending
-for the whole 15 s settle window (`PERMISSION_SETTLE_WINDOW_MS`), not a refusal's instant clear, and
-settles back on Bypass approvals with a fresh reading still `bypassPermissions`, proving an
-acknowledgement is not read as a confirmation; then Plan, Bypass approvals and Manual approval each settle
+the #650 footer agree from a cold read. Choosing Manual approval must produce an acknowledged
+`permission_write`; a refused or failed write fails separately. Once the pending control clears, the
+scenario requests another fresh reply for the same session: `default` confirms Manual approval early,
+while `bypassPermissions` identifies an acknowledged no-op. The selected Run configuration row must
+match that reply. Pending duration alone proves neither outcome; the earlier 15 s timing assertion
+could fail before reading the daemon's mode. Then Plan, Bypass approvals and Manual approval each settle
 on their own label on the same session with no turn in between, each confirmed by a fresh reading before
 the footer is asked to agree. Finally, still on that session, a Read of a file outside the conversation's
 workspace — holding a fresh token that appears nowhere in the prompt — raises a permission prompt the test
@@ -1346,7 +1347,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 37 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 38 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1455,7 +1456,7 @@ re-adding the background-task-progress method once pyrycode/pyrycode#2661 closed
 then from 45 to 44 when #1190 retired the host-row-only #1087 method, and from 44 to 36 when
 \#1193 removed eight ignored methods from the curated selector pending #1245/#1246 and the older
 workspace-switching follow-ups, then from 36 to 37 when #1223 added the remembered-model first-turn
-scenario.
+scenario, and from 37 to 38 when #1246 restored the operator-bypass permission method.
 `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
@@ -1511,7 +1512,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 37 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 38 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1535,8 +1536,8 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** The current curated selector passes 37 runnable methods as a comma-separated
-`class#method` list. The historical inventory below also names eight now ignored methods; the
+**What it runs.** The current curated selector passes 38 runnable methods as a comma-separated
+`class#method` list. The historical inventory below also names seven now ignored methods; the
 exact current list is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
@@ -1583,7 +1584,8 @@ exact current list is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`:
 `InteractiveStreamE2ETest#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost` (#1089), and
 `InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` (#1090), and
 `InteractiveStreamE2ETest#interactiveTurn_backgroundAgentProgress_showsOnRunningCard` (#1076/#1107).
-\#1223 adds the remembered-model method to this selector and raises `LIVE_MINIMUM` to 37.
+\#1223 added the remembered-model method to this selector, raising `LIVE_MINIMUM` to 37; #1246 restored
+the operator-bypass permission method and raised it to 38.
 #1189 revised three existing methods: Create channel opens from an initially empty host Channels
 section and uses the daemon default; the peer workspace-label method checks the thread, Settings and
 cross-host state without a deleted tree-row assertion; the folder-settings method keeps the repository
@@ -1640,8 +1642,9 @@ The full class also includes the
 `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`
 rode `@Ignore`d until [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020) let a stored
 `message` entry's `attachment_ids` survive history replay and now rides LIVE with the rest. The
-operator-bypass-permission method rides LIVE now that
-[#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixed its missing reply, and the
+operator-bypass-permission method rides LIVE after
+[#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) fixed its missing reply and #1246
+replaced its pending-duration assertion with reply-based settlement, and the
 permission-answer and question-answer methods (#966) ride LIVE on the dedicated answer daemon described
 above. `LIVE=1` is
 **mutually exclusive with `DETERMINISTIC=1`**
@@ -1983,7 +1986,14 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-09-27 (#1190).** The dispatcher ran
+**Current live verification — 2026-09-28 (#1246).** The dispatcher ran
+`python3 scripts/android-test-gate.py live` against `feature/1246` at `b0e0176649`, merged with
+`origin/main` at `a596935bf5`: 38 executed, 38 passed, zero failures or skips, exit 0. The XML
+includes `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild` as a passing
+testcase. This was the full curated gate, not a focused one-method run; its result does not identify
+whether the first Manual approval write confirmed `default` early or remained an acknowledged no-op.
+
+**Previous live verification — 2026-09-27 (#1190).** The dispatcher ran
 `python3 scripts/android-test-gate.py live` against `feature/1190` at `50712cec51`, merged with
 `origin/main` at `0df78d3578`: 44 executed, 44 passed, zero failures or skips, exit 0. This includes
 `InteractiveStreamE2ETest`'s migrated Chats creation, save-as-channel, folder-use, two-host defaults and
@@ -2582,6 +2592,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **Coverage — shipped:** [#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246)
+  restored `InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+  to the curated rung-3 selector after replacing its pending-duration check with an acknowledged-write
+  outcome and a fresh, same-session mode reply. The reply decides whether the first Manual approval
+  choice confirmed early or remained an acknowledged no-op; the selected row must agree. A refusal
+  fails separately. The Plan → Bypass approvals → Manual approval and outside-workspace Read witness
+  checks remain. `LIVE_MINIMUM` is 38; the 2026-09-28 full live gate executed all 38 methods with no
+  failures or skips, including this one.
+
 - **Coverage — shipped:** [#1223](https://github.com/pyrycode/pyrycode-mobile/issues/1223)
   adds `InteractiveStreamE2ETest.interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`:
   a model chosen in one chat is saved on a newly created chat before its first real Claude turn,
@@ -2592,10 +2611,11 @@ The remaining checks here are specific to a real relay or real Claude execution:
   expands `InteractiveStreamE2ETest.interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
   to choose a published ordinary row in Run configuration and verify each chat's selected radio after
   fresh daemon settings replies, including leaving and reopening the changed chat. The scenario stays
-  active in the rung-3 live list. Six unrelated methods remain ignored pending
+  active in the rung-3 live list. The #1193 selector excluded six other methods at the time, pending
   [#1245](https://github.com/pyrycode/pyrycode-mobile/issues/1245) and
-  [#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246); two older workspace-switching
-  methods are also excluded. This left 36 runnable methods before #1223 added one.
+  [#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246); the latter is now restored.
+  Two older workspace-switching methods remain excluded. The selector had 36 runnable methods
+  before #1223 added one.
 
 - **Coverage — shipped:** [#1190](https://github.com/pyrycode/pyrycode-mobile/issues/1190)
   moved `InteractiveStreamE2ETest` chat creation to each host's Chats plus and Create confirmation.
