@@ -53,4 +53,8 @@ The form remains stateless. The caller owns values, enabled state and callbacks;
 
 ## Documentation handoff
 
-No documentation path or section is requested in this ticket. The documentation stage should update the owning shared modal/channel form overview with the final field geometry and the evidence location; pending that stage.
+No documentation path or section is requested in this ticket. Pending documentation stage: update `docs/knowledge/features/save-as-channel-dialog.md` § `ChannelFormFields` with the final field geometry and links to the checked-in comparison images.
+
+## Revisions
+
+- 2026-09-28: Clarified the exact documentation handoff target after implementation. The field design and code contract above are unchanged.
