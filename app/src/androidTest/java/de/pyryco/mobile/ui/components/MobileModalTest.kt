@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
@@ -45,12 +46,14 @@ import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isFocused
@@ -63,13 +66,13 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -163,12 +166,19 @@ class MobileModalTest {
         show()
         rule.onNodeWithText("Independent title").assertIsDisplayed()
         rule.onNodeWithTag("field").assertIsDisplayed()
-        listOf(rule.onNodeWithContentDescription("Close"), rule.onNodeWithText("Cancel"), rule.onNodeWithText("OK")).forEach {
-            it
+        rule
+            .onNodeWithContentDescription("Close")
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
+            .assertWidthIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(48.dp)
+        listOf("Cancel", "OK").forEach { label ->
+            rule
+                .onNodeWithText(label)
                 .assertIsDisplayed()
                 .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
                 .assertWidthIsAtLeast(48.dp)
-                .assertHeightIsAtLeast(48.dp)
+                .assertHeightIsEqualTo(40.dp)
         }
         val title = rule.onNodeWithText("Independent title").fetchSemanticsNode().boundsInRoot
         val field = rule.onNodeWithTag("field").fetchSemanticsNode().boundsInRoot
@@ -183,9 +193,10 @@ class MobileModalTest {
         show()
         rule.onNodeWithContentDescription("Close").performClick()
         rule.runOnIdle { assertEquals(1, dismissals) }
-        rule.onNodeWithText("Cancel").performClick()
+        // The Figma surface is 40 dp high; its reserved target accepts a touch just above it.
+        rule.onNodeWithText("Cancel").performTouchInput { click(Offset(center.x, -3f)) }
         rule.runOnIdle { assertEquals(2, dismissals) }
-        Espresso.pressBack()
+        pressBackOnFocusedWindow()
         rule.runOnIdle {
             assertEquals(3, dismissals)
             assertEquals(0, submissions)
@@ -220,19 +231,28 @@ class MobileModalTest {
         rule.onNodeWithContentDescription("Close").assertDoesNotExist()
         rule.onNodeWithText("OK").assertDoesNotExist()
 
-        Espresso.pressBack()
+        pressBackOnFocusedWindow()
         rule.runOnIdle { assertEquals(0, dismissals) }
         rule.onNodeWithText("Gate content").assertIsDisplayed()
 
         rule
             .onNodeWithText("Cancel")
-            .assertHeightIsAtLeast(48.dp)
+            .assertHeightIsEqualTo(40.dp)
             .performClick()
         rule.runOnIdle { assertEquals(1, dismissals) }
     }
 
     private fun dialogWindow(): Window =
         checkNotNull((dialogView.parent as? DialogWindowProvider)?.window) { "modal content is not hosted in a dialog window" }
+
+    // Espresso can select the unfocused activity root while a dialog owns input.
+    private fun pressBackOnFocusedWindow() {
+        ParcelFileDescriptor
+            .AutoCloseInputStream(
+                InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("input keyevent KEYCODE_BACK"),
+            ).use { it.readBytes() }
+        rule.waitForIdle()
+    }
 
     @Test
     fun disabled_and_loading_block_submission_but_keep_dismissal_available() {
@@ -251,7 +271,7 @@ class MobileModalTest {
         rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).assertIsDisplayed()
         rule.onNodeWithContentDescription("Close").performClick()
         rule.onNodeWithText("Cancel").performClick()
-        Espresso.pressBack()
+        pressBackOnFocusedWindow()
         rule.runOnIdle {
             assertEquals(1, submissions)
             assertEquals(3, dismissals)

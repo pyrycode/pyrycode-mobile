@@ -4,7 +4,10 @@ import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -18,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -28,19 +32,25 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -156,6 +166,32 @@ internal fun MobileReadOnlyModal(
     )
 }
 
+/** A single filled dismissal action, with content starting below the header. */
+@Composable
+internal fun MobileDismissModal(
+    title: String,
+    actionLabel: String,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    // Settings' Figma frame omits Android bars; the shared shell still applies real safe drawing insets.
+    MobileModalShell(
+        title = title,
+        onDismissRequest = onDismissRequest,
+        gate = false,
+        error = null,
+        modifier = modifier,
+        contentAlignment = Alignment.Top,
+        footerAlignment = Alignment.End,
+        bottomPadding = 24.dp,
+        footer = { dismiss ->
+            ModalSubmitButton(label = actionLabel, onClick = dismiss, enabled = true, loading = false, logSubmit = false)
+        },
+        content = content,
+    )
+}
+
 /** [gate] is the only switch between the editing shell and the hardened decision gate. */
 @Composable
 private fun MobileModalShell(
@@ -165,6 +201,9 @@ private fun MobileModalShell(
     error: String?,
     footer: @Composable RowScope.(dismiss: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
+    contentAlignment: Alignment.Vertical = Alignment.CenterVertically,
+    footerAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
+    bottomPadding: androidx.compose.ui.unit.Dp = 20.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     DisposableEffect(Unit) {
@@ -193,8 +232,7 @@ private fun MobileModalShell(
             val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
             SideEffect { dialogWindow?.decorView?.filterTouchesWhenObscured = true }
         }
-        // Figma fills the sheet with onPrimaryFixed, which cannot differ between themes and is unreadable
-        // behind the light content colour, so the fill is the modalContainer slot: the frame's navy in dark,
+        // The sheet keeps its scoped modalContainer fill: Figma's On Primary Fixed navy in dark,
         // primaryContainer in light (#1142). Keep the reference corners local to this shell and its actions.
         Surface(
             modifier =
@@ -221,7 +259,7 @@ private fun MobileModalShell(
                         Modifier
                             .verticalScroll(shellScroll)
                             .then(if (pinned) Modifier.height(maxHeight) else Modifier)
-                            .padding(horizontal = 28.dp, vertical = 24.dp),
+                            .padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = bottomPadding),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -237,16 +275,20 @@ private fun MobileModalShell(
                             )
                             // A gate's footer Cancel is its only dismissal control, so it draws no close glyph.
                             if (!gate) {
-                                IconButton(onClick = dismiss, modifier = Modifier.size(48.dp)) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_modal_close),
-                                        contentDescription = "Close",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier =
-                                            Modifier
-                                                .size(28.dp)
-                                                .background(MaterialTheme.colorScheme.onPrimary, CircleShape),
-                                    )
+                                // The visible row is 28 dp; the centred 48 dp hit area fits within its 20 dp
+                                // title gap and 12 dp separator gap without changing either Figma measure.
+                                Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                                    IconButton(onClick = dismiss, modifier = Modifier.requiredSize(48.dp)) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_modal_close),
+                                            contentDescription = "Close",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier =
+                                                Modifier
+                                                    .size(28.dp)
+                                                    .background(MaterialTheme.colorScheme.onPrimary, CircleShape),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -258,7 +300,7 @@ private fun MobileModalShell(
                                 Modifier
                                     .fillMaxWidth()
                                     .then(if (pinned) Modifier.verticalScroll(contentScroll).heightIn(min = maxHeight) else Modifier),
-                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                            verticalArrangement = Arrangement.spacedBy(12.dp, contentAlignment),
                         ) {
                             content()
                             if (error != null) {
@@ -277,7 +319,7 @@ private fun MobileModalShell(
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                        horizontalArrangement = Arrangement.spacedBy(20.dp, footerAlignment),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         footer(dismiss)
@@ -288,52 +330,79 @@ private fun MobileModalShell(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModalCancelButton(
+internal fun ModalCancelButton(
     label: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
+    interactionSource: MutableInteractionSource? = null,
 ) {
-    OutlinedButton(
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
-        onClick = onClick,
-        modifier = Modifier.heightIn(min = 48.dp),
-        enabled = enabled,
-        shape = RoundedCornerShape(6.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+    val source = interactionSource ?: remember { MutableInteractionSource() }
+    val hovered = source.collectIsHoveredAsState().value && enabled
+    val rippleConfiguration = LocalRippleConfiguration.current
+    CompositionLocalProvider(LocalRippleConfiguration provides if (hovered) null else rippleConfiguration) {
+        OutlinedButton(
+            colors =
+                ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (hovered) MaterialTheme.colorScheme.onPrimary else Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ),
+            onClick = onClick,
+            interactionSource = source,
+            // Material reserves an invisible 48 dp hit area around the 40 dp surface.
+            modifier = Modifier.minimumInteractiveComponentSize(),
+            enabled = enabled,
+            shape = RoundedCornerShape(6.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+            contentPadding = PaddingValues(horizontal = 19.dp, vertical = 7.dp),
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+        }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModalSubmitButton(
+internal fun ModalSubmitButton(
     label: String,
     onClick: () -> Unit,
     enabled: Boolean,
     loading: Boolean,
+    interactionSource: MutableInteractionSource? = null,
+    logSubmit: Boolean = true,
 ) {
-    Button(
-        onClick = {
-            if (enabled) {
-                logModalEvent("submit_requested")
-                onClick()
+    val source = interactionSource ?: remember { MutableInteractionSource() }
+    val hovered = source.collectIsHoveredAsState().value && enabled
+    val rippleConfiguration = LocalRippleConfiguration.current
+    CompositionLocalProvider(LocalRippleConfiguration provides if (hovered) null else rippleConfiguration) {
+        Button(
+            onClick = {
+                if (enabled) {
+                    if (logSubmit) logModalEvent("submit_requested")
+                    onClick()
+                }
+            },
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = if (hovered) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            interactionSource = source,
+            modifier = Modifier.minimumInteractiveComponentSize(),
+            enabled = enabled,
+            shape = RoundedCornerShape(6.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.padding(end = 8.dp).size(20.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 2.dp,
+                )
             }
-        },
-        modifier = Modifier.heightIn(min = 48.dp),
-        enabled = enabled,
-        shape = RoundedCornerShape(6.dp),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-    ) {
-        if (loading) {
-            CircularProgressIndicator(
-                modifier = Modifier.padding(end = 8.dp).size(20.dp),
-                color = MaterialTheme.colorScheme.primary,
-                strokeWidth = 2.dp,
-            )
+            Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
         }
-        Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
     }
 }
 

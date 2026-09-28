@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
@@ -12,7 +15,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.MemorySearchAvailability
+import de.pyryco.mobile.data.repository.MemorySearchProvider
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -24,6 +31,15 @@ import org.junit.runner.RunWith
 class ThreadScreenChannelInfoTest {
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    private fun report(
+        availability: MemorySearchAvailability,
+        installed: Boolean = true,
+        enabled: Boolean = true,
+    ) = MemorySearchReport(
+        availability,
+        listOf(MemorySearchProvider("p", "Notebook Search", installed, enabled, availability)),
+    )
 
     private fun message(id: String): ThreadItem.MessageItem =
         ThreadItem.MessageItem(
@@ -81,6 +97,139 @@ class ThreadScreenChannelInfoTest {
         // sessionCount = 3, messageCount = 2 (counts the two MessageItems)
         composeTestRule.onNodeWithText("3").assertIsDisplayed()
         composeTestRule.onNodeWithText("2").assertIsDisplayed()
+    }
+
+    @Test
+    fun channel_info_shows_provider_name_and_effective_status() {
+        val state =
+            channelInfoState().copy(
+                runConfig = ThreadRunConfig(memorySearch = report(MemorySearchAvailability.Available)),
+            )
+        setContent(mutableListOf(), state)
+
+        composeTestRule.onNodeWithText("Notebook Search").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Memory search available").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
+    }
+
+    @Test
+    fun channel_info_lists_each_provider_with_its_own_state() {
+        val providers =
+            listOf(
+                MemorySearchProvider("a", "Notebook Search", true, true, MemorySearchAvailability.Available),
+                MemorySearchProvider("b", "Archive Index", true, true, MemorySearchAvailability.Unavailable),
+                MemorySearchProvider("c", "Local Notes", false, false, MemorySearchAvailability.Unknown),
+            )
+        setContent(
+            mutableListOf(),
+            channelInfoState().copy(
+                runConfig = ThreadRunConfig(memorySearch = MemorySearchReport(MemorySearchAvailability.Unavailable, providers)),
+            ),
+        )
+
+        composeTestRule.onNodeWithText("Notebook Search").assertExists()
+        composeTestRule.onNodeWithText("Memory search available").assertExists()
+        composeTestRule.onNodeWithText("Archive Index").assertExists()
+        composeTestRule.onNodeWithText("Memory search unavailable").assertExists()
+        composeTestRule.onNodeWithText("Local Notes").assertExists()
+        composeTestRule.onNodeWithText("Not installed").assertExists()
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
+    }
+
+    @Test
+    fun channel_info_bounds_daemon_supplied_provider_name() {
+        val longName = "A".repeat(300)
+        val provider = MemorySearchProvider("p", longName, true, true, MemorySearchAvailability.Available)
+        setContent(
+            mutableListOf(),
+            channelInfoState().copy(
+                runConfig = ThreadRunConfig(memorySearch = MemorySearchReport(MemorySearchAvailability.Available, listOf(provider))),
+            ),
+        )
+
+        composeTestRule.onNodeWithText("A".repeat(120)).assertExists()
+        composeTestRule.onNodeWithText(longName).assertDoesNotExist()
+    }
+
+    @Test
+    fun channel_info_distinguishes_disabled_absent_and_unknown_after_conversation_change() {
+        val state =
+            androidx.compose.runtime.mutableStateOf(
+                channelInfoState().copy(
+                    runConfig = ThreadRunConfig(memorySearch = report(MemorySearchAvailability.Unavailable, enabled = false)),
+                ),
+            )
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = state.value,
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Notebook Search").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Disabled").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Memory search available").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
+
+        composeTestRule.runOnIdle {
+            state.value =
+                channelInfoState().copy(
+                    conversationId = "ch_other",
+                    displayName = "Other channel",
+                    runConfig = ThreadRunConfig(memorySearch = MemorySearchReport.Unknown),
+                )
+        }
+        composeTestRule.onNode(hasText("Other channel") and hasAnyAncestor(isDialog())).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Status unknown").assertIsDisplayed()
+        composeTestRule.onNodeWithText("None").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
+
+        composeTestRule.runOnIdle {
+            state.value =
+                state.value.copy(
+                    runConfig = ThreadRunConfig(memorySearch = MemorySearchReport(MemorySearchAvailability.Absent, emptyList())),
+                )
+        }
+        composeTestRule.onNodeWithText("None").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Install").assertIsDisplayed()
+    }
+
+    @Test
+    fun channel_info_install_opens_memory_plugin_docs_for_confirmed_absence() {
+        val opened = mutableListOf<String>()
+        val uriHandler =
+            object : UriHandler {
+                override fun openUri(uri: String) {
+                    opened += uri
+                }
+            }
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        state =
+                            channelInfoState().copy(
+                                runConfig =
+                                    ThreadRunConfig(
+                                        memorySearch = MemorySearchReport(MemorySearchAvailability.Absent, emptyList()),
+                                    ),
+                            ),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("Install").performClick()
+        assertEquals(listOf(MEMORY_PLUGIN_DOCS_URL), opened)
     }
 
     @Test

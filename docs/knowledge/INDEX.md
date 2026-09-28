@@ -6,6 +6,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 
 ## Product and UI
 
+- [Shared typography](features/shared-typography.md): Figma text roles, emphasis, visual evidence and font-scale limit.
 - [Navigation](features/navigation.md): routes, pairing state and the single activity.
 - [Welcome](features/welcome-screen.md): first-run entry point.
 - [Pairing](features/scanner-screen.md): camera scanner, [pair with code](features/paste-code-dialog.md), [fingerprint confirmation](features/pairing-confirm-gate.md), and [paired-server storage](features/paired-server-store.md).
@@ -15,9 +16,9 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Slash-command type-ahead](features/slash-command-type-ahead.md): composer suggestions from the conversation's published slash-command menu, filtering, completion and dismissal.
 - [Banner notice row](features/banner-notice-row.md): claude's `banner` frame surfaced as an inert thread row, live and on history reload.
 - [Model refusal row](features/model-refusal-row.md): a model refusal or fallback explained in the thread, live and on history reload.
-- [Settings](features/settings-screen.md): settings UI, storage and diagnostics.
+- [Settings](features/settings-screen.md): notifications-only modal and persisted push control.
 - [Shared mobile modal](features/mobile-modal.md): caller-controlled editing shell, theme mapping, focus and IME behavior.
-- [Host editor](features/host-editor.md): the shared Edit host state machine (`ui/host/HostEditor.kt`) driving the modal from both the channel list and Settings.
+- [Host editor](features/host-editor.md): the shared Edit host state machine (`ui/host/HostEditor.kt`) used by the channel list.
 - [System prompt editor](features/system-prompt-editor.md): the shared channel system-prompt editing state (`ui/conversations/components/SystemPromptEditor.kt`) the create/save-as and edit channel modals will own.
 
 ## Data and transport

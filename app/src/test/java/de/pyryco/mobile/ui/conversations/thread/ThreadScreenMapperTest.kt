@@ -3,11 +3,12 @@ package de.pyryco.mobile.ui.conversations.thread
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.MemorySearchAvailability
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ThreadScreenMapperTest {
@@ -61,7 +62,24 @@ class ThreadScreenMapperTest {
         // created-date derives from the earliest thread item
         assertEquals(formatRelativeTime(earliest, now), model.createdLabel)
         assertEquals(formatRelativeTime(lastUsed, now), model.lastActivityLabel)
-        assertTrue(model.memoryPlugins.isEmpty())
+        assertEquals(MemorySearchReport.Unknown, model.memorySearch)
+    }
+
+    @Test
+    fun toChannelInfoUiModel_uses_current_session_report() {
+        val absent = MemorySearchReport(MemorySearchAvailability.Absent, emptyList())
+        val state =
+            ThreadUiState(
+                conversationId = "ch_1",
+                displayName = "x",
+                runConfig = ThreadRunConfig(memorySearch = absent),
+            )
+
+        assertEquals(absent, state.toChannelInfoUiModel(now).memorySearch)
+        assertEquals(
+            MemorySearchReport.Unknown,
+            state.copy(conversationId = "ch_2", runConfig = ThreadRunConfig()).toChannelInfoUiModel(now).memorySearch,
+        )
     }
 
     @Test

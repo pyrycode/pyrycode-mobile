@@ -1,0 +1,16 @@
+Ticket: #1238
+Design inspection date: 2026-09-28 (Europe/Helsinki)
+Figma: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=15-8
+Inspected node: 15:8, 412 × 892 current render
+Device: Gradle-managed pixel8Api35, API 35, density 160 dpi, 412 × 892 pixels
+Capture: MainActivityInsetsDeviceTest.savedAppearanceAndAndroidModeCannotChangeStaticDarkPalette, actual MainActivity channel list with demo fixture
+Captured case: Android light, saved Light, wallpaper colours enabled
+Focused command: ./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.MainActivityInsetsDeviceTest#savedAppearanceAndAndroidModeCannotChangeStaticDarkPalette' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Exit 0; 1 test executed, 0 failures, 0 errors, 0 skips. The test also exercised saved Light without wallpaper, System on Android dark, System with wallpaper on Android light, and Dark with wallpaper on Android dark. Stored values and defaultYolo remained intact in every case.
+Original XML: app/build/outputs/androidTest-results/managedDevice/debug/pixel8Api35/TEST-pixel8Api35-_app-.xml
+Original PNG: app/build/intermediates/managed_device_android_test_additional_output/debugAndroidTest/pixel8Api35DebugAndroidTest/palette-1238/api-35/412x892-light-wallpaper-android-light.png
+Retained XML: device-results.xml
+Comparison: palette-comparison.png labels actual emulator, Figma, and amplified absolute pixel difference panels at equal scale. Difference reflects different host/channel fixture, Android system bars, typography/layout, and Figma's atmospheric glow; it is not a pixel-exact same-content comparison.
+Palette sample: emulator (400,800) = #0B0E11; Figma (400,800) = #0B0E11. This is the static dark channel-list canvas. The root now always selects the static dark scheme. The glow and fixture/layout differences are outside this theme-root ticket; #1225's shared-role comparison covers selected-row and unread-dot colours with a closer fixture.
+API 33 focused command: ./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.MainActivityInsetsDeviceTest#savedAppearanceAndAndroidModeCannotChangeStaticDarkPalette' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Exit 0; 1 test executed, 0 failures, 0 errors, 0 skips. Retained XML: api33-device-results.xml. The ATD validates the real-activity pixel via view.draw(Canvas); the API 35 full-emulator screenshot supplies visual evidence.

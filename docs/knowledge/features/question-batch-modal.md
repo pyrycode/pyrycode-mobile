@@ -127,7 +127,7 @@ index only — never from claude-authored text). A single-choice question's rows
 `selectableGroup()` with `Role.RadioButton`; a multiple-choice question's rows use `Role.Checkbox`
 independently. All claude-authored text (header, question, option label, option description) renders
 through plain `Text` with no `maxLines` — the shell's scrolling column already handles overflow by height,
-so wrapping is free and no clamp is needed the way [`DebugBundleModal`](mobile-modal.md#callers) needed one
+so wrapping is free and no clamp is needed the way [`DebugBundleModal`](mobile-modal-callers.md#callers) needed one
 for a fixed-height row.
 
 Known deviation from Figma `347:6913` (verifier finding, non-blocking, unowned): the reference draws a
@@ -153,7 +153,11 @@ text alone. No ticket currently owns adding it.
   [Shared mobile modal § Focus and verification](mobile-modal.md#focus-and-verification)). The test also
   passes `modifier` through to `QuestionBatchModal`, forwarded into the gate, so
   `DeviceConfigurationOverride.ForcedSize` — which does not by itself constrain a `Dialog`'s own window —
-  can size it.
+  can size it. Before touching the IME, the test waits for that dialog window itself to gain focus,
+  sends `CLOSE_SYSTEM_DIALOGS` when focus is absent, and checks focus again before using the cached
+  view for inset measurements. A timeout reports the process windows' focus states. The managed API 33
+  full UI run for #1235 executed all 78 tests, including this case, with no failures or skips; the
+  intermittent external-dialog recovery path did not occur in that run.
 
 ## Related
 

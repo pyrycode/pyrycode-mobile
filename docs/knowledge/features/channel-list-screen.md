@@ -22,6 +22,8 @@ gone, the flat `ChannelListUiState` compatibility model (loading/error/empty pla
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `ChannelListScreen.kt`.
 
+Tree labels use the [shared type ramp](shared-typography.md) checked against Figma sidebar `15:8`.
+
 ## What it does
 
 Wraps its body in a `Scaffold` whose `topBar` is the file-private `ChannelListTopBar` (rendered in **every**
@@ -312,7 +314,7 @@ distinction from the tree's own blank at all — see the next section.
   [`../codebase/99.md`](../codebase/99.md), [`../codebase/162.md`](../codebase/162.md),
   [`../codebase/221.md`](../codebase/221.md) (FAB long-press → `WorkspacePicker` — the button itself
   retired by #738, the picker wiring it originated carried forward as the host row's long-press until
-  #904 replaced that one use with [`AddWorkspaceModal`](mobile-modal.md#callers))
+  #904 replaced that one use with [`AddWorkspaceModal`](mobile-modal-callers.md#callers))
 - Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`,
   `docs/specs/architecture/21-channel-list-top-app-bar.md`,
   `docs/specs/architecture/22-channel-list-fab-new-discussion.md`,
@@ -345,11 +347,11 @@ distinction from the tree's own blank at all — see the next section.
   `dismissWorkspaceEditor`; the compatibility `state` producer, `onEvent`
   reducer and `navigationEvents` this screen once also consumed retired with the button in #738), [Tree
   rows](channel-list-screen-how-it-works.md#tree-rows-730) (`TreeHostRow` / `TreeHostSectionRow` / `TreeConversationRow`,
-  #730; `TreeRowControl` since #738, renamed from `TreeAddControl` in #744), [`EditHostModal`](mobile-modal.md#callers)
-  (#743's shell content, driven by this screen since #744), [`EditChatModal`](mobile-modal.md#callers)
-  (#826's shell content, driven by this screen since #827), [`AddWorkspaceModal`](mobile-modal.md#callers)
+  #730; `TreeRowControl` since #738, renamed from `TreeAddControl` in #744), [`EditHostModal`](mobile-modal-callers.md#callers)
+  (#743's shell content, driven by this screen since #744), [`EditChatModal`](mobile-modal-callers.md#callers)
+  (#826's shell content, driven by this screen since #827), [`AddWorkspaceModal`](mobile-modal-callers.md#callers)
   (#904's shell content, replacing this screen's own use of [WorkspacePicker](./workspace-picker.md#consumers)),
-  [`EditWorkspaceModal`](mobile-modal.md#callers) (#905's retained folder editor, no longer opened from a
+  [`EditWorkspaceModal`](mobile-modal-callers.md#callers) (#905's retained folder editor, no longer opened from a
   tree row), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
   (#729's workspace projection, still available to other consumers), [ConversationAvatar](./conversation-avatar.md),
   [Navigation](./navigation.md), [Dependency injection](./dependency-injection.md)
@@ -362,8 +364,8 @@ distinction from the tree's own blank at all — see the next section.
   the rename path this section describes), #745 (done, split from #642 — wires `Unpair host` behind a
   confirmation, this section's own [Host row edit control](channel-list-screen-tree-and-controls.md#host-row-edit-control-744)), #904 (done, split
   from #664 — moves the host row's long-press from the `WorkspacePicker` sheet into
-  [`AddWorkspaceModal`](mobile-modal.md#callers), this section's own [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)), #905 (done, split
-  from #664 — every workspace row's own pencil, opening [`EditWorkspaceModal`](mobile-modal.md#callers) on
+  [`AddWorkspaceModal`](mobile-modal-callers.md#callers), this section's own [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)), #905 (done, split
+  from #664 — every workspace row's own pencil, opening [`EditWorkspaceModal`](mobile-modal-callers.md#callers) on
   that row's own host and exact `cwd` to call the `renameWorkspace` / `archiveWorkspace` repository methods
   #663 added; #664's other half, adding a workspace, already landed as #904's host-row long-press, above),
   #878 (done, split from #668 — draws each row's `ConversationAttention` (#877) as the leading dot's fill

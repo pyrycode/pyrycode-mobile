@@ -198,6 +198,7 @@ private fun IdentityRow(
     ) {
         Text(
             text = label,
+            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
         )
@@ -205,7 +206,7 @@ private fun IdentityRow(
         // inside the row rather than stretching it.
         Text(
             text = value,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(2f),
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

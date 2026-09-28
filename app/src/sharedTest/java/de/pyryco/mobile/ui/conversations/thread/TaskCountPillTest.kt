@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -142,8 +143,9 @@ class TaskCountPillTest {
         count = 2
         composeTestRule.waitForIdle()
         pill("2 tasks running").assertIsDisplayed()
-        // The pill alone raises the band by its own 24dp and the column's 8dp gap.
-        assertEquals(collapsedBottom - 32.dp, messageBottom())
+        // The pill raises the band by its measured text height and the column's 8dp gap.
+        val pillHeight = pill("2 tasks running").getUnclippedBoundsInRoot().height
+        assertEquals(collapsedBottom - pillHeight - 8.dp, messageBottom())
 
         count = 0
         composeTestRule.waitForIdle()

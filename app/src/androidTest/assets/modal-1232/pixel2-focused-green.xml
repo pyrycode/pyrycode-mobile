@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="7" failures="0" errors="0" skipped="0" time="11.07" timestamp="2026-09-28T01:02:44" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.components.MobileModalTest" tests="7" failures="0" errors="0" skipped="0" time="10.798" timestamp="2026-09-28T01:02:44" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="short_content_and_accessible_actions_are_visible" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.939" />
+    <testcase name="gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.361" />
+    <testcase name="plain_shell_window_is_not_hardened" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.268" />
+    <testcase name="small_window_overflow_scrolls_with_header_and_footer_fixed" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.501" />
+    <testcase name="close_cancel_and_back_only_request_dismissal_once_each" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.417" />
+    <testcase name="disabled_and_loading_block_submission_but_keep_dismissal_available" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.617" />
+    <testcase name="ime_keeps_focused_field_final_item_and_actions_reachable" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.695" />
+  </testsuite>
+</testsuites>

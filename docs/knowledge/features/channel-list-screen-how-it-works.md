@@ -161,7 +161,7 @@ screen's last use of it. The screen keeps its `(hostState, onEvent)` contract; V
 their `NavBackStackEntry`, and `collectAsStateWithLifecycle()` controls screen subscriptions.
 
 **The editor's target lives in the view model, not the screen (#744).** `ChannelListScreen` composes
-[`EditHostModal`](mobile-modal.md#callers) as a `Scaffold` sibling, the same placement `WorkspacePicker`
+[`EditHostModal`](mobile-modal-callers.md#callers) as a `Scaffold` sibling, the same placement `WorkspacePicker`
 already uses, drawn only while `hostState.hostEditor != null` and reading its `serverIdentity`,
 `relayAddress`, `initialName`, `saving`, `failed` and (since #745) `confirmingUnpair` straight off that
 state — no screen-local copy. The error slot resolves `unpairFailed` ahead of `failed`
@@ -183,7 +183,7 @@ removal's ordering and `saving` guard.
 **A Chats row's own pencil follows that chat's own host, live (#827).** `ChannelListScreen` composes a
 private `ChatEditorModal(hostState, onEvent)` as a third `Scaffold` sibling, after `HostEditorModal`,
 drawn only while `hostState.chatEditor != null`. It passes
-[`EditChatModal`](mobile-modal.md#callers) `conversationId`, `initialName`, `saving` and `failed` straight
+[`EditChatModal`](mobile-modal-callers.md#callers) `conversationId`, `initialName`, `saving` and `failed` straight
 off that state, and `hostAvailable = hostState.isHostConnected(editor.serverId)` — read fresh on every
 draw from the same host-snapshot flow the rows themselves render from, so a disconnect disables OK and a
 reconnect re-enables it without the modal leaving composition or losing the typed name; the error slot

@@ -1,0 +1,26 @@
+Ticket: #1225
+Design inspection date: 2026-09-28 (Europe/Helsinki)
+Figma: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=15-8
+Inspected nodes: 15:8, 132:3902, 533:1958, 533:2369, 16:8
+Reference: figma-sidebar.png, current 412 × 892 Figma render of node 15:8
+Device: Gradle-managed pixel8Api35, API 35, density 160 dpi (1 logical dp = 1 px)
+Capture: SharedDarkColourCaptureTest.sidebarAt412By892; test activity decorView.draw, 412 × 892 px
+Fixture: one connected host, five named channels, one selected row, one unread status dot
+
+Focused command (exit 0, 1 test executed, 0 failures/errors/skips):
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.list.SharedDarkColourCaptureTest#sidebarAt412By892' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain --quiet
+Original XML: app/build/outputs/androidTest-results/managedDevice/debug/pixel8Api35/TEST-pixel8Api35-_app-.xml
+Original PNG: app/build/intermediates/managed_device_android_test_additional_output/debugAndroidTest/pixel8Api35DebugAndroidTest/colors-1225/emulator-sidebar.png
+Retained XML: device-results.xml
+API 33 focused command (exit 0, 1 test executed, 0 failures/errors/skips):
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.list.SharedDarkColourCaptureTest#sidebarAt412By892' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain --quiet
+Retained API 33 XML: api33-device-results.xml
+Comparison: sidebar-comparison.png has labelled emulator, Figma and amplified absolute pixel-difference panels at the same viewport.
+
+Shared-role observations: emulator selected fill includes #003355 (Schemes/On Primary); its unread dot includes #2fc038 (Schemes/Success). The Figma reference includes the same values. The menu's #001d34 (Schemes/On Primary Fixed) is tested in OptionsOverlayColoursTest; it is not visible in the sidebar frame.
+Reference gaps: Figma has more hosts and sections than the one-host fixture. Existing row spacing, edit controls, corner clipping and the Figma background glow also differ; they are component or screen presentation work outside this shared-colour slice. The absolute difference panel includes these gaps and must not be read as a pixel-exact geometry comparison.
+
+PNG SHA-256:
+emulator-sidebar.png 66476e82e68d004f162f5c41f165704c7b9ef28fc9f85bdec66e90e9c0ec511c
+figma-sidebar.png 31e6d266bb32e5195cbd4ea09a827cb27d233beed86999a21024e4baa35657a6
+sidebar-comparison.png 9bf4a7cc8c7326ebd49f50a49f0d256fa0182148e9f4c28c66bbc17a2bde47d1

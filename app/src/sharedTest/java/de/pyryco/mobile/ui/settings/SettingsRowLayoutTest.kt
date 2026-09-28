@@ -77,11 +77,11 @@ class SettingsRowLayoutTest {
             }
         }
         for ((label, height) in listOf(
-            "Subtitle" to 62,
+            "Subtitle" to 55,
             "Single action" to 48,
             "Inert" to 44,
             "Single switch" to 52,
-            "Default YOLO" to 62,
+            "Default YOLO" to 55,
         )) {
             val bounds = rule.onNodeWithText(label).fetchSemanticsNode().boundsInRoot
             assertEquals("$label width", 412f * fixtureDensity, bounds.width, 1f)

@@ -27,6 +27,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.MemorySearchAvailability
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -38,6 +40,9 @@ import java.time.format.FormatStyle
 import java.util.Locale
 
 internal const val MEMORY_PLUGIN_DOCS_URL: String = "https://pyryco.de/docs/memory-plugins"
+
+internal fun MemorySearchReport.shouldOfferMemoryInstall(): Boolean =
+    availability == MemorySearchAvailability.Absent && providers.none { it.installed }
 
 // Figma 16:8 `Session reset` (119:3843): a 12dp-gap centred row of hairline rule / body-small label /
 // hairline rule. Gutter and inter-row spacing come from `MessageBubble.kt` so the three row kinds in the
@@ -56,12 +61,14 @@ fun SessionBoundaryDelimiter(
     boundary: ThreadItem.SessionBoundary,
     modifier: Modifier = Modifier,
     agent: ConversationAgent = ConversationAgent.Claude,
+    memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
 ) {
     SessionBoundaryDelimiterContent(
         boundary = boundary,
         uriHandler = LocalUriHandler.current,
         modifier = modifier,
         agent = agent,
+        memorySearch = memorySearch,
     )
 }
 
@@ -72,6 +79,7 @@ internal fun SessionBoundaryDelimiterContent(
     uriHandler: UriHandler,
     modifier: Modifier = Modifier,
     agent: ConversationAgent = ConversationAgent.Claude,
+    memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
 ) {
     val label = boundaryLabel(boundary, TimeZone.currentSystemDefault(), Locale.getDefault())
     Column(
@@ -86,27 +94,30 @@ internal fun SessionBoundaryDelimiterContent(
     ) {
         RuleLabelRow(label = label)
         Spacer(modifier = Modifier.height(ExplanationTopSpacing))
-        // The design draws neither the explanation nor the Install affordance, and both stay: CLAUDE.md
-        // requires them under every delimiter variant, and `ScriptedSessionBoundaryTest` asserts the
-        // explanation string. The restyle is of the rule-and-label arrangement above them only.
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = "${agentDisplayName(
-                    agent,
-                )} doesn't remember messages above this line. Install a memory plugin to preserve context. ",
+                text = "${agentDisplayName(agent)} doesn't remember messages above this line.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
-            TextButton(
-                onClick = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) },
-                contentPadding = PaddingValues(0.dp),
-            ) {
-                Text("Install")
+            if (memorySearch.shouldOfferMemoryInstall()) {
+                Text(
+                    text = " Search stored knowledge with a memory plugin. ",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                TextButton(
+                    onClick = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) },
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Text("Install")
+                }
             }
         }
     }

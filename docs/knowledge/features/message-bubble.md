@@ -144,12 +144,11 @@ only #644's static-dark fill divergence; body and metadata colours stay as befor
 | Meta row text + copy glyph `Schemes/inverse-primary` | `#32628D` | `LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)` (0.8) | **Divergence.** M3 has no de-emphasis role *inside* a filled container; `inverse-primary` is a light-scheme primary tone and only reads as de-emphasis against the dark reference frame. Taking the host bubble's own content colour at a fixed alpha de-emphasises correctly in both bubbles and both schemes. |
 
 The bubble-specific roles leave global Material containers unchanged (static dark:
-`primaryContainer = #134A74`, `secondaryContainer = #3A4857`). Do not substitute
-`colorScheme.onPrimaryFixed` for the assistant fill: the static schemes do not
-configure Material's fixed roles, so that property resolves to the baseline-purple
-default. The explicit bubble role supplies the reference hue without changing
-other surfaces. Metadata still uses the host content colour at 0.8 opacity;
-Figma's `inversePrimary` is not the readable cross-theme adaptation.
+`primaryContainer = #134A74`, `secondaryContainer = #3A4857`). Static dark now maps
+`colorScheme.onPrimaryFixed` to the same `#001D34`, but the assistant bubble keeps
+its scoped fill: light and wallpaper-colour bubbles still use `secondaryContainer`.
+Metadata still uses the host content colour at 0.8 opacity; Figma's
+`inversePrimary` is not the readable cross-theme adaptation.
 
 ### Meta row and copy control (`MessageMetaRow.kt`, since #644)
 
@@ -240,11 +239,9 @@ Each role container's `Row` carries `Modifier.padding(bottom = MessageAreaRowSpa
   `ColorScheme.userBubbleContainer` / `assistantBubbleContainer` extensions in
   `ui/theme/BubbleColors.kt`. The locals require this provider. The theme resolves
   the exception from its effective `darkTheme` and `dynamicColor` arguments;
-  bubble consumers do not read system dark mode. With wallpaper colours off,
-  app-selected dark mode uses the reference fills even on a light system, while
-  app-selected light mode retains its containers on a dark system. Runtime theme changes update already
-  composed bubbles. With wallpaper colours enabled, both modes use the selected
-  scheme's containers — see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes).
+  bubble consumers do not read system dark mode. The app root supplies the static
+  dark fills even on a light system. Explicit light and wallpaper themes in
+  isolated tests and previews still use their selected scheme's containers — see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes).
 - **Content styling:** `onPrimaryContainer` (user), `onSecondaryContainer`
   (assistant), and `typography.bodyMedium` / `bodySmall` remain unchanged. The
   shared `Surface(contentColor = …)` supplies the assistant markdown ambient and

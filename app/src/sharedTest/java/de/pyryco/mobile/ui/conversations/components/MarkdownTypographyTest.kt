@@ -60,21 +60,21 @@ class MarkdownTypographyTest {
     @Test
     fun default_renderer_keeps_message_typography_and_spacing() {
         rule.setContent { PyrycodeMobileTheme { MarkdownText(fixture) } }
-        assertBody(14, 20, 8f, 4f)
+        assertBody(14, 20, 8f, 4f, taskGap = 6f)
         assertSpecialStyles()
     }
 
     @Test
     fun finished_reply_keeps_message_typography_and_spacing() {
         showMessage(streaming = false)
-        assertBody(14, 20, 8f, 4f)
+        assertBody(14, 20, 8f, 4f, taskGap = 6f)
     }
 
     @Test
     fun streaming_reply_keeps_message_typography_and_spacing() {
         showMessage(streaming = true)
         rule.mainClock.advanceTimeBy(10_000)
-        assertBody(14, 20, 8f, 4f)
+        assertBody(14, 20, 8f, 4f, taskGap = 6f)
     }
 
     private fun showMessage(streaming: Boolean) {
@@ -98,6 +98,7 @@ class MarkdownTypographyTest {
         lineHeight: Int,
         blockGap: Float,
         itemGap: Float,
+        taskGap: Float = itemGap,
     ) {
         val bodyTexts =
             listOf(
@@ -151,7 +152,8 @@ class MarkdownTypographyTest {
         assertGap("Child one", "Child two", itemGap)
         assertGap("Child two", "Sibling", itemGap)
         assertGap("Ordered one", "Ordered two", itemGap)
-        assertGap("Task one", "Task two", itemGap)
+        // The task mark is taller than the message text's measured line box.
+        assertGap("Task one", "Task two", taskGap)
         assertGap("Quote one", "Quote two", blockGap)
         assertGap("Quote two", "Inner quote one", blockGap)
         assertGap("Inner quote one", "Inner quote two", blockGap)

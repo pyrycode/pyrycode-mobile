@@ -43,7 +43,8 @@ class AndroidGateTest(unittest.TestCase):
     def test_live_gate_collects_only_fresh_reports_from_selected_device_path(self):
         baseline = live_report(gate.LIVE_MINIMUM)
         for device in ("pixel2Api33Atd", "connected"):
-            for result in ("pass", "process_failure", "missing", "stale", "test_failure"):
+            for result in ("pass", "process_failure", "missing", "stale", "test_failure",
+                           "below_floor", "below_floor_with_failure"):
                 with self.subTest(device=device, result=result), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     results = root / "app/build/outputs/androidTest-results"
@@ -70,6 +71,17 @@ class AndroidGateTest(unittest.TestCase):
                             elif result == "test_failure":
                                 xml = xml.replace('failures="0"', 'failures="1"', 1)
                                 xml = xml.replace(" />", "><failure>private failure</failure></testcase>", 1)
+                            elif result.startswith("below_floor"):
+                                document = ET.fromstring(xml)
+                                suite = document.find("testsuite")
+                                cases = suite.findall("testcase")
+                                for case in cases[-2:]:
+                                    ET.SubElement(case, "skipped")
+                                suite.set("skipped", "2")
+                                if result == "below_floor_with_failure":
+                                    ET.SubElement(cases[0], "failure").text = "private failure"
+                                    suite.set("failures", "1")
+                                xml = ET.tostring(document, encoding="unicode")
                             path = self.report(directory, xml)
                             stamp = started - 1 if profile == device and result == "stale" else started + 1
                             os.utime(path, ns=(stamp, stamp))
@@ -93,6 +105,8 @@ class AndroidGateTest(unittest.TestCase):
                         self.assertTrue(all(case.get("name").startswith("interactiveTurn_") for case in cases))
                         self.assertNotIn("private failure", stdout.getvalue())
                         self.assertEqual(len(list(root.rglob("dispatcher.xml"))), 1)
+                        if result.startswith("below_floor"):
+                            self.assertEqual(len(ET.fromstring(stdout.getvalue()).findall(".//skipped")), 2)
 
     def test_live_floor_matches_the_curated_list(self):
         # #848: the floor is the curated list's size, so a method dropped from the list reddens the gate.
@@ -105,8 +119,8 @@ class AndroidGateTest(unittest.TestCase):
         self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))
-            with self.assertRaises(ValueError):
-                gate.combine_reports([short], gate.LIVE_MINIMUM)
+            _, _, executed = gate.combine_reports([short])
+            self.assertEqual(executed, gate.LIVE_MINIMUM - 1)
 
     def test_auth_preflight_requires_a_successful_logged_in_status(self):
         for code, output, expected in [(0, '{"loggedIn":true}', True),
@@ -132,17 +146,20 @@ class AndroidGateTest(unittest.TestCase):
                                         capture_output=True, text=True, check=True)
                 self.assertEqual(result.stdout.split("\t")[0], expected)
 
-    def test_no_reports_and_all_skipped_fail(self):
+    def test_no_reports_fail_and_all_skipped_count_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for files in [[], [self.report(root, '<testsuite tests="1" skipped="1"><testcase classname="C" name="x"><skipped/></testcase></testsuite>')]]:
-                with self.assertRaises(ValueError):
-                    gate.combine_reports(files, 1)
+            with self.assertRaises(ValueError):
+                gate.combine_reports([])
+            skipped = self.report(root, '<testsuite tests="1" skipped="1"><testcase classname="C" name="x"><skipped/></testcase></testsuite>')
+            _, passed, executed = gate.combine_reports([skipped])
+            self.assertTrue(passed)
+            self.assertEqual(executed, 0)
 
     def test_failed_case_stays_red_and_private_logs_are_not_exported(self):
         with tempfile.TemporaryDirectory() as tmp:
             report = self.report(Path(tmp), '<testsuite tests="2" failures="1"><testcase classname="C" name="ok"/><testcase classname="C" name="bad"><failure>private details</failure></testcase><system-out>private logs</system-out></testsuite>')
-            xml, passed, executed = gate.combine_reports([report], 1)
+            xml, passed, executed = gate.combine_reports([report])
             self.assertFalse(passed)
             self.assertEqual(executed, 2)
             self.assertNotIn("private", xml)
@@ -152,12 +169,12 @@ class AndroidGateTest(unittest.TestCase):
         for xml in ['<testsuite tests="2"><testcase classname="C" name="ok"/></testsuite>', '<testsuite>', '<testsuite tests="1" errors="1"><testcase classname="C" name="ok"/></testsuite>']:
             with self.subTest(xml=xml), tempfile.TemporaryDirectory() as tmp:
                 with self.assertRaises(ValueError):
-                    gate.combine_reports([self.report(Path(tmp), xml)], 1)
+                    gate.combine_reports([self.report(Path(tmp), xml)])
 
     def test_gradle_managed_device_report_container(self):
         with tempfile.TemporaryDirectory() as tmp:
             report = self.report(Path(tmp), '<testsuites tests="1" failures="0"><testsuite tests="1"><testcase classname="C" name="ok"/></testsuite></testsuites>')
-            xml, passed, executed = gate.combine_reports([report], 1)
+            xml, passed, executed = gate.combine_reports([report])
             self.assertTrue(passed)
             self.assertEqual(executed, 1)
             self.assertEqual(len(ET.fromstring(xml).findall(".//testcase")), 1)
@@ -492,14 +509,12 @@ class AndroidGateTest(unittest.TestCase):
         branch = live[: live.index("\nelse\n")]
         self.assertTrue(branch.rstrip().endswith('if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi'))
 
-    def test_live_floor_and_expected_class_are_enforced(self):
+    def test_expected_class_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             report = self.report(Path(tmp), '<testsuite tests="1"><testcase classname="C" name="ok"/></testsuite>')
             with self.assertRaises(ValueError):
-                gate.combine_reports([report], 8)
-            with self.assertRaises(ValueError):
-                gate.combine_reports([report], 1, "LiveTest")
-            _, passed, count = gate.combine_reports([report], 1, "C")
+                gate.combine_reports([report], "LiveTest")
+            _, passed, count = gate.combine_reports([report], "C")
             self.assertTrue(passed)
             self.assertEqual(count, 1)
 
