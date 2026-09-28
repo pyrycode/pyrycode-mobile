@@ -49,3 +49,8 @@ Pending for the documentation stage: update “Tree rows” in `docs/knowledge/f
 
 - Whether the supplied plus asset is identical to #1202's toolbar plus at the smaller section slot; compare vector paths before adding a duplicate.
 - Whether Figma provides a collapsed section component beyond the visible Chats example; if absent, rotate/use the supplied chevron consistently and record the absent reference state in the PR.
+
+## Revisions
+
+- 2026-09-28: The section plus has the same shape as the toolbar plus scaled to 16 dp; retain a separate vector resource at the Figma slot's native viewport. The visible Chats row is collapsed and supplies the right chevron; the expanded Pyry host also shows a right chevron despite visible children. Use down for expanded and right for collapsed, matching the section's state rule, and record the conflicting host instance in visual evidence.
+- 2026-09-28: Device pixels exposed a 12 dp inset on both sides of conversation fills and a 10 dp trailing section-add inset. The row component keeps its 24 dp visual band; list-level padding supplies the horizontal inset and 4 dp sibling gap. Existing Compose semantics tests observe expanded hit bounds around compact rows, so exact pixel geometry is proven by the device capture and component test while list tests assert the gap between semantic targets.

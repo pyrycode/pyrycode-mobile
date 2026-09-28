@@ -11,6 +11,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,27 +29,23 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Power
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -74,25 +73,25 @@ import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 // belongs to the list that assembles them (#731).
 private val HostRowIndent = 0.dp
 private val WorkspaceRowIndent = 12.dp
-private val ConversationRowIndent = 12.dp
-private val HostSectionIndent = 4.dp
+private val ConversationRowIndent = 8.dp
+private val HostSectionIndent = 12.dp
 
-// The design draws 28/28/24dp rows for a pointer. Touch needs 48dp — the same minimum
-// `ConversationRowTest` already holds the flat row to. The hierarchy the heights carried on desktop
-// is carried here by indent, leading glyph and type scale.
-private val TreeRowMinHeight = 48.dp
-private val TreeRowEndPadding = 8.dp
+// Compact bands follow the sidebar component. Each action keeps a separate named region; the phone
+// has no hover, so a visible control shares the same band without expanding its painted height.
+private val TreeBandHeight = 28.dp
+private val ConversationBandHeight = 24.dp
+private val TreeRowEndPadding = 0.dp
 private val TreeRowShape = RoundedCornerShape(6.dp)
-private val TreeGlyphSize = 16.dp
-private val TreeChevronSize = 18.dp
+private val TreeGlyphSize = 12.dp
+private val TreeChevronWidth = 8.dp
+private val TreeChevronHeight = 4.dp
 
-// The add control's target (#738). The same accessibility minimum TreeRowMinHeight holds the rows to,
-// applied on both axes because this one is a control rather than a whole row.
-private val TreeAddTouchSize = 48.dp
+// Control slots divide the compact row horizontally; their semantics remain distinct.
+private val TreeControlWidth = 24.dp
 private val TreeGlyphGap = 12.dp
 private val TreeNameGap = 6.dp
 private val TreeLegDotGap = 6.dp
-private val TreeDotSize = 8.dp
+private val TreeDotSize = 6.dp
 private val TreeDotRingWidth = 1.dp
 
 // The update-required caption's gap below its host row (#1009), the frame's own bottom padding.
@@ -142,9 +141,7 @@ private fun foldActionLabel(
  * caller resolved, never daemon text. It names the control too: the tree draws one header per section,
  * so two identically-named controls would be ambiguous in the accessibility tree.
  *
- * The band grows from the design's 20dp text line to [TreeRowMinHeight] because it carries a control
- * now rather than being a bare label — the same trade [TreeConversationRow] and [FoldableTreeRow] took
- * when #731 grew the design's 28dp pointer rows to a size touch can hit.
+ * The band uses the sidebar's 28dp height while the add action owns a separate trailing slot.
  */
 @Composable
 fun TreeSectionHeader(
@@ -153,7 +150,7 @@ fun TreeSectionHeader(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth().heightIn(min = TreeRowMinHeight).padding(end = TreeRowEndPadding),
+        modifier = modifier.fillMaxWidth().heightIn(min = TreeBandHeight).padding(end = TreeRowEndPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -165,9 +162,12 @@ fun TreeSectionHeader(
             modifier = Modifier.weight(1f).semantics { heading() },
         )
         TreeRowControl(
-            icon = Icons.Filled.Add,
+            painter = painterResource(R.drawable.ic_tree_add),
             contentDescription = stringResource(R.string.cd_tree_section_pair_host, title),
             onClick = onAddTapped,
+            height = TreeBandHeight,
+            glyphWidth = 16.dp,
+            glyphHeight = 16.dp,
         )
     }
 }
@@ -212,7 +212,9 @@ fun TreeHostRow(
     val update = connectionStatus.relay as? RelayLinkStatus.UpdateRequired
     Column(modifier = modifier) {
         FoldableTreeRow(
-            glyph = Icons.Filled.Dns,
+            glyph = painterResource(R.drawable.ic_tree_server),
+            glyphWidth = 12.dp,
+            glyphHeight = 12.dp,
             name = bounded,
             nameStyle = MaterialTheme.typography.titleSmall,
             startIndent = HostRowIndent,
@@ -220,32 +222,34 @@ fun TreeHostRow(
             onToggleExpanded = onToggleExpanded,
             accent = if (disconnected) MaterialTheme.colorScheme.error else null,
         ) {
-            Spacer(modifier = Modifier.width(TreeGlyphGap))
+            Spacer(modifier = Modifier.width(4.dp))
             if (update != null) {
                 TreeRowControl(
                     // Material's download, matched to the frame's `download-solid` arrow into a tray.
-                    icon = Icons.Filled.Download,
+                    painter = rememberVectorPainter(Icons.Filled.Download),
                     contentDescription = stringResource(R.string.cd_tree_host_update, bounded),
                     onClick = onReconnectTapped,
                     modifier = Modifier.testTag(treeHostUpdateTestTag(serverId)),
+                    height = TreeBandHeight,
                 )
             } else if (disconnected) {
                 TreeRowControl(
-                    // Material's plug, matched to the frame's `plug-solid-full` as `Dns` was to its server.
-                    icon = Icons.Filled.Power,
+                    // Retained mobile repair action; the reference has no disconnected-host variant.
+                    painter = rememberVectorPainter(Icons.Filled.Power),
                     contentDescription = stringResource(R.string.cd_tree_host_reconnect, bounded),
                     onClick = onReconnectTapped,
                     modifier = Modifier.testTag(treeHostReconnectTestTag(serverId)),
+                    height = TreeBandHeight,
                 )
             }
             ConnectionLegPair(status = connectionStatus, hostIdle = update != null)
             TreeRowControl(
-                // Matched to the Material set the same way this file matched `Dns` and `FolderOpen` to the
-                // design's own glyphs, rather than vendoring the frame's drawable.
-                icon = Icons.Filled.Edit,
+                // The supplied pen path, visible on mobile without hover.
+                painter = painterResource(R.drawable.ic_tree_edit),
                 contentDescription = stringResource(R.string.cd_tree_host_edit, bounded),
                 onClick = onEditTapped,
                 modifier = Modifier.testTag(treeHostEditTestTag(serverId)),
+                height = TreeBandHeight,
             )
         }
         if (update != null) {
@@ -304,21 +308,27 @@ fun TreeHostSectionRow(
 ) {
     val boundedHost = boundedRowText(hostName)
     FoldableTreeRow(
-        glyph = if (expanded) Icons.Filled.FolderOpen else Icons.Filled.Folder,
+        glyph = painterResource(if (expanded) R.drawable.ic_tree_folder_open else R.drawable.ic_tree_folder),
+        glyphWidth = if (expanded) 13.dp else 12.dp,
+        glyphHeight = if (expanded) 11.dp else 10.dp,
+        glyphGap = if (expanded) 9.dp else 10.dp,
         name = sectionName,
         foldLabelName = stringResource(R.string.tree_host_section_label, sectionName, boundedHost),
         nameStyle = MaterialTheme.typography.titleSmall,
         startIndent = HostSectionIndent,
         expanded = expanded,
         onToggleExpanded = onToggleExpanded,
-        modifier = modifier,
+        modifier = modifier.padding(end = 10.dp),
     ) {
         TreeRowControl(
-            icon = Icons.Filled.Add,
+            painter = painterResource(R.drawable.ic_tree_add),
             contentDescription =
                 stringResource(if (isChat) R.string.cd_tree_host_new_chat else R.string.cd_tree_host_new_channel, boundedHost),
             onClick = onAddTapped,
             modifier = Modifier.testTag(if (isChat) treeHostChatAddTestTag(serverId) else treeHostChannelAddTestTag(serverId)),
+            height = TreeBandHeight,
+            glyphWidth = 16.dp,
+            glyphHeight = 16.dp,
         )
     }
 }
@@ -374,7 +384,9 @@ fun TreeWorkspaceRow(
     // Clamped once and reused for the name and the pencil's label, as the host row does.
     val bounded = boundedRowText(workspaceName)
     FoldableTreeRow(
-        glyph = Icons.Filled.FolderOpen,
+        glyph = painterResource(R.drawable.ic_tree_folder_open),
+        glyphWidth = 13.dp,
+        glyphHeight = 11.dp,
         name = bounded,
         nameStyle = MaterialTheme.typography.titleSmall,
         startIndent = WorkspaceRowIndent,
@@ -384,16 +396,20 @@ fun TreeWorkspaceRow(
     ) {
         if (onEditTapped != null) {
             TreeRowControl(
-                icon = Icons.Filled.Edit,
+                painter = painterResource(R.drawable.ic_tree_edit),
                 contentDescription = stringResource(R.string.cd_tree_workspace_edit, bounded),
                 onClick = onEditTapped,
+                height = TreeBandHeight,
             )
         }
         if (onAddTapped != null) {
             TreeRowControl(
-                icon = Icons.Filled.Add,
+                painter = painterResource(R.drawable.ic_tree_add),
                 contentDescription = stringResource(R.string.cd_tree_workspace_new_channel, bounded),
                 onClick = onAddTapped,
+                height = TreeBandHeight,
+                glyphWidth = 16.dp,
+                glyphHeight = 16.dp,
             )
         }
     }
@@ -424,6 +440,8 @@ fun TreeConversationRow(
 ) {
     // Clamped once and reused for the name and the pencil's label, as the host row does.
     val bounded = boundedRowText(conversationName)
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed = interactionSource.collectIsPressedAsState().value
     val fill =
         if (selected) {
             if (LocalStaticDarkPalette.current) {
@@ -431,6 +449,8 @@ fun TreeConversationRow(
             } else {
                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = SELECTED_FILL_ALPHA)
             }
+        } else if (pressed) {
+            MaterialTheme.colorScheme.primaryContainer
         } else {
             Color.Transparent
         }
@@ -439,7 +459,7 @@ fun TreeConversationRow(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .heightIn(min = TreeRowMinHeight)
+                .heightIn(min = ConversationBandHeight)
                 .clip(TreeRowShape)
                 .background(fill)
                 .padding(end = TreeRowEndPadding),
@@ -449,13 +469,18 @@ fun TreeConversationRow(
             modifier =
                 modifier
                     .weight(1f)
-                    .heightIn(min = TreeRowMinHeight)
-                    .selectable(selected = selected, role = Role.Button, onClick = onClick)
-                    .padding(start = ConversationRowIndent),
+                    .heightIn(min = ConversationBandHeight)
+                    .selectable(
+                        selected = selected,
+                        interactionSource = interactionSource,
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onClick,
+                    ).padding(start = ConversationRowIndent),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ConversationStatusDot(attention = attention)
-            Spacer(modifier = Modifier.width(TreeGlyphGap))
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = bounded,
                 style = MaterialTheme.typography.bodySmall,
@@ -467,9 +492,10 @@ fun TreeConversationRow(
         }
         if (onEditTapped != null) {
             TreeRowControl(
-                icon = Icons.Filled.Edit,
+                painter = painterResource(R.drawable.ic_tree_edit),
                 contentDescription = stringResource(editDescription, bounded),
                 onClick = onEditTapped,
+                height = ConversationBandHeight,
             )
         }
     }
@@ -488,7 +514,9 @@ fun TreeConversationRow(
  */
 @Composable
 private fun FoldableTreeRow(
-    glyph: ImageVector,
+    glyph: Painter,
+    glyphWidth: Dp,
+    glyphHeight: Dp,
     name: String,
     nameStyle: TextStyle,
     startIndent: Dp,
@@ -497,6 +525,7 @@ private fun FoldableTreeRow(
     modifier: Modifier = Modifier,
     accent: Color? = null,
     foldLabelName: String = name,
+    glyphGap: Dp = TreeGlyphGap,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     val foldLabel = foldActionLabel(expanded = expanded, rowName = foldLabelName)
@@ -505,7 +534,7 @@ private fun FoldableTreeRow(
         modifier =
             modifier
                 .fillMaxWidth()
-                .heightIn(min = TreeRowMinHeight)
+                .heightIn(min = TreeBandHeight)
                 .clip(TreeRowShape)
                 .padding(end = TreeRowEndPadding),
         verticalAlignment = Alignment.CenterVertically,
@@ -514,18 +543,18 @@ private fun FoldableTreeRow(
             modifier =
                 Modifier
                     .weight(1f)
-                    .heightIn(min = TreeRowMinHeight)
+                    .heightIn(min = TreeBandHeight)
                     .clickable(onClickLabel = foldLabel, role = Role.Button, onClick = onToggleExpanded)
                     .padding(start = startIndent),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = glyph,
+                painter = glyph,
                 contentDescription = null,
-                tint = accent ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(TreeGlyphSize),
+                tint = accent ?: MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(glyphWidth, glyphHeight),
             )
-            Spacer(modifier = Modifier.width(TreeGlyphGap))
+            Spacer(modifier = Modifier.width(glyphGap))
             Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = name,
@@ -537,15 +566,14 @@ private fun FoldableTreeRow(
                 )
                 Spacer(modifier = Modifier.width(TreeNameGap))
                 Icon(
-                    imageVector =
-                        if (expanded) {
-                            Icons.Filled.KeyboardArrowDown
-                        } else {
-                            Icons.AutoMirrored.Filled.KeyboardArrowRight
-                        },
+                    painter = painterResource(if (expanded) R.drawable.ic_tree_chevron_down else R.drawable.ic_tree_chevron_right),
                     contentDescription = foldLabel,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(TreeChevronSize),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier =
+                        Modifier.size(
+                            if (expanded) TreeChevronWidth else TreeChevronHeight,
+                            if (expanded) TreeChevronHeight else TreeChevronWidth,
+                        ),
                 )
             }
         }
@@ -556,33 +584,33 @@ private fun FoldableTreeRow(
 /**
  * The trailing row control: each section header's plus, the host row's pencil (#744), a disconnected
  * host's plug (#840), an update-required host's update control (#1009), a chat row's pencil (#827) and a workspace row's pencil
- * (#905) and plus (#958). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
+ * (#905) and plus (#958). The body remains glyph-agnostic: the caller supplies the painter and nothing else
  * differs between them.
  *
  * [contentDescription] is the whole accessible name, because the controls repeat down the screen and two
  * of them sit on one row, so each has to say which section or host it acts on and what it does there.
  *
- * **The 48dp trade.** The design pins a [TreeGlyphSize] glyph with its centre 10dp from the content edge.
- * Touch needs [TreeAddTouchSize] and the glyph centres in that box, so behind the rows' own
- * [TreeRowEndPadding] the glyph's centre lands about 22dp further inboard than the design draws it. Taken
- * deliberately, and the same trade #731 took growing the design's 28dp pointer rows to a size a thumb can
- * hit; the alternative is a target below the accessibility minimum every other row here holds to.
+ * The slot is 24dp wide and uses the parent row's 28dp or 24dp height. This matches the visual band and
+ * keeps adjacent actions separate, at the cost of a smaller touch region than the usual 48dp guidance.
  *
  * Adjacent to the row's fold or open target, so this stays its own node with its own name, tag and
  * click action and a tap on it never reaches the row's main action.
  */
 @Composable
 private fun TreeRowControl(
-    icon: ImageVector,
+    painter: Painter,
     contentDescription: String,
     onClick: () -> Unit,
+    height: Dp,
     modifier: Modifier = Modifier,
+    glyphWidth: Dp = 12.dp,
+    glyphHeight: Dp = 12.dp,
 ) {
     Box(
         modifier =
             modifier
-                .size(TreeAddTouchSize)
-                .clip(CircleShape)
+                .width(TreeControlWidth)
+                .height(height)
                 .clickable(
                     onClick = onClick,
                     onClickLabel = contentDescription,
@@ -591,10 +619,10 @@ private fun TreeRowControl(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = icon,
+            painter = painter,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(TreeGlyphSize),
+            modifier = Modifier.size(glyphWidth, glyphHeight),
         )
     }
 }

@@ -1,0 +1,15 @@
+Design inspected: 2026-09-28.
+Nodes: viewport 15:8; visible sidebar 133:259; component 132:3902; conversation idle 103:2968, active 403:7410, hover 398:7258.
+Figma file last-edited date: not exposed by the inspected node metadata.
+Viewport render: figma-15-8-412x892.png (412 x 892).
+Flat sidebar render: figma-133-259-412x888.png (412 x 888).
+Actual: Pixel 8 API 35 managed emulator, 1 dp/px, static dark palette. Captures are emulator-412x892.png, emulator-320x800.png and emulator-412x892-large-text.png.
+Command: ./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Result: exit 0, 3 executed, 0 failed, 0 skipped; device-results.xml.
+comparison-412x892.png places the matching 412 x 892 full renders beside each other.
+row-difference.png places the 133:259 row crop (x20..392, y92..350) beside the same emulator crop and an amplified RGB difference.
+Selected fill sample at (36,216): Figma RGB(0,51,85); emulator RGB(0,51,85). Its visible left/right edges are x32/x380 in both renders.
+The flat sidebar node is four pixels shorter than the requested viewport; 15:8 supplies the 412 x 892 view but has an atmospheric background absent from 133:259. The panel treatment belongs to #1202.
+The reference hover highlight is absent from a resting phone screen; the phone keeps edit pens visible on every row and uses primaryContainer while a row is pressed. The Figma active variant omits its pen, while mobile keeps it for access without hover.
+The reference's expanded Pyry host shows a right chevron, whereas its expanded Channels section shows a down chevron. Mobile uses down for expanded and right for collapsed consistently. No separate compact-width or enlarged-text Figma state was present.
+The reference includes retired Apps/workspace tiers and no connection-leg dots, reconnect/update control, or always-visible edit actions. The emulator retains the current host-first Channels/Chats structure and these mobile actions; lower-row displacement follows the omitted tiers and differing fixture data.

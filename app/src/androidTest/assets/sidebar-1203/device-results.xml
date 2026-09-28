@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="3" failures="0" errors="0" skipped="0" time="18.315" timestamp="2026-09-28T17:42:13" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="17.049" timestamp="2026-09-28T17:42:13" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="treeAt412By892" classname="de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest" time="9.738" />
+    <testcase name="enlargedTextAt412By892" classname="de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest" time="4.269" />
+    <testcase name="compactAt320By800" classname="de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest" time="3.042" />
+  </testsuite>
+</testsuites>
