@@ -8,9 +8,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -24,6 +33,60 @@ import kotlin.math.roundToInt
 @RunWith(AndroidJUnit4::class)
 class OptionsOverlayColoursTest {
     @get:Rule val rule = createComposeRule()
+
+    @Test fun compactViewportWithLargeTextCanReachLastOption() {
+        rule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(280.dp, 400.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
+                    PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                        val density = LocalDensity.current
+                        OptionsOverlay(
+                            options =
+                                (1..12).map { index ->
+                                    OptionsOverlayOption(index.toString(), "Option $index", detail = "Description for option $index")
+                                },
+                            selectedValue = "1",
+                            notListed = 0,
+                            anchor =
+                                with(density) {
+                                    Rect(16.dp.toPx(), 300.dp.toPx(), 100.dp.toPx(), 340.dp.toPx())
+                                },
+                            onSelect = {},
+                            onDismiss = {},
+                        )
+                    }
+                }
+            }
+        }
+        rule.onNodeWithText("Option 12").performScrollTo().assertIsDisplayed()
+        val last = rule.onNodeWithText("Option 12").getUnclippedBoundsInRoot()
+        assertEquals(true, last.bottom <= 296.dp)
+        assertEquals(true, last.left >= 8.dp)
+    }
+
+    @Test fun rowsMatchFigmaHeightAndStayAboveAnchor() {
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                val density = LocalDensity.current
+                OptionsOverlay(
+                    options = listOf(OptionsOverlayOption("selected", "Selected"), OptionsOverlayOption("other", "Other")),
+                    selectedValue = "selected",
+                    notListed = 0,
+                    anchor =
+                        with(density) {
+                            Rect(40.dp.toPx(), 300.dp.toPx(), 100.dp.toPx(), 340.dp.toPx())
+                        },
+                    onSelect = {},
+                    onDismiss = {},
+                )
+            }
+        }
+        val selected = rule.onNodeWithText("Selected").getUnclippedBoundsInRoot()
+        val other = rule.onNodeWithText("Other").getUnclippedBoundsInRoot()
+        assertEquals(28.dp, selected.bottom - selected.top)
+        assertEquals(28.dp, other.bottom - other.top)
+        assertEquals(4.dp, 300.dp - other.bottom - 2.dp)
+    }
 
     @Test fun staticDarkMenuUsesBoundFixedAndOnPrimaryRoles() {
         var view: android.view.View? = null

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -25,7 +26,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
@@ -38,7 +38,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
-import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlin.math.roundToInt
 
@@ -52,13 +51,13 @@ data class OptionsOverlayOption(
     val detail: String? = null,
 )
 
-// Figma 533:1958's `Options overlay`: a 6dp-rounded column with 2dp of vertical padding, its rows inset
-// 12dp. The rows' vertical padding is 10dp rather than the design's 6dp so each row is a thumb-sized
-// target on a phone (36dp tall instead of 28dp).
+// Figma 533:1958's `Options overlay`: a 6dp-rounded column with 2dp of vertical padding;
+// each 28dp row has 12dp horizontal and 6dp vertical padding.
 private val OverlayShape = RoundedCornerShape(6.dp)
 private val OverlayVerticalPadding = 2.dp
 private val OptionHorizontalPadding = 12.dp
-private val OptionVerticalPadding = 10.dp
+private val OptionVerticalPadding = 6.dp
+private val OptionMinHeight = 28.dp
 private val OverlayMinWidth = 80.dp
 private val OverlayMaxWidth = 240.dp
 
@@ -85,8 +84,8 @@ private const val DETAIL_MAX_LINES = 2
  * overlay follows the composer's keyboard lift. The option column's height is capped at the space
  * above the anchor, and it scrolls when there are more options than fit.
  *
- * Static dark uses the design's `Schemes/On Primary` surface and selected row, with
- * `Schemes/On Primary Fixed` on unselected rows. Other theme paths retain their previous colours.
+ * The design's `Schemes/On Primary` fills the surface and selected row, with
+ * `Schemes/On Primary Fixed` on unselected rows in each theme mode.
  *
  * Every [OptionsOverlayOption.label] and [OptionsOverlayOption.detail] may be daemon-authored. They are
  * drawn through [Text] only: the label in one line, the detail in at most two, both ellipsized. [notListed] > 0 adds a caption that marks the list as a subset, so a cut menu never
@@ -171,11 +170,10 @@ private fun OptionsColumn(
     actions: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
-    val staticDark = LocalStaticDarkPalette.current
     Surface(
         shape = OverlayShape,
-        color = if (staticDark) colors.onPrimary else colors.surfaceContainerLowest,
-        shadowElevation = 3.dp,
+        color = colors.onPrimary,
+        shadowElevation = 0.dp,
     ) {
         Column(
             modifier =
@@ -192,13 +190,9 @@ private fun OptionsColumn(
                 val rowModifier =
                     Modifier
                         .fillMaxWidth()
-                        .background(
-                            if (staticDark) {
-                                if (selected) Color.Transparent else colors.onPrimaryFixed
-                            } else {
-                                if (selected) colors.primaryContainer else Color.Transparent
-                            },
-                        ).then(
+                        .heightIn(min = OptionMinHeight)
+                        .background(if (selected) colors.onPrimary else colors.onPrimaryFixed)
+                        .then(
                             if (actions) {
                                 Modifier.clickable(enabled = option.enabled, role = Role.Button, onClick = onClick)
                             } else {

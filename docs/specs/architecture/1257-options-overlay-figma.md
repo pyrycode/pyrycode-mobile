@@ -44,3 +44,7 @@ Pending documentation stage: update `docs/knowledge/features/options-overlay.md`
 ## Open questions
 
 - Does the direct `533:1958` screenshot become available during capture? If it remains 1×1, compare against its component states and mark the full-menu pixel comparison unverified.
+
+## Revisions
+
+- 2026-09-28: `533:1958` still renders as 1×1. Device captures and the available idle/selected state renders are attached under `app/src/androidTest/assets/options-1257/`; the full-menu pixel match remains unverified, and `capture-context.txt` identifies the missing disabled and slash-detail states. Compose measures the bodySmall text line at 14dp on the test device, so `OptionsColumn` enforces a 28dp minimum while allowing rows to grow for enlarged text.
