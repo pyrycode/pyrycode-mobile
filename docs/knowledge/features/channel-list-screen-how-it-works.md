@@ -24,23 +24,28 @@ chrome rather than relying on a shared `TopAppBar` slot threaded through the Nav
 
 The file-private `ChannelListTopBar(onEvent)` is a `Column`: a full-width `Row` keeps Settings and Archive
 together at the left and pairing at the right, followed by a `HorizontalDivider`. Each control is a
-48dp `IconButton` with a 24dp Material `Icon` tinted `colorScheme.primary`:
+44dp clickable `Box` with a distinct button role and a Figma-derived vector tinted `colorScheme.primary`:
 
-| Icon | TalkBack name | Event |
-| --- | --- | --- |
-| `Settings` | Open settings | `SettingsTapped` |
-| `Archive` | Open archive | `ArchiveTapped` |
-| `Add` | Pair another host | `PairHostTapped` |
+| Vector drawable | Drawn size | TalkBack name | Event |
+| --- | --- | --- | --- |
+| `ic_sidebar_settings` | 22 × 24dp | Open settings | `SettingsTapped` |
+| `ic_sidebar_archive` | 24 × 21dp | Open archive | `ArchiveTapped` |
+| `ic_sidebar_add_host` | 24 × 24dp | Pair another host | `PairHostTapped` |
 
-The existing Material icons remain the approximation of Figma's FontAwesome artwork. Both this divider and
-the tree's between-sections rule use the private `sidebarRuleColor()` helper: `inversePrimary` for a dark
-surface, `outlineVariant` for a light surface, each at `SECTION_RULE_ALPHA = 0.60f`.
+These paths replace the Material approximations, especially the visibly different Archive glyph. Both this
+divider and the tree's between-sections rule use the private `sidebarRuleColor()` helper: `inversePrimary`
+for a dark surface, `outlineVariant` for a light surface, each at `SECTION_RULE_ALPHA = 0.60f`. Sampling
+the visible Figma `133:259` render confirmed the dark rule at RGB (34, 65, 92); its inline
+`inversePrimary` fallback alone was not a reliable colour reference.
 
 **Panel colours ([#1158](../../specs/architecture/1158-dark-sidebar-colours.md)).** The list's `Scaffold`
 composites the current scheme's `scrim` at 30% over `surface` when `surface.luminance() < 0.5f`; its transparent
 top bar inherits that same fill, including with no hosts. The divider helper uses the same luminance check,
 so both treatments follow the active app theme and previews independently of the system theme. Light
-surfaces keep their plain `surface` fill and `outlineVariant` rules at 60%.
+surfaces keep their plain `surface` fill and `outlineVariant` rules at 60%. The dark panel resolves to RGB
+(11, 14, 17) in the [412 × 892 device capture](../../../app/src/androidTest/assets/sidebar-1202/comparison-412x892.png),
+matching the visible `133:259` panel; `15:8` supplies the matching viewport but has a different
+atmospheric background.
 
 This treatment belongs to Figma's nested sidebar panel `I133:259;103:2959`; the outer frame's surface already
 matches the design. Keep the fill local to the list Scaffold: global theme tokens, system bars and other
@@ -52,13 +57,14 @@ assembled tree (four before #738 retired the flat state's loading and error text
 being touched. This is what makes the "bar on every draw" requirement fall out of the structure rather than
 needing to be re-proven per state.
 
-**Geometry ([#1186](../../specs/architecture/1186-sidebar-pairing-toolbar.md)).** Figma's 24dp top inset
-and 4dp inside its 28dp wrapper put each 24dp glyph's top at 28dp relative to the panel. A 48dp target
-adds `BarTouchSlack = 12.dp` around the glyph, so `BarTopGap = 28dp − 12dp = 16dp`. Targets end at 64dp;
-`BarRuleGap = 16dp − 12dp = 4dp` places the 1dp divider at 68dp. Horizontal target padding is
-`TreeGutter − BarTouchSlack = 8dp` on both sides, placing the outer glyph edges at the 20dp content gutters.
-The two left targets have a 4dp gap, giving 52dp between centres. Copying the design's 44dp centre spacing
-would overlap 48dp targets; keep this deliberate spacing adaptation.
+**Geometry ([#1202](../../specs/architecture/1202-sidebar-toolbar-figma.md)).** Each 24dp visual frame
+is centred in a 44dp target, giving `BarTouchSlack = 10.dp` and `BarTopGap = 18dp`. The adjacent left
+targets touch without overlap, so Settings and Archive centres are exactly 44dp apart. At a 412dp panel
+width the Settings glyph spans x=21–43, Archive x=64–88, and add-host x=368–392; the first and last
+24dp visual frames align with the 20dp content gutters. The toolbar rule spans x=20–392 at y=68–69,
+with `BarRuleGap = 6dp` below the targets. The Archive glyph's half-dp vertical centering rasterizes at
+y=30 in the device geometry check, while the 24dp-tall glyphs start at y=28. Keeping 44dp targets is
+necessary to reproduce the design's icon centres without overlapping click regions.
 
 **First-row spacing.** The global Channels/Chats headers are no longer emitted. `BarBottomGap = 24.dp`
 is the entire gap from the divider's bottom to the first host row: both list-top padding and first-host
@@ -197,7 +203,7 @@ own `serverId` at the press, never the selected host) and the close (`dismissCha
 
 ## Configuration
 
-- **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`) for `collectAsStateWithLifecycle`. **Koin compose:** `org.koin.androidx.compose.koinViewModel`. **Icons:** `androidx.compose.material:material-icons-core` — `Icons.Default.Settings` / `Icons.Default.Add` / `Icons.Default.Archive` (#737, matched to the design's `box-archive-solid` FontAwesome glyph rather than vendoring a drawable, the same precedent the tree rows set); don't reach for `material-icons-extended` for single-glyph needs.
+- **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`) for `collectAsStateWithLifecycle`. **Koin compose:** `org.koin.androidx.compose.koinViewModel`. **Toolbar icons:** Figma-derived `ic_sidebar_settings`, `ic_sidebar_archive` and `ic_sidebar_add_host` VectorDrawables, loaded with `painterResource`; the tree's other Material icons still use `material-icons-core`.
 - **Strings added in #731:** `R.string.chats_section_header` ("Chats") and `R.string.unnamed_host`
   ("Unnamed host"). **Strings retired in #731:** `recent_discussions_section_header`,
   `see_all_discussions_label`, `cd_see_all_discussions` — deleted from `res/values/strings.xml` alongside the
