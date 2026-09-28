@@ -118,7 +118,7 @@ def print_focus_records(paths):
             print(f"Android gate: focus record for {test}: {record}", file=sys.stderr)
 
 
-def combine_reports(paths, minimum, expected_class=None):
+def combine_reports(paths, expected_class=None):
     if not paths:
         raise ValueError("No fresh Android test reports were produced")
     combined = ET.Element("testsuites")
@@ -174,8 +174,6 @@ def combine_reports(paths, minimum, expected_class=None):
                     ET.SubElement(output, "skipped", {"message": "Skipped by Android test runner"})
                 if bad or not skip:
                     executed += 1
-    if executed < minimum:
-        raise ValueError(f"Only {executed} Android tests executed; required at least {minimum}")
     return ET.tostring(combined, encoding="unicode"), failed == 0, executed
 
 
@@ -388,11 +386,11 @@ def run_scripted_all(env, run_dir, device):
                 shutil.copy2(path, run_dir / f"{scenario}-{index}-{path.name}")
             print_focus_records(logcats)
             try:
-                _, passed, executed = combine_reports(paths, 1, expected_class)
+                _, passed, executed = combine_reports(paths, expected_class)
             except ValueError as error:
                 passed, executed = False, 0
                 print(f"Android gate: scripted {scenario}: {error}", file=sys.stderr)
-            ok = passed and outcome.returncode == 0
+            ok = passed and executed >= 1 and outcome.returncode == 0
             if not ok:
                 failed.append(scenario)
             print(f"Android gate: scripted {scenario}: {'pass' if ok else 'FAIL'}, {executed} executed", file=sys.stderr)
@@ -404,13 +402,17 @@ def run_scripted_all(env, run_dir, device):
     finally:
         stop_emulator(env, serial, process)
     try:
-        xml, _, executed = combine_reports(all_paths, len(SCENARIOS), expected_class)
+        xml, _, executed = combine_reports(all_paths, expected_class)
     except ValueError as error:
         print(f"Android gate failed: {error}", file=sys.stderr)
         return 1
     (run_dir / "dispatcher.xml").write_text(xml + "\n")
     print(xml)
     print(f"Android gate: scripted-all {executed} executed; failed: {', '.join(failed) or 'none'}", file=sys.stderr)
+    if executed < len(SCENARIOS):
+        print(f"Android gate failed: Only {executed} Android tests executed; "
+              f"required at least {len(SCENARIOS)}", file=sys.stderr)
+        return 1
     return 1 if failed else 0
 
 
@@ -539,10 +541,14 @@ def run_on_device(command, env, run_dir, device, minimum, expected_class):
         for index, path in enumerate(logcats):
             shutil.copy2(path, run_dir / f"{index}-{path.name}")
         print_focus_records(logcats)
-        xml, passed, executed = combine_reports(paths, minimum, expected_class)
+        xml, passed, executed = combine_reports(paths, expected_class)
         (run_dir / "dispatcher.xml").write_text(xml + "\n")
         print(xml)
         print(f"Android gate: {executed} executed; process exit {outcome.returncode}", file=sys.stderr)
+        if executed < minimum:
+            print(f"Android gate failed: Only {executed} Android tests executed; "
+                  f"required at least {minimum}", file=sys.stderr)
+            return 1
         return 0 if passed and outcome.returncode == 0 else 1
     except (ValueError, OSError) as error:
         print(f"Android gate failed: {error}", file=sys.stderr)
