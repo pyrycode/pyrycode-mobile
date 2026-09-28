@@ -3,9 +3,9 @@ Nodes: viewport 15:8; visible sidebar 133:259; component 132:3902; conversation 
 Figma file last-edited date: not exposed by the inspected node metadata.
 Viewport render: figma-15-8-412x892.png (412 x 892).
 Flat sidebar render: figma-133-259-412x888.png (412 x 888).
-Actual: Pixel 8 API 35 managed emulator, 1 dp/px, static dark palette. Captures are emulator-412x892.png, emulator-320x800.png and emulator-412x892-large-text.png.
+Actual: Pixel 8 API 35 managed emulator, 1 dp/px, static dark palette. Captures are emulator-412x892.png, emulator-320x800.png and emulator-412x892-large-text.png. The latter two use a long channel name to expose ellipsis next to its edit action.
 Command: ./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
-Result: exit 0, 3 executed, 0 failed, 0 skipped; device-results.xml.
+Result: exit 0, 4 executed, 0 failed, 0 skipped; device-results.xml. Each capture test performs 13 root-coordinate taps at row/control edges and centers, checking exactly one intended fold, add, open or edit event after each. The fourth case uses a compact 320 x 800 viewport at 1.5x text and opens the host editor through a physical edit-control tap.
 comparison-412x892.png places the matching 412 x 892 full renders beside each other.
 row-difference.png places the 133:259 row crop (x20..392, y92..350) beside the same emulator crop and an amplified RGB difference.
 Selected fill sample at (36,216): Figma RGB(0,51,85); emulator RGB(0,51,85). Its visible left/right edges are x32/x380 in both renders.
