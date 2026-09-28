@@ -43,3 +43,7 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md` § “Live 
 ## Open questions
 
 - Whether focused real-Claude authentication and emulator access are available in this builder environment. If unavailable, hand the exact command and missing XML evidence to the dispatcher live gate; do not treat compilation as live execution.
+
+## Revisions
+
+- Builder handoff (2026-09-28): the shared practice assigns authenticated real-Claude execution to the dispatcher. Mark this issue `needs-live-artifacts` alongside its existing `needs-real-claude` label. After review, run the focused command in Testing strategy, then return the result to the builder. Pending builder-owned files are `scripts/fixtures/peer-workspace-label-live/1250.xml` (the exact sanitized focused dispatcher XML) and `scripts/fixtures/peer-workspace-label-live/1250-context.json` (actual app/daemon revisions, UTC time, command, process exit, executed/failed/skipped counts and XML SHA-256). Validate the selected method executed once without a failure or skip, commit/push the files and result note, and remove only `needs-live-artifacts`. No placeholder evidence or pass claim is made before the run. The documentation stage still owns `docs/e2e-interactive-stream.md`.

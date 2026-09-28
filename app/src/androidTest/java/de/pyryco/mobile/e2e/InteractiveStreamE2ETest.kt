@@ -2104,113 +2104,74 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A workspace label set from another client reaches every open surface, for its host only (#1089, rung 3).
-     * The daemon pushes `workspace_updated` to every connection but the requester's, so the label is set and
-     * cleared by the [SecondClientPeer] on host A while each surface is open in turn: an empty discussion's
-     * workspace chip and A's Default workspace row in Settings. Each shows the
-     * label and then the folder's name again without navigating away. Each surface gets its own label, so
-     * only that round's push can satisfy its wait.
-     *
-     * **Per host.** Host B holds a conversation in the same folder: both test daemons share `HOME`, so one
-     * path backs a workspace on each. B's never carries the label, in its live repository or on its tree row.
-     *
-     * **A real folder.** Settings names a label only for the stored default's own path, and the scratch row
-     * still sends the literal `~/.pyrycode/scratch`, which the daemon stores resolved, so A's default is a
-     * new, run-unique folder picked from A's Settings.
-     *
-     * **Shared state.** The label is cleared, both conversations deleted, both stored defaults written back
-     * and B removed in `finally`. The folder stays under `~/pyry-workspace`, as #1086's do.
-     *
-     * **Zero real-claude turns**: pairing, folder and chat creation and the renames are daemon round trips.
+     * A peer's workspace label reaches host A's open thread chip, and never host B's conversation at the
+     * same real folder (#1089, rung 3). Set and clear each update the chip without navigation. The run-unique
+     * folder remains under `~/pyry-workspace`; the label, both conversations and B's pairing are cleaned up.
+     * Pairing, folder creation, workspace changes and renames spend zero real-Claude turns.
      */
-    @Ignore("blocked on #1245 — default workspace controls were removed from Settings")
     @Test
     fun interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost() {
         val serverIdA = twoHostArg(ARG_SERVER_ID)
         val serverIdB = twoHostArg(ARG_SERVER_ID_B)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val preferences = GlobalContext.get().get<AppPreferences>()
         val stamp = System.currentTimeMillis()
         val folder = "${LABEL_E2E_PREFIX}$stamp"
-        val originalA = runBlocking { preferences.defaultWorkspace(serverIdA).first() }
-        var originalB: String? = null
         var path: String? = null
-        var chatA: String? = null
-        var chatB: String? = null
+        val beforeByHost = mutableMapOf<String, Set<String>>()
+        val createdByHost = mutableMapOf<String, String>()
         val peer = runningToolPeer()
         try {
-            // 1. Pair host B by code, as #847 does, and record its default before anything could move it.
+            // 1. Pair host B and create one real folder shared by both test daemons' HOME.
             awaitChannelList()
             awaitConnected()
             instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
             pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
-            originalB = runBlocking { preferences.defaultWorkspace(serverIdB).first() }
+            val shared =
+                runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).createWorkspaceFolder(folder) } }
+                    .also { path = it }
 
-            // 2. A's default is a new folder, picked from A's Settings.
-            openSettings()
-            showHostSettings(serverIdA)
-            val shared = pickNewDefaultFolder(serverIdA, folder).also { path = it }
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitChannelList()
-
-            // 3. B holds a conversation in the same folder.
+            // 2. B holds a conversation in the same folder before A's thread opens.
+            beforeByHost[serverIdB] = hostConversationIds(serverIdB)
             val onB = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdB).createDiscussion(shared) } }
-            chatB = onB.id
+            createdByHost[serverIdB] = onB.id
             assertEquals("B's conversation is not in the shared folder", shared, onB.cwd)
             peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
 
-            // 4. Create A's chat from its Chats section in the daemon default, then move it into the
-            //    chosen folder. With its empty thread open, the peer's label replaces that folder's name.
-            val idA = createChatOn(serverIdA).also { chatA = it }
+            // 3. Move A's empty discussion to the folder while its thread stays open.
+            beforeByHost[serverIdA] = hostConversationIds(serverIdA)
+            val idA = createChatOn(serverIdA).also { createdByHost[serverIdA] = it }
             runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).changeWorkspace(idA, shared) } }
             assertEquals("A's discussion did not move into the chosen folder", shared, heldConversation(serverIdA, idA).cwd)
             val labels = WorkspaceLabels(serverIdA, idA, serverIdB, onB.id)
+            awaitChipShows(folder)
+            assertWorkspaceLabels(labels, null)
+
+            // 4. A's peer push changes and clears the visible chip without leaving the thread.
             val chipLabel = "${LABEL_E2E_PREFIX}chip-$stamp"
             peerStep(peer, "set the chip label") { peer.renameWorkspace(shared, chipLabel, THREAD_TIMEOUT_MS) }
+            awaitChipShows(chipLabel)
             assertWorkspaceLabels(labels, chipLabel)
             peerStep(peer, "clear the chip label") { peer.renameWorkspace(shared, null, THREAD_TIMEOUT_MS) }
+            awaitChipShows(folder)
             assertWorkspaceLabels(labels, null)
-            leaveThread()
-
-            // 5. AC-1 + AC-2, Settings: A's Default workspace row takes the label and gives it back.
-            openSettings()
-            showHostSettings(serverIdA)
-            awaitDefaultWorkspaceRowShows(folder)
-            val settingsLabel = "${LABEL_E2E_PREFIX}settings-$stamp"
-            peerStep(peer, "set the settings label") { peer.renameWorkspace(shared, settingsLabel, THREAD_TIMEOUT_MS) }
-            awaitDefaultWorkspaceRowShows(settingsLabel)
-            assertWorkspaceLabels(labels, settingsLabel)
-            peerStep(peer, "clear the settings label") { peer.renameWorkspace(shared, null, THREAD_TIMEOUT_MS) }
-            awaitDefaultWorkspaceRowShows(folder)
-            assertWorkspaceLabels(labels, null)
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitChannelList()
-
-            // 6. AC-2: no label change moved a stored default or the discussion's folder.
-            assertEquals("A's stored default moved", shared, runBlocking { preferences.defaultWorkspace(serverIdA).first() })
-            assertEquals("B's stored default moved", originalB, runBlocking { preferences.defaultWorkspace(serverIdB).first() })
             assertEquals("A's discussion changed folder", shared, heldConversation(serverIdA, idA).cwd)
+            assertEquals("B's conversation changed folder", shared, heldConversation(serverIdB, onB.id).cwd)
         } finally {
             path?.let { cwd ->
                 runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).renameWorkspace(cwd, null) } } }
                     .onFailure { Log.w("E2E", "workspace label clear failed: ${it::class.simpleName}") }
             }
-            chatA?.let { id ->
-                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).delete(id) } } }
-                    .onFailure { Log.w("E2E", "host A discussion delete failed: ${it::class.simpleName}") }
-            }
-            chatB?.let { id ->
-                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdB).delete(id) } } }
-                    .onFailure { Log.w("E2E", "host B conversation delete failed: ${it::class.simpleName}") }
+            beforeByHost.forEach { (serverId, before) ->
+                cleanupCreatedConversation(serverId, before, createdByHost[serverId], "peer-label conversation cleanup failed")
             }
             peer.close()
-            runBlocking {
-                val koin = GlobalContext.getOrNull()
-                val saved = koin?.get<AppPreferences>()
-                saved?.setDefaultWorkspace(serverIdA, originalA)
-                originalB?.let { saved?.setDefaultWorkspace(serverIdB, it) }
-                koin?.get<PairedServerCollectionStore>()?.remove(serverIdB)
-            }
+            runCatching {
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB)
+                    }
+                }
+            }.onFailure { Log.w("E2E", "peer-label host B pairing cleanup failed: ${it::class.simpleName}") }
         }
     }
 
@@ -2241,13 +2202,6 @@ class InteractiveStreamE2ETest {
 
     /** The workspace chip's text for a workspace shown as [name]; `WorkspaceChip` hardcodes the shape. */
     private fun workspaceChipText(name: String): String = "Workspace: $name (change)"
-
-    /** Wait until the open Settings' Default workspace row names [name]. */
-    private fun awaitDefaultWorkspaceRowShows(name: String) {
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasText(DEFAULT_WORKSPACE_ROW) and hasText(name)).fetchSemanticsNodes().isNotEmpty()
-        }
-    }
 
     /**
      * A channel created, edited and archived from the list, with its prompt read back (#1088, rung 3). A
@@ -6225,33 +6179,6 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodes(owner).fetchSemanticsNodes().size == 1 &&
                 composeTestRule.onAllNodesWithText(DEFAULT_WORKSPACE_ROW).fetchSemanticsNodes().size == 1
-        }
-    }
-
-    /**
-     * On [serverId]'s Settings, create [folderName] from the Default workspace picker and wait until the row
-     * shows it and the host's stored default names it. Returns the stored path: the daemon's canonical one.
-     */
-    private fun pickNewDefaultFolder(
-        serverId: String,
-        folderName: String,
-    ): String {
-        composeTestRule.onNode(hasText(DEFAULT_WORKSPACE_ROW) and hasClickAction()).performScrollTo().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).onFirst().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNode(hasSetTextAction()).performTextInput(folderName)
-        composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasText(DEFAULT_WORKSPACE_ROW) and hasText(folderName)).fetchSemanticsNodes().isNotEmpty()
-        }
-        val preferences = GlobalContext.get().get<AppPreferences>()
-        return runBlocking {
-            withTimeout(THREAD_TIMEOUT_MS) { preferences.defaultWorkspace(serverId).first { it.endsWith("/$folderName") } }
         }
     }
 
