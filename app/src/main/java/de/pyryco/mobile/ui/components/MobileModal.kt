@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawing
@@ -231,7 +230,7 @@ private fun MobileModalShell(
                         Modifier
                             .verticalScroll(shellScroll)
                             .then(if (pinned) Modifier.height(maxHeight) else Modifier)
-                            .padding(horizontal = 28.dp, vertical = 24.dp),
+                            .padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -322,9 +321,8 @@ internal fun ModalCancelButton(
                 ),
             onClick = onClick,
             interactionSource = source,
-            // Material reserves a 48 dp hit area around the 40 dp surface. Shift that reservation
-            // down by 4 dp so the visible button ends at the footer's 24 dp bottom inset.
-            modifier = Modifier.minimumInteractiveComponentSize().offset(y = 4.dp),
+            // Material reserves an invisible 48 dp hit area around the 40 dp surface.
+            modifier = Modifier.minimumInteractiveComponentSize(),
             enabled = enabled,
             shape = RoundedCornerShape(6.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
@@ -361,7 +359,7 @@ internal fun ModalSubmitButton(
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                 ),
             interactionSource = source,
-            modifier = Modifier.minimumInteractiveComponentSize().offset(y = 4.dp),
+            modifier = Modifier.minimumInteractiveComponentSize(),
             enabled = enabled,
             shape = RoundedCornerShape(6.dp),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),

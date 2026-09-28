@@ -6,8 +6,11 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.view.View
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -52,6 +55,7 @@ class ComposerImagePasteDeviceTest {
     @Test
     fun pastingAnImageContentUri_addsItToTheStrip() {
         val image = insertPng()
+        var hostView: View? = null
         val viewModel =
             ThreadViewModel(
                 SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "chat")),
@@ -63,6 +67,7 @@ class ComposerImagePasteDeviceTest {
             val attachments by viewModel.pendingAttachments.collectAsStateWithLifecycle()
             val draft by viewModel.draft.collectAsStateWithLifecycle()
             PyrycodeMobileTheme {
+                hostView = LocalView.current
                 ThreadScreen(
                     state = ThreadUiState(conversationId = "chat", displayName = "Chat"),
                     onBack = {},
@@ -75,6 +80,20 @@ class ComposerImagePasteDeviceTest {
                     onAttachmentsPicked = viewModel::addPickedAttachments,
                 )
             }
+        }
+        // The managed API 33 image can show a Bluetooth crash dialog above the test host.
+        // Clipboard paste needs the host window focused before the action is sent.
+        composeRule.waitUntil(10_000) {
+            val focused = composeRule.runOnIdle { hostView?.hasWindowFocus() }
+            if (focused == false) {
+                ParcelFileDescriptor
+                    .AutoCloseInputStream(
+                        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(
+                            "am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS",
+                        ),
+                    ).use { it.readBytes() }
+            }
+            focused == true
         }
         composeRule.runOnUiThread {
             context
