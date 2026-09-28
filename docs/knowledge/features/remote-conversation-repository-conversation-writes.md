@@ -429,7 +429,7 @@ Reads and writes the system prompt a conversation stores over v2 `request_system
 `set_system_prompt` (server pyrycode#2152). Both name a **conversation**, never a session — the read
 works while nothing is running, and the write takes effect at the conversation's next session start;
 neither call restarts or resets a running one. No UI ships in this ticket; [`SaveAsChannelDialog`](save-as-channel-dialog.md) (#957),
-[`CreateChannelModal`](mobile-modal.md#callers) (#958) and [`EditChannelModal`](mobile-modal.md#callers) (#667) are the consumers —
+[`CreateChannelModal`](mobile-modal-callers.md#callers) (#958) and [`EditChannelModal`](mobile-modal-callers.md#callers) (#667) are the consumers —
 each calls `SystemPromptLimit`/`setSystemPrompt` directly rather than through #824's shared editing state,
 which stays unclaimed (see [System prompt editor](system-prompt-editor.md)). Both bodies
 now live on `SessionSettingsCommands` (#916, `data/repository/SessionSettingsCommands.kt`, beside

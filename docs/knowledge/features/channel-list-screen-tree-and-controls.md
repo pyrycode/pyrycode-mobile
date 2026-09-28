@@ -126,7 +126,7 @@ deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTre
 geometry is separate from the toolbar's 24dp glyphs and 52dp left-control centre spacing.
 
 **Channels-section creation.** The Channels section's own 48dp plus opens
-[`CreateChannelModal`](mobile-modal.md#callers) for that host. Its TalkBack name includes
+[`CreateChannelModal`](mobile-modal-callers.md#callers) for that host. Its TalkBack name includes
 the host; the section fold and plus have separate targets, and the plus does not fold the section. See
 [Create channel control](#workspace-row-create-channel-control-958).
 
@@ -142,7 +142,7 @@ uses the shared `boundedTagId` clamp and is attached to the pencil's own `Modifi
 
 Opening the modal, filling it from the host's stored pairing record, and saving the entered name are the
 view model's job — see [Wiring](channel-list-screen-how-it-works.md#wiring) below and [ChannelListViewModel](channel-list-viewmodel.md). The
-modal itself, [`EditHostModal`](mobile-modal.md#callers), is unchanged by this ticket; its `Unpair host`
+modal itself, [`EditHostModal`](mobile-modal-callers.md#callers), is unchanged by this ticket; its `Unpair host`
 action was wired to an empty lambda here until #745, which gives it a confirmation-gated removal — the
 modal swaps its own content in place for a prompt naming the host, and the shell's own Cancel/OK footer
 carries the decision. See [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the removal's three
@@ -252,7 +252,7 @@ never the selected host.
 
 Opening the modal from that target, resolving which host renames it, and following that host's connection
 live are the view model's job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring) — and the
-modal itself is [`EditChatModal`](mobile-modal.md#callers), unchanged by this ticket except for gaining
+modal itself is [`EditChatModal`](mobile-modal-callers.md#callers), unchanged by this ticket except for gaining
 its first caller. Archive chat was wired in #828, the same placeholder-then-wire shape the host row's
 Unpair action carried between #744 and #745 — but unlike Unpair, Archive takes no confirmation step,
 since the host's own Archive screen restores the chat.
@@ -268,7 +268,7 @@ in place of the `null` every Channels row passed until this ticket — the penci
 unchanged from #827's chat-row shape, since both tiers share one row composable. `target` is the row's
 own `HostConversationTarget`, the same targeting discipline every row control in this file uses.
 
-Opening [`EditChannelModal`](mobile-modal.md#callers) from that target, reading the channel's stored
+Opening [`EditChannelModal`](mobile-modal-callers.md#callers) from that target, reading the channel's stored
 prompt once the row's host has a live repository, and resolving which host renames, writes the prompt or
 archives are `ChannelListViewModel`'s job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring).
 Unlike every other row control here, the modal cannot fill its second field synchronously at open: the
@@ -278,7 +278,7 @@ reading line until that read lands. `ChannelFormFields` gained the two parameter
 `promptEnabled: Boolean = true` and `promptNote: String? = null`, the note drawn as `supportingText` in
 the same slot the over-limit message already used, so a caller that never passes a note is unaffected —
 rather than teaching the shared form to run its own read, keeping `ChannelFormFields` itself as inert as
-`EditChatModal`'s field always was. See [Mobile modal § Callers](mobile-modal.md#callers) for the full
+`EditChatModal`'s field always was. See [Mobile modal § Callers](mobile-modal-callers.md#callers) for the full
 caller contract: the target-tagged prompt reading, the `null`-until-shown prompt draft that keeps an
 unread prompt from ever being overwritten, and the outlined Archive action with no confirmation step.
 
@@ -302,7 +302,7 @@ and `cwd`, never `displayName`, the same targeting discipline every other row co
 Two workspaces on different hosts can show the same folder name, so the shown name is display text only
 and never the write target.
 
-Opening [`EditWorkspaceModal`](mobile-modal.md#callers) from that target, applying the label rule and
+Opening [`EditWorkspaceModal`](mobile-modal-callers.md#callers) from that target, applying the label rule and
 resolving which host writes are its `ChannelListViewModel` job — see
 [ChannelListViewModel](channel-list-viewmodel.md#wiring). `openWorkspaceEditor(serverId, cwd)` reads the
 shown name from that host's own snapshot rather than from the row: it looks up the first channel or chat
@@ -314,7 +314,7 @@ when the clamp actually cut it — an uncut folder name is compared exactly, unt
 swaps the modal's content for a confirmation in place, the same shape `EditHostModal`'s unpair step uses;
 confirming calls `archiveWorkspace` for that host and `cwd` only, and a partial failure keeps the
 confirmation open so a retry archives only the rows still active — see the operation's own contract in
-`ConversationRepository.kt`. See [Mobile modal § Callers](mobile-modal.md#callers) for the modal's own
+`ConversationRepository.kt`. See [Mobile modal § Callers](mobile-modal-callers.md#callers) for the modal's own
 field, its label-rule edge case and a Compose semantics trap in its test.
 
 ## Workspace row create-channel control (#958)
@@ -323,7 +323,7 @@ The #958 control used to sit on a workspace row and create a channel in its `cwd
 removed those rows. `TreeHostSectionRow` now renders the plus only for Channels and emits
 `TreeHostChannelAddTapped(serverId)`; Chats has no plus. The fixed heading stays visible when empty, so
 creation is reachable before the host has a channel. `openCreateChannel(serverId)` checks that the host
-exists in the current snapshot, then opens [`CreateChannelModal`](mobile-modal.md#callers) without a folder
+exists in the current snapshot, then opens [`CreateChannelModal`](mobile-modal-callers.md#callers) without a folder
 override. The modal's nullable `cwd` is null for this action. The repository omits `cwd` from the wire
 request, letting the daemon choose its default folder regardless of the app's saved per-host default.
 The returned conversation retains the daemon-confirmed `cwd`.

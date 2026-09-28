@@ -76,7 +76,7 @@ val dot = when (category) {
 
 The first consumer was the [connection-status line](connection-status-line.md)'s
 `ConnectionLegCategory.color()` resolver ([#397](../codebase/397.md)) — `Up → success`. The [background
-task panel](mobile-modal.md#callers)'s `TaskStatusTag` ([#1041](https://github.com/pyrycode/pyrycode-mobile/issues/1041))
+task panel](mobile-modal-callers.md#callers)'s `TaskStatusTag` ([#1041](https://github.com/pyrycode/pyrycode-mobile/issues/1041))
 is the second: its Completed style reads `colorScheme.success` as the dot/label colour on a 16% tint of
 itself as the pill fill — no new field, since a flat `success` colour is enough to derive both.
 Since #878, `ConversationStatusDot`'s `Unread` fill reads it too (see
@@ -87,7 +87,7 @@ Since #878, `ConversationStatusDot`'s `Unread` fill reads it too (see
 - Precedent (mirrored one-for-one): [Warning color](warning-color.md) ([#119](../codebase/119.md)) —
   the first custom color slot and the pattern for all future ones.
 - Consumers: [Connection status line](connection-status-line.md) ([#397](../codebase/397.md)), the
-  [background task panel](mobile-modal.md#callers)'s `TaskStatusTag` ([#1041](https://github.com/pyrycode/pyrycode-mobile/issues/1041))
+  [background task panel](mobile-modal-callers.md#callers)'s `TaskStatusTag` ([#1041](https://github.com/pyrycode/pyrycode-mobile/issues/1041))
   and the tree row's [Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878) (#878).
 - Implementation notes: [`codebase/397.md`](../codebase/397.md).
 - Theme primitive: `app/src/main/java/de/pyryco/mobile/ui/theme/Theme.kt` — `PyrycodeMobileTheme`,

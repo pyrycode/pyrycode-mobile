@@ -283,7 +283,7 @@ panel — the footer Close button, the close glyph, or Back, all routed through 
 `ThreadUiState` from two defaulted `ThreadViewModel` constructor lambdas bound in `AppModule` to the open
 host's `RelayRepositoryCoordinator.observeBackgroundTasks` / `observeLiveBackgroundTaskCount` — the same
 per-conversation binding shape `questionBatch` uses — and default to `null` / `0` on the demo destination.
-See [Shared mobile modal § Callers](mobile-modal.md#callers) for the panel's own content and trust-boundary
+See [Shared mobile modal § Callers](mobile-modal-callers.md#callers) for the panel's own content and trust-boundary
 handling.
 
 ### `fun retry()` — non-suspend, VM owns the launch

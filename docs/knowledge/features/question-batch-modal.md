@@ -127,7 +127,7 @@ index only — never from claude-authored text). A single-choice question's rows
 `selectableGroup()` with `Role.RadioButton`; a multiple-choice question's rows use `Role.Checkbox`
 independently. All claude-authored text (header, question, option label, option description) renders
 through plain `Text` with no `maxLines` — the shell's scrolling column already handles overflow by height,
-so wrapping is free and no clamp is needed the way [`DebugBundleModal`](mobile-modal.md#callers) needed one
+so wrapping is free and no clamp is needed the way [`DebugBundleModal`](mobile-modal-callers.md#callers) needed one
 for a fixed-height row.
 
 Known deviation from Figma `347:6913` (verifier finding, non-blocking, unowned): the reference draws a

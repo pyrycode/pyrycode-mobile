@@ -247,7 +247,7 @@ delimiter positioned between the two cross-session messages, driven through the 
 (`CHANNEL_LIST_TEST_TAG`, set once on the screen's root so both draws — the blank placeholder and the
 assembled tree — carry it) instead of waiting on a visible element. `createChat()` (tap) and
 `openWorkspacePicker()` (long-press, kept its name across #904 even though it now opens
-[Add workspace](knowledge/features/mobile-modal.md#callers), not the sheet the name still describes — the
+[Add workspace](knowledge/features/mobile-modal-callers.md#callers), not the sheet the name still describes — the
 tag-based handle it drives did not change) both drive a shared `awaitHostAddControl()` helper that waits on and returns
 the **paired host's own** add control — `treeHostAddTestTag(serverId)`, `serverId` read from the harness's
 own `ARG_SERVER_ID` instrumentation argument — since #738 moved chat creation off the floating button and
