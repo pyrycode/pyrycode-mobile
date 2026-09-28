@@ -45,3 +45,8 @@ Pending documentation stage: update the toolbar and panel-colour descriptions un
 ## Open questions
 
 - Does the device pixel comparison show any dark panel or rule mismatch after the vector and geometry change? Resolve against `133:259`, treating `15:8`'s atmospheric background as a conflicting outer context and recording it in the PR.
+
+## Revisions
+
+- A direct sample of the `133:259` render found its rule at RGB (34, 65, 92), over a panel at (11, 14, 17). The existing dark `sidebarRuleColor` yields those values, so the original rule helper remains shared with the tree. The Figma archive SVG rasterizes its half-dp vertical centering to y=30 at the test density, so the geometry test asserts the rendered coordinate.
+- Pixel 8 API 35 captures at 412 × 892 show the panel RGB (11, 14, 17) and a rule within one RGB value of the Figma export. The exact vector paths and geometry align; only platform rasterization differs at antialiased edges. `133:259` has no 412 × 892, empty, compact, or enlarged-text state, so the available `15:8` viewport and device-only captures document those reference limits.
