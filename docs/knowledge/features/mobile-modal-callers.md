@@ -4,23 +4,9 @@ See [the shared shell](mobile-modal.md) for layout, behavior and verification.
 
 ## Callers
 
-**`DebugBundleModal`** (`ui/settings/DebugBundleDownload.kt`, #683) is the shell's second direct
-caller — reusing `MobileModal` itself rather than going through `EditHostModal`/`HostEditorModal`.
-It draws the Settings Storage section's Log data download: present exactly while its state is
-non-null (the same presence rule `HostEditorModal` uses), `loading` mapped from
-`receiving || saving`, and `error` from one of nine static failure sentences. Worth reusing for the
-next caller with prose longer than a bare value: an early draft applied `maxLines = 1` to every line
-of its content, including a two-clause sentence the acceptance criteria required in full — the clamp
-that actually bounds an externally authored value (a scanned host name, a picked document's
-`DISPLAY_NAME`) is applied where that value enters state, not at render, and `maxLines` never
-substitutes for it since Compose measures the whole string regardless of what paints. `maxLines = 1`
-stays correct for a bare value in a fixed-height row — `EditHostModal`'s `IdentityRow`, this shell's
-own design source — but a caller composing a full sentence into this shell's content column should
-let it wrap; the column already scrolls, so wrapping costs height only. A `hasText` Compose assertion
-passes on text clipped this way, since it matches semantics rather than the painted layout — assert
-`TextLayoutResult.hasVisualOverflow` (via `SemanticsActions.GetTextLayoutResult`) instead wherever a
-caller's copy might outrun its column. See [SettingsViewModel — how it works § Log data
-download](settings-viewmodel-how-it-works.md#log-data-download-683) for the full state machine.
+`SettingsScreen` uses `MobileDismissModal` for its notifications-only dialog. This variant puts content directly below the header and one filled Done action at the footer's right edge. Close, Done and dialog Back dismiss the route; the sound row is inert. Its push switch remains backed by `AppPreferences`. At compact width, the text column must take the available width: a fractional intrinsic width can report visual overflow even when a semantics text matcher passes. The [device capture and text-layout check](settings-screen.md#wiring-and-verification) cover that case.
+
+`DebugBundleModal` still calls the editing shell, but the Settings Storage row that opened it was removed. Its download state machine remains documented in [SettingsViewModel](settings-viewmodel-how-it-works.md#log-data-download-683); it is not a current Settings caller.
 
 [`EditHostModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditHostModal.kt)
 (#743) draws the shell's content with two inert identity rows, a name field
@@ -47,21 +33,9 @@ destructive step (Cancel, the close glyph, system Back) is ambiguous about wheth
 removed anything. See [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the
 removal itself.
 
-**Settings landed as the second caller in #751** — the same component, the same
-`EditHostModal`, reached through a shared binding rather than a second inline call.
-The Edit host state machine (open/save/request-unpair/decline/confirm/dismiss) that
-used to live only in `ChannelListViewModel` moved to `HostEditorController` in
-`ui/host/HostEditor.kt`, and a new `HostEditorModal` composable in that same file is
-now the *only* place either screen calls `EditHostModal` — `ChannelListScreen` swapped
-its own inline call for it, and `SettingsScreen` never had one. That binding owns the
-presence rule (drawn exactly while a `HostEditorState?` is non-null), the
-`loading = saving` mapping, and the `failed`/`unpairFailed` → generic-string resolution
-this document described as the channel list's own responsibility until #751 — see
-[Host editor](host-editor.md) for the full contract and why a plain controller, not a
-second `ViewModel`, is the seam. Settings' own caller is `SettingsViewModel`'s
-`openOwnerHostEditor()`: it opens the modal on the destination's own captured host —
-never a row's own id, never selection — so the row that opens it is "the owner's, and
-only the owner's" as the ticket required. Patterns worth reusing for the next
+`HostEditorModal` remains the shared binding for Edit host on the channel list. Settings no longer opens it. Its controller, presence rule, loading mapping and failure copy remain described in [Host editor](host-editor.md).
+
+Patterns worth reusing for the next
 caller that pre-fills an editable field inside this shell:
 
 - **Key a pre-filled edit buffer on the identity of the thing being edited, not on
@@ -140,8 +114,7 @@ plus an outlined "Create new folder under pyry-workspace…" action styled like 
 Archive action, which opens the existing [`CreateFolderDialog`](create-folder-dialog.md) stacked
 as a second window over the shell. OK needs a selected folder and an available host; `MobileModal`
 also disables it while `loading`. Its former host-row long-press entry was removed in #1190;
-[`WorkspacePicker`](workspace-picker.md#consumers) stays for the thread and Settings
-pickers — see [ChannelListScreen § Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)
+[`WorkspacePicker`](workspace-picker.md#consumers) stays for the thread — see [ChannelListScreen § Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)
 and [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the host-resolved state machine
 this caller is bound to.
 
