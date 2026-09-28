@@ -258,7 +258,7 @@ Two `@Preview`s in `ThreadComposerFooter.kt` — `ThreadComposerFooterDarkPrevie
 - [Thread screen — the list, chip, empty state and status row](thread-screen-how-it-works-list-and-status-row.md#status-row-wiring-post-145) — the historical `bottomBar` wiring narrative through [#145](../codebase/145.md)–[#807](../codebase/807.md), before this ticket's replacement.
 - [Thread input bar](thread-input-bar.md) — the composer this footer stacks below, inside the same `bottomBar` column.
 - [Thread overflow menu](thread-overflow-menu.md) — owns the Reset session item the Actions menu's own Reset row dispatches through, and the `mutationsSupported` gate both share.
-- [Shared mobile modal § Callers](mobile-modal.md#callers) — `BackgroundTaskPanel` (#678), the read-only panel the Actions menu's background-tasks row opens.
+- [Shared mobile modal § Callers](mobile-modal-callers.md#callers) — `BackgroundTaskPanel` (#678), the read-only panel the Actions menu's background-tasks row opens.
 - [Thread composer footer — testing](thread-composer-footer-testing.md) — the full test-case list for every control, split out to keep this document under the size cap.
 - [Thread composer footer — Actions menu](thread-composer-footer-actions-menu.md) — `ComposerAction`, the live background-task count, the absence proof (including #1111's `slashCommands` capability rule) and the dispatch/send path, split out to keep this document under the size cap.
 - [Thread composer footer — remembered effort recall](thread-composer-footer-effort-recall.md) — `EffortRecall`'s once-per-opening decision, cancel, remember-only-successes and isolation rules, split out to keep this document under the size cap.
