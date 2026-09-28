@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -19,6 +20,7 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
@@ -32,6 +34,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -546,6 +549,9 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasText("alpha channel")).assertIsDisplayed()
         assertBarDrawn()
         assertToolbarGeometry()
+        val rule = composeTestRule.onNodeWithTag("channel-list-toolbar-rule").getUnclippedBoundsInRoot()
+        val firstHost = composeTestRule.onNode(hasText("Pyrybox")).getUnclippedBoundsInRoot()
+        assertEquals(24.dp, firstHost.top - rule.bottom)
         clickToolbar()
     }
 
@@ -563,6 +569,18 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasContentDescription("New discussion")).assertDoesNotExist()
     }
 
+    @Test
+    fun toolbarTouchBoundary_routesToOnlyTheControlOnEachSide() {
+        setTree(entry("pyrybox", "Pyrybox"))
+
+        composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).performTouchInput {
+            click(Offset(53f, 40f))
+            click(Offset(55f, 40f))
+        }
+
+        assertEquals(listOf(ChannelListEvent.SettingsTapped, ChannelListEvent.ArchiveTapped), events)
+    }
+
     private val toolbarNames = listOf("Open settings", "Open archive", "Pair another host")
 
     private fun toolbarBounds() =
@@ -578,24 +596,34 @@ class ChannelListScreenTest {
     private fun assertToolbarGeometry() {
         val targets = toolbarBounds()
         targets.forEach {
-            assertTrue(it.right - it.left >= 48.dp)
-            assertTrue(it.bottom - it.top >= 48.dp)
+            assertEquals(44.dp, it.right - it.left)
+            assertEquals(44.dp, it.bottom - it.top)
             assertEquals(targets.first().top, it.top)
         }
-        assertTrue(targets[0].right <= targets[1].left)
+        assertEquals(targets[0].right, targets[1].left)
         assertTrue(targets[1].right <= targets[2].left)
         val glyphs =
             toolbarNames.map {
                 composeTestRule.onNode(hasContentDescription(it), useUnmergedTree = true).getUnclippedBoundsInRoot()
             }
         val root = composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).getUnclippedBoundsInRoot()
-        glyphs.forEach {
-            assertEquals(24.dp, it.right - it.left)
-            assertEquals(24.dp, it.bottom - it.top)
-            assertEquals(28.dp, it.top - root.top)
-        }
-        assertEquals(20.dp, glyphs.first().left - root.left)
-        assertEquals(20.dp, root.right - glyphs.last().right)
+        assertEquals(22.dp, glyphs[0].right - glyphs[0].left)
+        assertEquals(24.dp, glyphs[0].bottom - glyphs[0].top)
+        assertEquals(24.dp, glyphs[1].right - glyphs[1].left)
+        assertEquals(21.dp, glyphs[1].bottom - glyphs[1].top)
+        assertEquals(24.dp, glyphs[2].right - glyphs[2].left)
+        assertEquals(24.dp, glyphs[2].bottom - glyphs[2].top)
+        assertEquals(21.dp, glyphs[0].left - root.left)
+        assertEquals(64.dp, glyphs[1].left - root.left)
+        assertEquals(20.dp, root.right - glyphs[2].right)
+        assertEquals(28.dp, glyphs[0].top - root.top)
+        assertEquals(30.dp, glyphs[1].top - root.top)
+        assertEquals(28.dp, glyphs[2].top - root.top)
+        val rule = composeTestRule.onNodeWithTag("channel-list-toolbar-rule").getUnclippedBoundsInRoot()
+        assertEquals(20.dp, rule.left - root.left)
+        assertEquals(20.dp, root.right - rule.right)
+        assertEquals(68.dp, rule.top - root.top)
+        assertEquals(1.dp, rule.bottom - rule.top)
     }
 
     /**

@@ -1,0 +1,1 @@
+viewport=320x800 density=1 fontScale=1.0 staticDark=true capture=decorView.draw fixture=one connected Pyry host
