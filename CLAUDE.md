@@ -13,7 +13,7 @@ The data-model entity is **`Conversation`** with an `isPromoted: Boolean` flag, 
 - **Discussions** (unpromoted) — auto-named, throwaway, scratch cwd, 30-day auto-archive.
 - **Channels** (promoted) — user-named, persistent, dedicated cwd by default (or bound to existing project folder), eligible for memory plugins. The main list.
 
-**Sessions are nested under conversations.** A conversation has a current active session and history of past sessions. Threads render messages chronologically across sessions, with **delimiters** at session boundaries (`/clear`, idle-evict, workspace change). Above-delimiter messages are visually de-emphasized; the explanatory line below the delimiter reminds users that claude doesn't remember above the line and offers a memory-plugin install affordance.
+**Sessions are nested under conversations.** A conversation has a current active session and history of past sessions. Threads render messages chronologically across sessions, with **delimiters** at session boundaries (`/clear`, idle-evict, workspace change). Above-delimiter messages are visually de-emphasized; the explanatory line below the delimiter reminds users that the agent doesn't remember above the line. A memory-plugin install affordance appears only when the current session's report confirms absence. Memory search retrieves stored knowledge; it does not capture conversations or restore the agent's earlier context.
 
 `Conversation` is server-side and shared by the pyrycode clients. Mobile consumes that shared entity.
 
