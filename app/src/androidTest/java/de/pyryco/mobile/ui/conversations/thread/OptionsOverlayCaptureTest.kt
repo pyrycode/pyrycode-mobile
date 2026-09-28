@@ -4,15 +4,18 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.ParcelFileDescriptor
 import android.view.View
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.ConnectionState
@@ -65,7 +68,16 @@ class OptionsOverlayCaptureTest {
         capture("slash-412x892.png")
     }
 
-    private fun setThread() {
+    @Test fun slashDetailAtCompactWidthWithLargeText() {
+        shell("wm size 280x400")
+        instrumentation.waitForIdleSync()
+        setThread(fontScale = 1.6f)
+        rule.onNode(hasSetTextAction()).performTextReplacement("/")
+        rule.onNodeWithText("Switch the model").assertExists()
+        capture("slash-280x400-large-text.png", width = 280, height = 400)
+    }
+
+    private fun setThread(fontScale: Float = 1f) {
         draft = ""
         val models = listOf(ThreadModelChoice("opus", "Opus", "", emptyList()))
         val commands =
@@ -75,44 +87,50 @@ class OptionsOverlayCaptureTest {
                 SlashCommandMenuRow("compact", "", "Compact the session", emptyList(), null),
             )
         rule.setContent {
-            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
-                contentView = LocalView.current
-                ThreadScreen(
-                    state =
-                        ThreadUiState(
-                            conversationId = "capture",
-                            displayName = "Test channel",
-                            isPromoted = true,
-                            runConfig =
-                                ThreadRunConfig(
-                                    choices = models,
-                                    menuAvailable = true,
-                                    settingsAvailable = true,
-                                    savedModel = "opus",
-                                    sessionId = "capture-session",
-                                ),
-                            slashCommands = commands,
-                        ),
-                    onBack = {},
-                    onSendMessage = {},
-                    connectionState = ConnectionState.Connected,
-                    onRetry = {},
-                    draft = draft,
-                    onDraftChange = { draft = it },
-                )
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                    contentView = LocalView.current
+                    ThreadScreen(
+                        state =
+                            ThreadUiState(
+                                conversationId = "capture",
+                                displayName = "Test channel",
+                                isPromoted = true,
+                                runConfig =
+                                    ThreadRunConfig(
+                                        choices = models,
+                                        menuAvailable = true,
+                                        settingsAvailable = true,
+                                        savedModel = "opus",
+                                        sessionId = "capture-session",
+                                    ),
+                                slashCommands = commands,
+                            ),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        draft = draft,
+                        onDraftChange = { draft = it },
+                    )
+                }
             }
         }
     }
 
-    private fun capture(name: String) {
+    private fun capture(
+        name: String,
+        width: Int = 412,
+        height: Int = 892,
+    ) {
         rule.waitForIdle()
         val bitmap =
             rule.runOnIdle {
                 val root = checkNotNull(contentView).rootView
                 Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
             }
-        assertEquals(412, bitmap.width)
-        assertEquals(892, bitmap.height)
+        assertEquals(width, bitmap.width)
+        assertEquals(height, bitmap.height)
         val colors = (0 until bitmap.height step 8).flatMap { y -> (0 until bitmap.width step 8).map { x -> bitmap.getPixel(x, y) } }
         assertTrue("capture must contain rendered content", colors.toSet().size > 10)
         val output =
