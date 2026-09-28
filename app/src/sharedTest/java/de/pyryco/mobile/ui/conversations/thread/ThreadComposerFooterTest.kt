@@ -159,7 +159,7 @@ class ThreadComposerFooterTest {
     fun runConfigurationShowsUnavailablePermissionWhenNoConfirmedMode() {
         setThread(baseConfig.copy(permissionMode = ""))
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
-        composeTestRule.onNodeWithText("Permission mode unavailable").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Permission mode unavailable").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("Bypass approvals").assertDoesNotExist()
     }
 
@@ -289,7 +289,8 @@ class ThreadComposerFooterTest {
         composeTestRule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
-        composeTestRule.onNodeWithText("Context usage unavailable").assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("Not reported yet")).assertCountEquals(2)
+        composeTestRule.onAllNodes(hasText("Not reported yet"))[1].performScrollTo().assertIsDisplayed()
         composeTestRule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
     }
 
