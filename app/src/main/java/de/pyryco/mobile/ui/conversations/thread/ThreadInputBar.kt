@@ -19,10 +19,10 @@ import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowCircleUp
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,10 +38,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
@@ -107,6 +109,7 @@ fun ThreadInputBar(
     // it. Stop therefore owns the button exactly when the composer is empty — the state anyone
     // reaching for stop is in. Pending attachments (#933) are something to send, so they count as not empty.
     val stopping = isBusy && text.isBlank() && !hasAttachments
+    val buttonEnabled = stopping || (!sending && (text.isNotBlank() || hasAttachments))
     // #885: the field keeps its own cursor, and text replaced from outside (a slash-command completion, a
     // cleared send) puts the cursor at the end. The draft returns asynchronously, so [text] can still be the
     // value from before the field's own latest edit ([textAtLastEdit]); that is not an outside change, and
@@ -225,20 +228,25 @@ fun ThreadInputBar(
             )
             IconButton(
                 onClick = if (stopping) onInterrupt else onSend,
-                enabled = stopping || (!sending && (text.isNotBlank() || hasAttachments)),
+                enabled = buttonEnabled,
                 modifier = Modifier.size(ButtonTouchSize),
+                colors =
+                    IconButtonDefaults.iconButtonColors(
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        disabledContentColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
+                    ),
             ) {
                 Icon(
-                    // Same filled-circle silhouette in both states, per the design's
-                    // `Message input button`, so the two actions read as one control.
-                    imageVector = if (stopping) Icons.Filled.StopCircle else Icons.Filled.ArrowCircleUp,
+                    // Figma defines the Send path. Its component has no Stop variant, so the
+                    // existing filled-circle Stop icon retains that action's distinct meaning.
+                    painter =
+                        if (stopping) rememberVectorPainter(Icons.Filled.StopCircle) else painterResource(R.drawable.ic_composer_send),
                     // The two descriptions both suites pin: "Send message" is the e2e thread-arrival
                     // marker, "Stop the running turn" is what ScriptedThreadRenderTest drives.
                     contentDescription =
                         stringResource(
                             if (stopping) R.string.cd_thread_interrupt else R.string.cd_send_message,
                         ),
-                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(ButtonGlyphSize),
                 )
             }

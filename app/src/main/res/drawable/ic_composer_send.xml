@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Figma Message input button 113:3543, circle-chevron-up-solid-full 1. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="28"
+    android:viewportHeight="28">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M14,28C21.7328,28 28,21.7328 28,14C28,6.26719 21.7328,0 14,0C6.26719,0 0,6.26719 0,14C0,21.7328 6.26719,28 14,28ZM20.6172,14.8203C21.1312,15.3344 21.1312,16.1656 20.6172,16.6742C20.1031,17.1828 19.2719,17.1883 18.7633,16.6742L14.0055,11.9164L9.24766,16.6742C8.73359,17.1883 7.90234,17.1883 7.39375,16.6742C6.88516,16.1602 6.87969,15.3289 7.39375,14.8203L13.0703,9.13281C13.5844,8.61875 14.4156,8.61875 14.9242,9.13281L20.6172,14.8203Z" />
+</vector>

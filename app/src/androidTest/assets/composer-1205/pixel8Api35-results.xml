@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="15.653" timestamp="2026-09-28T21:06:19" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ComposerFieldCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="14.422" timestamp="2026-09-28T21:06:19" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="compactLargeTextKeepsSendReachable" classname="de.pyryco.mobile.ui.conversations.thread.ComposerFieldCaptureTest" time="8.958" />
+    <testcase name="typedAndStopAt412By892" classname="de.pyryco.mobile.ui.conversations.thread.ComposerFieldCaptureTest" time="5.464" />
+  </testsuite>
+</testsuites>
