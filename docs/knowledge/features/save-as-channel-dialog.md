@@ -77,8 +77,8 @@ internal fun ChannelFormFields(
 ```
 
 Pulled into its own file, `ui/components/ChannelFormFields.kt`, rather than nested in
-`SaveAsChannelDialog.kt`, because it is meant to be reused by the future Create channel modal —
-stateless, the caller owns both values and every callback, no I/O.
+`SaveAsChannelDialog.kt`, because Create, Edit and Save as channel share the same controls — stateless,
+the caller owns both values and every callback, no I/O.
 
 - **Name field** — single-line, tagged `CHANNEL_NAME_FIELD_TAG`, `ImeAction.Next` (no submit-on-Done:
   the prompt below it is multi-line, so OK is the single submit route, matching desktop's form). It
@@ -90,23 +90,29 @@ stateless, the caller owns both values and every callback, no I/O.
   invisible until it was actually measured.
 - **Prompt field** — multi-line, `minLines = 4`, tagged `CHANNEL_PROMPT_FIELD_TAG`, no `maxLines`: the
   modal's content column already scrolls, so a long prompt just grows the well. When
-  `!SystemPromptLimit.fits(systemPrompt)` it shows `isError = true` and the static supporting text
-  `channel_form_prompt_too_long` — the caller (the dialog) independently disables OK for the same
-  reason, so the limit is enforced twice, once for the visible cue and once for the actual gate.
+  `!SystemPromptLimit.fits(systemPrompt)` it exposes an error semantic and shows the static
+  `channel_form_prompt_too_long` message in the error color; an optional caller note occupies that
+  supporting slot when the prompt fits. The caller (the dialog) independently disables OK for the
+  same reason, so the limit is enforced twice, once for the visible cue and once for the actual gate.
   `MAX_BYTES` is measured in UTF-8 bytes, not UTF-16 code units, so a limit test needs multi-byte
   characters to actually exercise the boundary (`SaveAsChannelDialogTest` uses `"é".repeat(...)`, two
   bytes each).
-- **Field styling** is `EditChatModal`'s `ChatNameField` recipe (`FIELD_FILL_ALPHA = 0.12f`, an
-  `onPrimaryContainer` fill on both wells, transparent indicators, `shapes.small`, `bodyMedium` text),
-  reimplemented privately here (`wellColors()`) rather than shared — `EditChatModal` is not touched by
-  this ticket. Each field sits under its own `labelLarge` SemiBold label ("Channel name:" / "Channel
-  system prompt:"), 8dp below the label, with a 12dp gap between the two blocks — the frame's "Input
-  large" pattern.
-- **Known accessibility gap (verifier SHOULD FIX, non-blocking, #957):** the labels are sibling `Text`
-  nodes with no semantic link to their fields, and neither `TextField` sets a `label` or a
-  `contentDescription`. TalkBack reads the prompt field, which opens empty, as an unnamed edit box.
-  `EditChatModal.ChatNameField` has the same gap. Worth fixing in both places together under a separate
-  ticket rather than duplicating a divergent fix here.
+- **Field geometry** follows the current Figma input (`347:6446`) and all three form instances:
+  `labelLarge` SemiBold labels in `onPrimaryContainer`, 8dp above filled wells and 12dp between field
+  blocks. A `BasicTextField` inside an explicit 6dp rounded well avoids Material `TextField`'s extra
+  minimum height and content insets. The name well is at least 52dp high, with 16dp top, bottom and
+  left insets and 56dp reserved on the right; the prompt well is at least 112dp high, with 16dp on
+  every side. Both use `bodyMedium` text and the shared modal field fill/text tokens, without a border
+  or indicator. These are minimum heights: text and font scaling can grow the wells. The field nodes
+  carry their label as a `contentDescription`; disabled fields remain readable without edit actions.
+  Figma specified only the default dark state, so focus, disabled and over-limit appearances follow
+  the theme and accessibility contract.
+- **Visual evidence** — [412 × 892 emulator beside the native-scale Figma Create crop](../../../app/src/androidTest/assets/channel-fields-1233/viewport-comparison.png)
+  and the [aligned field overlay](../../../app/src/androidTest/assets/channel-fields-1233/fields-overlay.png)
+  compare actual API 33 pixels with the 2026-09-28 design. The [raw capture](../../../app/src/androidTest/assets/channel-fields-1233/emulator-create.png)
+  and [Figma render](../../../app/src/androidTest/assets/channel-fields-1233/figma-create.png) are retained
+  alongside them. The wider source form and phone modal place the outer shell differently; the field
+  measurements stay at native scale, and the prompt wraps further at phone width.
 
 ## `ThreadViewModel`: the two-write state machine
 
@@ -217,12 +223,18 @@ should ever reach it.
 `AlertDialog`. Removed: `save_as_channel_dialog_field_label`, `_workspace_dedicated`, `_workspace_scratch`,
 `_save`, `_cancel` — the location choice and the dialog's own Save/Cancel labels no longer exist; OK and
 Cancel come from `MobileModal`'s fixed footer. Added, in the `channel_form_*` namespace shared with the
-future Create channel modal: `channel_form_name_label` ("Channel name:"), `channel_form_prompt_label`
+Create channel modal: `channel_form_name_label` ("Channel name:"), `channel_form_prompt_label`
 ("Channel system prompt:"), `channel_form_prompt_too_long`, plus the two failure strings above.
 `save_as_channel_action` ("Save as channel…", with the ellipsis) is the unrelated
 [`ThreadOverflowMenu`](thread-overflow-menu.md) item string and is untouched.
 
 ## Tests
+
+`ChannelFormFieldsTest` checks the 52dp/112dp wells, 8dp/12dp gaps, accessible names, Next focus,
+verbatim prompt edits, error semantics, disabled fields and separation at 240dp width with 1.5× text.
+Those layout bounds do not prove rendered pixels: `ChannelFormFieldsCaptureTest#createFormAt412By892`
+provides the API 33 capture used in the visual comparison above. Scaling the wider Figma render down
+would also shrink its well and conceal a size mismatch, so the comparison uses a native-scale crop.
 
 **`SaveAsChannelDialogTest`** (`app/src/sharedTest/.../components/SaveAsChannelDialogTest.kt`, Robolectric)
 covers: the title, both labels and the footer render, with no "Keep in scratch" remnant; the name prefills
@@ -263,8 +275,8 @@ against the ellipsis-bearing menu item) replace them, alongside `SAVE_AS_CHANNEL
 
 - Shell contract: [Shared mobile modal](mobile-modal.md) — this is one of its direct `MobileModal`
   callers (§ Callers).
-- Nearest analogue: [`EditChatModal`](mobile-modal-callers.md#callers) (#827) — the field styling, the
-  identity-keyed buffer and the surrogate-safe clamp of a daemon-authored name are all lifted from it.
+- Nearest analogue: [`EditChatModal`](mobile-modal-callers.md#callers) (#827) — the identity-keyed
+  buffer and the surrogate-safe clamp of a daemon-authored name are lifted from it.
 - [`ThreadOverflowMenu`](thread-overflow-menu.md) — the sole entry point.
 - [`ConversationRepository.promote`](conversation-repository.md) / `setSystemPrompt` /
   `SystemPromptLimit` — the two writes this flow drives, and the byte limit both the field and the VM
