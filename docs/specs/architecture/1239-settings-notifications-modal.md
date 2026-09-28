@@ -57,3 +57,9 @@ Pending documentation stage: update `docs/knowledge/features/settings-screen.md`
 ## Size self-check
 
 Three production Kotlin files, about 700 written lines including tests/capture/plan, one new internal composable, one call site, five acceptance criteria, zero new reject branches.
+
+## Revisions
+
+- 2026-09-28: The Figma chevron has no exact local asset. Converted the supplied SVG path into an Android vector with the same 20 dp viewport and stroke; its tint comes from the dark scheme's `onSurfaceVariant` role.
+- 2026-09-28: Exact text measurement in the dialog must run on the device. The first real capture found `Notification sound` reporting overflow at its fractional intrinsic width; making its label and subtitle fill the available column width cleared both device and Robolectric checks. The compact 2× font proof therefore lives in `SettingsDensityDeviceTest`, not in a `DeviceConfigurationOverride` around the dialog's separate window.
+- 2026-09-28: Espresso Back in the production-graph harness selected its unfocused activity root while the dialog owned focus. `SettingsDensityDeviceTest` sends the real system Back key to the focused modal and checks dismissal. The shared screen test also checks that the shell invokes its dismissal callback for Back.

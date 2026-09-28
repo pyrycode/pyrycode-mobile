@@ -166,6 +166,32 @@ internal fun MobileReadOnlyModal(
     )
 }
 
+/** A single filled dismissal action, with content starting below the header. */
+@Composable
+internal fun MobileDismissModal(
+    title: String,
+    actionLabel: String,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    // Settings' Figma frame omits Android bars; the shared shell still applies real safe drawing insets.
+    MobileModalShell(
+        title = title,
+        onDismissRequest = onDismissRequest,
+        gate = false,
+        error = null,
+        modifier = modifier,
+        contentAlignment = Alignment.Top,
+        footerAlignment = Alignment.End,
+        bottomPadding = 24.dp,
+        footer = { dismiss ->
+            ModalSubmitButton(label = actionLabel, onClick = dismiss, enabled = true, loading = false, logSubmit = false)
+        },
+        content = content,
+    )
+}
+
 /** [gate] is the only switch between the editing shell and the hardened decision gate. */
 @Composable
 private fun MobileModalShell(
@@ -175,6 +201,9 @@ private fun MobileModalShell(
     error: String?,
     footer: @Composable RowScope.(dismiss: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
+    contentAlignment: Alignment.Vertical = Alignment.CenterVertically,
+    footerAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
+    bottomPadding: androidx.compose.ui.unit.Dp = 20.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     DisposableEffect(Unit) {
@@ -230,7 +259,7 @@ private fun MobileModalShell(
                         Modifier
                             .verticalScroll(shellScroll)
                             .then(if (pinned) Modifier.height(maxHeight) else Modifier)
-                            .padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 20.dp),
+                            .padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = bottomPadding),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -271,7 +300,7 @@ private fun MobileModalShell(
                                 Modifier
                                     .fillMaxWidth()
                                     .then(if (pinned) Modifier.verticalScroll(contentScroll).heightIn(min = maxHeight) else Modifier),
-                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                            verticalArrangement = Arrangement.spacedBy(12.dp, contentAlignment),
                         ) {
                             content()
                             if (error != null) {
@@ -290,7 +319,7 @@ private fun MobileModalShell(
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                        horizontalArrangement = Arrangement.spacedBy(20.dp, footerAlignment),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         footer(dismiss)
@@ -341,6 +370,7 @@ internal fun ModalSubmitButton(
     enabled: Boolean,
     loading: Boolean,
     interactionSource: MutableInteractionSource? = null,
+    logSubmit: Boolean = true,
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val hovered = source.collectIsHoveredAsState().value && enabled
@@ -349,7 +379,7 @@ internal fun ModalSubmitButton(
         Button(
             onClick = {
                 if (enabled) {
-                    logModalEvent("submit_requested")
+                    if (logSubmit) logModalEvent("submit_requested")
                     onClick()
                 }
             },
