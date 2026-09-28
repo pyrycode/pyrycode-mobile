@@ -327,6 +327,7 @@ fun ThreadScreen(
                     onOverflowEvent = onOverflowEvent,
                     isPromoted = state.isPromoted,
                     mutationsSupported = state.mutationsSupported,
+                    memorySearch = state.runConfig.memorySearch,
                 )
             },
             // Figma 16:8's `Input area` (533:1957): a gap-8 column of the status area, the input field and
@@ -566,7 +567,11 @@ fun ThreadScreen(
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
-                                                    SessionBoundaryDelimiter(boundary = item, agent = state.agent)
+                                                    SessionBoundaryDelimiter(
+                                                        boundary = item,
+                                                        agent = state.agent,
+                                                        memorySearch = state.runConfig.memorySearch,
+                                                    )
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
                                                 is ThreadItem.Banner -> BannerNoticeRow(item = item, agent = state.agent)
@@ -924,7 +929,7 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         lastActivityLabel = lastUsedAt?.let { formatRelativeTime(it, now) } ?: "—",
         sessionCount = sessionCount,
         messageCount = items.count { it is ThreadItem.MessageItem },
-        memoryPlugins = emptyList(),
+        memorySearch = runConfig.memorySearch,
         channelId = conversationId,
     )
 

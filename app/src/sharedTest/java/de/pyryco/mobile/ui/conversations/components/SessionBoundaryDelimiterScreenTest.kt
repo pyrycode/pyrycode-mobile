@@ -11,6 +11,9 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.MemorySearchAvailability
+import de.pyryco.mobile.data.repository.MemorySearchProvider
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -66,10 +69,35 @@ class SessionBoundaryDelimiterScreenTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 CompositionLocalProvider(LocalUriHandler provides capturing) {
-                    SessionBoundaryDelimiter(boundary = boundary)
+                    SessionBoundaryDelimiter(boundary = boundary, memorySearch = absent)
                 }
             }
         }
+    }
+
+    private val absent = MemorySearchReport(MemorySearchAvailability.Absent, emptyList())
+
+    @Test
+    fun installed_or_unknown_report_keeps_reset_explanation_without_install() {
+        val installed =
+            MemorySearchReport(
+                MemorySearchAvailability.Unavailable,
+                listOf(MemorySearchProvider("p", "Knowledge search", true, false, MemorySearchAvailability.Unavailable)),
+            )
+        val report = androidx.compose.runtime.mutableStateOf(installed)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                SessionBoundaryDelimiter(boundary = clearBoundary(), memorySearch = report.value)
+            }
+        }
+
+        composeTestRule.onNodeWithText("New session — ", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Claude doesn't remember messages above this line.", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
+        composeTestRule.runOnIdle { report.value = MemorySearchReport.Unknown }
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
+        composeTestRule.runOnIdle { report.value = absent }
+        composeTestRule.onNodeWithText("Install").assertIsDisplayed()
     }
 
     @Test
@@ -79,10 +107,11 @@ class SessionBoundaryDelimiterScreenTest {
         composeTestRule
             .onNode(
                 hasText(
-                    "Claude doesn't remember messages above this line. Install a memory plugin to preserve context.",
+                    "Claude doesn't remember messages above this line.",
                     substring = true,
                 ),
             ).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Search stored knowledge with a memory plugin.", substring = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Install").assertIsDisplayed()
     }
 
@@ -90,14 +119,14 @@ class SessionBoundaryDelimiterScreenTest {
     fun a_Codex_conversation_names_Codex_and_keeps_the_install_button() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                SessionBoundaryDelimiter(boundary = clearBoundary(), agent = ConversationAgent.Codex)
+                SessionBoundaryDelimiter(boundary = clearBoundary(), agent = ConversationAgent.Codex, memorySearch = absent)
             }
         }
 
         composeTestRule
             .onNode(
                 hasText(
-                    "Codex doesn't remember messages above this line. Install a memory plugin to preserve context.",
+                    "Codex doesn't remember messages above this line.",
                     substring = true,
                 ),
             ).assertIsDisplayed()

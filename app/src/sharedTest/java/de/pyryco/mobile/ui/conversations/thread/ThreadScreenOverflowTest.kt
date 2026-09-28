@@ -12,6 +12,10 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.MemorySearchAvailability
+import de.pyryco.mobile.data.repository.MemorySearchProvider
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.channels.Channel
@@ -37,6 +41,58 @@ class ThreadScreenOverflowTest {
             isPromoted = true,
             hasMessages = false,
         )
+
+    @Test
+    fun boundary_and_overflow_follow_report_and_conversation_change() {
+        val available =
+            MemorySearchReport(
+                MemorySearchAvailability.Available,
+                listOf(MemorySearchProvider("p", "Search", true, true, MemorySearchAvailability.Available)),
+            )
+        val boundary =
+            ThreadItem.SessionBoundary(
+                previousSessionId = "s0",
+                newSessionId = "s1",
+                reason = BoundaryReason.Clear,
+                occurredAt = Instant.parse("2026-05-20T10:00:00Z"),
+            )
+        val state =
+            androidx.compose.runtime.mutableStateOf(
+                baseState().copy(hasMessages = true, items = listOf(boundary), runConfig = ThreadRunConfig(memorySearch = available)),
+            )
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = state.value,
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Claude doesn't remember messages above this line.").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
+        val installItem = string(R.string.thread_overflow_install_memory_plugin)
+        composeTestRule.onNodeWithText(installItem).assertDoesNotExist()
+
+        composeTestRule.runOnIdle {
+            state.value =
+                state.value.copy(
+                    runConfig = ThreadRunConfig(memorySearch = MemorySearchReport(MemorySearchAvailability.Absent, emptyList())),
+                )
+        }
+        composeTestRule.onNodeWithText(installItem).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Install").assertIsDisplayed()
+
+        composeTestRule.runOnIdle {
+            state.value = state.value.copy(conversationId = "c2", runConfig = ThreadRunConfig())
+        }
+        composeTestRule.onNodeWithText(installItem).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
+    }
 
     private fun setContent(events: MutableList<ThreadEvent>) {
         composeTestRule.setContent {

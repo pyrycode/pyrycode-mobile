@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Add
@@ -44,6 +46,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import de.pyryco.mobile.data.repository.MemorySearchAvailability
+import de.pyryco.mobile.data.repository.MemorySearchProvider
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 internal data class ChannelInfoUiModel(
@@ -53,7 +58,7 @@ internal data class ChannelInfoUiModel(
     val lastActivityLabel: String,
     val sessionCount: Int,
     val messageCount: Int,
-    val memoryPlugins: List<String>,
+    val memorySearch: MemorySearchReport,
     val channelId: String,
 )
 
@@ -99,7 +104,7 @@ internal fun ChannelInfoSheetContent(
     onDismiss: () -> Unit,
     mutationsSupported: Boolean = true,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         TitleRow(title = model.conversationName, onClose = onDismiss)
 
         SectionHeader(text = "About")
@@ -110,7 +115,7 @@ internal fun ChannelInfoSheetContent(
         AboutRow(label = "Total messages", value = model.messageCount.toString())
 
         SectionHeader(text = "Memory")
-        MemoryRow(plugins = model.memoryPlugins, onInstall = onInstallMemoryPlugin)
+        MemoryRow(report = model.memorySearch, onInstall = onInstallMemoryPlugin)
 
         if (mutationsSupported) {
             SectionHeader(text = "Actions")
@@ -218,7 +223,7 @@ private fun AboutRow(
 
 @Composable
 private fun MemoryRow(
-    plugins: List<String>,
+    report: MemorySearchReport,
     onInstall: () -> Unit,
 ) {
     Row(
@@ -234,7 +239,7 @@ private fun MemoryRow(
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
-        if (plugins.isEmpty()) {
+        if (report.shouldOfferMemoryInstall()) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -260,20 +265,47 @@ private fun MemoryRow(
                     )
                 }
             }
+        } else if (report.providers.isEmpty()) {
+            Text(
+                text =
+                    if (report.availability == MemorySearchAvailability.Unknown) "Status unknown" else "Memory search unavailable",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.End,
+            )
         } else {
-            Column(horizontalAlignment = Alignment.End) {
-                plugins.forEach { name ->
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.End,
-                    )
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                report.providers.forEach { provider ->
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = provider.displayName.take(120).ifBlank { "Unnamed provider" },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.End,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = providerStatus(provider),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.End,
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+private fun providerStatus(provider: MemorySearchProvider): String =
+    when {
+        !provider.installed -> "Not installed"
+        !provider.enabled -> "Disabled"
+        provider.availability == MemorySearchAvailability.Available -> "Memory search available"
+        provider.availability == MemorySearchAvailability.Unavailable -> "Memory search unavailable"
+        else -> "Status unknown"
+    }
 
 @Composable
 private fun ActionsGrid(
@@ -361,7 +393,7 @@ private val SAMPLE_MODEL =
         lastActivityLabel = "2 hours ago",
         sessionCount = 12,
         messageCount = 347,
-        memoryPlugins = emptyList(),
+        memorySearch = MemorySearchReport(MemorySearchAvailability.Absent, emptyList()),
         channelId = "ch_a8f3c2d1e9b7",
     )
 
