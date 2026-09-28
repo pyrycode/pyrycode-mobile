@@ -5,7 +5,10 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -60,6 +63,24 @@ class MobileModalCaptureTest {
             }
         }
         rule.waitForIdle()
+        val title =
+            rule
+                .onNodeWithText("Edit host")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        val footer =
+            rule
+                .onNodeWithText("OK")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        rule.onNodeWithText("Cancel").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Close").assertIsDisplayed()
+        assertTrue("footer must follow the header", footer.top > title.bottom)
+        // The ATD gate can return a black framebuffer even when the dialog is laid out.
+        // The full image run opts into strict pixel proof with this instrumentation argument.
+        if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") != "true") return
         // Dialog window dim/enter animations can outlive Compose idleness on a real device.
         SystemClock.sleep(600)
         val image = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
