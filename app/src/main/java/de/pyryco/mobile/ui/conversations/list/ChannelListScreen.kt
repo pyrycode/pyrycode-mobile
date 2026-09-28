@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.list
 
 import android.content.res.Configuration
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,13 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Archive
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -33,10 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionStatus
@@ -104,18 +102,14 @@ private val TreeHostGap = 16.dp
 // The outer Scaffold in MainActivity owns the system-bar insets.
 private val TreeBottomInset = 16.dp
 
-// Figma's 24dp top inset + 4dp inside its 28dp wrapper put the glyph at 28dp. Centre
-// it in a 48dp target, subtracting the 12dp touch slack from that offset and the 16dp
-// wrapper-to-rule gap. The first host has no extra padding below the bar's 24dp gap.
+// Adjacent 44dp click regions keep the Figma's 44dp icon centres without overlapping.
+// The icon frame starts 28dp from the panel top; the first host follows the rule by 24dp.
 private val BarGlyphSize = 24.dp
-private val BarTouchSize = 48.dp
+private val BarTouchSize = 44.dp
 private val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
 private val BarTopGap = 28.dp - BarTouchSlack
 private val BarRuleGap = 16.dp - BarTouchSlack
 private val BarBottomGap = 24.dp
-
-// Keep 52dp centre spacing so the left targets never overlap (the reference draws 44dp).
-private val BarEntryGap = 4.dp
 
 private const val SECTION_RULE_ALPHA = 0.60f
 
@@ -568,34 +562,39 @@ private fun ChannelListTopBar(onEvent: (ChannelListEvent) -> Unit) {
                 ),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(BarEntryGap)) {
+            Row {
                 ChannelListBarEntry(
-                    icon = Icons.Default.Settings,
+                    icon = R.drawable.ic_sidebar_settings,
+                    glyphWidth = 22.dp,
+                    glyphHeight = 24.dp,
                     label = stringResource(R.string.cd_open_settings),
                     onClick = { onEvent(ChannelListEvent.SettingsTapped) },
                 )
                 ChannelListBarEntry(
-                    // Keep the existing Material approximation of Figma's FontAwesome archive glyph.
-                    icon = Icons.Default.Archive,
+                    icon = R.drawable.ic_sidebar_archive,
+                    glyphWidth = 24.dp,
+                    glyphHeight = 21.dp,
                     label = stringResource(R.string.cd_open_archive),
                     onClick = { onEvent(ChannelListEvent.ArchiveTapped) },
                 )
             }
             ChannelListBarEntry(
-                // The toolbar uses the same Material plus as the existing tree add controls.
-                icon = Icons.Default.Add,
+                icon = R.drawable.ic_sidebar_add_host,
+                glyphWidth = 24.dp,
+                glyphHeight = 24.dp,
                 label = stringResource(R.string.cd_pair_another_host),
                 onClick = { onEvent(ChannelListEvent.PairHostTapped) },
             )
         }
         HorizontalDivider(
             modifier =
-                Modifier.padding(
-                    start = TreeGutter,
-                    end = TreeGutter,
-                    top = BarRuleGap,
-                    bottom = BarBottomGap,
-                ),
+                Modifier
+                    .padding(
+                        start = TreeGutter,
+                        end = TreeGutter,
+                        top = BarRuleGap,
+                        bottom = BarBottomGap,
+                    ).testTag("channel-list-toolbar-rule"),
             thickness = 1.dp,
             color = sidebarRuleColor(),
         )
@@ -609,19 +608,21 @@ private fun sidebarRuleColor(): Color {
         .copy(alpha = SECTION_RULE_ALPHA)
 }
 
-/** One bar entry: the design's 24dp glyph centred in a target touch can actually hit. */
+/** One bar entry with a distinct 44dp region around the design's visible glyph. */
 @Composable
 private fun ChannelListBarEntry(
-    icon: ImageVector,
+    icon: Int,
+    glyphWidth: Dp,
+    glyphHeight: Dp,
     label: String,
     onClick: () -> Unit,
 ) {
-    IconButton(onClick = onClick, modifier = Modifier.size(BarTouchSize)) {
+    Box(modifier = Modifier.size(BarTouchSize).clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
         Icon(
-            imageVector = icon,
+            painter = painterResource(icon),
             contentDescription = label,
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(BarGlyphSize),
+            modifier = Modifier.size(glyphWidth, glyphHeight),
         )
     }
 }

@@ -1,0 +1,12 @@
+Design inspected: 2026-09-28
+Figma file last-edited date: not exposed by the node metadata; inspection date is the recorded design date.
+Target visible instance: Figma 133:259, exported 412 x 888.
+Related nodes: Figma 15:8, exported 412 x 892; Figma 132:3902, sidebar component.
+Actual captures: Pixel 8 API 35 managed emulator, density 1 dp/px, static dark scheme.
+Focused result: SidebarToolbarCaptureTest, 3 executed, 0 failed, 0 skipped; see device-results.xml.
+412 x 892 reference: figma-15-8-412x892.png beside emulator-412x892.png in comparison-412x892.png.
+Toolbar target: figma-133-259-412x888.png beside the emulator's matching top crop in toolbar-difference.png.
+The toolbar difference panel amplifies absolute RGB differences by 8. The two icon paths and visible frames align; remaining bright edge pixels are SVG versus Android vector rasterization.
+The target instance is 4 px shorter than the required 412 x 892 viewport. The related 15:8 view supplies that viewport but has an atmospheric background absent from 133:259; the app matches 133:259's flat panel treatment.
+The Figma PNG includes white pixels outside its rounded presentation corners. The emulator artifact captures app View pixels before the device's physical screen mask, so the toolbar difference crop uses the panel interior.
+No empty, compact-width, or enlarged-text Figma state was present in these inspected nodes. Their emulator captures check distinct controls and clipping. Host, section, and conversation row appearance belongs to #1203.
