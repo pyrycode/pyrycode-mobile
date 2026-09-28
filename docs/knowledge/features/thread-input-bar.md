@@ -61,7 +61,8 @@ The two-overload pattern matches the project convention for composables that nee
 
 | `text` | `hasAttachments` | `isBusy` | `sending` | description | action | enabled |
 |---|---|---|---|---|---|---|
-| non-blank | either | either | either | `cd_send_message` ("Send message") | `onSend` | yes |
+| non-blank | either | either | `false` | `cd_send_message` ("Send message") | `onSend` | yes |
+| non-blank | either | either | `true` | `cd_send_message` ("Send message") | `onSend` | no |
 | blank | `true` | either | `false` | `cd_send_message` ("Send message") | `onSend` | yes |
 | blank | `true` | either | `true` | `cd_send_message` ("Send message") | `onSend` | no |
 | blank | `false` | `true` | either | `cd_thread_interrupt` ("Stop the running turn") | `onInterrupt` | yes |
@@ -69,11 +70,9 @@ The two-overload pattern matches the project convention for composables that nee
 
 Text present wins over an in-flight turn **deliberately**: sending while the agent is busy is a shipped path (the daemon queues it and [`QueuedBacklog`](queued-backlog-section.md) renders it, #461/#467), so a stop variant that pre-empted a typed message would silently remove the only tap that reaches it. Stop therefore owns the button exactly when the composer is empty **and holds no attachment** — [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) widened `stopping = isBusy && text.isBlank() && !hasAttachments`, since an attachment with no text is still something to send, not the empty state stop is for. One consequence worth knowing for anyone touching this path: **stop is unreachable while a draft sits in the composer, or while an attachment is pending** — the user must clear both first. Deliberate and settled (queue-while-busy is real, the design has exactly one button slot), but a real thing to watch during a live turn.
 
-`enabled = stopping || (!sending && (text.isNotBlank() || hasAttachments))` (also #933): attachments alone enable Send, and `sending` — true for as long as [`ThreadViewModel.sendWithAttachments`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) is uploading and sending — disables it outright rather than letting it fall through to stop, so a second tap during an in-flight attachment send does nothing.
+`enabled = stopping || (!sending && (text.isNotBlank() || hasAttachments))` (also #933): attachments alone enable Send, and `sending` — true for as long as [`ThreadViewModel.sendWithAttachments`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) is uploading and sending — disables Send even when text is present, so a second tap during an in-flight attachment send does nothing.
 
-Both states draw the same filled-circle silhouette so the control reads as one button in two states: `Icons.Filled.ArrowCircleUp` for send, `Icons.Filled.StopCircle` for stop, both tinted `colorScheme.primary` inside a container-less 48dp `IconButton`.
-
-**Known gap, not yet fixed: the disabled state has no visual dimming.** The icon's `tint` is hardcoded to `colorScheme.primary` regardless of `enabled`, and `Icon(tint = ...)` overrides the `LocalContentColor` that `IconButton` would otherwise swap to `disabledContentColor` — so the idle-and-empty resting state draws the identical full-strength circle-chevron as the live send button. Semantics are correct (`assertIsNotEnabled` passes, TalkBack announces "disabled"); only the visual half is missing. Flagged in review as a non-blocking SHOULD FIX and shipped as-is — a case where the accessibility test passes while the visual reads as a live, tappable control. Fix by gating the tint's alpha on the same expression that gates `enabled` (e.g. `primary.copy(alpha = if (stopping || text.isNotBlank()) 1f else 0.38f)`) if this is picked up.
+Both states draw a filled-circle silhouette inside the same container-less 48dp `IconButton`. Send uses the 28dp `ic_composer_send` vector traced from Figma node `113:3543`; Stop retains `Icons.Filled.StopCircle` because the inspected components define no Stop asset. `IconButtonDefaults.iconButtonColors` supplies `colorScheme.primary` when enabled and primary at 0.38 alpha when disabled. The icon inherits that content colour, so its appearance follows the actual button enabled condition, including attachment sending. Figma defines neither a Stop nor a disabled Send variant; those appearances are app choices. A semantics-only enabled assertion would miss a wrong icon path or full-strength disabled tint, so `ThreadInputBarStyleTest` also samples rendered pixels.
 
 ## How it works
 
@@ -451,6 +450,8 @@ Five `@Preview`s at the bottom of `ThreadInputBar.kt`, all calling the **statele
 - `InputBar — Dark, Filled` (`darkTheme = true`, `text = "Drafting a reply…"`)
 - `InputBar — Dark, Stop variant` (`darkTheme = true`, `text = ""`, `isBusy = true`) — added in #643 for the `StopCircle` glyph.
 
+These previews retain light and wallpaper examples, but the app's visual target is fixed dark. The 2026-09-29 inspection of Figma nodes `533:1957`, `347:6446`, and `113:3543` confirms the existing 6dp corners, 52dp field height, 16dp leading inset, 14sp/20sp text, centered 28dp icon, and 48dp button target. The [412 × 892 Pixel 8 comparison](../../../app/src/androidTest/assets/composer-1205/comparison.png) places actual emulator pixels beside the Figma render; with the 372 × 52 field tops aligned, mean RGB channel difference is 1.69/255. The full-frame fixture omits the separately owned status and attachment bands, leaving its field 12dp higher than the Figma frame. Compact large-text, keyboard, and menu captures are in the same evidence directory.
+
 The existing `ThreadScreenLightPreview` / `ThreadScreenDarkPreview` in `ThreadScreen.kt` still pass `onSendMessage = {}` and render the composer in its empty/idle state via the stateful overload — no new screen-level preview variants from #643.
 
 ## Edge cases / limitations
@@ -463,7 +464,6 @@ The existing `ThreadScreenLightPreview` / `ThreadScreenDarkPreview` in `ThreadSc
 - **A consumed paste item that turns out non-image is dropped, not pasted as text.** [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934)'s `imageReceiver` decides per item from the clip's declared type before any provider call; an item it accepts is removed from what the field receives, so if the provider's own `getType` later disagrees the item is gone, not returned to the field. See [§ Image paste into the field](#image-paste-into-the-field-934). Noted in review as a known behaviour, not a defect.
 - **Keyboard `Send` action vs. multi-line entry.** Some keyboards render the IME `Send` action as a glyph; others fall through to `Done` or `Enter`. The `KeyboardActions(onSend = …)` callback fires only for `ImeAction.Send`. Multi-line entry via `Enter` is the OS's responsibility under `singleLine = false`; no manual `\n` handling needed.
 - **Stop is unreachable while the field holds a draft** — see [The message-input button](#the-message-input-button--one-control-two-actions) above; this is the live #643 consequence that superseded the old "mic is a stub" limitation.
-- **The disabled send button has no visual dimming** — see [The message-input button](#the-message-input-button--one-control-two-actions) above; a shipped, non-blocking gap, not a design limitation.
 - **No voice input, no interim stub.** Removed in #643; Phase 6 owns a fresh design for it whenever it lands.
 
 ## Related
