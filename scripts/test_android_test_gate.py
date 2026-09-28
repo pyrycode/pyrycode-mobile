@@ -116,6 +116,7 @@ class AndroidGateTest(unittest.TestCase):
         branch = live[: live.index("\nelse\n")]
         targets = [line for line in branch.split("\n") if line.lstrip().startswith('TEST_TARGET="')]
         self.assertTrue(any("#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage" in target for target in targets))
+        self.assertTrue(any("#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild" in target for target in targets))
         self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))

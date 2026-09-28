@@ -169,6 +169,7 @@ import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.GZIPInputStream
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
@@ -3155,11 +3156,11 @@ class InteractiveStreamE2ETest {
      * session from the bootstrap's template, so its child launches in bypass too.
      *  * **Bypass reads as bypass.** After a tool-free turn, a fresh reading reports `bypassPermissions`,
      *    and the reopened footer reads Bypass approvals, never Manual approval.
-     *  * **An acknowledgement is not a confirmation.** Manual approval sends a `default` write, which the
-     *    daemon acknowledges without touching a child whose stored mode is already `default`. The control
-     *    stays pending for the whole settle window and ends on Bypass approvals. A refusal would clear the
-     *    pending mark at once. Plan, Bypass approvals and Manual approval then each settle on their own
-     *    label once a fresh reading reports them, on the same session with no turn in between.
+     *  * **An acknowledgement is not a confirmation.** After Manual approval, a structured write outcome
+     *    distinguishes refusal from acknowledgement. Once the control settles, a fresh reply says whether
+     *    the child confirmed `default` early or remained in `bypassPermissions` after an acknowledged no-op.
+     *    The selected row must match that reply. Plan, Bypass approvals and Manual approval then each settle
+     *    on their own label once a fresh reading reports them, on the same session with no turn in between.
      *  * **Manual approval enforces.** A Read of a file outside the workspace raises a prompt on the phone
      *    that names the Read. The peer allows it, and the reply carries the file's token, which the prompt
      *    never contains.
@@ -3168,7 +3169,6 @@ class InteractiveStreamE2ETest {
      *
      * **Two real-claude turns**: the tool-free ping and the Read.
      */
-    @Ignore("blocked on #1246 — no-op permission write settles before the test's timing window")
     @Test
     fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -3208,18 +3208,47 @@ class InteractiveStreamE2ETest {
             val sessionId = awaitPermissionReading(serverId, chat.id, bypass.wire).sessionId
             awaitFooter(changePermissionLabel, bypass.label)
 
-            // 3. AC-2: the no-op `default` write. Pending proves the tap sent it; lasting the settle window
-            //    proves it was acknowledged, and no re-read in that window reported `default`.
-            pickFooterOption(changePermissionLabel, manual.label)
-            awaitFooter(changePermissionLabel, bypass.label) { it == footerPending }
-            val pendingSince = SystemClock.elapsedRealtime()
-            awaitFooter(changePermissionLabel, bypass.label)
-            val pendingFor = SystemClock.elapsedRealtime() - pendingSince
-            assertTrue(
-                "the Manual approval write settled after $pendingFor ms: refused, or confirmed by a reading",
-                pendingFor >= PERMISSION_SETTLE_WINDOW_MS - SETTLE_SLACK_MS,
-            )
-            assertEquals("a fresh reading after the acknowledged no-op", bypass.wire, freshSettings(chat.id, serverId).permissionMode)
+            // 3. AC-1: distinguish the write result from the child's confirmed mode. A fast settlement
+            //    is valid when the child already confirmed Manual approval; pending duration proves neither.
+            val priorSink = RelayLog.sink
+            val writeOutcome = AtomicReference<String?>(null)
+            RelayLog.sink = { priority, tag, message ->
+                priorSink(priority, tag, message)
+                if (message.startsWith("event=permission_write outcome=")) {
+                    writeOutcome.set(message.substringAfter("outcome="))
+                }
+            }
+            try {
+                pickFooterOption(changePermissionLabel, manual.label)
+                try {
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { writeOutcome.get() != null }
+                } catch (e: ComposeTimeoutException) {
+                    throw AssertionError("the Manual approval write had no classified outcome within $THREAD_TIMEOUT_MS ms", e)
+                }
+            } finally {
+                RelayLog.sink = priorSink
+            }
+            when (writeOutcome.get()) {
+                "acked" -> Unit
+                "refused" -> throw AssertionError("the Manual approval write was refused")
+                "failed" -> throw AssertionError("the Manual approval write failed before acknowledgement")
+                else -> throw AssertionError("the Manual approval write had no classified outcome")
+            }
+            openRunConfiguration()
+            try {
+                composeTestRule.waitUntil(PERMISSION_SETTLE_WINDOW_MS + THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodesWithText("Permission · applying…").fetchSemanticsNodes().isEmpty()
+                }
+            } finally {
+                composeTestRule.onNodeWithContentDescription("Close").performClick()
+            }
+            val afterManual = freshSettings(chat.id, serverId)
+            assertEquals("the Manual approval write moved to another session", sessionId, afterManual.sessionId)
+            when (afterManual.permissionMode) {
+                manual.wire -> awaitFooter(changePermissionLabel, manual.label)
+                bypass.wire -> awaitFooter(changePermissionLabel, bypass.label)
+                else -> throw AssertionError("the acknowledged Manual approval write reported an unexpected permission mode")
+            }
 
             // 4. AC-2: real changes on the same child, each confirmed by a fresh reading and then the footer.
             listOf(PermissionModeOption.Plan, bypass, manual).forEach { mode ->
@@ -6970,11 +6999,9 @@ class InteractiveStreamE2ETest {
         const val BLOCKED_REPLY = "blocked"
         const val PHONE_TRAIL_MS = 15_000L
 
-        // How long a fresh reading may take to report a mode, how often it is re-asked, and how early a
-        // settle may end and still count as having run its window.
+        // How long a fresh reading may take to report a mode, and how often it is re-asked.
         const val PERMISSION_READING_TIMEOUT_MS = 30_000L
         const val PERMISSION_POLL_MS = 500L
-        const val SETTLE_SLACK_MS = 5_000L
 
         // A model row whose `truncated_fields` names any of these cannot be used: its value would not be
         // accepted, its levels would be incomplete, or its label would be cut.

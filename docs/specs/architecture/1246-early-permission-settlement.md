@@ -46,3 +46,7 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md` under the o
 ## Open questions
 
 - Does the current daemon acknowledge and then confirm `default` early, or acknowledge a no-op that remains `bypassPermissions`? The focused live result determines which branch occurs; both are valid when the selected row matches the reply.
+
+## Revisions
+
+- 2026-09-28: The live branch is observational and does not change the test contract. Both acknowledged replies are classified by their fresh mode and selected row; the dispatcher-owned real-Claude gate will report which occurred.

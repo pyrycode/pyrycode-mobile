@@ -1130,15 +1130,16 @@ elif [ -n "${LIVE}" ]; then
   # list-archive-entry, two-host and the #545 model round trip spend none), passed as a comma-separated
   # class#method list. The class' #481 tool-use test stays excluded from LIVE for cost (it runs only in the
   # default whole-class rung-3 run).
-  # #977: the #687 operator-bypass method is out of the list below until #981 fixes the missing reply,
-  # so the list holds 20 methods and 15 turns for now. #981 puts it back and raises LIVE_MINIMUM to 21.
-  # Historical list-size counts in this block predate the temporary exclusions for #1245/#1246 and
-  # the two already ignored workspace-switching scenarios. The active list and gate floor contain 36 methods.
+  # #977 temporarily removed the #687 method; #981 restored it after the missing reply fix.
+  # #1193 excluded it again after the timing assertion failed; #1246 restores it with reply-based settlement.
+  # Historical list-size counts in this block predate the temporary exclusions for #1245 and
+  # the two already ignored workspace-switching scenarios. The active list and gate floor contain 38 methods.
   TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
   # #965: the stop method joins the list, so it holds 21 methods and 17 turns while #687 stays out.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain"
-  # #981: the thread now shows the allowed Read's reply, so the #687 operator-bypass method is back on top:
-  # 22 methods and 19 turns.
+  # #1246: the operator-bypass method is selected again; its write and fresh reply decide settlement.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild"
+  # #981 originally restored the #687 operator-bypass method when the allowed Read's reply appeared.
   # #966: the permission-answer method (three turns) and the question-answer method (two) join on the answer
   # daemon, so the list holds 24 methods and 24 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation"
