@@ -185,6 +185,7 @@ class MainActivityInsetsDeviceTest {
             assertEquals(theme, runBlocking { preferences.themeMode.first() })
             assertEquals(wallpaper, runBlocking { preferences.useWallpaperColors.first() })
             assertTrue(runBlocking { preferences.defaultYolo.first() })
+            // Sample the shared lower canvas, clear of Figma's decorative glow and fixture-specific rows.
             val pixel =
                 rule.runOnIdle {
                     Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).let { image ->
