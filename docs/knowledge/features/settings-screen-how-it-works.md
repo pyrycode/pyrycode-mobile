@@ -1,5 +1,8 @@
 # Settings screen — how it works
 
+Historical: this describes the seven-section page removed by #1239. The current
+[Settings modal](settings-screen.md) contains only Notifications.
+
 Split out of [Settings screen](settings-screen.md) on 2026-09-21 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Settings screen](settings-screen.md); see that document for what it does, its configuration/usage wiring, its edge cases, its previews and its links.
 
 ## How it works

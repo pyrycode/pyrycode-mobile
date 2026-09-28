@@ -1,5 +1,8 @@
 # Settings screen — edge cases and previews
 
+Historical: these page states and previews predate the notifications-only
+[Settings modal](settings-screen.md) in #1239.
+
 Split out of [Settings screen](settings-screen.md) on 2026-09-22 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Settings screen](settings-screen.md); see that document for the rest.
 
 ## Edge cases / limitations
