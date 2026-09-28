@@ -69,3 +69,7 @@ Pending documentation stage: update `CLAUDE.md` § Conversations model so the bo
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-28
+
+## Revisions
+
+- 2026-09-28, verifier MUST FIX on PR #1242: the Channel info Install callback was still an inert placeholder. Bind it through `LocalUriHandler` to the existing `MEMORY_PLUGIN_DOCS_URL`, as the other two surfaces already do, and assert the URL from a focused Channel info click test. The install gate and destination stay as planned.

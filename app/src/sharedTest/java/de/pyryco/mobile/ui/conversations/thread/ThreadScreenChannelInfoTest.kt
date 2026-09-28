@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
@@ -16,6 +19,7 @@ import de.pyryco.mobile.data.repository.MemorySearchAvailability
 import de.pyryco.mobile.data.repository.MemorySearchProvider
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -193,6 +197,39 @@ class ThreadScreenChannelInfoTest {
         }
         composeTestRule.onNodeWithText("None").assertIsDisplayed()
         composeTestRule.onNodeWithText("Install").assertIsDisplayed()
+    }
+
+    @Test
+    fun channel_info_install_opens_memory_plugin_docs_for_confirmed_absence() {
+        val opened = mutableListOf<String>()
+        val uriHandler =
+            object : UriHandler {
+                override fun openUri(uri: String) {
+                    opened += uri
+                }
+            }
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        state =
+                            channelInfoState().copy(
+                                runConfig =
+                                    ThreadRunConfig(
+                                        memorySearch = MemorySearchReport(MemorySearchAvailability.Absent, emptyList()),
+                                    ),
+                            ),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("Install").performClick()
+        assertEquals(listOf(MEMORY_PLUGIN_DOCS_URL), opened)
     }
 
     @Test
