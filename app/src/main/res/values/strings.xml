@@ -130,12 +130,12 @@
     <string name="background_tasks_elapsed_minutes">%1$dm %2$02ds</string>
     <string name="background_tasks_elapsed_hours">%1$dh %2$02dm</string>
     <string name="status_sheet_running_model">Running model</string>
-    <string name="status_sheet_running_model_unavailable">Not announced yet</string>
+    <string name="status_sheet_running_model_unavailable">Not reported yet</string>
     <string name="status_sheet_running_build">Claude Code %1$s</string>
     <string name="status_sheet_running_truncated">" (truncated)"</string>
     <!-- #946: Claude's reported context usage. Client-owned wording; the figure is Claude's percentage as sent. -->
     <string name="status_sheet_context_used">%1$d%% used</string>
-    <string name="status_sheet_context_unavailable">Context usage unavailable</string>
+    <string name="status_sheet_context_unavailable">Not reported yet</string>
     <string name="thread_footer_context">Cxt: %1$d%%</string>
     <string name="thread_footer_context_unavailable">Cxt: n/a</string>
     <string name="cd_context_usage">Context usage %1$d%%</string>

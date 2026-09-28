@@ -1,13 +1,15 @@
 # StatusSheet
 
-Stateless Material 3 `ModalBottomSheet` (shell + Model section [#254](../codebase/254.md); Effort + YOLO sections [#229](../codebase/229.md); Context window section [#230](../codebase/230.md), rendered as an honest "unavailable" state since [#601](../codebase/601.md), showing Claude's reported percentage since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946); re-sourced off the daemon's own published configuration by [#807](../codebase/807.md); YOLO section retired by [#650](https://github.com/pyrycode/pyrycode-mobile/issues/650)) that hosts the Status Sheet — the surface a user opens to inspect or change per-conversation run configuration. Through [#807](../codebase/807.md) the opener was a tap anywhere on the single-line `ThreadStatusRow`; [#808](../codebase/808.md) retired that row and moved the opener to the [composer footer](thread-composer-footer.md)'s trailing icon. **[#650](https://github.com/pyrycode/pyrycode-mobile/issues/650) replaced the sheet's YOLO toggle with a permission button in that same footer** (`FooterControl.Permission`, showing the daemon-confirmed `SessionSettings.permissionMode` — see [Thread composer footer § Sourcing — Permission mode](thread-composer-footer.md#permission-mode-650)), rather than relocating the toggle: the permission control later returned to Run configuration in #1196; the separate footer control is gone. Renders Figma node `20:100`: a `"Run configuration"` title row with a trailing close icon, over sections in order — **Model** (`selectableGroup`-wrapped radio rows for the daemon's own published models, each pairing its agent-specific inert label with an inert `resolvedModel` detail when it says something the label does not), **Running model** (since [#891](https://github.com/pyrycode/pyrycode-mobile/issues/891): what claude announced it is actually running for the latest turn, plus its build, kept apart from the Model section above — never derived from or falling back to the selection; see [§ `RunningModelSection`](status-sheet-readings.md#runningmodelsection)), **Effort** (a `Row` of `FilterChip`s for the *selected* model's own published `effortLevels`, empty when it publishes none), and **Context window** (a `bodyLarge` label + `bodySmall` caption, no progress bar — since [#601](../codebase/601.md) an honest `"Context usage unavailable"` label when there is no reading; since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946), `"N% used"` in its place — Claude's own reported percentage, verbatim — when there is one; see [§ `ContextWindowSection`](status-sheet-readings.md#contextwindowsection)). **Through [#807](../codebase/807.md) the Model and Effort sections iterated the three-entry `Model` and five-entry `Effort` device enums** (Opus 4.7 / Sonnet 4.6 / Haiku 4.5, and `low`/`medium`/`high`/`xhigh`/`max`) — this phone's guesses at a vocabulary the daemon actually publishes per conversation, and a value the server never published was refused server-side. #807 deleted that sourcing outright; see [§ Shape](#shape) and [thread-composer-footer.md § Sourcing](thread-composer-footer.md#sourcing) for the replacement.
-
-Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `StatusSheet.kt`. Third **sheet** in that package after [`WorkspacePickerSheet`](workspace-picker-sheet.md) ([#212](../codebase/212.md)) and [`ChannelInfoSheet`](channel-info-sheet.md) ([#217](../codebase/217.md)); follows their shell + `*Content` split verbatim.
+Run configuration is a stateless [shared mobile modal](mobile-modal.md) opened from the
+[composer footer](thread-composer-footer.md). Its body shows published Model and Effort radio
+choices, separate reported readings, then the retained Permission control. The earlier
+bottom-sheet implementation is historical.
 
 ## Shape
 
+Since #1195, `StatusSheet` uses `MobileDismissModal(title = "Run configuration", actionLabel = "Done")`. The shell supplies the header, separator, close control, scrolling body and pinned Done footer. `StatusSheetContent` renders the body only; the old `SheetState` parameter and bottom-sheet chrome are gone. Close, Done and Back call `onDismiss` without a settings write.
+
 ```kotlin
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatusSheet(
     choices: List<ThreadModelChoice>,
@@ -29,7 +31,6 @@ fun StatusSheet(
     permissionChoices: List<Pair<String, String>> = emptyList(),
     onPermissionSelected: (String) -> Unit = {},
     permissionPending: Boolean = false,
-    sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     modelSelectionNote: String? = null,
 )
 ```
@@ -45,7 +46,6 @@ fun StatusSheet(
 **Through [#807](../codebase/807.md)** this signature took `selectedModel: Model`, `onModelSelected: (Model) -> Unit`, `selectedEffort: Effort` and `onEffortSelected: (Effort) -> Unit` — the sheet iterated `Model.entries` / `Effort.entries` directly. **#807 deleted every reference to those enums from this file.** The sheet is now a dumb renderer of pre-sanitized choices the ViewModel assembles from the daemon's own readings ([`ThreadModelChoice`](thread-composer-footer.md#sourcing) / `ThreadEffortChoice`, both defined in `ThreadViewModel.kt`); `StatusSheet.kt` imports nothing from `data/` and never sees a raw `ModelMenuRow`.
 
 - **Public** (no `internal`) — same posture as the public shell in [`WorkspacePickerSheet`](workspace-picker-sheet.md) post-#220. The sheet has one production consumer ([`ThreadScreen`](thread-screen.md)) but the visibility decision tracks the sibling sheets, not consumer count.
-- **`sheetState` defaulted but exposed** — the host can drive an animated close before invoking `onDismiss` if needed; defaulting keeps the host wiring one-line. `skipPartiallyExpanded = true` because the body is a short list, not a half-sheet.
 - **No nullable callbacks** — every section in this sheet (four post-[#230](../codebase/230.md)) always renders, so all callbacks are always wired.
 - **`choices: List<ThreadModelChoice>` and `selectedModel: String?`** — ordinary published rows in conversation-agent order, with the `default` row omitted. `ThreadScreen` passes `runConfig.selectedChoice?.value`, so a missing settings reply, unmatched explicit identifier, or unresolved inherited choice marks no radio. A pending or confirmed explicit value selects only a row with exactly the same raw `value`; a pending `default` is not inherited. For confirmed Claude inheritance (`""` or `"default"`), `selectedChoice` resolves the hidden default row's nonempty, non-placeholder `resolvedModel` only when exactly one ordinary row in the *full* published menu has the same concrete identifier; checking only the 32 rendered rows could falsely select one when another match is hidden. Codex has no inherited resolution. The separate Running model reading never decides this selection. `effortChoices` follows the saved or pending row's own levels, or the hidden default metadata for inheritance, even if no visible row resolves.
 - **`modelSelectionNote: String?`** — when settings are confirmed but no visible row can represent the choice, the sheet shows the unmatched identifier as inert text or the client-owned "Model unavailable" for unresolved inheritance. Before settings arrive it shows no selection note or marked radio. The published `default` row remains available internally for inherited effort and permission support, not as a radio or write option.
@@ -68,7 +68,6 @@ internal fun StatusSheetContent(
     onEffortSelected: (String) -> Unit,
     pending: Boolean,
     enabled: Boolean,
-    onDismiss: () -> Unit,
     effortNote: String? = null,
     running: ThreadRunningModel = ThreadRunningModel(),
     contextPercent: Int? = null,
@@ -80,26 +79,13 @@ internal fun StatusSheetContent(
 )
 ```
 
-`StatusSheet` is the `ModalBottomSheet` shell that delegates into it. The split exists so previews and Compose UI tests can render the content directly — the modal scrim + animation machinery don't render in the IDE preview pane and aren't wired into `createComposeRule()`-style tests. Same architectural shape M3 samples use for sheet previews, and the same shape `WorkspacePickerSheet` and `ChannelInfoSheet` follow.
+The shell and body remain separate so previews and Compose tests can render the body directly.
 
 ## What it does
 
-Single `Column(fillMaxWidth)` inside the `ModalBottomSheet`, scrolling since [#807](../codebase/807.md) (`Modifier.verticalScroll(rememberScrollState())` — the daemon's own render cap is not a wire constant, so a long menu must not clip the sections below it):
+The current group order is Model, Effort, Running model, Context window, then the retained Permission section. Model rows and two-column Effort rows use `selectableGroup` and row-level radio semantics around a 20 dp tertiary circle; the circle adds no visible control padding. Only published choices appear, in supplied order, with the confirmed or pending visible choice marked. There is no Default row. The shared scroll area accommodates compact widths, enlarged text and long lists while Done stays pinned. Each selection invokes its existing callback once, then the host dismisses the modal.
 
-1. **`TitleRow(title = "Run configuration", onClose = onDismiss)`** — `titleLarge` in `onSurface` filling the row, trailing `IconButton(Icons.Filled.Close)` with `contentDescription = "Close"` and `tint = onSurfaceVariant`. Padding `start = 16, end = 4, top = 4, bottom = 12` per Figma `20:104`.
-2. **`SectionHeader(text = sectionTitle("Model", pending))`** — `labelLarge` in `onSurfaceVariant`, padding `start = 24, end = 16, top = 12, bottom = 4` per Figma `20:113`. Same shape as [`WorkspacePickerSheet`](workspace-picker-sheet.md)'s `"Recent"` / `"Other"` headers. `sectionTitle` (#807) appends `" · applying…"` while `pending` is true — see [§ `pending` and `enabled`](#pending-and-enabled-807) below.
-3. **`ModelSection(choices, menuAvailable, notListedModels, selectedModel, modelSelectionNote, onModelSelected, enabled = enabled && !pending)`** — a `Column(Modifier.selectableGroup())` of ordinary published `ModelRow`s in conversation-agent order, with no `default` radio; an inert note explains an unrepresented choice. See [§ `ModelSection`](#modelsection).
-4. **`SectionHeader(text = stringResource(R.string.status_sheet_running_model))`** then **`RunningModelSection(running)`** ([#891](https://github.com/pyrycode/pyrycode-mobile/issues/891)) — what claude announced, labelled apart from the selection above and never derived from it; see [§ `RunningModelSection`](status-sheet-readings.md#runningmodelsection) below. This is the one header in the sheet sourced from `stringResource` rather than an inline literal — see [§ Configuration](#configuration).
-5. **`SectionHeader(text = sectionTitle("Effort", pending))`** ([#229](../codebase/229.md)) — same padding + style as the Model header per Figma `20:130`.
-6. **`EffortChipRow(effortChoices, selectedEffort, onEffortSelected, enabled = enabled && !pending)`** ([#229](../codebase/229.md); re-sourced by [#807](../codebase/807.md)) — a `Row` of `FilterChip`s over the *selected model's own* published effort levels; see [§ `EffortChipRow`](#effortchiprow) below. Immediately after it, `effortNote?.let { Caption(text = it) }` ([#889](https://github.com/pyrycode/pyrycode-mobile/issues/889)) — one line explaining why the selected chip is not Claude's applied value, omitted entirely when there is nothing to explain.
-7. **`SectionHeader(text = "Context window")`** ([#230](../codebase/230.md)) — same padding + style as above per Figma `20:151`.
-8. **`ContextWindowSection(contextPercent)`** ([#230](../codebase/230.md); parameterless from [#601](../codebase/601.md) until [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946) re-added the one parameter) — read-only label + caption, no progress bar; "unavailable" with no reading, `"N% used"` with one; see [§ `ContextWindowSection`](status-sheet-readings.md#contextwindowsection) below.
-9. **`SectionHeader(text = sectionTitle("Permission", permissionPending))`** and **`PermissionSection`** — the confirmed mode and allowed choices, gated by the session and its own pending write (#1196).
-10. **`Spacer(height = 24.dp)`** — bottom inset, matching the trailing spacer on the sibling sheets.
-
-**[#650](https://github.com/pyrycode/pyrycode-mobile/issues/650) deleted the `"YOLO mode"` header and `YoloRow`** that sat between Effort and Context window ([#229](../codebase/229.md)), along with the `Switch` it rendered and the `androidx.compose.foundation.selection.toggleable` import it alone used. The permission control returned as a separate Run configuration section in #1196.
-
-`ModalBottomSheet`'s default `BottomSheetDefaults.DragHandle` paints the M3 drag pill at the top; the composable doesn't override it.
+The [current dark Figma frame](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=600-1694) shows the designed sections at 412 × 892. It has no Permission, pending, rejection, long-list or unavailable-reading state; production preserves those behaviours in the modal. The 2026-09-28 emulator and Figma captures and [labelled overlay](../../../../app/src/androidTest/assets/status-1195/figma-emulator-overlay.png) compare the same logical viewport. Aligning below Android's status bar exposed the accumulated section-spacing difference; 34 dp Compose group spacing aligned the rendered section positions. Android system bars and Permission remain visible differences.
 
 ### `pending` and `enabled` (#807)
 
@@ -173,29 +159,11 @@ Through [#807](../codebase/807.md) `ModelRow` rendered a second line from a priv
 Split into [StatusSheet — running model and context window readings](status-sheet-readings.md) on
 2026-09-24 to keep this document under the 50000-byte cap the docs guard enforces. Moved there verbatim.
 
-### `EffortChipRow`
+### `EffortRadioRows`
 
-```kotlin
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun EffortChipRow(
-    effortChoices: List<ThreadEffortChoice>,
-    selectedEffort: String,
-    onEffortSelected: (String) -> Unit,
-    enabled: Boolean,
-)
-```
-
-**Through [#807](../codebase/807.md)** this iterated `Effort.entries` (`LOW, MEDIUM, HIGH, XHIGH, MAX`) — a fixed five-entry device vocabulary — regardless of which model was selected. **#807 replaced that with the *selected model's own* published levels**: `effortChoices` is `ThreadRunConfig.effortChoices` at the call site, i.e. the selected `ThreadModelChoice.effortChoices` — empty when that model publishes none. Empty renders an [`UnavailableNote`](status-sheet-readings.md#contextwindowsection) — `"No effort levels published for this model."` — rather than five now-meaningless chips.
-
-**`selectedEffort` (since [#889](https://github.com/pyrycode/pyrycode-mobile/issues/889)) is `ThreadRunConfig.selectedEffort`, not a bare saved reading** — the same pending-then-applied-then-saved value the [composer footer's effort button](thread-composer-footer.md#applied-effort-889) shows, so the chip row and the button agree by construction. The caller passes the matching `effortNote` alongside it (§ Shape above); this composable itself takes no part in resolving either — it renders whatever `String` / `String?` it is given.
-
-`Row(Modifier.fillMaxWidth().selectableGroup().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp))` iterating `effortChoices` — `FilterChip(selected = effort.value == selectedEffort, enabled = enabled, onClick = { onEffortSelected(effort.value) }, label = { Text(effort.label, maxLines = 1, overflow = Ellipsis) })`. No leading icon, no trailing icon.
-
-- **`FilterChip` defaults match Figma `20:131–140` exactly — no `FilterChipDefaults.filterChipColors(...)` override.** Selected: `secondaryContainer` background + `onSecondaryContainer` label, no border. Unselected: 1dp `outline` border + transparent background + `onSurfaceVariant` label. The default `FilterChipDefaults.filterChipBorder(...)` paints the unselected outline; the selected state replaces border with background fill automatically.
-- **`effortChoices.forEach`, not `Effort.entries.forEach`.** The wire order the selected row published, not a fixed enum's source order — a model reordering or narrowing its own levels propagates without a UI edit, same principle the pre-#807 `Effort.entries.forEach` claimed for the device enum.
-- **Labels are `effort.label` — the level itself, made inert by the ViewModel** (see [thread-composer-footer.md § Sourcing](thread-composer-footer.md#sourcing)), not a resolved `Effort.label()` extension call. `Effort.entries` / `Effort.label()` still exist for Settings' own device-default picker (see [app-preferences.md](app-preferences.md)) but have no consumer in this file any more.
-- **A11y.** `FilterChip` owns `Role.Button` with selection state; `selectableGroup()` lets TalkBack announce the group size.
+The selected model's published effort levels appear in supplied order, two radio rows per
+line. An empty list states that no levels were published. Row-level selection semantics
+surround the 20 dp visual mark; the existing effort note appears beneath the rows.
 
 ### `YoloRow` — retired by #650
 
