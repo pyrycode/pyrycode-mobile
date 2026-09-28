@@ -72,13 +72,13 @@ Column(
 
 Each row is `Modifier.selectable(selected, role = RadioButton, onClick = { onSelect(option.value) })` inside a `Modifier.selectableGroup()` — TalkBack announces the set as a mutually-exclusive group and each row as "Radio button, selected/not selected", matching the [Status sheet](status-sheet.md)'s own radio-group rows. The selected-row fill depends on the theme path below; every row's text is `colorScheme.primary`.
 
-### Colour deviation from the design
+### Colour and surface
 
-In static dark mode, Figma `533:1958`'s `Schemes/On Primary` (`#003355`) fills the outer surface and shows through the selected row, while `Schemes/On Primary Fixed` (`#001D34`) fills unselected rows. This relies on the static-dark `ColorScheme.onPrimaryFixed` mapping in `Theme.kt`. Light and wallpaper-colour paths keep the former `surfaceContainerLowest` outer surface, transparent unselected rows and `primaryContainer` selected row. The surrounding `Surface` keeps its 3dp shadow in every mode. Scope the role choice to static dark: applying the fixed navy to light or dynamic menus would override those established palettes.
+In the app's fixed dark theme, Figma `533:1958`'s `Schemes/On Primary` (`#003355`) fills the outer surface and shows through the selected row, while `Schemes/On Primary Fixed` (`#001D34`) fills unselected rows. Text uses `primary` (`#9DCBFC`). This relies on the static-dark color mappings in `Theme.kt`. The `Surface` has no shadow. Other theme paths retain `surfaceContainerLowest`, transparent idle rows and `primaryContainer` selection; those paths are outside the app's current dark-only product scope. Applying the fixed navy to light rows produced poor label and detail contrast during review, so the Figma roles are conditional on `LocalStaticDarkPalette`.
 
-### Row height deviation
+### Row geometry
 
-Rows use `OptionVerticalPadding = 10.dp` rather than the design's 6dp, making each row 36dp tall instead of 28dp — the same thumb-target reasoning as the [footer buttons'](thread-composer-footer.md) `heightIn(min = 32.dp)`.
+Rows use the design's 12dp horizontal and 6dp vertical insets, with a 28dp minimum height. The minimum matters because the test device measures the `bodySmall` text line at 14dp; enlarged text can grow the row rather than clip it. The outer column has a 2dp vertical inset and 6dp radius; the anchor gap remains 4dp. Width and available-height limits keep the scrollable options reachable above the composer on compact screens.
 
 ### Row modes: radio vs. button (#884)
 
@@ -108,9 +108,11 @@ No internal state beyond the `rememberScrollState()` the column's own scroll pos
 
 `OptionsOverlayColoursTest` draws the static-dark menu and samples selected and unselected row pixels, catching a role mapping that can look approximately right in a preview. `ThreadComposerFooterTest` (`app/src/sharedTest/.../thread/ThreadComposerFooterTest.kt`) hosts the overlay on `ThreadScreen`, where its anchor comes from a real footer button's live bounds. See [Thread composer footer — testing](thread-composer-footer-testing.md#testing) for the covered cases (row visibility and width, selection, outside-tap dismissal, the not-listed caption, the overlay's position relative to its anchor, and, since [#884](https://github.com/pyrycode/pyrycode-mobile/issues/884), the Actions menu's button-mode rows and its disabled/greyed row). The `detail` line (#885) is covered by `SlashCommandTypeAheadScreenTest.kt`, also hosted on `ThreadScreen` — see [Slash-command type-ahead § Testing](slash-command-type-ahead.md#testing), including the bounded-height case for a 1,500-character description.
 
+`OptionsOverlayCaptureTest` provides managed-device captures of Actions and slash menus at 412 × 892, plus slash suggestions at 280 × 400 with 1.6× text. [Visual evidence](../../../app/src/androidTest/assets/options-1257/comparison-412x892.png) pairs the 412 × 892 emulator views with the available Figma viewport and idle/selected option renders; [capture context](../../../app/src/androidTest/assets/options-1257/capture-context.txt) records the limits. The direct open-overlay render for `533:1958` returned 1 × 1 and the thread viewport has the menu closed, so a full open-menu pixel match remains unverified. The inspected nodes also have no disabled-option or slash-detail state; their existing semantic appearance and bounded detail are not claimed as exact Figma matches. On this managed device, `uiAutomation.takeScreenshot()` returned black frames; drawing the root view produced usable app captures.
+
 ## Previews
 
-Two `@Preview`s, `OptionsOverlayDarkPreview` / `OptionsOverlayLightPreview`, both `widthDp = 200, heightDp = 260`, showing five effort-style rows (`low`/`medium`/`high`/`xhigh`/`max`) with `high` selected, against a fixed `anchor = Rect(left = 40f, top = 600f, right = 80f, bottom = 640f)`.
+Two `@Preview`s, `OptionsOverlayDarkPreview` / `OptionsOverlayLightPreview`, both `widthDp = 200, heightDp = 260`, show five effort-style rows (`low`/`medium`/`high`/`xhigh`/`max`) with `high` selected, against a fixed `anchor = Rect(left = 40f, top = 600f, right = 80f, bottom = 640f)`. The dark preview uses the supported palette; neither preview replaces the managed-device captures for placement or visual comparison.
 
 ## Related
 
