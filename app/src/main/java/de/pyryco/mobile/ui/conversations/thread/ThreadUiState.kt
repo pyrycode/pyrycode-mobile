@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.SessionCapabilities
@@ -194,6 +195,7 @@ data class ThreadEffortChoice(
  *   the Status sheet both read it, and it is never derived from token totals or the settings' figures.
  * @param capabilities What the session accepts (#1111), or `null` when the reading carried no list. A list
  *   narrows [effortChoices], the permission menu and the Actions commands; `null` narrows nothing.
+ * @param memorySearch Search access for this thread's current session; unknown while its reading is pending.
  */
 data class ThreadRunConfig(
     val choices: List<ThreadModelChoice> = emptyList(),
@@ -212,6 +214,7 @@ data class ThreadRunConfig(
     val running: ThreadRunningModel = ThreadRunningModel(),
     val contextPercent: Int? = null,
     val capabilities: SessionCapabilities? = null,
+    val memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel

@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -2231,6 +2232,7 @@ private fun runConfig(
         pendingPermission = pendingPermission,
         appliedEffort = settings?.effectiveEffort ?: EffectiveEffort.Unavailable,
         capabilities = settings?.capabilities,
+        memorySearch = settings?.memorySearch ?: MemorySearchReport.Unknown,
     )
 }
 
@@ -2247,7 +2249,7 @@ private fun ModelMenu.forAgent(agent: ConversationAgent): ModelMenu =
     )
 
 /**
- * Hides a permission mode (#650) and an applied effort (#889) left over from a replaced session. A
+ * Hides a permission mode (#650), applied effort (#889), and memory search report left over from a replaced session. A
  * `session_transition` updates the conversation's current session before the settings re-read lands, so
  * until a reading for [liveSessionId] arrives, the reading on hand describes a session that is gone. An
  * empty [liveSessionId] is the v2 summary's placeholder and proves nothing. The saved model and effort are
@@ -2255,7 +2257,7 @@ private fun ModelMenu.forAgent(agent: ConversationAgent): ModelMenu =
  */
 private fun ThreadRunConfig.forLiveSession(liveSessionId: String): ThreadRunConfig =
     if (liveSessionId.isNotEmpty() && liveSessionId != sessionId) {
-        copy(permissionMode = "", appliedEffort = EffectiveEffort.Unavailable)
+        copy(permissionMode = "", appliedEffort = EffectiveEffort.Unavailable, memorySearch = MemorySearchReport.Unknown)
     } else {
         this
     }
