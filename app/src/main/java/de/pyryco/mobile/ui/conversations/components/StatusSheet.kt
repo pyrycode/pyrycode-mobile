@@ -1,31 +1,22 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.SheetState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +32,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.ui.components.MobileDismissModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadEffortChoice
 import de.pyryco.mobile.ui.conversations.thread.ThreadModelChoice
 import de.pyryco.mobile.ui.conversations.thread.ThreadReportedText
@@ -56,10 +48,8 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
  * boundary — every label arriving here has already been made inert — so this file imports nothing from
  * `data/` and never sees a raw `ModelMenuRow`. [ThreadModelChoice.value] is the write argument and is
  * never rendered; the labels reach `Text` and nothing else.
- * The radio selection follows Figma's Run configuration node; #1195 owns replacing this sheet shell
- * with that node's shared modal layout.
+ * The radio selection and shared modal presentation follow Figma's current Run configuration frame.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatusSheet(
     choices: List<ThreadModelChoice>,
@@ -81,13 +71,13 @@ fun StatusSheet(
     permissionChoices: List<Pair<String, String>> = emptyList(),
     onPermissionSelected: (String) -> Unit = {},
     permissionPending: Boolean = false,
-    sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     modelSelectionNote: String? = null,
 ) {
-    ModalBottomSheet(
+    MobileDismissModal(
+        title = "Run configuration",
+        actionLabel = "Done",
         onDismissRequest = onDismiss,
         modifier = modifier,
-        sheetState = sheetState,
     ) {
         StatusSheetContent(
             choices = choices,
@@ -101,7 +91,6 @@ fun StatusSheet(
             onEffortSelected = onEffortSelected,
             pending = pending,
             enabled = enabled,
-            onDismiss = onDismiss,
             effortNote = effortNote,
             running = running,
             contextPercent = contextPercent,
@@ -125,7 +114,6 @@ internal fun StatusSheetContent(
     onEffortSelected: (String) -> Unit,
     pending: Boolean,
     enabled: Boolean,
-    onDismiss: () -> Unit,
     effortNote: String? = null,
     running: ThreadRunningModel = ThreadRunningModel(),
     contextPercent: Int? = null,
@@ -135,47 +123,32 @@ internal fun StatusSheetContent(
     permissionPending: Boolean = false,
     modelSelectionNote: String? = null,
 ) {
-    // The menu length is the daemon's, and its producer cap is not a wire constant — so the body scrolls
-    // rather than clipping later sections. The SettingsScreen / MobileModal idiom handles nested scroll.
     Column(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(34.dp),
     ) {
-        TitleRow(title = "Run configuration", onClose = onDismiss)
-        SectionHeader(text = sectionTitle("Model", pending))
-        ModelSection(
-            choices = choices,
-            menuAvailable = menuAvailable,
-            notListedModels = notListedModels,
-            selectedModel = selectedModel,
-            selectionNote = modelSelectionNote,
-            onModelSelected = onModelSelected,
-            enabled = enabled && !pending,
-        )
-        // #891: what claude says it runs, labelled apart from the selection above and never filled from it.
-        SectionHeader(text = stringResource(R.string.status_sheet_running_model))
-        RunningModelSection(running = running)
-        SectionHeader(text = sectionTitle("Effort", pending))
-        EffortChipRow(
-            effortChoices = effortChoices,
-            selectedEffort = selectedEffort,
-            onEffortSelected = onEffortSelected,
-            enabled = enabled && !pending,
-        )
-        // #889: why the selection is not Claude's applied effort — client-owned text, never daemon text.
-        effortNote?.let { Caption(text = it) }
-        SectionHeader(text = "Context window")
-        ContextWindowSection(contextPercent = contextPercent)
-        SectionHeader(text = sectionTitle("Permission", permissionPending))
-        PermissionSection(
-            selectedMode = permissionMode,
-            choices = permissionChoices,
-            enabled = enabled && !permissionPending,
-            onSelected = onPermissionSelected,
-        )
-        Spacer(modifier = Modifier.height(24.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader(text = sectionTitle("Model", pending))
+            ModelSection(choices, menuAvailable, notListedModels, selectedModel, modelSelectionNote, onModelSelected, enabled && !pending)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader(text = sectionTitle("Effort", pending))
+            EffortRadioRows(effortChoices, selectedEffort, onEffortSelected, enabled && !pending)
+            effortNote?.let { Caption(text = it) }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SectionHeader(text = stringResource(R.string.status_sheet_running_model))
+            RunningModelSection(running = running)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SectionHeader(text = "Context window")
+            ContextWindowSection(contextPercent = contextPercent)
+        }
+        // The current Figma frame omits Permission; keep the production control after its designed sections.
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader(text = sectionTitle("Permission", permissionPending))
+            PermissionSection(permissionMode, permissionChoices, enabled && !permissionPending, onPermissionSelected)
+        }
     }
 }
 
@@ -208,7 +181,7 @@ private fun ModelSection(
         )
         return
     }
-    Column(modifier = Modifier.selectableGroup()) {
+    Column(modifier = Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         choices.forEach { choice ->
             ModelRow(
                 choice = choice,
@@ -226,43 +199,12 @@ private fun ModelSection(
 }
 
 @Composable
-private fun TitleRow(
-    title: String,
-    onClose: () -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = title,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        IconButton(onClick = onClose) {
-            Icon(
-                imageVector = Icons.Filled.Close,
-                contentDescription = "Close",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
 private fun SectionHeader(text: String) {
     Text(
         text = text,
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 24.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+        modifier = Modifier.fillMaxWidth(),
         style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.onPrimaryContainer,
     )
 }
 
@@ -282,18 +224,18 @@ private fun ModelRow(
                     enabled = enabled,
                     onClick = onClick,
                     role = Role.RadioButton,
-                ).padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.Top,
+                ).heightIn(min = 22.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected = selected, enabled = enabled, onClick = null)
+        RadioMark(selected = selected, enabled = enabled)
         Spacer(modifier = Modifier.width(12.dp))
         Column {
             // #807: claude's own label, already made inert by the ViewModel. maxLines guards the layout
             // against a label the daemon bounded but did not shape.
             Text(
                 text = choice.label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -304,7 +246,7 @@ private fun ModelRow(
                 Text(
                     text = choice.detail,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -318,9 +260,8 @@ private fun ModelRow(
  * exposes no effort control — never a cue to substitute the five `Effort` entries, which is exactly the
  * substitution #807 removes.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EffortChipRow(
+private fun EffortRadioRows(
     effortChoices: List<ThreadEffortChoice>,
     selectedEffort: String,
     onEffortSelected: (String) -> Unit,
@@ -330,24 +271,52 @@ private fun EffortChipRow(
         UnavailableNote(text = "No effort levels published for this model.")
         return
     }
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .selectableGroup()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    Column(
+        modifier = Modifier.fillMaxWidth().selectableGroup(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        effortChoices.forEach { effort ->
-            FilterChip(
-                selected = effort.value == selectedEffort,
-                enabled = enabled,
-                onClick = { onEffortSelected(effort.value) },
-                label = {
-                    Text(text = effort.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                },
-            )
+        effortChoices.chunked(2).forEach { pair ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                pair.forEach { effort ->
+                    Row(
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .selectable(
+                                    selected = effort.value == selectedEffort,
+                                    enabled = enabled,
+                                    role = Role.RadioButton,
+                                    onClick = { onEffortSelected(effort.value) },
+                                ).heightIn(min = 22.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioMark(selected = effort.value == selectedEffort, enabled = enabled)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = effort.label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                    }
+                }
+                if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+            }
         }
+    }
+}
+
+/** Draw only the 20 dp visible circle; the selectable parent supplies the touch and radio semantics. */
+@Composable
+private fun RadioMark(
+    selected: Boolean,
+    enabled: Boolean,
+) {
+    val color = MaterialTheme.colorScheme.tertiary.copy(alpha = if (enabled) 1f else 0.38f)
+    Box(
+        modifier = Modifier.size(20.dp).border(BorderStroke(2.dp, color), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) Box(Modifier.size(10.dp).background(color, CircleShape))
     }
 }
 
@@ -362,7 +331,7 @@ private fun PermissionSection(
         UnavailableNote(text = "Permission mode unavailable")
         return
     }
-    Column(modifier = Modifier.selectableGroup()) {
+    Column(modifier = Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         choices.forEach { (value, label) ->
             val selected = value == selectedMode
             Row(
@@ -371,12 +340,12 @@ private fun PermissionSection(
                         .fillMaxWidth()
                         .selectable(selected = selected, enabled = enabled, role = Role.RadioButton) {
                             onSelected(value)
-                        }.padding(horizontal = 16.dp, vertical = 4.dp),
+                        }.heightIn(min = 22.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                RadioButton(selected = selected, enabled = enabled, onClick = null)
+                RadioMark(selected = selected, enabled = enabled)
                 Spacer(modifier = Modifier.width(12.dp))
-                Text(text = label, style = MaterialTheme.typography.bodyLarge)
+                Text(text = label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground)
             }
         }
     }
@@ -395,13 +364,9 @@ private fun RunningModelSection(running: ThreadRunningModel) {
     } else {
         Text(
             text = withTruncationMark(model.text, model.truncated, truncatedMark),
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .testTag(RUNNING_MODEL_TEST_TAG),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.fillMaxWidth().testTag(RUNNING_MODEL_TEST_TAG),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
     }
     running.build?.let { build ->
@@ -436,9 +401,9 @@ const val RUNNING_MODEL_TEST_TAG = "status_sheet_running_model"
 private fun UnavailableNote(text: String) {
     Text(
         text = text,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        style = MaterialTheme.typography.bodyLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onPrimaryContainer,
     )
 }
 
@@ -451,23 +416,18 @@ private fun Caption(text: String) {
 private fun Caption(text: AnnotatedString) {
     Text(
         text = text,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth(),
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.onPrimaryContainer,
     )
 }
 
-// Figma node 20:151 reads "73% used (146K of 200K tokens)" over a severity-coloured bar. #946 shows only
-// Claude's reported percentage, verbatim, and no bar: the token figures and severity colours are a
-// deliberate divergence. With no reading the section says so, in desktop's wording, and never shows 0%.
+// The current modal design shows one reported reading and no helper copy. Never infer 0% from absence.
 @Composable
 private fun ContextWindowSection(contextPercent: Int?) {
     Column(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(
             text =
@@ -476,15 +436,8 @@ private fun ContextWindowSection(contextPercent: Int?) {
                 } else {
                     stringResource(R.string.status_sheet_context_unavailable)
                 },
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            text =
-                "When full, oldest messages get dropped from claude's view " +
-                    "(delimiter still shows; old messages stay in your scroll).",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
     }
 }
@@ -533,28 +486,21 @@ private fun PreviewSheet(
 ) {
     val selected = choices.firstOrNull { it.value == selectedModel }
     PyrycodeMobileTheme(darkTheme = darkTheme) {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-        ) {
-            Column(modifier = Modifier.padding(PaddingValues(top = 12.dp))) {
-                StatusSheetContent(
-                    choices = choices,
-                    menuAvailable = menuAvailable,
-                    notListedModels = notListedModels,
-                    selectedModel = selectedModel,
-                    onModelSelected = {},
-                    effortChoices = selected?.effortChoices.orEmpty(),
-                    selectedEffort = selectedEffort,
-                    onEffortSelected = {},
-                    pending = pending,
-                    enabled = enabled,
-                    onDismiss = {},
-                    running = running,
-                    contextPercent = contextPercent,
-                )
-            }
-        }
+        StatusSheet(
+            choices = choices,
+            menuAvailable = menuAvailable,
+            notListedModels = notListedModels,
+            selectedModel = selectedModel,
+            onModelSelected = {},
+            effortChoices = selected?.effortChoices.orEmpty(),
+            selectedEffort = selectedEffort,
+            onEffortSelected = {},
+            pending = pending,
+            enabled = enabled,
+            onDismiss = {},
+            running = running,
+            contextPercent = contextPercent,
+        )
     }
 }
 

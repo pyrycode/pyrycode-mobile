@@ -4,6 +4,8 @@ Split out of [StatusSheet](status-sheet.md) on 2026-09-22 to keep that document 
 
 ## Hosting in `ThreadScreen`
 
+The footer opener sets `sheetVisible`; `ThreadScreen` mounts the shared modal and forwards one existing settings action per Model, Effort or Permission selection before dismissing. Done, Close and Back only clear visibility. Agent-switch confirmation and the ViewModel's pending and rejection paths stay with the host. The modal's body scrolls while Done remains pinned.
+
 The sheet is mounted inside [`ThreadScreen`](thread-screen.md) at the screen-root level, as a `Scaffold` sibling (not inside the `Scaffold` content slot — `ModalBottomSheet` lives in its own window, so source-order placement doesn't affect Z-order). The screen owns a `rememberSaveable`-hoisted visibility flag and forwards the model selection to the VM. **[#807](../codebase/807.md) re-sourced every argument below off the daemon's own readings** — the shape shown is the current one:
 
 ```kotlin
@@ -109,6 +111,10 @@ The seven `@Preview`s, each a one-line `PreviewSheet(...)` call overriding only 
 **[#891](https://github.com/pyrycode/pyrycode-mobile/issues/891) defaulted `running` to a file-private `PreviewRunning` fixture** (an announced model + build, both `truncated = false`) and added two more previews, taking the count to nine: `StatusSheetRunningUnavailablePreview` (`running = ThreadRunningModel()` — the "Not announced yet" state) and `StatusSheetRunningTruncatedDarkPreview` (a truncated model and build, `darkTheme = true` — proves the italic truncation mark is visible in both themes).
 
 ## Tests
+
+\#1195 adds shared-modal dismissal and radio semantics checks to `StatusSheetTest`, including the final published choice at compact width with 1.6× text and pinned Done. `ThreadComposerFooterTest` scrolls to the retained Permission unavailable state and checks that it has no selectable choices; its context assertion expects `Not reported yet` in the modal while the footer still says `Context usage unavailable`. The device capture test compares 412 × 892 emulator pixels with Figma node `600:1694`; see the [labelled overlay](../../../../app/src/androidTest/assets/status-1195/figma-emulator-overlay.png).
+
+The inspected design nodes on 2026-09-28 were `598:1565`, current dark `600:1694`, shared modal `533:2369` and component `489:1942`. Figma omits Permission, pending, rejection, long-list and unavailable-reading states. The overlay accounts for Android's status bar; the system bars and retained Permission section explain the remaining visible differences. The surface has no keyboard field or popup menu; compact published lists were checked for clipping.
 
 **[#807](../codebase/807.md) rewrote `androidTest/.../StatusSheetTest.kt` from twelve tests over the `Model` / `Effort` device enums to nineteen over the daemon-published `choices` / `effortChoices` shape** (`createComposeRule()` + `AndroidJUnit4` + `PyrycodeMobileTheme` wrapper — matches [`WorkspacePickerSheetTest`](workspace-picker-sheet.md#tests) shape). All target `StatusSheetContent` (not the `ModalBottomSheet`) because the modal machinery requires an attached `Activity` host. The twelve pre-#807 `StatusSheetContent(...)` call sites — one per test, each restating every unvaried parameter — are replaced by one `ComposeContentTestRule.setSheet(...)` extension carrying three file-private `ThreadModelChoice` fixtures (`opus` / `sonnet` / `haiku`, mirroring the production previews' fixtures) plus every parameter defaulted, so each test names only what it varies; `effortChoices` defaults to the selected row's own levels when left `null`, mirroring what the ViewModel derives. **[#650](https://github.com/pyrycode/pyrycode-mobile/issues/650) dropped `setSheet`'s `yoloEnabled` / `onYoloToggled` parameters** along with the three YOLO tests below, replacing them with one negative assertion — seventeen tests total.
 
