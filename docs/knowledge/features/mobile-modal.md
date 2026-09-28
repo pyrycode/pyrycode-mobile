@@ -216,7 +216,12 @@ native disabled content colour and press feedback remain.
 Light and dark previews remain at 412 × 892 dp.
 
 The shared [type ramp](shared-typography.md) supplies the modal text metrics;
-Edit host's enlarged identity label still clips at 320 dp and 1.5× text (#1229).
+Edit host keeps each identity label within one weighted share of its row and
+reserves two shares for the value, with a 10 dp gap. At 320 dp and 1.5× Android
+text, both labels wrap within their bounds without overlapping the values.
+Long identity and relay display text remains clamped before layout and
+ellipsized to one line in the value slot. The shell's scrolling keeps the name
+field and Unpair, Cancel and OK actions reachable.
 
 ## Focus and verification
 
