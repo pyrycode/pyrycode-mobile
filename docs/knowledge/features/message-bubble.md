@@ -239,11 +239,9 @@ Each role container's `Row` carries `Modifier.padding(bottom = MessageAreaRowSpa
   `ColorScheme.userBubbleContainer` / `assistantBubbleContainer` extensions in
   `ui/theme/BubbleColors.kt`. The locals require this provider. The theme resolves
   the exception from its effective `darkTheme` and `dynamicColor` arguments;
-  bubble consumers do not read system dark mode. With wallpaper colours off,
-  app-selected dark mode uses the reference fills even on a light system, while
-  app-selected light mode retains its containers on a dark system. Runtime theme changes update already
-  composed bubbles. With wallpaper colours enabled, both modes use the selected
-  scheme's containers — see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes).
+  bubble consumers do not read system dark mode. The app root supplies the static
+  dark fills even on a light system. Explicit light and wallpaper themes in
+  isolated tests and previews still use their selected scheme's containers — see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes).
 - **Content styling:** `onPrimaryContainer` (user), `onSecondaryContainer`
   (assistant), and `typography.bodyMedium` / `bodySmall` remain unchanged. The
   shared `Surface(contentColor = …)` supplies the assistant markdown ambient and

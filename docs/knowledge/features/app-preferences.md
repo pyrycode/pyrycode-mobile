@@ -9,16 +9,16 @@ Exposes preferences as typed `Flow<T>` reads + `suspend fun` writes, covering ap
 - `themeMode: Flow<ThemeMode>` — `ThemeMode.DARK` by default
   ([#1147](../../specs/architecture/1147-default-dark-mode.md)); both a missing
   `theme_mode` key and an unknown stored name read as Dark. Saved `SYSTEM`, `LIGHT`
-  and `DARK` names retain their meaning across restart and upgrade; the key,
-  enum names and setter are unchanged, so no migration is needed. System follows
-  the phone, Light stays light, and Dark stays dark even on a light-mode phone.
-  The root theme and [Settings ViewModel](settings-viewmodel.md) both start at
-  Dark before the saved value loads. Settings uses the collected value for its
-  Theme subtitle and picker selection, keeping all three choices. The matching
+  and `DARK` names remain stored across restart and upgrade; the key, enum names
+  and setter are unchanged, so no migration is needed. The app root always uses
+  the static dark palette, regardless of the saved choice or Android night mode.
+  [Settings ViewModel](settings-viewmodel.md) starts at Dark before the saved
+  value loads, then uses that value for the Theme subtitle and picker selection,
+  keeping all three choices. The matching
   `suspend fun setThemeMode(mode: ThemeMode)` is called through
   `SettingsViewModel.onSelectTheme(...)` when the picker is confirmed; one write
-  updates both collectors.
-- `useWallpaperColors: Flow<Boolean>` — `false` by default (#88); `booleanPreferencesKey("use_wallpaper_colors")`. Read at two surfaces: at `MainActivity.setContent`'s root as a sibling to the `themeMode` collector, then forwarded into `PyrycodeMobileTheme(darkTheme = …, dynamicColor = useWallpaperColors)`; and since #89 inside `composable(Routes.SETTINGS)` via `koinViewModel<SettingsViewModel>().useWallpaperColors.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The theme's pre-existing SDK gate (`dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S` at `Theme.kt:275`) handles the "Android < 12 OR preference false → brand palette" branch internally, so no composition-root version check is needed. Matching `suspend fun setUseWallpaperColors(enabled: Boolean)` is wired in #89 by `SettingsViewModel.onToggleUseWallpaperColors(...)`, called from the Settings → Appearance "Use Material You dynamic color" switch row's `onCheckedChange` (headline updated from the prior "Use wallpaper colors" in #163 to match Figma `17:2`); one write fans out to both collectors above.
+  updates the Settings projection and stored value without changing the palette.
+- `useWallpaperColors: Flow<Boolean>` — `false` by default (#88); `booleanPreferencesKey("use_wallpaper_colors")`. [Settings ViewModel](settings-viewmodel.md) collects the saved value for the Appearance switch. `MainActivity` no longer collects it: the root passes `dynamicColor = false` to `PyrycodeMobileTheme`, so a saved `true` remains stored and visible in Settings but cannot enable wallpaper colours at runtime. Matching `suspend fun setUseWallpaperColors(enabled: Boolean)` is wired through `SettingsViewModel.onToggleUseWallpaperColors(...)` from the Settings → Appearance "Use Material You dynamic color" switch row's `onCheckedChange`.
 
 "Defaults for new conversations" preferences:
 
@@ -104,13 +104,13 @@ Two Koin singletons:
 1. A `DataStore<Preferences>` bound to the on-disk file `<filesDir>/datastore/app_prefs.preferences_pb` (filename `app_prefs`; DataStore appends `.preferences_pb`).
 2. `AppPreferences`, which takes the `DataStore<Preferences>` in its constructor and exposes typed accessors.
 
-`MainActivity` collects `themeMode` with
-`collectAsStateWithLifecycle(initialValue = ThemeMode.DARK)`;
-`SettingsViewModel.themeMode` uses `stateIn` with the same initial value, and the
-Settings route collects that `StateFlow`. Keep both initial values aligned with
-the reader's missing/unknown fallback so an unsaved preference starts consistently
-at Dark. A saved choice takes over when DataStore emits; reading it does not
-rewrite the stored name.
+`MainActivity` passes `darkTheme = true` and `dynamicColor = false` to
+`PyrycodeMobileTheme` for every destination. It still injects `AppPreferences`
+for workspace migration, but does not collect either appearance preference.
+`SettingsViewModel.themeMode` uses `stateIn` with `ThemeMode.DARK` as its initial
+value, matching the reader's missing/unknown fallback. A saved choice appears
+in Settings when DataStore emits; reading it does not rewrite the stored name
+or change the runtime palette.
 
 ```kotlin
 // de/pyryco/mobile/data/preferences/AppPreferences.kt (app-wide accessor excerpt)
@@ -228,7 +228,7 @@ fun Effort.label(): String =
     }
 ```
 
-`ThemeMode`'s label mapping ("System" / "Light" / "Dark", per the `internal ThemeMode.label()` extension at the bottom of `SettingsScreen.kt`; was `"System default"` between #86 and #163) lives at the Settings call site, and dark/light resolution lives at the composition root (`when (themeMode) { SYSTEM -> isSystemInDarkTheme(); LIGHT -> false; DARK -> true }`). `PyrycodeMobileTheme`'s signature stays `darkTheme: Boolean`; the caller computes the boolean. <a id="design-decision-defer-label-extensions-on-data-layer-enums"></a>**Original [#231](../codebase/231.md) convention:** `Model` and `Effort` followed the same convention by design — the first UI consumer (Settings model/effort pickers) owns label strings; baking them in here would either be unused dead code or pin `String` literals into the data layer that may want to be Android string resources later. `CLAUDE.md` lists Compose Multiplatform as a walk-back trigger and asks for `data/` to stay portable; display strings are not data-layer concerns.
+`ThemeMode`'s label mapping ("System" / "Light" / "Dark", per the `internal ThemeMode.label()` extension at the bottom of `SettingsScreen.kt`; was `"System default"` between #86 and #163) lives at the Settings call site, while the app root always selects the static dark palette. `PyrycodeMobileTheme` still accepts explicit arguments for previews and isolated components. <a id="design-decision-defer-label-extensions-on-data-layer-enums"></a>**Original [#231](../codebase/231.md) convention:** `Model` and `Effort` followed the same convention by design — the first UI consumer (Settings model/effort pickers) owns label strings; baking them in here would either be unused dead code or pin `String` literals into the data layer that may want to be Android string resources later. `CLAUDE.md` lists Compose Multiplatform as a walk-back trigger and asks for `data/` to stay portable; display strings are not data-layer concerns.
 
 **[#253](../codebase/253.md) partial walk-back, scoped to `Model`:** when the second UI consumer materialised (sibling slice [#254](../codebase/254.md)'s Status Sheet radio group alongside #253's status-row label derivation), the deferral cost flipped — two private helpers across two slices, plus an inevitable third extract-on-third-use later, are more expensive than co-locating `Model.label()` once at 7 LOC. The labels (`"Opus 4.7"`, `"Sonnet 4.6"`, `"Haiku 4.5"`) are product-vendor names that don't localise — they ship in the same form across locales the same way "Anthropic" or "Claude" would, so the portability concern is mooted for `Model` specifically.
 
@@ -292,9 +292,9 @@ Collecting reactively is the right shape when a screen genuinely needs live re-c
 val themeMode by appPrefs.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.DARK)
 ```
 
-Pass the fresh-store default as `initialValue` so the unsaved theme and subtitle
-are Dark from the first frame. A saved System or Light choice takes effect after
-the first DataStore emission.
+Pass the fresh-store default as `initialValue` so the Settings subtitle starts
+at Dark. A saved System or Light choice updates the subtitle and picker after
+the first DataStore emission; the app stays on the static dark palette.
 
 ## State + concurrency
 
@@ -313,6 +313,14 @@ preserve the serialized value. Literal seeds exercise the existing storage
 contract independently of the current setter. The Settings initial-value check
 runs both before collection and after loading; see
 [SettingsViewModel testing](settings-viewmodel-testing.md).
+
+`MainActivityInsetsDeviceTest.savedAppearanceAndAndroidModeCannotChangeStaticDarkPalette`
+launches the real activity at 412 × 892 with saved Light, System and Dark values,
+wallpaper colours on and off, and both Android night modes. It checks the static
+dark canvas pixel, retained appearance values and an unrelated preference.
+The [emulator/Figma comparison](../../../app/src/androidTest/assets/palette-1238/palette-comparison.png)
+uses node `15:8` (inspected 2026-09-28); its lower canvas matches, while glow,
+system bars and fixture content are outside the root palette contract.
 
 The remembered-model tests cover absence after changing the Settings default,
 an out-of-enum value that leaves that default intact, and verbatim persistence

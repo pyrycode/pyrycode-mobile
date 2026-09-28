@@ -137,8 +137,8 @@ visual follows the app's existing message-row idiom until the frame gains one â€
 it does, only a re-tune here.
 
 The fill follows [MessageBubble's theme mapping](message-bubble.md#token-mapping-figma-roles-against-this-apps-two-schemes):
-`#003355` in app-selected dark mode with wallpaper colours off, otherwise the
-selected scheme's `primaryContainer`. The 0.6 opacity applies to the whole row,
+`#003355` under the app root's static dark palette; isolated light and
+wallpaper-themed previews use the selected scheme's `primaryContainer`. The 0.6 opacity applies to the whole row,
 including its fill, explicit `onPrimaryContainer` text and interactive drop control.
 
 ### Constants
