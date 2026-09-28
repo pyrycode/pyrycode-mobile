@@ -493,12 +493,31 @@ class ChannelListViewModel(
             menu.rows.any { row ->
                 row.agent == conversation.agent && row.value == remembered && "value" !in row.truncatedFields.orEmpty()
             }
-        if (!offered || conversation.currentSessionId.isEmpty()) {
+        if (!offered) {
             RelayLog.d { "event=new_chat_model outcome=not_applicable" }
             return
         }
+        // A relay create reply contains no session id. Read the new conversation's
+        // authoritative settings before the thread opens so the first send uses this model.
+        val sessionId =
+            try {
+                withTimeoutOrNull(5_000) {
+                    repository
+                        .observeSessionSettings(conversation.id)
+                        .filterNotNull()
+                        .first()
+                        .sessionId
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                null
+            }
+        if (sessionId.isNullOrEmpty()) {
+            RelayLog.d { "event=new_chat_model outcome=settings_unavailable" }
+            return
+        }
         try {
-            repository.setSessionSettings(conversation.currentSessionId, model = remembered)
+            repository.setSessionSettings(sessionId, model = remembered)
             RelayLog.d { "event=new_chat_model outcome=applied" }
         } catch (error: Exception) {
             if (error is CancellationException) throw error

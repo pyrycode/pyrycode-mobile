@@ -28,10 +28,12 @@ import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionPromptStatus
+import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.SystemPromptReading
@@ -445,6 +447,27 @@ class HostChannelListViewModelTest {
                 f.b.repo.modelWrites
                     .isEmpty(),
             )
+
+            f.a.repo.settingsGate
+                ?.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+        }
+
+    @Test
+    fun relayCreateReplyWithoutSessionIdStillAppliesModelBeforeNavigation() =
+        runTest(dispatcher) {
+            val f = fixture(flowOf(preferencesOf(stringPreferencesKey("remembered_model") to "opus")))
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.createdSessionId = ""
+            f.a.repo.modelMenu.value = ModelMenu(listOf(modelRow("opus", ConversationAgent.Claude)), 0)
+            f.a.repo.settingsGate = CompletableDeferred()
+
+            f.vm.createChat("Host")
+            runCurrent()
+            assertEquals(listOf("returned-id"), f.a.repo.settingsReads)
+            assertEquals(listOf("session" to "opus"), f.a.repo.modelWrites)
+            assertTrue("navigation must wait for the settings acknowledgement", f.nav.isEmpty())
 
             f.a.repo.settingsGate
                 ?.complete(Unit)
@@ -3098,6 +3121,8 @@ class HostChannelListViewModelTest {
         val modelMenu = MutableStateFlow<ModelMenu?>(null)
         val menuReads = mutableListOf<String>()
         val modelWrites = mutableListOf<Pair<String, String>>()
+        val settingsReads = mutableListOf<String>()
+        var createdSessionId = "session"
         var settingsGate: CompletableDeferred<Unit>? = null
         var settingsFailure = false
         var publishOnCreate = false
@@ -3105,6 +3130,22 @@ class HostChannelListViewModelTest {
         override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> {
             menuReads += conversationId
             return modelMenu
+        }
+
+        override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> {
+            settingsReads += conversationId
+            return flowOf(
+                SessionSettings(
+                    sessionId = "session",
+                    model = "",
+                    effort = "",
+                    effectiveEffort = EffectiveEffort.Unavailable,
+                    permissionMode = "",
+                    yolo = false,
+                    usedTokens = 0,
+                    windowTokens = 0,
+                ),
+            )
         }
 
         override suspend fun setSessionSettings(
@@ -3147,7 +3188,9 @@ class HostChannelListViewModelTest {
             workspaces += workspace
             failure?.let { throw it }
             createGate?.await()
-            return row("returned-id").also { if (publishOnCreate) rows.value = listOf(it) }
+            return row("returned-id").copy(currentSessionId = createdSessionId).also {
+                if (publishOnCreate) rows.value = listOf(it)
+            }
         }
 
         // Records every rename and applies it to this repo's own rows, as the daemon's re-emitted list would.
