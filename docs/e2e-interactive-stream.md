@@ -39,7 +39,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    daemon; no claude turn — delete is a daemon round-trip); and an **archive/restore** scenario (#551):
    rename a discussion to a runtime-unique name, confirm it is present on the channel list, archive it from
    the thread (overflow → "Archive", immediate — no confirm) and assert it is gone from the list, then
-   restore it (Settings → "Archived discussions" → the Archived screen's restore affordance) and assert it
+   restore it (list toolbar → "Open archive" → the Archived screen's restore affordance) and assert it
    is back in the list (exercises the #549 archive/unarchive wire, the #556 archive-from-thread and #557
    restore surfacings against a real daemon; no claude turn — archive and restore are daemon round-trips);
    and a **change-workspace** scenario (#562): via the real thread overflow "Change workspace…" → Workspace
@@ -68,8 +68,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    the handler the verb had been answering `unsupported` without; and a **list-archive-entry** scenario
    (#740): arrive on the channel list, assert the Archived screen's title is absent, tap the list's own
    archive entry (`CD_OPEN_ARCHIVE`, the sibling of the settings entry #737 put on the bar) and assert the
-   title appears — proving the entry #737 shipped reaches Archived on its own, independently of the
-   Settings route `interactiveTurn_archiveRestore_roundTripsListMembership` already covers; no claude turn,
+   title appears — proving the entry #737 shipped reaches Archived on its own. The full round trip
+   `interactiveTurn_archiveRestore_roundTripsListMembership` now uses that entry too; no claude turn,
    no seeded conversation — the bar is drawn on every state of the list; and a
    **two-hosts-colliding-conversation-id** scenario (#847): seed one conversation under a shared id but a
    different name on two isolated test daemons, pair the second host through the app's own scanner →
@@ -174,6 +174,11 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    `interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`) chooses a published model in
    one chat, creates another chat, verifies its model before the first send, receives a real Claude
    reply, and checks the original chat's saved choice stayed put. It runs in `InteractiveStreamE2ETest`.
+   **Archive round trip and host isolation** are again live in `InteractiveStreamE2ETest` (#1249):
+   `interactiveTurn_archiveRestore_roundTripsListMembership` restores a discussion through the selected
+   host's list toolbar after proving its active and archived membership changes;
+   `interactiveTurn_twoHostsArchive_staysPerHost` archives and restores A's chat through A's toolbar
+   while B's active and archived sets remain unchanged. Both wait for restore completion before Back.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -290,8 +295,8 @@ durable post-conditions: the unique name is gone from the list and the thread ha
 round-trips); and an **archive/restore** scenario (#551 —
 `interactiveTurn_archiveRestore_roundTripsListMembership`: rename a scratch discussion to a runtime-unique
 name, confirm it is present on the channel list, archive it from the thread (overflow → "Archive",
-**immediate — no confirm**) and assert it is **gone** from the list, then restore it (settings → "Archived
-discussions" → the Archived screen's restore affordance) and assert it is **back** in the list — the round
+**immediate — no confirm**) and assert it is **gone** from the list, then restore it (list toolbar → "Open
+archive" → the Archived screen's restore affordance) and assert it is **back** in the list — the round
 trip closes; proving the #549 archive/unarchive wire, the #556 archive-from-thread and #557 restore
 surfacings against a real daemon; **zero** claude turns — create/rename/archive/restore are daemon
 round-trips); and a **change-workspace** scenario (#562 —
@@ -418,7 +423,7 @@ inversion — then its **re-appearance** after restore is a second, opposite inv
 attributable to the restore. Two structural differences from the delete twin: **archive is immediate** —
 the "Archive" item sits directly in the thread overflow (no confirm dialog, no Channel-Info sheet, so
 **none** of #554's "Delete"-collision disambiguation), and **restore navigates to a second screen** (channel
-list → Settings → "Archived discussions" → the Archived screen, which opens on the **Discussions** tab by
+list → "Open archive" → the Archived screen, which opens on the **Discussions** tab by
 default → the renamed discussion is on it, no tab tap). The one gotcha is the **restore-coroutine
 cancellation race**: `RestoreRequested` runs `viewModelScope.launch { repository.unarchive(id); … }` scoped
 to the **Archived screen's** ViewModel, so the test waits for the **"Restored" success snackbar** before
@@ -508,8 +513,8 @@ claude turn — unlike every sibling above, it spends nothing even in daemon rou
 list's **own** archive entry (`CD_OPEN_ARCHIVE = "Open archive"`, the sibling of `CD_OPEN_SETTINGS`, kept
 in sync with `cd_open_archive` in `strings.xml` by a comment on the constant) reaches the Archived screen,
 which until #740 was proven only at the event boundary
-(`ChannelListScreenTest.archiveEntry_emitsArchiveTapped`) and, on a device, only via the Settings route
-`interactiveTurn_archiveRestore_roundTripsListMembership` already covers. `awaitChannelList()` is followed
+(`ChannelListScreenTest.archiveEntry_emitsArchiveTapped`). The full round trip now uses the same
+toolbar entry. `awaitChannelList()` is followed
 by an absence check (`ARCHIVED_TITLE` has zero nodes — the list draws no "Archived" text) before the tap, so
 the arrival after it is a genuine inversion, not a match-everything.
 
@@ -733,8 +738,10 @@ all 37 selected methods with no failures or skips.
 \#1239 ([#1245](https://github.com/pyrycode/pyrycode-mobile/issues/1245)), and the operator-bypass
 permission case had a settle-window assertion failure now diagnosed by
 [#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246). Two older workspace-switching methods
-remain ignored and excluded. With the bypass method restored, `scripts/e2e-emulator.sh` lists 38 runnable
-methods and `android-test-gate.py` requires 38 executed tests. Script tests check both the floor and the
+remain ignored and excluded. #1249 restored two of the five Settings-dependent methods through the
+list toolbar; three still await #1245. With the bypass method and two Archive methods restored,
+`scripts/e2e-emulator.sh` lists 40 runnable
+methods and `android-test-gate.py` requires 40 executed tests. Script tests check both the floor and the
 bypass method's explicit presence, as well as excluding ignored methods.
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
@@ -1347,7 +1354,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 38 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 40 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1456,8 +1463,8 @@ re-adding the background-task-progress method once pyrycode/pyrycode#2661 closed
 then from 45 to 44 when #1190 retired the host-row-only #1087 method, and from 44 to 36 when
 \#1193 removed eight ignored methods from the curated selector pending #1245/#1246 and the older
 workspace-switching follow-ups, then from 36 to 37 when #1223 added the remembered-model first-turn
-scenario, and from 37 to 38 when #1246 restored the operator-bypass permission method.
-`LIVE_MINIMUM` is
+scenario, and from 37 to 38 when #1246 restored the operator-bypass permission method, then from 38 to 40
+when #1249 restored the two Archive methods. `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -1512,7 +1519,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 38 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 40 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1536,56 +1543,31 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** The current curated selector passes 38 runnable methods as a comma-separated
-`class#method` list. The historical inventory below also names seven now ignored methods; the
-exact current list is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`:
-`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
-`InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
-`InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
-`InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread` (#554),
-`InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551),
-`InteractiveStreamE2ETest#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace` (#562),
-`InteractiveStreamE2ETest#interactiveTurn_renameConversation_relabelsTopBarAndListRow` (#537),
-`InteractiveStreamE2ETest#interactiveTurn_saveAsChannel_promotesToChannelTier` (#581),
-`InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740),
-`InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847),
-`InteractiveStreamE2ETest#interactiveTurn_peerStartedTurn_continuesOnPhone` (#848),
-`InteractiveStreamE2ETest#interactiveTurn_peerQueue_staysConsistentAcrossClients` (#849),
-`InteractiveStreamE2ETest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` (#850),
-`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_statusSheetShowsRunningModel` (#891),
-`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_footerShowsContextUsage` (#946),
-`InteractiveStreamE2ETest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation`,
-`InteractiveStreamE2ETest#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage` (#1223),
-`InteractiveStreamE2ETest#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`,
-`InteractiveStreamE2ETest#interactiveTurn_chosenEffort_appliesFromTheFirstTurn`,
-`InteractiveStreamE2ETest#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` (#545),
-`InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` (#950), and
-`InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` (#965), and
-`InteractiveStreamE2ETest#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild` (#981),
-`InteractiveStreamE2ETest#interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` (#966), and
-`InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation` (#966),
-`InteractiveStreamE2ETest#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` (#967),
-`InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork` (#967), and
-`InteractiveStreamE2ETest#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` (#967),
-`InteractiveStreamE2ETest#interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` (#955), and
-`InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` (#955),
-`InteractiveStreamE2ETest#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` (#1016), and
-`InteractiveStreamE2ETest#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` (#1016),
-`InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` (#1020), and
-`InteractiveStreamE2ETest#interactiveTurn_markdownLink_opensLiveNoteInReader` (#1050), and
-`InteractiveStreamE2ETest#interactiveTurn_muteChannel_roundTripsThroughTheHost` (#1021),
-`InteractiveStreamE2ETest#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes` (#1017), and
-`InteractiveStreamE2ETest#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile` (#1017),
-`InteractiveStreamE2ETest#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost` (#1017), and
-`InteractiveStreamE2ETest#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched` (#1085), and
-`InteractiveStreamE2ETest#interactiveTurn_logData_savesTheOwningHostsArchive` (#684), and
-`InteractiveStreamE2ETest#interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost` (#1086), and
-`InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` (#1088), and
-`InteractiveStreamE2ETest#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost` (#1089), and
-`InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` (#1090), and
-`InteractiveStreamE2ETest#interactiveTurn_backgroundAgentProgress_showsOnRunningCard` (#1076/#1107).
-\#1223 added the remembered-model method to this selector, raising `LIVE_MINIMUM` to 37; #1246 restored
-the operator-bypass permission method and raised it to 38.
+**What it runs.** The current curated selector passes 40 runnable methods as a comma-separated
+`class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
+against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The restored
+`InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551/#1249)
+uses the selected host's list toolbar Archive entry and proves the uniquely named discussion is on the
+active list, leaves it after archive, appears in Archive, then returns to the active list after restore.
+`InteractiveStreamE2ETest#interactiveTurn_twoHostsArchive_staysPerHost` (#1086/#1249) archives and
+restores host A's chat through A's Archive while host B's active and archived ID sets stay unchanged.
+Both wait for the restore success snackbar before leaving Archive. Their cleanup can recover newly
+created chats even when setup fails before their IDs are captured. The two-host scenario also removes
+the second pairing.
+These are daemon round trips and spend no real Claude turns. The independent
+`InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740) still proves the toolbar
+entry reaches Archive without creating a conversation. Three Settings-dependent methods and two older
+workspace-switching methods remain ignored and outside the curated selector.
+
+A focused selection of the restored methods is:
+
+```bash
+python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership,de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_twoHostsArchive_staysPerHost
+```
+
+The [#1249 full live gate](#verification-status) executed both selected methods; no separate focused
+run is claimed.
+
 #1189 revised three existing methods: Create channel opens from an initially empty host Channels
 section and uses the daemon default; the peer workspace-label method checks the thread, Settings and
 cross-host state without a deleted tree-row assertion; the folder-settings method keeps the repository
@@ -1593,8 +1575,9 @@ rename/archive and Archive restore round trip without a tree-row pencil. The cre
 the harness's seeded promoted channel for the empty-section check and restores it in `finally`.
 #1190 moves `createChat()` and the save-as-channel setup through the host's Chats plus and confirmation;
 the folder-use method now creates a chat before using the thread's picker, and the peer-label method moves
-A's new chat into the chosen folder before relabeling it. The two-host defaults method now checks that
-Chats creation uses the daemon default independently of saved app defaults. The host-row-only #1087 method
+A's new chat into the chosen folder before relabeling it. At #1190, the two-host defaults method also checked that
+Chats creation used the daemon default independently of saved app defaults; #1249 later removed that
+obsolete Settings proof and retained the host-isolated Archive round trip. The host-row-only #1087 method
 is retired; its selector and the executed-test floor were lowered together.
 The pre-#1193 forty-four-method suite spent **forty-four real claude turns** per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
@@ -1986,7 +1969,17 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-09-28 (#1246).** The dispatcher ran
+**Current live verification — 2026-09-28 (#1249).** The dispatcher ran the full
+`python3 scripts/android-test-gate.py live` gate against `feature/1249` at `35f0140c5d`, merged with
+`origin/main` at `4eb735654c`: **40 executed, 40 passed, 0 failed, 0 skipped**, exit 0, against
+`LIVE_MINIMUM = 40`. The fresh XML has passing testcases for both
+`interactiveTurn_archiveRestore_roundTripsListMembership` and
+`interactiveTurn_twoHostsArchive_staysPerHost`. This is full-suite evidence, including those two methods,
+not a separate focused run. See the [dispatcher evidence comment](https://github.com/pyrycode/pyrycode-mobile/issues/1249#issuecomment-5872787531)
+and its `build/dispatcher-tests/live-*/dispatcher.xml` report; the comment records the tested revisions
+and the dispatcher's retained report path.
+
+**Previous live verification — 2026-09-28 (#1246).** The dispatcher ran
 `python3 scripts/android-test-gate.py live` against `feature/1246` at `b0e0176649`, merged with
 `origin/main` at `a596935bf5`: 38 executed, 38 passed, zero failures or skips, exit 0. The XML
 includes `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild` as a passing
@@ -2592,6 +2585,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **Coverage — shipped:** [#1249](https://github.com/pyrycode/pyrycode-mobile/issues/1249)
+  restores `InteractiveStreamE2ETest.interactiveTurn_archiveRestore_roundTripsListMembership` and
+  `InteractiveStreamE2ETest.interactiveTurn_twoHostsArchive_staysPerHost` through the list toolbar.
+  The first proves the discussion's active → archived → active membership; the second proves host B's
+  active and archived sets do not change during host A's archive and restore. Both wait for restore
+  success before Back and recover fixtures created before an ID could be captured. The curated live
+  selector and `LIVE_MINIMUM` are 40; the 2026-09-28 full gate executed 40, failed 0, skipped 0.
+
 - **Coverage — shipped:** [#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246)
   restored `InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
   to the curated rung-3 selector after replacing its pending-duration check with an acknowledged-write
@@ -2981,8 +2982,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
   are conversation-scoped daemon round-trips, promote being a pure registry op), taking the gate from a septet
   to an octet at three ping turns plus an optional reset wrap-up; Layer-3 (real claude) list-archive-entry —
   **shipped (#740)**, proving the list's own archive entry #737 put on the channel list's bar reaches the
-  Archived screen on its own, independently of the Settings route `interactiveTurn_archiveRestore_roundTripsListMembership`
-  already covers (previously proven only at the event boundary,
+  Archived screen on its own (at #740 the full round trip still used Settings; #1249 moved it to the
+  same toolbar entry; previously proven only at the event boundary,
   `ChannelListScreenTest.archiveEntry_emitsArchiveTapped`), always-on (the bar is a durable fact of every
   draw of the list, so the scenario needs no host wait, no seeded conversation and no claude turn — the
   only curated method that spends nothing at all, not even a daemon round-trip) and folded into the

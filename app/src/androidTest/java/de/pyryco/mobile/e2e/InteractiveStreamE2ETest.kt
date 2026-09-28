@@ -926,7 +926,7 @@ class InteractiveStreamE2ETest {
      * wire, the #556 archive-from-thread surfacing, and the #557 restore-from-Archive-screen surfacing. Give
      * a scratch discussion a runtime-unique, list-visible identity via **Rename**, confirm it is **present**
      * on the channel list, archive it from the thread (overflow → "Archive", **immediate — no confirm**) and
-     * assert it is **gone** from the list, then restore it (settings → "Archived discussions" → the Archived
+     * assert it is **gone** from the list, then restore it (list toolbar → Archived
      * screen's restore affordance) and assert it is **back** in the list. The same unique token flips **out
      * of** and then **back into** the same surface, so each list assertion is a genuine inversion of the other.
      *
@@ -952,8 +952,8 @@ class InteractiveStreamE2ETest {
      * thread overflow and fires `ThreadEvent.Archive → sendArchive → repository.archive → success-only
      * PopBack`; there is **none** of #554's "Delete"-collision / sheet-behind-dialog disambiguation — the
      * archive tap is a single [onNodeWithText] in the open overflow. (2) **Restore needs a second screen:**
-     * channel list → Settings → "Archived discussions" → the Archived screen (default **Discussions** tab, so
-     * the renamed discussion is on it with no tab tap), restore, then two Back hops to confirm re-appearance.
+     * channel list → Archived screen (default **Discussions** tab, so the renamed discussion is on it with no
+     * tab tap), restore, then Back to confirm re-appearance.
      *
      * **The one gotcha — the restore-coroutine cancellation race.** `RestoreRequested` handling is
      * `viewModelScope.launch { repository.unarchive(id); … }` scoped to the **Archived screen's**
@@ -966,17 +966,13 @@ class InteractiveStreamE2ETest {
      * subtitle is "Archived <time>"; the restore button's content-description is "Restore …", not "Restored"),
      * so a non-empty text match can only be the success snackbar.
      *
-     * Both post-conditions are durable structural facts, so this scenario belongs in the live gate once its
-     * removed Settings navigation is replaced (#1245).
+     * Both post-conditions are durable structural facts, so this scenario belongs in the live gate.
      *
      * **Zero real-claude turns (same as #554).** Create-discussion, rename, archive, and restore are daemon
      * round-trips, not claude turns, and the durable identity is the typed name, so this scenario sends **no**
      * ping and spends **no** claude turn. It still rides the real rung-3 stack (real relay + daemon) and
-     * catches a broken `archive` / `unarchive` / `rename` wire against the production relay. The LIVE gate goes
-     * from a quartet (4 methods) to a **quintet** (5 methods) at **still 3 turns** — archive/restore adds a
-     * method, not a turn.
+     * catches a broken `archive` / `unarchive` / `rename` wire against the production relay.
      */
-    @Ignore("blocked on #1245 — archived discussions moved out of Settings")
     @Test
     fun interactiveTurn_archiveRestore_roundTripsListMembership() {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
@@ -985,117 +981,109 @@ class InteractiveStreamE2ETest {
         // 2. Wait for the relay connection to open before creating — rename/archive/restore round-trip to the daemon.
         awaitConnected()
 
-        // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
-        //    plain discussion suffices — "Rename" and "Archive" are both gated on mutationsSupported, reachable on it.
-        createChat()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
-        }
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val before = hostConversationIds(serverId)
 
-        // 4. Rename the discussion to a runtime-unique, list-visible name (identical to #554 step 4). The
-        //    RenameDialog opens OVER the thread, whose composer is also an editable field, so hasSetTextAction()
-        //    alone is ambiguous — target the dialog's field by its focus (RenameDialog auto-focuses on open),
-        //    REPLACE the pre-filled+selected auto-name (performTextReplacement, not performTextInput), then Save.
-        val uniqueName = ARCHIVE_NAME_PREFIX + System.currentTimeMillis()
-        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onAllNodesWithText(RENAME_ITEM).onFirst().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
-        composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
+        var createdId: String? = null
+        try {
+            // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
+            //    plain discussion suffices — "Rename" and "Archive" are both gated on mutationsSupported, reachable on it.
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            createdId = newHostConversationId(serverId, before)
 
-        // 5. Presence check #1 (AC-1): back to the list, wait for it, then confirm the unique name is displayed on
-        //    a recents row — the genuine presence observation on the surface where absence is later asserted (step 8).
-        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        awaitChannelList()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+            // 4. Rename the discussion to a runtime-unique, list-visible name (identical to #554 step 4). The
+            //    RenameDialog opens OVER the thread, whose composer is also an editable field, so hasSetTextAction()
+            //    alone is ambiguous — target the dialog's field by its focus (RenameDialog auto-focuses on open),
+            //    REPLACE the pre-filled+selected auto-name (performTextReplacement, not performTextInput), then Save.
+            val uniqueName = ARCHIVE_NAME_PREFIX + System.currentTimeMillis()
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(RENAME_ITEM).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
+            composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
 
-        // 6. Re-enter the thread by tapping the recents row (a 2nd presence observation — it can only succeed if
-        //    the name is on the list). Archive is driven "from the thread".
-        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
-        }
+            // 5. Presence check #1 (AC-1): back to the list, wait for it, then confirm the unique name is displayed on
+            //    its chat row — the genuine presence observation on the surface where absence is later asserted (step 8).
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
 
-        // 7. Archive (immediate — no confirm dialog). Open the overflow, wait for the "Archive" item, tap it:
-        //    sendArchive → repository.archive → success-only PopBack. "Archive" is unique in the open overflow.
-        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(ARCHIVE_ITEM).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNodeWithText(ARCHIVE_ITEM).performClick()
+            // 6. Re-enter the thread by tapping the chat row (a 2nd presence observation — it can only succeed if
+            //    the name is on the list). Archive is driven "from the thread".
+            composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
 
-        // 8. Absence check (AC-1). After PopBack: wait for the list marker (the thread has popped back), then
-        //    assert the unique name is gone from the active list — a genuine inversion of step 5. archive folds
-        //    the conversation out of the active projection on the repo's demux loop before PopBack renders the
-        //    list, so a direct assertCountEquals(0). Tolerant: presence/absence, generous timeout — never a delta count.
-        awaitChannelList()
-        composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
+            // 7. Archive (immediate — no confirm dialog). Open the overflow, wait for the "Archive" item, tap it:
+            //    sendArchive → repository.archive → success-only PopBack. "Archive" is unique in the open overflow.
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVE_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(ARCHIVE_ITEM).performClick()
 
-        // 9. Navigate to the Archived screen: tap the channel-list settings button, wait for the Settings marker
-        //    "Archived discussions", tap it, then wait for the Archived-screen top-bar title "Archived". The
-        //    default tab is Discussions → the seeded (renamed) discussion is on it, so no tab tap is needed.
-        composeTestRule.onNode(hasContentDescription(CD_OPEN_SETTINGS)).performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule
-            .onNodeWithText(ARCHIVED_ROW)
-            .performScrollTo()
-            .assertIsDisplayed()
-            .performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
-        }
+            // 8. Absence check (AC-1). After PopBack: wait for the list marker (the thread has popped back), then
+            //    assert the unique name is gone from the active list — a genuine inversion of step 5. archive folds
+            //    the conversation out of the active projection on the repo's demux loop before PopBack renders the
+            //    list, so a direct assertCountEquals(0). Tolerant: presence/absence, generous timeout — never a delta count.
+            awaitChannelList()
+            composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
 
-        // 10. Restore. Wait for the restore affordance keyed on the unique name — the "Restore <uniqueName>"
-        //     IconButton (the row name is a Text node, so only the restore button matches a content-description
-        //     search) — a presence observation on the Archived screen, then tap it: RestoreRequested →
-        //     repository.unarchive.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(uniqueName, substring = true)).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onAllNodes(hasContentDescription(uniqueName, substring = true)).onFirst().performClick()
+            // 9. The list toolbar opens Archive for the selected host. The default Discussions tab shows the chat.
+            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+            }
 
-        // 11. Restore-completed guard (the one gotcha — see KDoc). Wait for the "Restored <name>" success
-        //     snackbar BEFORE navigating back: it renders only after repository.unarchive returned and
-        //     RestoreSucceeded was sent, so the ArchivedDiscussionsViewModel-scoped restore coroutine is not
-        //     cancelled mid-flight by the return-nav's popBackStack.
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
+            // 10. Restore. Wait for the restore affordance keyed on the unique name — the "Restore <uniqueName>"
+            //     IconButton (the row name is a Text node, so only the restore button matches a content-description
+            //     search) — a presence observation on the Archived screen, then tap it: RestoreRequested →
+            //     repository.unarchive.
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(uniqueName, substring = true)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasContentDescription(uniqueName, substring = true)).onFirst().performClick()
 
-        // 12. Navigate back to the channel list. Two Back hops: Archived → Settings, then Settings → list. The
-        //     waitUntil(ARCHIVED_ROW) between them lets Compose idle so the Archived screen is fully torn down
-        //     and only Settings' single "Back" node exists before the 2nd tap (both screens' nav icon is "Back").
-        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        awaitChannelList()
+            // 11. Restore-completed guard (the one gotcha — see KDoc). Wait for the "Restored <name>" success
+            //     snackbar BEFORE navigating back: it renders only after repository.unarchive returned and
+            //     RestoreSucceeded was sent, so the ArchivedDiscussionsViewModel-scoped restore coroutine is not
+            //     cancelled mid-flight by the return-nav's popBackStack.
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
 
-        // 13. Presence check #2 (AC-2 — round-trip closes). Wait for the unique name on the active list, then
-        //     confirm it is displayed. The re-appearance is attributable to the restore (asserted absent in
-        //     step 8), on the same surface, same unique token.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
+            // 12. Return directly from Archive to the channel list after the restore has completed.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+
+            // 13. Presence check #2 (AC-2 — round-trip closes). Wait for the unique name on the active list, then
+            //     confirm it is displayed. The re-appearance is attributable to the restore (asserted absent in
+            //     step 8), on the same surface, same unique token.
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+        } finally {
+            cleanupCreatedConversation(serverId, before, createdId, "archive discussion cleanup failed")
         }
-        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
     }
 
     /**
      * The list's own archive entry reaches the Archived screen (#740). #737 put two entries on the channel
-     * list's bar; [interactiveTurn_archiveRestore_roundTripsListMembership] travels the settings one (list →
-     * Settings → Archived), and this travels the archive one, which otherwise is proven only at the event
-     * boundary (`ChannelListScreenTest.archiveEntry_emitsArchiveTapped`).
+     * list's bar; [interactiveTurn_archiveRestore_roundTripsListMembership] now uses the same Archive entry
+     * for a complete round trip, while this method checks the entry without creating a conversation.
      *
      * The bar is drawn on every state of the list, so the scenario needs no connection wait, no seeded
      * conversation, no prompt and no claude turn. The list draws no "Archived" text, so [ARCHIVED_TITLE] is
@@ -2004,79 +1992,51 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Each host's default workspace and Archive stay its own with two live hosts paired (#1086, rung 3).
-     * #714 scoped Settings' default-workspace row to its host and #715 bound Archive to its host; both were
-     * proven against fakes only.
-     *
-     * **Defaults.** Each host's default is set from that host's own Settings to a run-unique folder created
-     * through the picker, whose path is the daemon's canonical one (`workspace_folder_created`). A chat made
-     * from each host's Chats section uses the daemon default instead of either saved app default; Settings
-     * still keeps the two saved paths independent.
+     * Each host's Archive stays its own with two live hosts paired (#1086, rung 3).
      *
      * **Archive.** One of host A's chats is archived from its thread and restored from A's Archive, reached
-     * through A's Settings. B's full list and B's archived list are read before and compared after each step.
+     * through A's list toolbar. B's full list and B's archived list are read before and compared after each step.
      *
-     * **Shared app state.** Both stored defaults are written back in `finally`, and B is removed there as #847 does.
+     * **Cleanup.** Both created chats are deleted and B's pairing is removed in `finally`.
      *
-     * **Zero real-claude turns**: pairing, folder creation, chat creation, rename, archive and restore are
-     * daemon round-trips.
+     * **Zero real-claude turns**: pairing, chat creation, rename, archive and restore are daemon round-trips.
      */
-    @Ignore("blocked on #1245 — default workspace controls were removed from Settings")
     @Test
-    fun interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost() {
+    fun interactiveTurn_twoHostsArchive_staysPerHost() {
         val serverIdA = twoHostArg(ARG_SERVER_ID)
         val serverIdB = twoHostArg(ARG_SERVER_ID_B)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val preferences = GlobalContext.get().get<AppPreferences>()
-        val originalA = runBlocking { preferences.defaultWorkspace(serverIdA).first() }
-        var originalB: String? = null
+        val beforeByHost = mutableMapOf<String, Set<String>>()
+        val createdByHost = mutableMapOf<String, String>()
         try {
-            // 1. Pair host B by code, as #847 does, and record its default before anything writes one.
+            // 1. Pair host B by code, as #847 does.
             awaitChannelList()
             awaitConnected()
             instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
             pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
-            originalB = runBlocking { preferences.defaultWorkspace(serverIdB).first() }
 
-            // 2. AC-1: A's default, from A's Settings. B's stored default does not move.
-            val stamp = System.currentTimeMillis()
-            val folderA = "${DEFAULTS_FOLDER_PREFIX}a-$stamp"
-            val folderB = "${DEFAULTS_FOLDER_PREFIX}b-$stamp"
-            openSettings()
-            showHostSettings(serverIdA)
-            val pathA = pickNewDefaultFolder(serverIdA, folderA)
-            assertEquals("setting A's default moved B's", originalB, runBlocking { preferences.defaultWorkspace(serverIdB).first() })
-
-            // 3. AC-1: B's default, from B's Settings. A's stays pathA, and A's Settings still shows only its own.
-            showHostSettings(serverIdB)
-            val pathB = pickNewDefaultFolder(serverIdB, folderB)
-            assertEquals("setting B's default moved A's", pathA, runBlocking { preferences.defaultWorkspace(serverIdA).first() })
-            showHostSettings(serverIdA)
-            composeTestRule.onNode(hasText(DEFAULT_WORKSPACE_ROW) and hasText(folderA)).performScrollTo().assertIsDisplayed()
-            composeTestRule.onAllNodesWithText(folderB, substring = true).assertCountEquals(0)
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitChannelList()
-
-            // 4. A's Chats plus uses the daemon default, ignoring A's saved app default. Rename it for Archive.
-            val chatName = DEFAULTS_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            // 2. Create a uniquely named chat on A and a second chat on B.
+            val chatName = TWO_HOST_ARCHIVE_CHAT_PREFIX + System.currentTimeMillis()
+            beforeByHost[serverIdA] = hostConversationIds(serverIdA)
             val chatA = createChatOn(serverIdA)
-            assertNotEquals("A's new chat used the app default", pathA, heldConversation(serverIdA, chatA).cwd)
+            createdByHost[serverIdA] = chatA
             renameOpenThread(chatName)
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitListText(chatName)
 
-            // 5. B's Chats plus likewise ignores B's saved app default.
+            beforeByHost[serverIdB] = hostConversationIds(serverIdB)
             val chatB = createChatOn(serverIdB)
-            assertNotEquals("B's new chat used the app default", pathB, heldConversation(serverIdB, chatB).cwd)
+            createdByHost[serverIdB] = chatB
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
 
-            // 6. B's baseline for the archive steps: every conversation it lists, and its archived ones.
-            val allB = hostConversationIds(serverIdB)
+            // 3. B's active and archived baselines stay independent of A's archive changes.
             val archivedB = archivedIds(serverIdB) { true }
+            val activeB = hostConversationIds(serverIdB) - archivedB
+            assertTrue("B's new chat is missing from its active set", chatB in activeB)
 
-            // 7. AC-2: archive A's chat from its thread. It leaves the list and joins A's archive; B is unchanged.
+            // 4. Archive A's chat from its thread. It leaves A's active list and joins A's archive.
             awaitListText(chatName)
             composeTestRule.onAllNodesWithText(chatName, substring = true).onFirst().performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -2092,14 +2052,14 @@ class InteractiveStreamE2ETest {
                 runCatching { scrollListTo(hasText(chatName, substring = true)) }.isFailure
             }
             archivedIds(serverIdA) { chatA in it }
-            assertEquals("archiving A's chat changed B's list", allB, hostConversationIds(serverIdB))
-            assertEquals("archiving A's chat changed B's archive", archivedB, archivedIds(serverIdB) { true })
+            val archivedBAfterArchive = archivedIds(serverIdB) { true }
+            assertEquals("archiving A's chat changed B's archive", archivedB, archivedBAfterArchive)
+            assertEquals("archiving A's chat changed B's active list", activeB, hostConversationIds(serverIdB) - archivedBAfterArchive)
 
-            // 8. AC-2: restore it from A's Archive, reached through A's Settings. The snackbar wait keeps the
-            //    restore coroutine from being cancelled by the Back that follows (#551).
-            openSettings()
-            showHostSettings(serverIdA)
-            composeTestRule.onNodeWithText(ARCHIVED_ROW).performScrollTo().performClick()
+            // 5. Select A for the list toolbar's host-scoped Archive, then restore after observing the row.
+            val koin = GlobalContext.get()
+            selectHost(koin.get(), koin.get(), serverIdA)
+            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2111,26 +2071,26 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
 
-            // 9. AC-2: the chat is back on A's list and out of A's archive; B is still unchanged.
+            // 6. A's chat is back on the active list and out of the archive; B is still unchanged.
             awaitListText(chatName)
             hostConversationIds(serverIdA, "the restored chat", ConversationFilter.Discussions) { chatA in it }
             archivedIds(serverIdA) { chatA !in it }
-            assertEquals("restoring A's chat changed B's list", allB, hostConversationIds(serverIdB))
-            assertEquals("restoring A's chat changed B's archive", archivedB, archivedIds(serverIdB) { true })
+            val archivedBAfterRestore = archivedIds(serverIdB) { true }
+            assertEquals("restoring A's chat changed B's archive", archivedB, archivedBAfterRestore)
+            assertEquals("restoring A's chat changed B's active list", activeB, hostConversationIds(serverIdB) - archivedBAfterRestore)
         } finally {
-            runBlocking {
-                val koin = GlobalContext.getOrNull()
-                val saved = koin?.get<AppPreferences>()
-                saved?.setDefaultWorkspace(serverIdA, originalA)
-                originalB?.let { saved?.setDefaultWorkspace(serverIdB, it) }
-                koin?.get<PairedServerCollectionStore>()?.remove(serverIdB)
+            beforeByHost.forEach { (serverId, before) ->
+                cleanupCreatedConversation(serverId, before, createdByHost[serverId], "two-host archive chat cleanup failed")
             }
+            runCatching {
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB)
+                    }
+                }
+            }.onFailure { Log.w("E2E", "two-host archive pairing cleanup failed: ${it::class.simpleName}") }
         }
     }
 
@@ -6031,6 +5991,19 @@ class InteractiveStreamE2ETest {
         before: Set<String>,
     ): String = (hostConversationIds(serverId, "a new chat's id") { ids -> (ids - before).isNotEmpty() } - before).single()
 
+    /** Delete a created chat even if a UI or repository wait failed before its id was captured. */
+    private fun cleanupCreatedConversation(
+        serverId: String,
+        before: Set<String>,
+        knownId: String?,
+        failureMessage: String,
+    ) {
+        runCatching {
+            val id = knownId ?: newHostConversationId(serverId, before)
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } }
+        }.onFailure { Log.w("E2E", "$failureMessage: ${it::class.simpleName}") }
+    }
+
     /**
      * The first conversation-id set [serverId]'s repository lists that satisfies [ready], following the host's
      * redial with `firstOnLive` as #1029's reads do; a timeout names [what] the phone was reading. [filter]
@@ -6605,16 +6578,15 @@ class InteractiveStreamE2ETest {
 
         // #551 archive/restore round-trip scenario. Archive from the thread overflow (ARCHIVE_ITEM,
         // mutationsSupported-gated) is IMMEDIATE — no confirm dialog, unlike #554's DELETE_ACTION. Restore
-        // navigates channel list → Settings: CD_OPEN_SETTINGS is the settings entry on the list's own bar (#737);
-        // ARCHIVED_ROW is the Settings row that opens the Archived screen AND doubles as the Settings-screen
-        // return-nav marker; ARCHIVED_TITLE is the Archived-screen top-bar arrival anchor; RESTORED_SNACKBAR
+        // opens Archive from the list toolbar; ARCHIVED_TITLE is its top-bar arrival anchor; RESTORED_SNACKBAR
         // is the restore-completion guard (a prefix of "Restored %1$s", appearing in no other on-screen
         // string). The restore affordance is keyed on the unique name via its content-description ("Restore
         // <name>"), so it needs no constant. Keep in sync with res/values/strings.xml:
-        //   thread_overflow_archive = "Archive", cd_open_settings = "Open settings",
-        //   archived_discussions_settings_row = "Archived discussions", archived_title = "Archived",
+        //   thread_overflow_archive = "Archive", archived_title = "Archived",
         //   restored_snackbar = "Restored %1$s".
         const val ARCHIVE_ITEM = "Archive"
+
+        // Other scenarios still reference the retired Settings row while their #1245 ignores remain.
         const val CD_OPEN_SETTINGS = "Open settings"
         const val ARCHIVED_ROW = "Archived discussions"
         const val ARCHIVED_TITLE = "Archived"
@@ -6752,11 +6724,10 @@ class InteractiveStreamE2ETest {
         const val HOST_RENAME_PREFIX = "e2e1085-host-"
         const val EDIT_HOST_OK = "OK"
 
-        // #1086 per-host defaults. The two folders are "e2e1086-a-<ms>" and "e2e1086-b-<ms>", clean single
-        // path elements under the shared real ~/pyry-workspace, neither a substring of the other. The chat
-        // prefix is distinct from both. DEFAULT_WORKSPACE_ROW is the Settings row's hardcoded headline.
-        const val DEFAULTS_FOLDER_PREFIX = "e2e1086-"
-        const val DEFAULTS_CHAT_NAME_PREFIX = "e2e1086-chat-"
+        // #1086's remaining two-host Archive proof uses a run-unique chat name.
+        const val TWO_HOST_ARCHIVE_CHAT_PREFIX = "e2e1086-chat-"
+
+        // Retained for ignored default-workspace scenarios and their helpers.
         const val DEFAULT_WORKSPACE_ROW = "Default workspace"
 
         // #1089 workspace label from the peer. The folder is "e2e1089-<ms>"; the labels are "e2e1089-chip-<ms>",
