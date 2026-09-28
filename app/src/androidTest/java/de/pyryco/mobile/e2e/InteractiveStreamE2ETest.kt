@@ -2931,7 +2931,6 @@ class InteractiveStreamE2ETest {
                 .onFirst()
                 .performScrollTo()
                 .performClick()
-            composeTestRule.onNodeWithContentDescription("Close").performClick()
             awaitFooter(changeModelLabel, label)
             assertEquals("the source choice was acknowledged", target.value, freshSettings(original.id).model)
             runBlocking {
