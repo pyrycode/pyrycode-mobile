@@ -331,6 +331,8 @@ class ChannelListViewModel(
     private val createChannel = MutableStateFlow<CreateChannelState?>(null)
     private val createChat = MutableStateFlow<CreateChatState?>(null)
     private var nextCreateChatRequestId = 0L
+    private val pendingNewChatModels = mutableSetOf<HostConversationTarget>()
+    private val tappedPendingNewChats = mutableSetOf<HostConversationTarget>()
 
     // #667: the editor's own prompt stays at its default here; the reading lives apart, tagged with the
     // channel it was read for, so a read landing mid-write never breaks that write's `compareAndSet` and no
@@ -429,12 +431,35 @@ class ChannelListViewModel(
     val hostNavigationEvents: Flow<HostConversationTarget> = hostNavigationChannel.receiveAsFlow()
 
     fun onHostRowTapped(target: HostConversationTarget) {
+        if (target in pendingNewChatModels) {
+            tappedPendingNewChats += target
+            RelayLog.d { "event=new_chat_open_deferred" }
+            return
+        }
         // Recorded before the send so the row highlights on the tap, not a dispatch later.
         lastOpenedTarget.value = target
         // The list's open path clears that host's unread and failed marks at the tap (#877); the thread's
         // viewing handle keeps it read while it is open.
         hostSource.markOpened(target.serverId, target.conversationId)
         viewModelScope.launch { hostNavigationChannel.send(target) }
+    }
+
+    private suspend fun prepareNewChatModel(
+        repository: ConversationRepository,
+        conversation: Conversation,
+        serverId: String,
+    ): HostConversationTarget {
+        val target = HostConversationTarget(serverId, conversation.id)
+        pendingNewChatModels += target
+        var settled = false
+        try {
+            applyRememberedModel(repository, conversation)
+            settled = true
+        } finally {
+            pendingNewChatModels -= target
+            if (!settled) tappedPendingNewChats -= target
+        }
+        return target
     }
 
     /** A newly created chat alone may inherit the phone's last acknowledged model choice. */
@@ -501,7 +526,7 @@ class ChannelListViewModel(
             val conversation =
                 try {
                     RelayLog.d { "event=create_chat_started" }
-                    live.createDiscussion(null).also { applyRememberedModel(live, it) }
+                    live.createDiscussion(null)
                 } catch (error: Exception) {
                     if (error is CancellationException) {
                         createChat.compareAndSet(state, null)
@@ -511,8 +536,9 @@ class ChannelListViewModel(
                     RelayLog.d { "event=create_chat_failed code=request" }
                     return@launch
                 }
+            val target = prepareNewChatModel(live, conversation, serverId)
             createChat.compareAndSet(state, null)
-            val target = HostConversationTarget(serverId, conversation.id)
+            tappedPendingNewChats -= target
             lastOpenedTarget.value = target
             hostNavigationChannel.send(target)
             RelayLog.d { "event=create_chat_created" }
@@ -613,18 +639,19 @@ class ChannelListViewModel(
             RelayLog.d { "event=add_workspace_start_started" }
             val conversation =
                 try {
-                    live.createDiscussion(workspace).also { applyRememberedModel(live, it) }
+                    live.createDiscussion(workspace)
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     RelayLog.d { "event=add_workspace_start_failed" }
                     addWorkspace.compareAndSet(pending, pending.copy(busy = false, startFailed = true))
                     return@launch
                 }
-            if (!addWorkspace.compareAndSet(pending, null)) {
+            val target = prepareNewChatModel(live, conversation, state.serverId)
+            val tapped = tappedPendingNewChats.remove(target)
+            if (!addWorkspace.compareAndSet(pending, null) && !tapped) {
                 RelayLog.d { "event=add_workspace_started code=dismissed" }
                 return@launch
             }
-            val target = HostConversationTarget(state.serverId, conversation.id)
             lastOpenedTarget.value = target
             hostNavigationChannel.send(target)
             RelayLog.d { "event=add_workspace_started" }
