@@ -2451,7 +2451,7 @@ class ThreadViewModelTest {
 
             val config = vm.state.value.runConfig
             // The label is the row's displayName; the identity is the row's value.
-            assertEquals("Sonnet 4.6", config.modelLabel)
+            assertEquals("Sonnet", config.modelLabel)
             assertEquals("sonnet", config.selectedModel)
             assertEquals("high", config.effortLabel)
             collector.cancel()
@@ -2470,7 +2470,7 @@ class ThreadViewModelTest {
 
             val config = vm.state.value.runConfig
             assertTrue(config.settingsAvailable)
-            assertEquals(INHERITED_RUN_CONFIG_LABEL, config.modelLabel)
+            assertEquals(UNAVAILABLE_MODEL_LABEL, config.modelLabel)
             // #889: an empty saved effort with no applied reading names the control, never "default".
             assertEquals(EFFORT_PLACEHOLDER_LABEL, config.effortLabel)
             collector.cancel()
@@ -2508,7 +2508,7 @@ class ThreadViewModelTest {
             val config = vm.state.value.runConfig
             assertTrue(config.menuAvailable)
             assertEquals(listOf("haiku", "opus", "sonnet"), config.choices.map { it.value })
-            assertEquals(listOf("Haiku 4.5", "Opus 4.7", "Sonnet 4.6"), config.choices.map { it.label })
+            assertEquals(listOf("Haiku", "Opus", "Sonnet"), config.choices.map { it.label })
             collector.cancel()
         }
 
@@ -2665,11 +2665,25 @@ class ThreadViewModelTest {
             val collectors = listOf(launch { mine.state.collect {} }, launch { other.state.collect {} })
             advanceUntilIdle()
 
-            assertEquals("Opus 4.7", mine.state.value.runConfig.modelLabel)
+            assertEquals("Opus", mine.state.value.runConfig.modelLabel)
             val neighbour = other.state.value.runConfig
             assertEquals(UNKNOWN_RUN_CONFIG_LABEL, neighbour.modelLabel)
+            assertEquals(null, neighbour.selectedChoice)
             assertEquals(emptyList<ThreadModelChoice>(), neighbour.choices)
             assertEquals("", neighbour.sessionId)
+            repo.setModelMenu("seed-discussion-a", menu(row("haiku", "Haiku 4.5")))
+            repo.setSessionSettingsReading("seed-discussion-a", settings(model = "haiku"))
+            advanceUntilIdle()
+            assertEquals(
+                "haiku",
+                other.state.value.runConfig.selectedChoice
+                    ?.value,
+            )
+            assertEquals(
+                "opus",
+                mine.state.value.runConfig.selectedChoice
+                    ?.value,
+            )
             collectors.forEach { it.cancel() }
         }
 
@@ -2946,12 +2960,16 @@ class ThreadViewModelTest {
             assertEquals("opus", vm.state.value.runConfig.savedModel)
             assertEquals("a settled write asks for a fresh reading", listOf(RUN_CONFIG_CONV), repo.sessionSettingsRefreshes)
 
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9", model = "opus", effort = "low"))
+            advanceUntilIdle()
+            assertTrue("a stale reading cannot confirm the new model", vm.state.value.runConfig.pending)
+
             // The fresh reading lands; the display updates with no further user turn.
             repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9", model = "haiku"))
             advanceUntilIdle()
             assertFalse(vm.state.value.runConfig.pending)
             assertEquals("haiku", vm.state.value.runConfig.savedModel)
-            assertEquals("Haiku 4.5", vm.state.value.runConfig.modelLabel)
+            assertEquals("Haiku", vm.state.value.runConfig.modelLabel)
             collector.cancel()
         }
 
@@ -3014,6 +3032,12 @@ class ThreadViewModelTest {
                 advanceUntilIdle()
 
                 assertEquals("the control returns to the confirmed reading", "opus", vm.state.value.runConfig.selectedModel)
+                assertEquals(
+                    "opus",
+                    vm.state.value.runConfig.selectedChoice
+                        ?.value,
+                )
+                assertEquals("Opus", vm.state.value.runConfig.modelLabel)
                 assertFalse("and is no longer pending", vm.state.value.runConfig.pending)
                 assertEquals("a server error surfaces exactly one signal", 1, errors.size)
                 assertTrue("the server-error throw must be caught, not propagated: $uncaught", uncaught.isEmpty())

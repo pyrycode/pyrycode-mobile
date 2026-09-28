@@ -122,6 +122,22 @@ class AndroidGateTest(unittest.TestCase):
             _, _, executed = gate.combine_reports([short])
             self.assertEqual(executed, gate.LIVE_MINIMUM - 1)
 
+    def test_live_curated_list_excludes_ignored_methods(self):
+        script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
+        live = script[script.index('elif [ -n "${LIVE}" ]; then\n  # LIVE curates'):]
+        branch = live[: live.index("\nelse\n")]
+        assignments = [line for line in branch.splitlines() if line.lstrip().startswith('TEST_TARGET="')]
+        targets = set(re.findall(r"#(interactiveTurn_\w+)", "\n".join(assignments)))
+        source = (Path(__file__).parent.parent / "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt").read_text()
+        lines = source.splitlines()
+        ignored = {
+            match.group(1)
+            for index, line in enumerate(lines)
+            if (match := re.search(r"fun (interactiveTurn_\w+)\(", line))
+            and "@Ignore" in "\n".join(lines[max(0, index - 3):index])
+        }
+        self.assertEqual(set(), targets & ignored)
+
     def test_auth_preflight_requires_a_successful_logged_in_status(self):
         for code, output, expected in [(0, '{"loggedIn":true}', True),
                                        (1, '{"loggedIn":true}', False),

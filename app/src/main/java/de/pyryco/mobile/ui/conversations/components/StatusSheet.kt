@@ -56,6 +56,8 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
  * boundary — every label arriving here has already been made inert — so this file imports nothing from
  * `data/` and never sees a raw `ModelMenuRow`. [ThreadModelChoice.value] is the write argument and is
  * never rendered; the labels reach `Text` and nothing else.
+ * The radio selection follows Figma's Run configuration node; #1195 owns replacing this sheet shell
+ * with that node's shared modal layout.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,7 +65,7 @@ fun StatusSheet(
     choices: List<ThreadModelChoice>,
     menuAvailable: Boolean,
     notListedModels: Int,
-    selectedModel: String,
+    selectedModel: String?,
     onModelSelected: (String) -> Unit,
     effortChoices: List<ThreadEffortChoice>,
     selectedEffort: String,
@@ -80,6 +82,7 @@ fun StatusSheet(
     onPermissionSelected: (String) -> Unit = {},
     permissionPending: Boolean = false,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    modelSelectionNote: String? = null,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -91,6 +94,7 @@ fun StatusSheet(
             menuAvailable = menuAvailable,
             notListedModels = notListedModels,
             selectedModel = selectedModel,
+            modelSelectionNote = modelSelectionNote,
             onModelSelected = onModelSelected,
             effortChoices = effortChoices,
             selectedEffort = selectedEffort,
@@ -114,7 +118,7 @@ internal fun StatusSheetContent(
     choices: List<ThreadModelChoice>,
     menuAvailable: Boolean,
     notListedModels: Int,
-    selectedModel: String,
+    selectedModel: String?,
     onModelSelected: (String) -> Unit,
     effortChoices: List<ThreadEffortChoice>,
     selectedEffort: String,
@@ -129,6 +133,7 @@ internal fun StatusSheetContent(
     permissionChoices: List<Pair<String, String>> = emptyList(),
     onPermissionSelected: (String) -> Unit = {},
     permissionPending: Boolean = false,
+    modelSelectionNote: String? = null,
 ) {
     // The menu length is the daemon's, and its producer cap is not a wire constant — so the body scrolls
     // rather than clipping later sections. The SettingsScreen / MobileModal idiom handles nested scroll.
@@ -145,6 +150,7 @@ internal fun StatusSheetContent(
             menuAvailable = menuAvailable,
             notListedModels = notListedModels,
             selectedModel = selectedModel,
+            selectionNote = modelSelectionNote,
             onModelSelected = onModelSelected,
             enabled = enabled && !pending,
         )
@@ -190,13 +196,15 @@ private fun ModelSection(
     choices: List<ThreadModelChoice>,
     menuAvailable: Boolean,
     notListedModels: Int,
-    selectedModel: String,
+    selectedModel: String?,
+    selectionNote: String?,
     onModelSelected: (String) -> Unit,
     enabled: Boolean,
 ) {
+    selectionNote?.let { UnavailableNote(text = it) }
     if (choices.isEmpty()) {
         UnavailableNote(
-            text = if (menuAvailable) "This server published no models." else "Model list unavailable",
+            text = if (menuAvailable) "This server published no selectable models." else "Model list unavailable",
         )
         return
     }

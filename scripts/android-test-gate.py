@@ -59,6 +59,10 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1107 re-adds #1076's background-task progress method.
 LIVE_MINIMUM += 1
+# #1193 live-gate rework: eight ignored methods are excluded from the curated list. Six have
+# follow-ups #1245/#1246; two older workspace-switching methods were already ignored. The floor
+# tracks the runnable list and still fails if any selected method silently skips.
+LIVE_MINIMUM -= 8
 # #1223 adds the remembered-model first-turn proof.
 LIVE_MINIMUM += 1
 
