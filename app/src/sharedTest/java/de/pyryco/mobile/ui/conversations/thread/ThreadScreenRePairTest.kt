@@ -19,10 +19,10 @@ class ThreadScreenRePairTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun a_rejected_pairing_shows_re_pair_and_no_retry_banner() {
+    fun a_rejected_pairing_shows_re_pair_and_no_offline_pill() {
         setScreen(showRePair = true)
         composeRule.onNodeWithText(RE_PAIR_LABEL).assertIsDisplayed()
-        composeRule.onNodeWithText(OFFLINE_BANNER).assertDoesNotExist()
+        composeRule.onNodeWithText(OFFLINE_PILL).assertDoesNotExist()
     }
 
     @Test
@@ -34,15 +34,24 @@ class ThreadScreenRePairTest {
     }
 
     @Test
-    fun network_loss_keeps_the_retry_banner_and_offers_no_re_pair() {
+    fun network_loss_shows_an_offline_retry_pill_and_offers_no_re_pair() {
         setScreen(showRePair = false)
-        composeRule.onNodeWithText(OFFLINE_BANNER).assertIsDisplayed()
+        composeRule.onNodeWithText(OFFLINE_PILL).assertIsDisplayed()
         composeRule.onNodeWithText(RE_PAIR_LABEL).assertDoesNotExist()
+    }
+
+    @Test
+    fun tapping_the_offline_pill_retries_the_connection() {
+        var retries = 0
+        setScreen(showRePair = false, onRetry = { retries++ })
+        composeRule.onNodeWithText(OFFLINE_PILL).performClick()
+        composeRule.runOnIdle { assertEquals(1, retries) }
     }
 
     private fun setScreen(
         showRePair: Boolean,
         onRePair: () -> Unit = {},
+        onRetry: () -> Unit = {},
     ) {
         composeRule.setContent {
             PyrycodeMobileTheme {
@@ -52,7 +61,7 @@ class ThreadScreenRePairTest {
                     onSendMessage = {},
                     // The legacy state a rejected pairing folds into, so the banner would otherwise offer retry.
                     connectionState = ConnectionState.Offline,
-                    onRetry = {},
+                    onRetry = onRetry,
                     showRePair = showRePair,
                     onRePair = onRePair,
                 )
@@ -62,6 +71,6 @@ class ThreadScreenRePairTest {
 
     private companion object {
         const val RE_PAIR_LABEL = "Pairing error - Re-pair"
-        const val OFFLINE_BANNER = "Offline — tap to retry"
+        const val OFFLINE_PILL = "Offline · Retry"
     }
 }
