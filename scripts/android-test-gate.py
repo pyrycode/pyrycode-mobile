@@ -69,6 +69,8 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1249 restores the discussion round trip and two-host Archive methods through the list toolbar.
 LIVE_MINIMUM += 2
+# #1251 restores the channel create/edit/archive method through reachable list controls.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 
