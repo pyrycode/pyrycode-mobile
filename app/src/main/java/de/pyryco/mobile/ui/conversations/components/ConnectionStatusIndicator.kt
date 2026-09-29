@@ -27,6 +27,6 @@ fun ConnectionStatusIndicator(
         text = label,
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }

@@ -1,8 +1,12 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -11,7 +15,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -84,7 +90,23 @@ internal fun ThreadTopOverlay(
                 // The label is a local resource, never daemon text.
                 NoticePill(text = stringResource(R.string.thread_re_pair), isError = true, onClick = onRePair)
             } else if (showOffline) {
-                NoticePill(text = stringResource(R.string.thread_connection_offline_retry), isError = true, onClick = onRetryConnection)
+                // The visible 24dp pill keeps its 12dp gap below usage. Its 48dp target extends downward,
+                // away from the usage pill's dismiss target.
+                Box(
+                    modifier =
+                        Modifier
+                            .height(48.dp)
+                            .width(144.dp)
+                            .testTag("offline_retry_target")
+                            .clickable(role = Role.Button, onClick = onRetryConnection),
+                    contentAlignment = Alignment.TopEnd,
+                ) {
+                    NoticePill(
+                        text = stringResource(R.string.thread_connection_offline_retry),
+                        isError = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
     }
