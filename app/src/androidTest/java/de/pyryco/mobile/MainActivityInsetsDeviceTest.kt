@@ -435,7 +435,7 @@ class MainActivityInsetsDeviceTest {
         clearOfBars(paste)
         capture("scanner")
         paste.performClick()
-        assertEquals(scannerTop, bounds(rule.onNodeWithContentDescription("Back")).top, 1f)
+        assertEquals(bars.top.toFloat(), bounds(rule.onNodeWithContentDescription("Back")).top, 1f)
         for (label in listOf("Host name", "Pairing code", "Pair", "Cancel")) clearOfBars(rule.onNodeWithText(label))
         capture("pair")
 
