@@ -6,17 +6,20 @@ import android.graphics.Shader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -36,6 +39,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.vector.VectorPath
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -43,6 +47,14 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+
+private val welcomeBodyLines =
+    listOf(
+        "Pyrycode runs Claude on your computer",
+        "or home server. Channels and",
+        "conversation history live on your machine,",
+        "accessible from any device.",
+    )
 
 @Composable
 fun WelcomeScreen(
@@ -62,7 +74,7 @@ fun WelcomeScreen(
                 transform(Matrix().apply { scale(size.width / logo.viewportWidth, size.height / logo.viewportHeight) })
             }
         }
-    Box(
+    BoxWithConstraints(
         modifier =
             modifier
                 .fillMaxSize()
@@ -77,18 +89,18 @@ fun WelcomeScreen(
                             0f,
                             10f,
                             intArrayOf(glowColor.toArgb(), glowEdge.toArgb()),
-                            floatArrayOf(0f, 0.7f),
+                            floatArrayOf(0f, 0.76012f),
                             Shader.TileMode.CLAMP,
                         ).apply {
                             setLocalMatrix(
                                 android.graphics.Matrix().apply {
                                     setValues(
                                         floatArrayOf(
-                                            28.4f * xScale,
-                                            4.3038f * xScale,
+                                            43.8f * xScale,
+                                            13.523f * xScale,
                                             196f * xScale,
-                                            -2.6f * yScale,
-                                            47.011f * yScale,
+                                            -11.95f * yScale,
+                                            49.567f * yScale,
                                             265f * yScale,
                                             0f,
                                             0f,
@@ -102,17 +114,21 @@ fun WelcomeScreen(
                     onDrawBehind { drawRect(brush) }
                 },
     ) {
+        // Figma and Android wrap this 320 dp measure at different words with the same bodyLarge style.
+        val useReferenceBodyWrap = maxWidth >= 384.dp && LocalDensity.current.fontScale <= 1f
         Column(
             modifier =
                 Modifier
                     .fillMaxSize()
                     .systemBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(min = maxHeight)
                     .padding(horizontal = 32.dp),
             verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.Start,
         ) {
             Column(
-                modifier = Modifier.padding(top = 168.dp),
+                modifier = Modifier.padding(top = 172.dp),
                 verticalArrangement = Arrangement.spacedBy(28.dp),
             ) {
                 Icon(
@@ -153,10 +169,7 @@ fun WelcomeScreen(
                     )
                 }
                 Text(
-                    text =
-                        "Pyrycode runs Claude on your computer or home server. " +
-                            "Channels and conversation history live on your machine, " +
-                            "accessible from any device.",
+                    text = welcomeBodyLines.joinToString(if (useReferenceBodyWrap) "\n" else " "),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(320.dp),
@@ -167,7 +180,7 @@ fun WelcomeScreen(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 16.dp),
+                        .padding(bottom = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Button(
@@ -175,7 +188,7 @@ fun WelcomeScreen(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .height(56.dp),
+                            .heightIn(min = 56.dp),
                     shape = RoundedCornerShape(28.dp),
                 ) {
                     Icon(
@@ -192,7 +205,7 @@ fun WelcomeScreen(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .height(56.dp),
+                            .heightIn(min = 56.dp),
                 ) {
                     Text(text = "Set up pyrycode first")
                 }

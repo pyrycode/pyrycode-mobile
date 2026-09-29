@@ -1,0 +1,18 @@
+Ticket: #1212
+Figma: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=6-32
+Inspected nodes: 6:32, 6:33, 6:34, 6:36-6:44, 80:2, 9:41, 9:53-9:54
+Design render/inspection date: 2026-09-29 UTC. Figma last-modified date was not exposed by the design-context and screenshot tools.
+Reference viewport: 412x892 px, no system chrome. Real activity viewport: 412x892 or 360x800 px at 160 dpi (density 1.0), API 35, dark fixed theme, wallpaper colors disabled. Real system bars: 24 px top, 24 px bottom. The per-capture text files record measured bounds and font scale.
+Activity: production MainActivity through the app's unpaired startup path, with no replacement Welcome composable or synthetic insets.
+Device: Gradle-managed full pixel8Api35 image. Each PNG is checked for a settled #101418 surface pixel and more than 10 sampled colors.
+
+Command (exit 0; three executed, zero failures/errors/skips):
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+
+Original result: app/build/outputs/androidTest-results/managedDevice/debug/pixel8Api35/TEST-pixel8Api35-_app-.xml
+Retained result: device-results.xml
+Original PNG/metadata directory: app/build/intermediates/managed_device_android_test_additional_output/debugAndroidTest/pixel8Api35DebugAndroidTest/welcome-1212/
+
+Comparison: comparison-overlay.png places the current Figma render, stable real-activity capture and a 50% overlay side by side. comparison-difference.png amplifies RGB differences 3x and includes expected system chrome/corner differences. 360x800-dark-1.0x-initial.png is the compact normal-text state. 360x800-dark-1.5x-initial.png and 360x800-dark-1.5x-scrolled.png show the enlarged-text start and reachable bottom actions/footer.
+
+Figma's current 6:39 text metadata reports a 320x96 px body and the rendered frame shows four lines. The ticket's earlier five-line observation is no longer the current visible design. Real activity title bounds are x=32, y=328-368; body x=32, y=428-519; primary CTA x=32-380, y=704-760 at 412x892. These align with Figma's node positions. Platform status/navigation bars replace Figma's chrome-free rounded outer frame.
