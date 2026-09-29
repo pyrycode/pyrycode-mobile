@@ -3,10 +3,17 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -40,22 +47,38 @@ internal fun ThreadTopOverlay(
 ) {
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     if (usage == null && !showRePair) return
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.End,
-        verticalArrangement = Arrangement.spacedBy(OverlayPillGap),
-    ) {
-        if (usage != null) {
-            val warning = usageLimitIsWarning(usage)
-            NoticePill(
-                text = usageLimitLabel(usage, agent),
-                isError = !warning,
-                onDismiss = if (warning) onDismissUsageLimit else null,
-            )
+    val viewConfiguration = LocalViewConfiguration.current
+    val pillTouchConfiguration =
+        remember(viewConfiguration) {
+            object : ViewConfiguration by viewConfiguration {
+                // The 24dp pills sit 12dp apart. Two 48dp vertical touch targets overlap in that stack.
+                // Keep 48dp horizontally, and expand each pill to the largest non-overlapping height.
+                override val minimumTouchTargetSize = DpSize(viewConfiguration.minimumTouchTargetSize.width, 36.dp)
+            }
         }
-        if (showRePair) {
-            // The label is a local resource, never daemon text.
-            NoticePill(text = stringResource(R.string.thread_re_pair), isError = true, onClick = onRePair)
+    // Keep the clickable error pill at the design's 24dp visible height. The default Material layout
+    // minimum inserted an extra 12dp above and below it, shifting the visible stack out of position.
+    CompositionLocalProvider(
+        LocalMinimumInteractiveComponentSize provides Dp.Unspecified,
+        LocalViewConfiguration provides pillTouchConfiguration,
+    ) {
+        Column(
+            modifier = modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(OverlayPillGap),
+        ) {
+            if (usage != null) {
+                val warning = usageLimitIsWarning(usage)
+                NoticePill(
+                    text = usageLimitLabel(usage, agent),
+                    isError = !warning,
+                    onDismiss = if (warning) onDismissUsageLimit else null,
+                )
+            }
+            if (showRePair) {
+                // The label is a local resource, never daemon text.
+                NoticePill(text = stringResource(R.string.thread_re_pair), isError = true, onClick = onRePair)
+            }
         }
     }
 }
