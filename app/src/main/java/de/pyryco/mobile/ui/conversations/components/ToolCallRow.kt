@@ -342,7 +342,8 @@ private fun ExpandedBody(toolCall: ToolCall) {
         }
         // A denied row restored from the disk cache has no denial and shows no reason.
         val denial = toolCall.denial
-        if (toolCall.status == ToolCallStatus.Denied && denial != null &&
+        if (toolCall.status == ToolCallStatus.Denied &&
+            denial != null &&
             (denial.message.isNotEmpty() || denial.decisionReason.isNotEmpty())
         ) {
             ExpandedSection(label = stringResource(R.string.tool_row_denial)) {
