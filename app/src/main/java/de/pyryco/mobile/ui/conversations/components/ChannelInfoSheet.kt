@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -38,6 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -81,6 +85,23 @@ internal fun ChannelInfoSheet(
         onDismissRequest = onDismiss,
         modifier = modifier,
         sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        dragHandle = {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier =
+                        Modifier
+                            .size(width = 32.dp, height = 4.dp)
+                            .background(
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                RoundedCornerShape(50),
+                            ),
+                )
+            }
+        },
     ) {
         ChannelInfoSheetContent(
             model = model,
@@ -108,7 +129,7 @@ internal fun ChannelInfoSheetContent(
         TitleRow(title = model.conversationName, onClose = onDismiss)
 
         SectionHeader(text = "About")
-        AboutRow(label = "Workspace", value = model.workspacePath, valueIsPath = true)
+        AboutRow(label = "Folder", value = model.workspacePath, valueIsPath = true)
         AboutRow(label = "Created", value = model.createdLabel)
         AboutRow(label = "Last activity", value = model.lastActivityLabel)
         AboutRow(label = "Total sessions", value = model.sessionCount.toString())
@@ -148,6 +169,8 @@ private fun TitleRow(
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
         IconButton(onClick = onClose) {
             Icon(
@@ -187,37 +210,28 @@ private fun AboutRow(
     ) {
         Text(
             text = label,
+            modifier = if (valueIsPath) Modifier else Modifier.weight(1f),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
-        if (valueIsPath) {
-            Text(
-                text = value,
-                modifier =
-                    Modifier
-                        .weight(1f)
-                        .padding(start = 16.dp),
-                style =
+        Text(
+            text = value,
+            modifier = Modifier.weight(1f).padding(start = if (valueIsPath) 16.dp else 8.dp),
+            style =
+                if (valueIsPath) {
                     MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
-                    ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.StartEllipsis,
-                textAlign = TextAlign.End,
-            )
-        } else {
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                text = value,
-                modifier = Modifier.padding(start = 16.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.End,
-            )
-        }
+                    )
+                } else {
+                    MaterialTheme.typography.bodyMedium
+                },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = if (valueIsPath) 1 else 2,
+            overflow = if (valueIsPath) TextOverflow.StartEllipsis else TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+        )
     }
 }
 
@@ -226,6 +240,7 @@ private fun MemoryRow(
     report: MemorySearchReport,
     onInstall: () -> Unit,
 ) {
+    val compact = LocalConfiguration.current.screenWidthDp < 360 || LocalDensity.current.fontScale >= 1.3f
     Row(
         modifier =
             Modifier
@@ -236,45 +251,62 @@ private fun MemoryRow(
     ) {
         Text(
             text = "Memory plugins",
+            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
         if (report.shouldOfferMemoryInstall()) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.End,
             ) {
-                Text(
-                    text = "None",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                TextButton(
-                    onClick = onInstall,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
+                if (compact) {
                     Text(
-                        text = "Install",
-                        style = MaterialTheme.typography.labelLarge,
+                        text = "None",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 0.dp else 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (!compact) {
+                        Text(
+                            text = "None",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(
+                        onClick = onInstall,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "Install", style = MaterialTheme.typography.labelLarge)
+                    }
                 }
             }
         } else if (report.providers.isEmpty()) {
             Text(
                 text =
                     if (report.availability == MemorySearchAvailability.Unknown) "Status unknown" else "Memory search unavailable",
+                modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.End,
             )
         } else {
-            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 report.providers.forEach { provider ->
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
@@ -282,7 +314,7 @@ private fun MemoryRow(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             textAlign = TextAlign.End,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
@@ -290,6 +322,7 @@ private fun MemoryRow(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.End,
+                            maxLines = 2,
                         )
                     }
                 }
@@ -320,14 +353,14 @@ private fun ActionsGrid(
                 .padding(start = 16.dp, end = 16.dp, top = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ActionCell(label = "Rename", onClick = onRename, modifier = Modifier.fillMaxWidth())
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            ActionCell(label = "Rename", onClick = onRename, modifier = Modifier.weight(1f))
             ActionCell(label = "Archive", onClick = onArchive, modifier = Modifier.weight(1f))
-            ActionCell(label = "Delete", onClick = onDelete, modifier = Modifier.weight(1f))
         }
+        ActionCell(label = "Delete", onClick = onDelete, modifier = Modifier.fillMaxWidth())
     }
 }
 
