@@ -58,6 +58,7 @@ Pending documentation stage: update `docs/knowledge/features/tool-call-row.md` Â
 ## Revisions
 
 - 2026-09-30, device comparison: the existing `HeaderRow` measured 32 dp at density 1 because Compose's measured text box is shorter than Figma's 20 dp line. Give the header a 20 dp minimum to meet the 36 dp collapsed row (8 dp padding on each side). The existing length heuristic also boxed a long single-paragraph result that Figma shows as wrapping monospace prose. For results, use the bordered `CodeBlock` when the supplied text contains line breaks; render a single paragraph as wrapping monospace text. Keep the command-field code block and no-copy rule.
+- 2026-09-30, live-gate review: the full `LIVE=1` curated selector in `scripts/e2e-emulator.sh` excluded `interactiveTurn_toolPrompt_rendersToolStepInThread`, so its 42 passing cases did not prove the ticket's named live criterion. Include that existing method, raise `LIVE_MINIMUM` to 43, and pin both the method and count in `test_live_floor_matches_the_curated_list`. The dispatcher must produce a fresh full suite report after this repair; a focused substitute does not satisfy the criterion. Documentation stage should reconcile `docs/e2e-interactive-stream.md`'s prose coverage list.
 
 ## Security review
 
