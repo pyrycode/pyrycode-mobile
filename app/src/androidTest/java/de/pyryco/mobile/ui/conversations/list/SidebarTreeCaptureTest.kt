@@ -39,26 +39,42 @@ import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.host.HostEditorState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import java.io.File
 
 /** Real emulator pixels for the tree bands, including compact and enlarged-text states. */
 @RunWith(AndroidJUnit4::class)
 class SidebarTreeCaptureTest {
-    @get:Rule val rule = createComposeRule()
+    @get:Rule(order = 0)
+    val displayBeforeActivity =
+        TestRule { base, _ ->
+            object : Statement() {
+                override fun evaluate() {
+                    setDisplay()
+                    try {
+                        base.evaluate()
+                    } finally {
+                        restoreDisplay()
+                    }
+                }
+            }
+        }
+
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var contentView: View? = null
     private var oldSize = "reset"
     private var oldDensity = "reset"
     private val longName = "Long channel name that must ellipsize before the neighboring edit control"
 
-    @Before fun setDisplay() {
+    private fun setDisplay() {
         oldSize = overrideOf(shell("wm size"))
         oldDensity = overrideOf(shell("wm density"))
         shell("wm density 160")
@@ -66,7 +82,7 @@ class SidebarTreeCaptureTest {
         instrumentation.waitForIdleSync()
     }
 
-    @After fun restoreDisplay() {
+    private fun restoreDisplay() {
         shell("wm size $oldSize")
         shell("wm density $oldDensity")
         instrumentation.waitForIdleSync()
