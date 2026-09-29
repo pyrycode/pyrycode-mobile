@@ -55,6 +55,10 @@ Pending documentation stage: update `docs/knowledge/features/tool-call-row.md` Â
 - The component examples omit status glyphs, while the mobile product requires all four statuses. Resolve by retaining the existing trailing status slot and note its pixel-comparison limit in the PR.
 - The Figma code component contains an older copy glyph. Resolve by keeping `CodeBlock(copyable = false)` per the ticket and note the deliberate difference in the comparison.
 
+## Revisions
+
+- 2026-09-30, device comparison: the existing `HeaderRow` measured 32 dp at density 1 because Compose's measured text box is shorter than Figma's 20 dp line. Give the header a 20 dp minimum to meet the 36 dp collapsed row (8 dp padding on each side). The existing length heuristic also boxed a long single-paragraph result that Figma shows as wrapping monospace prose. For results, use the bordered `CodeBlock` when the supplied text contains line breaks; render a single paragraph as wrapping monospace text. Keep the command-field code block and no-copy rule.
+
 ## Security review
 
 **Verdict:** PASS

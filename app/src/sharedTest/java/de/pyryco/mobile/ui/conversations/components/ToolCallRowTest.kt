@@ -170,7 +170,7 @@ class ToolCallRowTest {
     }
 
     @Test
-    fun the_subject_comes_from_the_input_fields() {
+    fun a_supplied_description_uses_the_described_header() {
         setContent(
             doneToolCall().copy(
                 inputFields = mapOf("command" to "git status", "description" to "Show working tree status"),
@@ -178,7 +178,44 @@ class ToolCallRowTest {
         )
 
         composeTestRule.onNodeWithText("Show working tree status").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Bash").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("tool-description-chevron", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun a_call_without_a_description_uses_the_simple_name_and_subject() {
+        setContent(doneToolCall().copy(inputFields = mapOf("command" to "git status")))
+
         composeTestRule.onNodeWithText("Bash").assertIsDisplayed()
+        composeTestRule.onNodeWithText("git status").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tool-description-chevron", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun the_described_row_toggles_supplied_code_and_result_without_copy() {
+        setContent(
+            doneToolCall().copy(
+                inputFields = mapOf("command" to "git status", "description" to "Inspect repository"),
+                output = "working tree clean",
+            ),
+        )
+        composeTestRule.onNodeWithText("Input").assertDoesNotExist()
+        composeTestRule.onNode(hasClickAction()).performClick()
+
+        composeTestRule.onNodeWithText("git status").assertIsDisplayed()
+        composeTestRule.onNodeWithText("working tree clean").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_copy_code)).assertDoesNotExist()
+
+        composeTestRule.onNode(hasClickAction()).performClick()
+        composeTestRule.onNodeWithText("Input").assertDoesNotExist()
+    }
+
+    @Test
+    fun a_resolved_call_without_a_result_does_not_invent_output() {
+        setContent(doneToolCall().copy(output = ""))
+        composeTestRule.onNode(hasClickAction()).performClick()
+
+        composeTestRule.onNodeWithText("Output").assertDoesNotExist()
     }
 
     @Test
@@ -192,7 +229,13 @@ class ToolCallRowTest {
 
     @Test
     fun a_row_stays_expanded_while_it_is_updated_in_place() {
-        var toolCall by mutableStateOf(runningToolCall().copy(elapsedSeconds = 3))
+        var toolCall by
+            mutableStateOf(
+                runningToolCall().copy(
+                    inputFields = mapOf("description" to "Build the app", "command" to "./gradlew assembleDebug"),
+                    elapsedSeconds = 3,
+                ),
+            )
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 ToolCallRow(toolCall = toolCall)
