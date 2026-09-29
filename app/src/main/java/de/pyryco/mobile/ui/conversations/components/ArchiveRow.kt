@@ -58,7 +58,7 @@ fun ArchiveRow(
                 text =
                     stringResource(
                         R.string.archived_relative_subtitle,
-                        formatRelativeTime(conversation.lastUsedAt),
+                        formatArchiveRelativeTime(conversation.lastUsedAt),
                     ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -78,6 +78,26 @@ fun ArchiveRow(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/** The Archive reference uses elapsed weeks and months where the thread uses calendar dates. */
+internal fun formatArchiveRelativeTime(
+    lastUsedAt: kotlinx.datetime.Instant,
+    now: kotlinx.datetime.Instant = Clock.System.now(),
+): String {
+    val age = now - lastUsedAt
+    return when {
+        age < 7.days -> formatRelativeTime(lastUsedAt, now)
+        age < 30.days -> {
+            val weeks = age.inWholeDays / 7
+            "$weeks ${if (weeks == 1L) "week" else "weeks"} ago"
+        }
+        age < 365.days -> {
+            val months = age.inWholeDays / 30
+            "$months ${if (months == 1L) "month" else "months"} ago"
+        }
+        else -> formatRelativeTime(lastUsedAt, now)
     }
 }
 
