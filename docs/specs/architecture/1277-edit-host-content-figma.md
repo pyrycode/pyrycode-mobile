@@ -65,5 +65,10 @@ Pending documentation stage: update `docs/knowledge/features/mobile-modal-caller
 - [Concurrency] The field's remembered state remains keyed on raw `serverIdentity`; loading/error recompose without resetting the draft. The controller's scoped write and compare-and-set behavior is unchanged.
 - [Threat model] Pairing-derived identity and relay text remain length bounded, read-only and never interpreted as a URL. UI screenshot/accessibility exposure is limited to the same public display fields already shown by this form; no credentials are added.
 
-**Reviewer:** builder (self-review per `builder/security-review.md`)  
+**Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-29
+
+## Revisions
+
+- 2026-09-29: The M3 `TextField` retained its 56 dp minimum in the failing geometry test. `HostNameField` now uses the same `BasicTextField` well pattern as `ChannelFormFields`, giving the 52 dp reference height while retaining an editable, labelled field and IME Done submission.
+- 2026-09-29: Natural label widths match the Figma viewport, but the enlarged-text 320 dp regression clipped the server label. `IdentityRow` uses the existing weighted split below 320 dp of content width and natural labels at the reference width. `UnpairAction` draws a 40 dp outline inside a 48 dp M3 `Surface` click target so the visible reference size and touch floor both hold.

@@ -24,6 +24,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
@@ -78,6 +79,7 @@ class EditHostModalTest {
 
     // The viewport the shell's own overflow case uses, and the one AC5 names.
     private val smallSize = DpSize(320.dp, 640.dp)
+    private val figmaSize = DpSize(412.dp, 892.dp)
 
     // One bodyMedium line is 20sp, so two lines of it clear this comfortably.
     private val singleLineCeiling = 28.dp
@@ -88,14 +90,16 @@ class EditHostModalTest {
         serverIdentity: String = identity,
         relayAddress: String = relay,
         small: Boolean = false,
+        figma: Boolean = false,
         fontScale: Float = 1f,
     ) {
         rule.setContent {
             PyrycodeMobileTheme {
-                if (small) {
-                    DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(smallSize)) {
+                if (small || figma) {
+                    val size = if (small) smallSize else figmaSize
+                    DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
                         DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
-                            Modal(serverIdentity, relayAddress, Modifier.size(smallSize))
+                            Modal(serverIdentity, relayAddress, Modifier.size(size))
                         }
                     }
                 } else {
@@ -178,6 +182,45 @@ class EditHostModalTest {
         rule.onNodeWithContentDescription("Close").assertIsDisplayed()
         rule.onNodeWithText("Cancel").assertIsDisplayed()
         rule.onNodeWithText("OK").assertIsDisplayed()
+    }
+
+    @Test
+    fun identityValuesFollowNaturalWidthLabelsAndNameWellMatchesDesignHeight() {
+        show(figma = true)
+        val valueStarts = mutableListOf<Dp>()
+        listOf(
+            string(R.string.edit_host_server_identity_label) to identity,
+            string(R.string.edit_host_relay_address_label) to relay,
+        ).forEach { (label, value) ->
+            val labelBounds = rule.onNodeWithText(label, useUnmergedTree = true).getUnclippedBoundsInRoot()
+            val valueBounds = valueNode(value).getUnclippedBoundsInRoot()
+            valueStarts += valueBounds.left
+            assertEquals(10f, (valueBounds.left - labelBounds.right).value, 1f)
+            assertEquals(labelBounds.top.value, valueBounds.top.value, 1f)
+        }
+        assertTrue("identity values must align within the reference row", (valueStarts[0] - valueStarts[1]).value < 7f)
+        val well = rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).getUnclippedBoundsInRoot()
+        assertEquals(52f, well.height.value, 1f)
+    }
+
+    @Test
+    fun clearingTheNameSubmitsBlankWithoutTriggeringUnpair() {
+        show()
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextClearance()
+        rule.onNodeWithText("OK").performClick()
+        rule.runOnIdle {
+            assertEquals(listOf(""), submitted)
+            assertEquals(0, unpairs)
+        }
+    }
+
+    @Test
+    fun keyboardDoneSubmitsTheEditedName() {
+        show()
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextClearance()
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextInput("Renamed host")
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performImeAction()
+        rule.runOnIdle { assertEquals(listOf("Renamed host"), submitted) }
     }
 
     @Test

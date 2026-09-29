@@ -347,6 +347,42 @@ class MobileModalTest {
 
     @Test
     @WithTestIme
+    fun editHostFieldAndUnpairRemainReachableWithKeyboard() {
+        var unpairs = 0
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                EditHostModal(
+                    serverIdentity = "345345-345345345-gw3vw-w4wv34-vw34t",
+                    relayAddress = "https://asdf.afwevawef.fwef/asdffe",
+                    initialHostName = "Pyrybox",
+                    onDismissRequest = {},
+                    onSubmit = {},
+                    onUnpairRequested = { unpairs++ },
+                    onUnpairConfirmed = {},
+                    onUnpairDeclined = {},
+                )
+            }
+        }
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTouchInput { click(Offset(8f, center.y)) }.assertIsFocused()
+        rule.runOnIdle { assertEquals(0, unpairs) }
+        rule.waitUntil(5_000) {
+            rule.runOnIdle {
+                ViewCompat.getRootWindowInsets(rule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertIsDisplayed().performTextInput(" two")
+        val action = rule.onNodeWithText("Unpair host").performScrollTo().assertIsDisplayed()
+        val fieldBounds = rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).fetchSemanticsNode().boundsInRoot
+        val actionBounds = action.fetchSemanticsNode().boundsInRoot
+        assertTrue("field and Unpair touch areas overlap", fieldBounds.bottom < actionBounds.top)
+        action.performTouchInput { click(Offset(center.x, 1f)) }
+        rule.runOnIdle { assertEquals(1, unpairs) }
+        rule.onNodeWithText("Cancel").assertIsDisplayed()
+        rule.onNodeWithText("OK").assertIsDisplayed()
+    }
+
+    @Test
+    @WithTestIme
     @Landscape
     fun landscape_ime_keeps_focused_field_following_content_and_actions_reachable() {
         rotateToLandscape()

@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="3.074" timestamp="2026-09-29T13:53:23" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.components.MobileModalTest" tests="1" failures="0" errors="0" skipped="0" time="2.715" timestamp="2026-09-29T13:53:23" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="editHostFieldAndUnpairRemainReachableWithKeyboard" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="2.715" />
+  </testsuite>
+</testsuites>
