@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="3" failures="0" errors="0" skipped="0" time="6.297" timestamp="2026-09-29T03:10:47" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.settings.ArchiveAppearanceCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="5.441" timestamp="2026-09-29T03:10:47" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="compactLargeTextKeepsRestoreReachable" classname="de.pyryco.mobile.ui.settings.ArchiveAppearanceCaptureTest" time="2.21" />
+    <testcase name="emptyTabsAt412By892" classname="de.pyryco.mobile.ui.settings.ArchiveAppearanceCaptureTest" time="1.498" />
+    <testcase name="populatedTabsAt412By892" classname="de.pyryco.mobile.ui.settings.ArchiveAppearanceCaptureTest" time="1.733" />
+  </testsuite>
+</testsuites>

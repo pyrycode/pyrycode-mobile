@@ -39,6 +39,46 @@ class ArchivedDiscussionsLayoutTest {
 
     @Test fun populatedTabsAlignTextAndRestore_dark() = assertPopulatedTabs(darkTheme = true)
 
+    @Test fun darkArchiveBackdropHasTheReferenceGlow() {
+        lateinit var view: View
+        compose.setContent {
+            view = LocalView.current
+            PyrycodeMobileTheme(darkTheme = true) {
+                ArchivedDiscussionsScreen(
+                    state = ArchivedDiscussionsUiState.Loaded(emptyList(), emptyList(), ArchiveTab.Channels),
+                    onEvent = {},
+                )
+            }
+        }
+        compose.runOnIdle {
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            view.draw(Canvas(bitmap))
+            val glow = bitmap.getPixel(view.width / 2, view.height / 3)
+            val edge = bitmap.getPixel(view.width / 2, view.height - 8)
+            org.junit.Assert.assertNotEquals("Archive must have the Figma radial glow", edge, glow)
+            bitmap.recycle()
+        }
+    }
+
+    @Test fun archivedRowsUseTheRelativeLabelsShownByFigma() {
+        val now = Clock.System.now()
+        val rows =
+            listOf(14.days, 30.days, 60.days).mapIndexed { index, age ->
+                archived("archive-$index", promoted = true).copy(lastUsedAt = now - age)
+            }
+        compose.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ArchivedDiscussionsScreen(
+                    state = ArchivedDiscussionsUiState.Loaded(rows, emptyList(), ArchiveTab.Channels),
+                    onEvent = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Archived 2 weeks ago").assertIsDisplayed()
+        compose.onNodeWithText("Archived 1 month ago").assertIsDisplayed()
+        compose.onNodeWithText("Archived 2 months ago").assertIsDisplayed()
+    }
+
     private fun assertPopulatedTabs(darkTheme: Boolean) {
         val channel = archived("old-project", promoted = true)
         val discussion = archived("old-discussion", promoted = false)

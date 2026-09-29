@@ -45,3 +45,8 @@ Pending documentation stage: update `docs/knowledge/features/archived-discussion
 ## Open questions
 
 - Can the Figma render be downloaded into the worktree for a durable comparison? If the sandbox blocks its short-lived URL, use the inline render and record the exact artifact gap without claiming a pixel comparison.
+
+## Revisions
+
+- 2026-09-29: The Figma render was saved through the inline screenshot response, resolving the artifact question. The first real device comparison showed a dark inherited back glyph and a broad glow; the implementation now supplies the `onSurface` tint and a tighter role-based radial gradient. The 4dp list top inset aligns the reference's first row.
+- 2026-09-29: The reference labels weeks and months while shared `formatRelativeTime` switches to calendar dates after seven days. `ArchiveRow` now uses an Archive-local elapsed weeks/months formatter, still based on the existing `lastUsedAt` model field. A failing shared screen test preceded that change. The compact device capture exposed a misaligned selected indicator when the other tab wrapped; one shared indicator row now keeps the underline at the strip's bottom.
