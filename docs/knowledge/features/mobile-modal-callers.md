@@ -35,6 +35,26 @@ removal itself.
 
 `HostEditorModal` remains the shared binding for Edit host on the channel list. Settings no longer opens it. Its controller, presence rule, loading mapping and failure copy remain described in [Host editor](host-editor.md).
 
+At the [dark 412 × 892 reference](../../specs/architecture/1277-edit-host-content-figma.md#design-source),
+the centered Edit host content has two 20 dp read-only identity rows with 12 dp
+between them. Each value follows its natural-width semibold label by 10 dp and
+uses one-line ellipsis; below 320 dp of content width, the rows reserve one
+weighted share for the label and two for the value so enlarged labels can wrap
+without collision. The separate Name label sits 8 dp above a 52 dp filled
+`BasicTextField` well. M3 `TextField` retained a 56 dp minimum, so it could not
+meet that measured well height. The outlined Unpair host action follows with
+8 dp extra top space, a 40 dp visible height at default text scale and at least
+a 48 dp click target. Its outline and click target grow with enlarged text so
+the label stays inside the border; the well and outline use the shared 6 dp
+`modalControl` shape. The shell supplies the scrolling and footer reachability
+when width or the keyboard constrains the form. The [emulator capture, Figma
+render and labelled overlay](../../../app/src/androidTest/assets/host-content-1277/comparison-412x892.png)
+preserve both 412 × 892 viewports; Android system bars shift the shell relative
+to Figma's bar-free frame. Figma supplied no loading, error, confirmation,
+compact-width, enlarged-text or keyboard reference; the [capture
+context](../../../app/src/androidTest/assets/host-content-1277/capture-context.txt)
+records that limit.
+
 Patterns worth reusing for the next
 caller that pre-fills an editable field inside this shell:
 

@@ -908,8 +908,12 @@ private fun ThreadStatusArea(
     // The reading's own 16dp padding lands its content on the 20dp gutter; the pill ends on it. A reading
     // that emits nothing takes its weight with it, and Arrangement.End keeps the pill at the right end.
     val hasReading =
-        apiRetry != ApiRetryStatus.NotRetrying || resetting != null || isCompacting || turnOutcome != null ||
-            isThinking || runningTool != null
+        apiRetry != ApiRetryStatus.NotRetrying ||
+            resetting != null ||
+            isCompacting ||
+            turnOutcome != null ||
+            isThinking ||
+            runningTool != null
     // The 24dp reading stays centered in a 28dp combined band. That height also keeps the task
     // pill at its Figma anchor when a reading and task count appear together.
     val bandModifier =

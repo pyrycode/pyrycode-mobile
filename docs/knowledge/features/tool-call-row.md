@@ -353,7 +353,7 @@ rendering doesn't ripple into the data-layer fake.
   - [`MessageBubble`](./message-bubble.md) — `Role.Tool` arm routes here via `?.let`, applies the
     content gutter
   - [`MarkdownText`](./markdown-text.md) — `internal CodeBlock(content, language, copyable = false,
-    textStyle = bodyMedium)` reused for code-ish input/output; `textStyle` added by #895, `copyable`
+    textStyle = bodySmall)` reused for code-ish input/output; `textStyle` added by #895, `copyable`
     stays at its `false` default here (whether tool content becomes copyable is still open, #658's call)
   - [development-verification](./development-verification.md) — component-test placement
     (`sharedTest` vs. `androidTest`) and the managed-device gate this row's tests run under

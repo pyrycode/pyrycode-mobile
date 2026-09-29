@@ -30,6 +30,7 @@ import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.MemorySearchAvailability
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -51,9 +52,8 @@ private val RuleLabelSpacing = 12.dp
 private val RuleThickness = 1.dp
 private val ExplanationTopSpacing = 8.dp
 
-// The design names `Schemes/inverse-primary` at 60% for the rules. #643 mapped that same token at that
-// same alpha onto `outlineVariant` for the header rule — M3's divider role, and the only mapping that
-// reads as a rule under both colour schemes rather than only against the dark reference frame.
+// Fixed dark takes `Schemes/inverse-primary` at 60% directly. Other palettes keep the earlier
+// `outlineVariant` adaptation for a legible rule.
 private const val RULE_ALPHA = 0.60f
 
 @Composable
@@ -177,11 +177,13 @@ private fun RuleLabelRow(
 /** One half of the design's `Session reset` rule pair (Figma nodes `119:3846` / `119:3841`). */
 @Composable
 private fun BoundaryRule(modifier: Modifier = Modifier) {
+    val ruleColor =
+        if (LocalStaticDarkPalette.current) MaterialTheme.colorScheme.inversePrimary else MaterialTheme.colorScheme.outlineVariant
     Box(
         modifier =
             modifier
                 .height(RuleThickness)
-                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = RULE_ALPHA)),
+                .background(ruleColor.copy(alpha = RULE_ALPHA)),
     )
 }
 

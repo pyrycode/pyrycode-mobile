@@ -1,0 +1,6 @@
+Figma nodes 16:8 and 132:3959 inspected 2026-09-29; Figma last-modified date unavailable.
+Both updated emulator panels are 412x892 logical dp captured on the managed Pixel 8 API 35 device; source bitmap 1079x2336 pixels, normalized for comparison. The focused capture method executed once with no failures or skips in the managed-device XML.
+Long-text sheet uses identical message source; Figma also shows status overlays, attachments, thinking, and a prefilled composer that are absent from this deterministic fixture. Reverse-layout thread anchors the shorter fixture lower than the static design.
+Code/boundary sheet uses native-size component crops from the 741dp-wide 132:3959 design. Figma shows a generic Session reset; product requires reason/time, explanation and conditional memory link. Code and message text match, but desktop-width code is cropped instead of resized.
+The overlay and pixel difference compare the entire 16:8 frame. Nonmatching fixture state and vertical anchoring contribute strongly; it is not a per-component color metric.
+Figma's inverse-primary metadata tone is below 4.5:1 on both bubble fills. The emulator uses the enclosing M3 on-container role at 80% opacity for readable timestamp and copy glyph contrast; this is an intentional visual difference.

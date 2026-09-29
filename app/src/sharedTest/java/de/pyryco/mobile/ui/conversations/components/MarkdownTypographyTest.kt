@@ -60,21 +60,21 @@ class MarkdownTypographyTest {
     @Test
     fun default_renderer_keeps_message_typography_and_spacing() {
         rule.setContent { PyrycodeMobileTheme { MarkdownText(fixture) } }
-        assertBody(14, 20, 8f, 4f, taskGap = 6f)
-        assertSpecialStyles()
+        assertBody(14, 20, 12f, 4f, taskGap = 6f)
+        assertSpecialStyles(codeSize = 12)
     }
 
     @Test
     fun finished_reply_keeps_message_typography_and_spacing() {
         showMessage(streaming = false)
-        assertBody(14, 20, 8f, 4f, taskGap = 6f)
+        assertBody(14, 20, 12f, 4f, taskGap = 6f)
     }
 
     @Test
     fun streaming_reply_keeps_message_typography_and_spacing() {
         showMessage(streaming = true)
         rule.mainClock.advanceTimeBy(10_000)
-        assertBody(14, 20, 8f, 4f, taskGap = 6f)
+        assertBody(14, 20, 12f, 4f, taskGap = 6f)
     }
 
     private fun showMessage(streaming: Boolean) {
@@ -171,8 +171,8 @@ class MarkdownTypographyTest {
         assertEquals("$before -> $after", expected, (second.top - first.bottom).value, 0.6f)
     }
 
-    private fun assertSpecialStyles() {
-        for ((text, size, height) in listOf(Triple("Heading", 24, 32), Triple("Cell", 14, 20), Triple("val x = 1", 14, 20))) {
+    private fun assertSpecialStyles(codeSize: Int = 14) {
+        for ((text, size, height) in listOf(Triple("Heading", 24, 32), Triple("Cell", 14, 20), Triple("val x = 1", codeSize, 20))) {
             val style =
                 rule
                     .onNodeWithText(text, useUnmergedTree = true)
