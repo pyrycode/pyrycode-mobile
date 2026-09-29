@@ -69,3 +69,7 @@ No new I/O or parsing. The existing route-specific parse, save and connect error
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-29
+
+## Revisions
+
+- 2026-09-29 verifier review: use `MaterialTheme.shapes.small` for the fingerprint panel instead of a local corner shape. This is the closest existing theme role to the older verification field; preserve the field's dimensions and compare the refreshed emulator capture with node `487:2559`. Render the confirmation preview in the fixed dark theme.

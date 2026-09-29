@@ -426,7 +426,7 @@ private fun PairingConfirmContent(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(MaterialTheme.shapes.small)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                         .padding(horizontal = 12.dp, vertical = 16.dp),
                 contentAlignment = Alignment.Center,
@@ -483,10 +483,16 @@ private fun ScannerScreenDarkPreview() {
     }
 }
 
-@Preview(name = "Confirm", showBackground = true, widthDp = 412, heightDp = 892)
+@Preview(
+    name = "Confirm dark",
+    showBackground = true,
+    widthDp = 412,
+    heightDp = 892,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
 @Composable
 private fun PairingConfirmPreview() {
-    PyrycodeMobileTheme {
+    PyrycodeMobileTheme(darkTheme = true) {
         ScannerScreen(
             state =
                 ScannerUiState.AwaitingConfirm(
