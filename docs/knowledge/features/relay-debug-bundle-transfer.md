@@ -2,8 +2,8 @@
 
 Split out of [Relay/repository coordinator](relay-repository-coordinator.md#configuration) when
 that overview crossed the size cap (\#764). `RelayConnectionRegistry.requestDebugBundle(serverId):
-DebugBundleTransfer` is the coordinator's Configuration-owned entry point for an operator-initiated
-Log data pull; this document covers the transfer itself.
+DebugBundleTransfer` is the coordinator's Configuration-owned entry point for a host-backed
+diagnostic archive pull; this document covers the transfer itself. Settings has no Log data export.
 
 ## How it works
 
@@ -102,3 +102,11 @@ decrypted serialized request for omitted fields, and change selection/remove one
 host while the other completes. Coordinator tests request immediately after a
 transport change, **before `runCurrent()`**, to catch stale admission; after
 reconnect they assert no automatic send and no old-pump frames reaching a retry.
+
+The live two-host proof is `InteractiveStreamE2ETest.interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts`
+([#1252](../../specs/architecture/1252-live-diagnostic-bundles-host-scoped.md)). It writes a
+marker only to A's daemon log, requests complete archives by exact host ID while B is
+selected, and asserts the marker appears only in A's archive. The 2026-09-29 full live
+suite executed 42 methods, failed 0 and skipped 0, including this method; the earlier
+focused attempt stopped at authentication preflight without XML. This tests registry
+host ownership, not a Settings save flow.
