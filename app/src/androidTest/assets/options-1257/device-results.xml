@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="3" failures="0" errors="0" skipped="0" time="5.869" timestamp="2026-09-28T19:21:39" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.OptionsOverlayCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="5.419" timestamp="2026-09-28T19:21:39" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="actionsAt412By892" classname="de.pyryco.mobile.ui.conversations.thread.OptionsOverlayCaptureTest" time="2.402" />
+    <testcase name="slashDetailAtCompactWidthWithLargeText" classname="de.pyryco.mobile.ui.conversations.thread.OptionsOverlayCaptureTest" time="1.888" />
+    <testcase name="slashDetailAt412By892" classname="de.pyryco.mobile.ui.conversations.thread.OptionsOverlayCaptureTest" time="1.129" />
+  </testsuite>
+</testsuites>

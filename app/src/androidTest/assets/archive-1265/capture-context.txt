@@ -1,0 +1,11 @@
+Ticket #1265 Archive visual evidence, inspected 2026-09-29.
+Figma: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=18-2
+Reference: figma-channels-412x892.png is the live 18:2 render at its native 412 x 892 viewport.
+Device: pixel2Api33Atd, API 33, 160 dpi, static dark theme. Focused result: device-results.xml, 3 executed, 0 failures, 0 skipped.
+The capture test wrote PNGs to Gradle's additionalTestOutputDir (named pixel8Api35 by this build configuration); the XML identifies the executing device as pixel2Api33Atd.
+channels-reference-412x892.png omits the host line to reproduce the sole Figma state exactly. channels-412x892.png includes the selected host label used by the app.
+discussions-412x892.png and both empty-state PNGs show current functional states. Node 18:2 has no matching Discussions or empty-state render, so these are not claimed as pixel matches.
+compact-280x400-large-text.png uses font scale 1.6. The host and long conversation name ellipsize; both tab labels and the restore control remain reachable, and the selected indicator stays at the bottom of the expanded tab strip.
+The design's 44px rounded outer corners are part of its presentation frame; the device-root screenshot has rectangular edges. The comparison shows those corners as differences.
+The screen has no archivedAt field. ArchiveRow retains lastUsedAt as the source for the visual relative-time labels, matching the existing data contract.
+Verifier rework on 2026-09-29: refreshed both empty-state captures after setting CenteredText to the onSurface role. The shared dark pixel test checks empty, loading and error copy for a light foreground; the focused device run executed 3 tests, 0 failures and 0 skips, as recorded in device-results.xml. The populated comparison remains valid because this correction affects only centered copy.

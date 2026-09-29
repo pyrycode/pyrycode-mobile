@@ -6,9 +6,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -65,6 +65,58 @@ class ConversationTreeRowsTest {
 
     // One line of titleSmall is 20sp and one of bodySmall 16sp, so two lines of either clear this.
     private val singleLineCeiling = 28.dp
+
+    @Test
+    fun treeRows_matchFigmaBandHeightsAndKeepActionRegionsSeparate() {
+        var folds = 0
+        var edits = 0
+        var adds = 0
+        var opens = 0
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                Column(modifier = Modifier.width(320.dp)) {
+                    TreeHostRow(
+                        serverId = "pyry",
+                        hostName = "Pyry",
+                        connectionStatus = mixedStatus,
+                        expanded = true,
+                        onToggleExpanded = { folds++ },
+                        onEditTapped = { edits++ },
+                        modifier = Modifier.testTag("geometry-host"),
+                    )
+                    TreeHostSectionRow(
+                        serverId = "pyry",
+                        hostName = "Pyry",
+                        sectionName = "Channels",
+                        expanded = true,
+                        onToggleExpanded = { folds++ },
+                        onAddTapped = { adds++ },
+                        isChat = false,
+                        modifier = Modifier.testTag("geometry-section"),
+                    )
+                    TreeConversationRow(
+                        conversationName = "kitchenclaw refactor",
+                        selected = false,
+                        onClick = { opens++ },
+                        onEditTapped = { edits++ },
+                        modifier = Modifier.testTag("geometry-conversation"),
+                    )
+                }
+            }
+        }
+
+        assertEquals(28.dp, composeTestRule.onNodeWithTag("geometry-host").getUnclippedBoundsInRoot().height)
+        assertEquals(28.dp, composeTestRule.onNodeWithTag("geometry-section").getUnclippedBoundsInRoot().height)
+        assertEquals(24.dp, composeTestRule.onNodeWithTag("geometry-conversation").getUnclippedBoundsInRoot().height)
+
+        composeTestRule.onNodeWithTag(treeHostEditTestTag("pyry")).performClick()
+        composeTestRule.onNodeWithTag(treeHostChannelAddTestTag("pyry")).performClick()
+        composeTestRule.onNodeWithText("kitchenclaw refactor").performClick()
+        assertEquals(0, folds)
+        assertEquals(1, edits)
+        assertEquals(1, adds)
+        assertEquals(1, opens)
+    }
 
     private fun string(
         resId: Int,
@@ -485,7 +537,7 @@ class ConversationTreeRowsTest {
             .onAllNodes(hasContentDescription(string(R.string.cd_tree_host_edit, "Pyrybox")), useUnmergedTree = true)
             .assertCountEquals(1)
         val control = composeTestRule.onNodeWithTag(treeHostEditTestTag("pyrybox"))
-        control.assertHeightIsAtLeast(48.dp)
+        assertEquals(28.dp, control.getUnclippedBoundsInRoot().height)
         control.performClick()
 
         assertEquals(1, edits)
@@ -514,7 +566,7 @@ class ConversationTreeRowsTest {
     }
 
     @Test
-    fun everyTappableRow_meetsTheMinimumTouchTargetHeight() {
+    fun everyTappableRow_keepsTheCompactBandWithoutClippingItsText() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 Column {
@@ -532,8 +584,8 @@ class ConversationTreeRowsTest {
             }
         }
 
-        listOf("Pyrybox", "Second Brain", "rocd-thinking").forEach { label ->
-            composeTestRule.onNode(hasText(label)).assertHeightIsAtLeast(48.dp)
-        }
+        assertEquals(28.dp, composeTestRule.onNode(hasText("Pyrybox")).getUnclippedBoundsInRoot().height)
+        assertEquals(28.dp, composeTestRule.onNode(hasText("Second Brain")).getUnclippedBoundsInRoot().height)
+        assertEquals(24.dp, composeTestRule.onNode(hasText("rocd-thinking")).getUnclippedBoundsInRoot().height)
     }
 }

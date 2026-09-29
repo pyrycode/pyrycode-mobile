@@ -110,9 +110,34 @@ assembles: `TreeHostRow`, `TreeHostSectionRow` and `TreeConversationRow`, plus t
 neither. The rows remain stateless and resolve nothing about which host or workspace they belong to; every
 parameter is display text, a flag or a callback the caller (this screen) already resolved — `TreeHostRow`'s
 new `serverId` parameter is the one exception, used only to name its own add control for the device suites,
-never to resolve anything the row draws. Row-level clamping, truncation, selection-fill and
-connection-indicator details are not repeated here — see `docs/specs/architecture/730-mobile-tree-rows.md`;
-this document covers only how the screen assembles and drives them.
+never to resolve anything the row draws.
+
+The visible tree uses 28dp host and Channels/Chats section bands and 24dp conversation bands,
+with 4dp between sibling conversations, 16dp between hosts and a 20dp list gutter. The list
+insets conversation fills another 12dp on each side; section add controls end 10dp before
+the gutter's right edge. Labels use `titleSmall` for hosts and sections and `bodySmall` for
+conversations. Rows have 6dp corners, no tree divider, 6dp status dots, an
+`onPrimary` selected fill in the static dark palette (translucent `primaryContainer` in
+light), and a `primaryContainer` pressed fill. Long names stay on one line and ellipsize
+before the trailing controls. The host retains two separately named connection-leg dots;
+conversation dots name attention state, including the running blink.
+
+Server, open/closed folder, right/down chevron, pencil and plus use the inspected Figma
+paths in the `ic_tree_*` vectors, drawn at 8–16dp according to their slot. Expanded nodes
+use the down chevron and collapsed nodes use right. The visible Figma host instance shows
+a right chevron despite expanded children, so the section's state rule governs both here.
+The phone keeps edit and add actions visible without hover, along with its existing
+reconnect/update controls; the reference has no resting-phone variant for those controls.
+The historical Apps/workspace tiers in that instance are not part of this list.
+
+Fold/open and trailing actions each have their own named, non-overlapping region. A trailing
+control occupies a 24dp-wide slot within its row's 28dp or 24dp band, a smaller physical
+target than the usual 48dp guidance. Compose may expand its semantics bounds beyond the
+painted band, so semantics bounds cannot establish visual row height, and `performClick()`
+cannot prove physical tap separation. The [device capture and coordinate-tap checks](../../../app/src/androidTest/assets/sidebar-1203/capture-context.txt)
+cover row/control edges at 412dp, 320dp and enlarged text, including a long name and the
+host editor. See the [row design](../../specs/architecture/1203-sidebar-tree-rows.md) for
+the inspected states and reference limits.
 
 ## Wiring
 
@@ -203,7 +228,7 @@ own `serverId` at the press, never the selected host) and the close (`dismissCha
 
 ## Configuration
 
-- **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`) for `collectAsStateWithLifecycle`. **Koin compose:** `org.koin.androidx.compose.koinViewModel`. **Toolbar icons:** Figma-derived `ic_sidebar_settings`, `ic_sidebar_archive` and `ic_sidebar_add_host` VectorDrawables, loaded with `painterResource`; the tree's other Material icons still use `material-icons-core`.
+- **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`) for `collectAsStateWithLifecycle`. **Koin compose:** `org.koin.androidx.compose.koinViewModel`. **Toolbar icons:** Figma-derived `ic_sidebar_settings`, `ic_sidebar_archive` and `ic_sidebar_add_host` VectorDrawables, loaded with `painterResource`. **Tree icons:** Figma-derived `ic_tree_*` vectors; only the mobile reconnect and update actions retain Material glyphs.
 - **Strings added in #731:** `R.string.chats_section_header` ("Chats") and `R.string.unnamed_host`
   ("Unnamed host"). **Strings retired in #731:** `recent_discussions_section_header`,
   `see_all_discussions_label`, `cd_see_all_discussions` — deleted from `res/values/strings.xml` alongside the

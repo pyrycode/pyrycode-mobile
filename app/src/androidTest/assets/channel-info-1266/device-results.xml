@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="3" failures="0" errors="0" skipped="0" time="6.845" timestamp="2026-09-29T03:59:02" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.components.ChannelInfoCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="6.105" timestamp="2026-09-29T03:59:02" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="longProviderAtCompactWidthWithLargeText" classname="de.pyryco.mobile.ui.conversations.components.ChannelInfoCaptureTest" time="2.948" />
+    <testcase name="channelInfoAtCompactWidthWithLargeText" classname="de.pyryco.mobile.ui.conversations.components.ChannelInfoCaptureTest" time="1.468" />
+    <testcase name="channelInfoAt412By892" classname="de.pyryco.mobile.ui.conversations.components.ChannelInfoCaptureTest" time="1.689" />
+  </testsuite>
+</testsuites>

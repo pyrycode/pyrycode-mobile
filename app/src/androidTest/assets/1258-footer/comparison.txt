@@ -1,0 +1,23 @@
+Inspected 2026-09-28: Figma nodes 533:1957 (live Input area), 115:3677
+(Actions footer button), and 16:8 (412 x 892 conversation frame).
+
+412x892-side-by-side.png places the full 412 x 892 Figma render beside the
+412 x 892 Pixel 8 API 35 capture. The emulator image includes 24 px status and
+navigation bars. In 412x892-footer-comparison.png, the four 412 x 80 panels
+are Figma, emulator, 50% overlay, and absolute RGB difference. The Figma crop
+is y=812..892. The emulator crop is y=788..868, aligning the bottom of app
+content above the 24 px Android navigation bar. Both crops retain the same
+horizontal positions and scale; no resizing or retouching was applied.
+
+The live Input area has Actions, Cxt: 84%, and Attach, but no Run configuration
+opener. Ticket #1258 requires the opener, so the emulator retains Tune after
+Attach; this shifts the paperclip left. The fake thread has no context report,
+so it shows Cxt: n/a rather than the Figma sample's 84%. The full conversation
+sample also differs from the deterministic fake thread. These are labelled
+reference-state differences, not a second theme or a substituted icon.
+
+The live Figma node supplies no compact-width, enlarged-text, or keyboard-raised
+state. The 360 x 640 emulator captures and the focused Compose enlarged-text
+assertion cover those cases. The device test checks that the three controls do
+not overlap and that the footer clears the keyboard. pixel8Api35-results.xml
+records two executed cases, zero failures and zero skips.

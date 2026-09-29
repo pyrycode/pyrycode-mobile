@@ -204,6 +204,58 @@ class MainActivityInsetsDeviceTest {
 
     @Test fun populatedThreadKeyboardAt360By640() = exerciseThreadKeyboard(360, 640)
 
+    @Test fun composerFooterAt412By892() = captureComposerFooter(412, 892)
+
+    @Test fun composerFooterAt360By640() = captureComposerFooter(360, 640)
+
+    private fun captureComposerFooter(
+        widthDp: Int,
+        heightDp: Int,
+    ) {
+        evidenceFolder = "1258-footer"
+        width = widthDp
+        height = heightDp
+        shell("wm density 160")
+        shell("wm size ${width}x$height")
+        instrumentation.waitForIdleSync()
+        instrumentation.uiAutomation.waitForIdle(250, 10_000)
+        paired = true
+        val conversationId =
+            runBlocking {
+                GlobalContext
+                    .get()
+                    .get<FakeConversationRepository>()
+                    .createChannel("Footer comparison", "~/footer-fixture")
+                    .id
+            }
+        keyboardConversationId = conversationId
+        runBlocking {
+            preferences.setThemeMode(ThemeMode.DARK)
+            preferences.setUseWallpaperColors(false)
+        }
+        launch()
+        density = view.resources.displayMetrics.density
+        assertEquals(1f, density, 0.01f)
+        if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
+            assertTrue("physical bars required for pixels", !syntheticBars)
+        }
+        rule.onNodeWithText("Footer comparison").performScrollTo().performClick()
+        val actions = screenBounds(rule.onNodeWithText("Actions"))
+        val attach = screenBounds(rule.onNodeWithContentDescription("Attach files"))
+        val runConfig = screenBounds(rule.onNodeWithContentDescription("Expand status details"))
+        assertTrue("footer controls keep their order without overlap", actions.right < attach.left && attach.right <= runConfig.left)
+        assertTrue("run configuration stays inside viewport", runConfig.right <= width)
+        capture("thread")
+        val field = rule.onNode(hasSetTextAction())
+        openKeyboard(field)
+        val imeTop = height - insets().getInsets(WindowInsetsCompat.Type.ime()).bottom
+        assertTrue(
+            "all footer controls clear keyboard",
+            screenBounds(rule.onNodeWithContentDescription("Expand status details")).bottom < imeTop,
+        )
+        capture("keyboard")
+    }
+
     private fun exerciseThreadKeyboard(
         widthDp: Int,
         heightDp: Int,
@@ -370,9 +422,9 @@ class MainActivityInsetsDeviceTest {
         if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
             assertTrue("full-image evidence must use physical system bars", !syntheticBars)
         }
-        assertEquals(bars.top + 300 * density, bounds(rule.onNodeWithText("Pyrycode Mobile")).top, 1f)
+        assertEquals(bars.top + 304 * density, bounds(rule.onNodeWithText("Pyrycode Mobile")).top, 1f)
         val footer = rule.onNodeWithText("Open source · github.com/pyrycode/pyrycode-mobile")
-        assertEquals(height - bars.bottom - 16 * density, bounds(footer).bottom, 1f)
+        assertEquals(height - bars.bottom - 4 * density, bounds(footer).bottom, 1f)
         capture("welcome")
 
         rule.onNodeWithText("I already have pyrycode").performClick()
