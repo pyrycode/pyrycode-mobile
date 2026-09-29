@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -155,6 +156,7 @@ private fun RemoveControl(
         modifier =
             Modifier
                 .size(RemoveSize)
+                .shadow(2.dp, CircleShape)
                 .clickable(role = Role.Button, onClick = onRemove),
         contentAlignment = Alignment.Center,
     ) {

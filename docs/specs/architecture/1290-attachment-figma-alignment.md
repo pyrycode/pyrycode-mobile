@@ -68,3 +68,7 @@ Pending documentation stage: update `docs/knowledge/features/thread-screen-compo
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-30
+
+## Revisions
+
+- 2026-09-30: The component capture host did not reproduce `MainActivity`'s IME inset behavior. The keyboard check runs in `MainActivityInsetsDeviceTest` with a real test IME and an assertion that the pending strip clears its measured top. `AttachmentVisualCaptureTest` remains the 412 × 892 and compact pixel fixture; it waits for the provider's asynchronous thumbnails before recording evidence.

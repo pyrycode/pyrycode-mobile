@@ -82,9 +82,7 @@ private val TypeLabelFoldOffset = 14.dp
 private val LoadingIndicatorSize = 24.dp
 private val LoadingIndicatorStroke = 2.dp
 
-// The design paints the file field in `Schemes/inverse-primary`. Same value and reasoning as
-// `MessageMetaRow`'s META_CONTENT_ALPHA (#644): M3 has no de-emphasis role inside a filled container, so
-// the bubble's own content colour at this alpha stands in for it in both bubbles and both schemes.
+// Loading and error text needs stronger contrast than the design's de-emphasized ready file field.
 private const val ATTACHMENT_CONTENT_ALPHA = 0.80f
 private const val IMAGE_PLACEHOLDER_ALPHA = 0.12f
 
@@ -349,7 +347,8 @@ private fun AttachmentFileRow(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val tint = LocalContentColor.current.copy(alpha = ATTACHMENT_CONTENT_ALPHA)
+    val tint = MaterialTheme.colorScheme.inversePrimary
+    val statusTint = LocalContentColor.current.copy(alpha = ATTACHMENT_CONTENT_ALPHA)
     Row(
         modifier = Modifier.testTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).then(modifier),
         horizontalArrangement = Arrangement.spacedBy(FileFieldSpacing),
@@ -371,7 +370,7 @@ private fun AttachmentFileRow(
                     AttachmentViewState.Failed -> R.string.thread_attachment_failed
                     is AttachmentViewState.Ready -> null
                 }
-            status?.let { Text(text = stringResource(it), style = MaterialTheme.typography.bodySmall, color = tint) }
+            status?.let { Text(text = stringResource(it), style = MaterialTheme.typography.bodySmall, color = statusTint) }
             if (state is AttachmentViewState.Failed) {
                 TextButton(onClick = onRetry) { Text(stringResource(R.string.thread_attachment_retry)) }
             }
