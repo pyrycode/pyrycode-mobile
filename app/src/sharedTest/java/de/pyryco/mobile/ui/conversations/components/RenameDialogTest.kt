@@ -1,9 +1,12 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -19,6 +22,8 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -241,9 +246,16 @@ class RenameDialogTest {
     fun compact_width_and_large_text_keep_field_and_actions_reachable() {
         var submitted: String? = null
         composeTestRule.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
-                PyrycodeMobileTheme(darkTheme = true) {
-                    RenameDialog(initialName = "old", onSubmit = { submitted = it }, onDismiss = {})
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
+                    PyrycodeMobileTheme(darkTheme = true) {
+                        RenameDialog(
+                            initialName = "old",
+                            onSubmit = { submitted = it },
+                            onDismiss = {},
+                            modifier = Modifier.size(320.dp, 640.dp),
+                        )
+                    }
                 }
             }
         }

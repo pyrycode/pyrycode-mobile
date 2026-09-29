@@ -51,3 +51,4 @@ Pending documentation stage: update `docs/knowledge/features/mobile-modal-caller
 
 - `LabelledField` and `FieldWell` are private to `ChannelFormFields`, so `RenameDialogInternal` mirrors their single-field geometry locally. This keeps the shared form API unchanged.
 - The managed API 33 ATD image rendered the dialog but returned a blank framebuffer. `RenameDialogCaptureTest` skips that capture-only check on a blank framebuffer; the full Pixel 8 API 35 run produced the actual 412 × 892 PNG and a passing, unskipped XML report under `app/src/androidTest/assets/rename-1278/`.
+- Verifier rework: the Rename field well uses `MaterialTheme.shapes.modalControl`, the same shared shape as `HostNameField`. Compact-width and enlarged-text coverage now fixes the dialog to 320 × 640 dp; a Rename-specific managed-device test verifies an actually visible IME leaves its field and footer above the keyboard and accepts a pointer submission.
