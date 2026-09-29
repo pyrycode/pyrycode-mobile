@@ -2,8 +2,11 @@ package de.pyryco.mobile.ui.components
 
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
@@ -31,6 +34,7 @@ import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -394,5 +398,46 @@ class EditHostModalTest {
         rule.onNodeWithText("Cancel").assertIsDisplayed()
         rule.onNodeWithText("OK").assertIsDisplayed().performClick()
         rule.runOnIdle { assertEquals(listOf(hostName), submitted) }
+    }
+
+    @Test
+    fun unpairOutlineGrowsWithTextScaleWithoutClippingTheLabel() {
+        val fontScale = mutableFloatStateOf(1f)
+        var clicks = 0
+        rule.setContent {
+            PyrycodeMobileTheme {
+                CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.floatValue)) {
+                    UnpairAction(onClick = { clicks++ })
+                }
+            }
+        }
+
+        val unpair = string(R.string.edit_host_unpair)
+        val outline = rule.onNodeWithTag(EDIT_HOST_UNPAIR_OUTLINE_TAG, useUnmergedTree = true)
+        assertEquals(40f, outline.getUnclippedBoundsInRoot().height.value, 1f)
+        val defaultLabelHeight = rule.onNodeWithText(unpair, useUnmergedTree = true).getUnclippedBoundsInRoot().height
+
+        rule.runOnIdle { fontScale.floatValue = 1.5f }
+        val outlineBounds = outline.getUnclippedBoundsInRoot()
+        val actionBounds = rule.onNodeWithText(unpair).getUnclippedBoundsInRoot()
+        val labelBounds = rule.onNodeWithText(unpair, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val labelLayouts = mutableListOf<TextLayoutResult>()
+        rule
+            .onNodeWithText(unpair, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(labelLayouts) }
+        assertEquals(1, labelLayouts.single().lineCount)
+        assertFalse("Unpair label was ellipsized", labelLayouts.single().isLineEllipsized(0))
+        assertTrue("The test did not enlarge the Unpair label", labelBounds.height > defaultLabelHeight)
+        assertTrue("Unpair outline is ${outlineBounds.height}; expected growth beyond 40 dp", outlineBounds.height > 40.dp)
+        assertTrue(
+            "Unpair label extends beyond its outline",
+            labelBounds.left >= outlineBounds.left + 20.dp &&
+                labelBounds.right <= outlineBounds.right - 20.dp &&
+                labelBounds.top >= outlineBounds.top + 7.dp &&
+                labelBounds.bottom <= outlineBounds.bottom - 7.dp,
+        )
+        assertTrue("Unpair touch target must contain its outline", actionBounds.height >= outlineBounds.height)
+        rule.onNodeWithText(unpair).performClick()
+        rule.runOnIdle { assertEquals(1, clicks) }
     }
 }

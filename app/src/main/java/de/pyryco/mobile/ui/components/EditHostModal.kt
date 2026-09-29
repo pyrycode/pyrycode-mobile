@@ -11,10 +11,8 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -29,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -44,12 +43,14 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 import de.pyryco.mobile.ui.theme.modalFieldContainer
 import de.pyryco.mobile.ui.theme.modalFieldText
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 
 /** The device suites' handle for the name field, which the design draws without a built-in label. */
 internal const val EDIT_HOST_NAME_FIELD_TAG: String = "edit-host-name"
+internal const val EDIT_HOST_UNPAIR_OUTLINE_TAG: String = "edit-host-unpair-outline"
 
 // The design's 20dp identity rows, its 10dp label/value gap and the 8dp gap above the name field.
 private val IdentityRowMinHeight = 20.dp
@@ -264,7 +265,7 @@ private fun HostNameField(
                         Modifier
                             .fillMaxWidth()
                             .heightIn(min = NameWellHeight)
-                            .background(MaterialTheme.colorScheme.modalFieldContainer, RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.modalFieldContainer, MaterialTheme.shapes.modalControl)
                             .padding(start = NameWellInset, end = NameTrailingInset, top = NameWellInset, bottom = NameWellInset),
                 ) {
                     innerTextField()
@@ -276,11 +277,17 @@ private fun HostNameField(
 
 /** The frame's outlined `Unpair host` action, with the shell's 48 dp touch floor. */
 @Composable
-private fun UnpairAction(onClick: () -> Unit) {
+internal fun UnpairAction(onClick: () -> Unit) {
+    val textLineHeight =
+        with(LocalDensity.current) {
+            MaterialTheme.typography.bodyLarge.lineHeight
+                .toDp()
+        }
+    val visibleHeight = maxOf(ActionVisibleHeight, textLineHeight + 16.dp)
     Column(modifier = Modifier.padding(top = UnpairTopPadding)) {
         Surface(
             onClick = onClick,
-            modifier = Modifier.height(ActionTouchHeight),
+            modifier = Modifier.heightIn(min = ActionTouchHeight),
             color = androidx.compose.ui.graphics.Color.Transparent,
             contentColor = MaterialTheme.colorScheme.primary,
         ) {
@@ -288,8 +295,9 @@ private fun UnpairAction(onClick: () -> Unit) {
                 Box(
                     modifier =
                         Modifier
-                            .height(ActionVisibleHeight)
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary), RoundedCornerShape(6.dp))
+                            .heightIn(min = visibleHeight)
+                            .testTag(EDIT_HOST_UNPAIR_OUTLINE_TAG)
+                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary), MaterialTheme.shapes.modalControl)
                             .padding(horizontal = 20.dp, vertical = 7.dp),
                     contentAlignment = Alignment.Center,
                 ) {
