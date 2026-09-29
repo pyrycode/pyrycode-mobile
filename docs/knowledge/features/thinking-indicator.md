@@ -44,7 +44,7 @@ component renders exactly as it did before #803. `runningTool` (#897) is the tra
 reason, and `null` means no tool is open. `agent` ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114))
 is the new trailing param, defaulting to `Claude` so every pre-#1114 call site and preview keeps compiling
 and rendering unchanged. The composable is a **pure function of its params** — no
-`ViewModel` reference, no flow collection, no `remember`, no `LaunchedEffect`, no `ThreadUiState` field.
+  `ViewModel` reference, no flow collection, no label cache, no `LaunchedEffect`, no `ThreadUiState` field.
 Statelessness is an AC, not a style choice.
 
 ## What it does
@@ -60,38 +60,36 @@ Statelessness is an AC, not a style choice.
   passing it in, so a tool open during `responding` still shows, and a stale `Running` row after the
   turn has ended does not.
 - When shown, renders a start-aligned `Row` (`fillMaxWidth`, `padding(horizontal = 16.dp, vertical =
-  8.dp)`, `verticalAlignment = CenterVertically`, `horizontalArrangement = Arrangement.spacedBy(8.dp)`)
+  4.dp)`, `verticalAlignment = CenterVertically`, `horizontalArrangement = Arrangement.spacedBy(8.dp)`)
   containing:
-  - a small **indeterminate** `CircularProgressIndicator` — `Modifier.size(16.dp)`, `strokeWidth =
-    2.dp` (deliberately smaller than the 48dp `ScannerConnectingScreen` full-screen spinner; this is a
-    status-band affordance, not a loader). Default M3 `primary` colour — no override.
+  - the supplied 14 × 16 snowflake vector. Its opacity pulses without changing the glyph's bounds.
   - an adjacent `Text`, chosen in priority order: with an open tool, "Running <tool>…"
     (`thread_tool_running_label`) or, with an elapsed reading too, "Running <tool>… <elapsed>"
     (`thread_tool_running_elapsed_label`); otherwise "Thinking…" (`thread_thinking_label`) or, with a
     renderable progress reading, "Thinking… ~N tokens this step" (`thread_thinking_progress_label`) —
-    styled `MaterialTheme.typography.bodySmall` / `color = MaterialTheme.colorScheme.onSurfaceVariant`.
+    styled `MaterialTheme.typography.bodySmall` / `color = MaterialTheme.colorScheme.primary`.
 - **Accessibility** — the row carries `Modifier.semantics(mergeDescendants = true) { contentDescription
   = … }`, sourced by the same priority order: `cd_thread_tool_running` / `cd_thread_tool_running_elapsed`
   for an open tool, else `cd_thread_thinking` ("Agent is thinking") or, with a renderable reading,
   `cd_thread_thinking_progress` ("Claude is thinking, about N tokens into its current reasoning step").
   Merging descendants makes TalkBack announce the indicator once as a single node; the decorative
-  spinner + visible label are subsumed under that accessible name.
-- **One `Row`, one `CircularProgressIndicator`, deliberately (#803, extended by #897).** All four label
+  glyph + visible label are subsumed under that accessible name.
+- **One `Row`, one glyph, deliberately (#803, extended by #897).** All four label
   variants (plain thinking, thinking + tokens, running tool, running tool + elapsed) are chosen by
   varying only the `Text` argument, its `maxLines`/`overflow`, and the row's content description inside a
-  single composition — never by an `if (…) Row { … } else Row { … }` split. Distinct `Row`/spinner call
+  single composition — never by an `if (…) Row { … } else Row { … }` split. Distinct `Row`/glyph call
   sites would give Compose distinct groups: the first tool to open (or reading to arrive) would dispose
-  the old spinner and compose a fresh one, **restarting its rotation** at exactly the moment a tool opens
+  the old glyph and compose a fresh one, **restarting its pulse** at exactly the moment a tool opens
   or a reading appears — a visible hitch, and the inverse of "updates without flicker". This property is
   guaranteed **structurally**, not by assertion: Compose's test API cannot assert node identity across a
   recomposition, so a test that claimed to would be proving something weaker than it reads.
   [`ApiRetryIndicator`](api-retry-indicator.md) shares the identical structure for the identical reason.
-- **No `remember`-cached label, no `derivedStateOf`, no local state (#803, #897).** A cached label would
+- **No `remember`-cached label or `derivedStateOf` (#803, #897).** A cached label would
   freeze a changing reading — the inverse of the point. The reading reaches Compose already
   `distinctUntilChanged`-deduped upstream (see [Thinking-progress state](thinking-progress-state.md)), so
   no further operator belongs here either. `runningTool`'s elapsed seconds are likewise rendered exactly
   as received: there is no `LaunchedEffect`, no local timer, and no coroutine anywhere in this component
-  or its caller — the seconds advance only when a new `ToolCall` value with a new `elapsedSeconds` arrives
+  or its caller for the elapsed reading — the seconds advance only when a new `ToolCall` value with a new `elapsedSeconds` arrives
   (§ The running tool).
 
 The 16dp horizontal inset matches `ConnectionBanner`'s `BannerHorizontalPadding`, so the indicator
@@ -156,10 +154,10 @@ named-constant posture as [`ConnectionBanner`](connection-banner.md) / [`Message
 
 ```kotlin
 private val IndicatorHorizontalPadding = 16.dp
-private val IndicatorVerticalPadding = 8.dp
-private val SpinnerSize = 16.dp
-private val SpinnerStrokeWidth = 2.dp
-private val SpinnerLabelGap = 8.dp
+private val IndicatorVerticalPadding = 4.dp
+private val GlyphWidth = 14.dp
+private val GlyphHeight = 16.dp
+private val IconLabelGap = 8.dp
 ```
 
 ## The running tool (#897)
@@ -330,9 +328,8 @@ here rather than silently defaulting to Claude's text.
   `openToolCall` already returns the same `ToolCall` reference-equal-by-value across recompositions where
   nothing about the open call changed, and a genuinely new reading (a new `elapsedSeconds`) is exactly
   the case that must reach the label.
-- No internal mutable state, no `remember`, no side effect, no coroutine — pure projection of the params
-  to a rendered (or absent) row. `openToolCall` itself lives in `ThreadScreen`, not here, and is likewise
-  a pure function with no coroutine.
+- No mutable label state or coroutine is owned here. The glyph's composition-scoped infinite transition
+  animates opacity while the row remains visible; `openToolCall` remains a pure function in `ThreadScreen`.
 - `ThreadScreen` gains one stable nullable param; the status band is a single cheap wrap-height row — no
   impact on the `LazyColumn`'s item recomposition. `openToolCall`'s scan is `remember(state.items)`-cached
   in the caller, so it re-runs only when the list reference actually changes, not on every recomposition.
@@ -377,13 +374,7 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
 
 ## Edge cases / limitations
 
-- **Visual is design-owed.** The dedicated thinking-state Figma frame is **not yet drawn** in
-  [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) (flagged for Juhana). Until
-  it lands, the visual follows the app's existing M3 progress idiom (small indeterminate spinner +
-  label). When the frame arrives, re-tune the spinner size/colour/label here — no contract change. The
-  `responding`-state streaming caret is the separately-drawn affordance at `16-54`, out of scope.
-- **No animation.** The show/hide is an instant early-return swap, matching `ConnectionBanner`. A
-  subtle fade-in (`AnimatedVisibility`) is a design-owed nicety, deferred with the Figma frame.
+- The reading follows [input status `533:1957`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957), inspected on 2026-09-29. Its opacity pulse preserves the snowflake's 14 × 16 geometry. Show/hide remains an instant early-return swap.
 - **Stale-`true`-on-resume (known, accepted).** The upstream `isThinking`
   ([`stateIn(WhileSubscribed(5_000))`](turn-state-thinking-flag.md) over a `replay = 0` source) can
   momentarily read a stale `true` on re-foreground after a long background. This is a **data-layer**
@@ -391,9 +382,7 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   UI-only slice's scope) or local state in the composable (violates the statelessness AC). It matches
   the transient "right-now" posture already accepted for [`connectionState`](connection-state.md) and
   the [stall flag](stall-state.md). File a follow-up if it reads jarring in practice.
-- **Spinner-only vs. spinner + label.** The shipped variant is spinner **+** "Thinking…" label (the M3
-  idiom default for clarity until the design frame lands); a spinner-only variant would equally satisfy
-  the ACs. The content description is mandatory either way.
+- The supplied glyph and "Thinking…" label share one merged content description.
 - **a11y enhancement (open, NIT).** Code review flagged that adding `liveRegion =
   LiveRegionMode.Polite` would let TalkBack announce "Agent is thinking" on appearance without the user
   navigating to the node — appropriate for a transient status affordance. Deferred as a non-blocking
@@ -495,9 +484,7 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
 - Idiom mirrored: [ConnectionBanner](connection-banner.md) (stateless early-return show/hide,
   file-private spacing `val`s, 16dp horizontal inset), [EmptyThreadState](empty-thread-state.md)
   (light/dark preview template, `stringResource` usage), [ApiRetryIndicator](api-retry-indicator.md) (the
-  display-sanity-gate and single-spinner-call-site idioms #803 clones directly). The existing M3 progress
-  idiom it follows: `ScannerConnectingScreen` (`CircularProgressIndicator(size(48.dp))`), `StatusSheet`
-  (`LinearProgressIndicator`), `LiteralScreenSurface` (`CircularProgressIndicator`). The single-ellipsized-line
+  display-sanity-gate and single-indicator-call-site idioms #803 clones directly). The single-ellipsized-line
   treatment for the tool name (#897) mirrors [`ToolCallRow`](tool-call-row.md#what-it-does) and desktop's
   `toolWorkingCopy` label (`docs/knowledge/features/conversation-shell-working-indicator.md` in the desktop
   repo).

@@ -31,6 +31,8 @@ Split on 2026-09-05 into four documents, listed in § Map above: [ViewModel stat
 
 The current session's `state.runConfig.memorySearch` feeds [Channel info](channel-info-sheet.md) through `toChannelInfoUiModel`, each [session boundary](session-boundary-delimiter.md), and [channel overflow](thread-overflow-menu.md) through `ThreadTopAppBar`. The same report drives all three surfaces after a replacement report or conversation change: Channel info shows installed, disabled and unknown states, while the boundary and channel menu offer Install only for confirmed absence. An omitted report is unknown, not absent. Memory search retrieves stored knowledge. It does not capture the conversation or give the agent access to all messages above a session boundary.
 
+The five transient readings in the composer's [status band](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643) follow the [input status component `533:1957`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957), inspected with the [pill variants `347:6618`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6618) and thread `16:8` on 2026-09-29. Thinking has the supplied snowflake glyph; retry, compaction and Reset use a fixed-length rotating arc; outcomes use the shared error pill. Figma specifies no dedicated frame for the latter four readings or their combination with a task pill, so their component treatment is the reference, not a full-screen pixel match.
+
 ## Wiring
 
 ### Koin binding

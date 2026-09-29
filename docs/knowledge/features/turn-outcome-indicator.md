@@ -83,12 +83,11 @@ fun TurnOutcomeIndicator(report: TurnOutcomeReport?, agent: ConversationAgent, m
 
 Early-return on `null` — the sibling totality idiom shared with [`ApiRetryIndicator`](api-retry-indicator.md)
 / [`ResettingIndicator`](resetting-indicator.md) / [`CompactingIndicator`](compacting-indicator.md).
-Otherwise the sibling row (16dp horizontal / 8dp vertical padding, 8dp gap, `bodySmall` /
-`onSurfaceVariant`, merged `semantics`), with `Icons.Outlined.StopCircle` for `Interrupted` and
-`Icons.Outlined.ErrorOutline` for `Failed`/`StoppedEarly` — no spinner, since a finished turn is not
-progress (the same reasoning the pre-#1002 `UsageLimitIndicator` applied to its own `Icons.Outlined.Info`,
-and [`NoticePill`](notice-pill.md) now applies to the usage-limit reading's own icon-free pill). The row's
-merged `contentDescription` is the visible label.
+Otherwise a 16dp-inset row holds the shared error [`NoticePill`](notice-pill.md) with
+`Icons.Outlined.StopCircle` for `Interrupted` and `Icons.Outlined.ErrorOutline` for
+`Failed`/`StoppedEarly`. Its `bodySmall` label ellipsizes after two lines while the
+merged accessibility description keeps the full bounded label. No spinner appears
+for a finished turn. [Pill variants `347:6618`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6618) provide the component reference; Figma has no dedicated outcome frame.
 
 Label assembly (`strings.xml`, all copy client-owned):
 

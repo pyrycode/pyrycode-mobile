@@ -39,10 +39,9 @@ fun CompactingIndicator(
   composable total anyway — defence in depth, the same posture both siblings ship.
 - Exactly one rendered case — there is no counter-shown/counter-less split of the kind
   [`ApiRetryIndicator`](api-retry-indicator.md) needs, because the flag carries no payload.
-- Renders a `Row` (`fillMaxWidth`, 16dp horizontal / 8dp vertical padding, `CenterVertically`,
-  `Arrangement.spacedBy(8.dp)`) containing a small indeterminate `CircularProgressIndicator`
-  (`size(16.dp)`, `strokeWidth = 2.dp`) and an adjacent `Text` (`bodySmall` / `onSurfaceVariant`) — the
-  identical M3 shape as `ThinkingIndicator` and `ApiRetryIndicator`.
+- Renders a `Row` (16dp horizontal / 4dp vertical padding, 8dp gap) with a 16dp
+  fixed-length rotating arc and adjacent `bodySmall` / `primary` text, matching
+  the input status component's 24dp reading.
 - **Accessibility** — `Modifier.semantics(mergeDescendants = true) { contentDescription = … }` on the
   `Row` so it reads as **one** merged TalkBack node (AC #1), sourced from `cd_thread_compacting` or, when
   `agent == Codex` ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114)),
@@ -156,9 +155,8 @@ See [Compacting state](compacting-state.md) for the upstream data path (#596's `
 
 - `isCompacting: Boolean` is a stable type, so the new `ThreadScreen` parameter adds no recomposition
   instability.
-- No internal mutable state, no `remember`, no side effect, no coroutine — pure projection of
-  `isCompacting` to a rendered (or absent) row. The label is a constant `stringResource`, so there is
-  nothing to freeze.
+- No mutable label state is owned here. The shared arc's composition-scoped transition rotates while
+  `isCompacting` is true; the label remains a constant `stringResource`.
 - `ThreadScreen` gains one param and a `when` arm at an existing single-child slot — no impact on the
   `LazyColumn`'s item recomposition.
 
@@ -190,15 +188,7 @@ case).
 
 ## Edge cases / limitations
 
-- **Visual is design-owed.** No compacting treatment is drawn in
-  [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — the same design-owed gap
-  already recorded for [`ThinkingIndicator`](thinking-indicator.md) and
-  [`ApiRetryIndicator`](api-retry-indicator.md) (and, until [#883](../../specs/architecture/883-retire-literal-screen.md)
-  retired it, the stall promotion banner).
-  Re-verified via `get_metadata` during #597's code review: the frame is Top App Bar → Message list →
-  Status row → Composer, with no status-affordance row drawn. Until it lands the visual follows the
-  app's existing M3 progress idiom; when the frame arrives, re-tune spinner/typography here — no
-  contract change.
+- Figma has no dedicated compaction frame. The current reading uses [input status `533:1957`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957) as its component reference.
 - **No `liveRegion`** on any of the status affordances (this indicator, `ThinkingIndicator`,
   `ApiRetryIndicator`) — a pre-existing, out-of-scope gap across the whole
   family, folded into the design-owed a11y follow-up rather than fixed per-component (see

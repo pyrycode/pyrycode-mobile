@@ -21,12 +21,14 @@ internal fun NoticePill(
     onClick: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
     shadowElevation: Dp = PillShadow,
+    leadingIcon: ImageVector? = null,
+    maxLines: Int = Int.MAX_VALUE,
 )
 ```
 
 [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added `shadowElevation`, defaulted to the
 existing `PillShadow` constant so [`ThreadTopOverlay`](thread-top-overlay.md)'s two overlay callers are
-unaffected — see [§ Three call sites, three contracts](#three-call-sites-three-contracts) below for the
+unaffected — see [§ Four call sites, four contracts](#four-call-sites-four-contracts) below for the
 third caller that overrides it to `0.dp`.
 
 A `Surface` (6dp `RoundedCornerShape`, `shadowElevation` for the overlay's drop shadow) holding a `Row`
@@ -46,7 +48,7 @@ one TalkBack stop, the same "wording has one source" idiom every status-row indi
 `onClick != null` the whole pill is a clickable `Surface(onClick = onClick, ...)`; otherwise a plain
 `Surface`.
 
-## Three call sites, three contracts
+## Four call sites, four contracts
 
 - **Usage pill** ([`ThreadTopOverlay`](thread-top-overlay.md#the-usage-pill)): `onDismiss` is non-`null`
   only when [`usageLimitIsWarning`](usage-limit-indicator.md#shape) is true for the reading being shown —
@@ -63,10 +65,12 @@ one TalkBack stop, the same "wording has one source" idiom every status-row indi
   same `BackgroundTaskPanel` the Actions menu's background-tasks row opens; `onDismiss` is always `null` — a
   running-task count is not something the user can wave away. `shadowElevation = 0.dp`: Figma `568:3162`
   sits in the page flow, not over the messages, so it carries none of the overlay's drop shadow.
+- **Turn-outcome pill** ([Turn-outcome indicator](turn-outcome-indicator.md)): inert error variant in the
+  input status area, with a leading outcome icon, no shadow and a two-line ellipsized label. The full
+  bounded label remains its content description. It has no click or dismiss callback.
 
-The component itself does not know which caller it is serving — `isError`, the two nullable callbacks and
-now `shadowElevation` are the whole contract, so a future fourth notice reuses this file rather than growing
-a new one.
+The component itself does not know which caller it serves. Its error flag, callbacks,
+shadow, optional leading icon and line limit let the outcome reuse the same shape.
 
 ## Testing
 
@@ -83,9 +87,10 @@ for what it pins.
 
 ## Security
 
-No daemon-authored text reaches this file directly — all three call sites pass already-sanitised text
+No daemon-authored text reaches this file directly — its call sites pass already-sanitised text
 (`usageLimitLabel(reading)`, the local `R.string.thread_re_pair` resource, or the client-owned plural
-`R.plurals.thread_task_count` formatted against a device-side `Int` count). `NoticePill` renders `text`
+`R.plurals.thread_task_count` formatted against a device-side `Int` count, or the outcome's bounded
+`turnOutcomeReport`). `NoticePill` renders `text`
 as a plain `Text` argument only, same as every sibling status-row indicator; it performs no further
 sanitisation of its own; see [Usage-limit indicator § Security](usage-limit-indicator.md#security) for why
 the caller's sanitisation bound is the one that matters (the pill wraps instead of `maxLines`-capping, so
