@@ -8,7 +8,7 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/p
 
 Dispatches on `message.role` with a Kotlin `when`:
 
-- **`Role.User`** → `UserMessageBubble(message, modifier)` — right-aligned, filled from `colorScheme.userBubbleContainer` with `onPrimaryContainer` content, plain unparsed `Text(message.content)`.
+- **`Role.User`** → `UserMessageBubble(message, modifier)` — right-aligned, filled from `colorScheme.userBubbleContainer` with `onPrimaryContainer` content, plain unparsed text split at blank-line paragraph breaks.
 - **`Role.Assistant`** → `AssistantMessage(message, modifier)` — left-aligned, filled from `colorScheme.assistantBubbleContainer` with `onSecondaryContainer` content, either the static [`MarkdownText`](./markdown-text.md) (finalized) or the private `StreamingAssistantBody` (while `message.isStreaming`).
 - **`Role.Tool`** → `message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier.padding(start = MessageContentGutter + ToolNestingIndent * toolNestingDepth, end = MessageContentGutter), subagentDepth = toolNestingDepth) }` — routes the unwrapped [`ToolCall`](./data-model.md) payload to [`ToolCallRow`](./tool-call-row.md) since #131. Since #644 this arm also applies the thread's shared content gutter to the modifier it passes down, so the tool card sits on the same inset as the two bubble roles without [`ToolCallRow.kt`](./tool-call-row.md) itself changing — that file is owned by [#658](../codebase/658.md), and this is a caller-side `Modifier.padding`, not an edit to it. **Since #896** the arm also reads `toolNestingDepth` (see [Subagent nesting indent](#subagent-nesting-indent-since-896) below) and steps the start padding in by one `ToolNestingIndent` per level, on top of the gutter; `end` stays a plain `MessageContentGutter`. The null-safe `?.let` still absorbs the data-class invariant (`toolCall` non-null iff `role == Role.Tool`) silently — a `Role.Tool` message with `toolCall = null` (a data-layer bug) renders nothing.
 
@@ -92,7 +92,7 @@ private fun MessageContainer(
         horizontalArrangement = Arrangement.spacedBy(0.dp, alignment),
     ) {
         Surface(
-            modifier = Modifier.testTag(MESSAGE_BUBBLE_TEST_TAG),
+            modifier = Modifier.shadow(4.dp, BubbleShape).testTag(MESSAGE_BUBBLE_TEST_TAG),
             shape = BubbleShape,
             color = bubbleColor,
             contentColor = bubbleContentColor,
@@ -110,7 +110,7 @@ private fun MessageContainer(
 }
 ```
 
-`UserMessageBubble` and `AssistantMessage` are now thin: each supplies `alignment` (`Alignment.End` / `Alignment.Start`), the bubble fill and content colour (see [Token mapping](#token-mapping-figma-roles-against-this-apps-two-schemes) below), and the `body` composable — plain `Text` for the user, the streaming/static markdown pair for the assistant. Neither role owns its own `Surface`, padding, or meta row any more; drift between the two is no longer possible because there is one function that lays both out.
+`UserMessageBubble` and `AssistantMessage` supply alignment, fill, content colour and body to the shared container. User text remains unparsed: blank-line-delimited paragraphs become separate `Text` children at the 12dp content gap, while single line breaks remain literal. The meta row still copies the original source, including blank lines. The assistant supplies streaming or finalized markdown. The 4dp surface shadow follows the 6dp bubble shape without changing layout bounds.
 
 The frame's 412dp reference width carries a 20dp gutter on each edge (`MessageContentGutter`), leaving a 372dp content area; the role container then insets its *opposite* edge by 100dp (`MessageRoleInset`), which caps a bubble at 272dp there. The inset is the mechanism and 272dp is its value at the reference width — there is no separate max-width constant to drift away from it. The gutter lives on the component (not on `ThreadScreen`'s `LazyColumn`, which applies none) because this ticket did not touch that screen.
 
@@ -133,7 +133,7 @@ Since [#1161](../../specs/architecture/1161-dark-message-bubble-fills.md), the b
 fills match it in static dark mode (`darkTheme && !dynamicColor`). Static light
 and wallpaper-derived light/dark palettes retain their selected scheme's
 `primaryContainer` (user) and `secondaryContainer` (assistant). This supersedes
-only #644's static-dark fill divergence; body and metadata colours stay as before:
+only #644's static-dark fill divergence; the current message presentation uses:
 
 | Figma role | Design hex | Used here | Why |
 |---|---|---|---|
@@ -141,31 +141,33 @@ only #644's static-dark fill divergence; body and metadata colours stay as befor
 | Assistant body `Schemes/on-secondary-container` | `#D6E4F7` | `colorScheme.onSecondaryContainer` | As named. |
 | User fill `Schemes/on-primary` | `#003355` | `colorScheme.userBubbleContainer` | Static dark uses `onPrimaryDark` from `Color.kt`; static light and wallpaper modes use `primaryContainer`. [`QueuedMessageRow`](queued-backlog-section.md) shares this base fill beneath its existing 0.6 row opacity. |
 | User body `Schemes/on-primary-container` | `#CFE4FF` | `colorScheme.onPrimaryContainer` | As named. |
-| Meta row text + copy glyph `Schemes/inverse-primary` | `#32628D` | `LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)` (0.8) | **Divergence.** M3 has no de-emphasis role *inside* a filled container; `inverse-primary` is a light-scheme primary tone and only reads as de-emphasis against the dark reference frame. Taking the host bubble's own content colour at a fixed alpha de-emphasises correctly in both bubbles and both schemes. |
+| Meta row text + copy glyph `Schemes/inverse-primary` | `#32628D` | `LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)` (0.8) | **Accessibility deviation:** Figma's tone measures about 2–3:1 on these fills. The enclosing surface provides `onPrimaryContainer` for user and `onSecondaryContainer` for assistant; 80% of that role clears 4.5:1 on both. |
 
 The bubble-specific roles leave global Material containers unchanged (static dark:
 `primaryContainer = #134A74`, `secondaryContainer = #3A4857`). Static dark now maps
 `colorScheme.onPrimaryFixed` to the same `#001D34`, but the assistant bubble keeps
 its scoped fill: light and wallpaper-colour bubbles still use `secondaryContainer`.
-Metadata still uses the host content colour at 0.8 opacity; Figma's
-`inversePrimary` is not the readable cross-theme adaptation.
+The design was inspected on 2026-09-29; its last-modified date was unavailable.
+[The 412 × 892 comparison](https://github.com/pyrycode/pyrycode-mobile/blob/44ac0889/app/src/androidTest/assets/thread-message-1207/long-text-side-by-side.png)
+and [labelled overlay](https://github.com/pyrycode/pyrycode-mobile/blob/44ac0889/app/src/androidTest/assets/thread-message-1207/long-text-overlay-difference.png)
+show the geometry and the deliberate metadata contrast difference.
 
 ### Meta row and copy control (`MessageMetaRow.kt`, since #644)
 
-Each bubble's last child is a `MessageMetaRow(timestamp, copyText, modifier)`: a `Row` of the formatted timestamp (`typography.bodySmall`) and a `CopyTextControl`, 8dp apart, aligned to the bubble's own side via the caller's `Modifier.align(alignment)`.
+Each bubble's last child is a `MessageMetaRow(timestamp, copyText, modifier)`: a `BoxWithConstraints` containing the formatted timestamp (`typography.bodySmall`) and `CopyTextControl` in a row 8dp apart, aligned to the bubble's own side. It reserves the glyph width, horizontal touch padding and gap before measuring the timestamp; at 320dp / 1.5× text, the date may wrap while the copy control stays inside the bubble. A one-line 412dp assertion alone missed this failure.
 
 ```kotlin
 internal fun formatShortDateTime(instant: Instant, timeZone: TimeZone, locale: Locale): String
 ```
-The design's date-then-time timestamp (sample `13.01.2026 - 13:55`). The date half is `DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)`; the time half is `SessionBoundaryDelimiter.kt`'s already-shipped `formatShortTime` (`internal`, same package, importable without moving it) — so neither half carries a hardcoded pattern. The ` - ` separator and the date-before-time order are the design's own and are fixed here rather than delegated to `ofLocalizedDateTime`, which would let a locale reorder them.
+The design's date-then-time timestamp (sample `13.01.2026 - 13:55`). The date half is `DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)`; the time half is `SessionBoundaryDelimiter.kt`'s `formatShortTime`. The ` - ` separator and date-before-time order are fixed. The German-locale emulator shows a two-digit year where the Figma sample has four digits; the locale-aware short-date contract is retained.
 
 ```kotlin
 @Composable
 internal fun CopyTextControl(text: String, contentDescription: String, modifier: Modifier = Modifier)
 ```
-A `Box(Modifier.clickable(role = Role.Button) { ... }.padding(CopyTouchPadding))` around the 11×12 copy glyph (`R.drawable.ic_copy`, tinted from `LocalContentColor`), writing `AnnotatedString(text.take(MAX_CLIPBOARD_CHARS))` to `LocalClipboardManager.current` on tap — the `ChannelInfoSheet` footer's clipboard idiom. It reads **nothing** from the composition tree: the copied text is exactly the caller-supplied `text` argument, never something re-derived from `body`'s rendered output. `MAX_CLIPBOARD_CHARS = 100_000` — `Message.content` is daemon-authored and bounded nowhere on the inbound path, while `ClipData` crosses a Binder transaction with a ~1MB ceiling; an unbounded `setText` on a long assistant turn would throw `TransactionTooLargeException` on the user's own tap. The bound lives inside the control (not at call sites) so every future caller — [#657](../codebase/657.md)'s per-code-block copy included — inherits it without needing to know the text is untrusted.
+A `Box(Modifier.clickable(role = Role.Button) { ... }.padding(horizontal = 6.dp, vertical = 2.dp))` around the 11×12 copy glyph (`R.drawable.ic_copy`, tinted from `LocalContentColor`) writes `AnnotatedString(text.take(MAX_CLIPBOARD_CHARS))` to `LocalClipboardManager.current` on tap. It copies the caller-supplied source, never text re-derived from the rendered body. `MAX_CLIPBOARD_CHARS = 100_000` bounds daemon-authored content before the Binder clipboard transaction, and the bound also applies to per-code-block copy.
 
-**Touch target — recorded deviation.** The glyph draws at 11×12 (a 12dp tap target); `CopyTouchPadding = 6.dp` inside the clickable widens that to 24dp, growing the meta row from 16dp to 24dp. Still under Material's 48dp guidance — a full `IconButton` would inflate every bubble by ~32dp and visibly miss the frame — the deviation runs toward accessibility and is identical on both roles.
+**Visible row and touch target.** The 2dp vertical padding keeps the visible metadata row at 16dp. Compose expands the clickable pointer hit region toward its minimum touch target without enlarging layout. A 320dp / 1.5× device pointer tap outside the visible row copied the source without activating the adjacent menu.
 
 **Why wrap-content, not `fillMaxWidth()`.** The design's meta row is `w-full` inside a shrink-wrapping `Message` column. CSS resolves `w-full` against the *parent's resolved* width, so a short bubble's meta row stays narrow; Compose resolves `fillMaxWidth()` against the *incoming max constraint*, so a literal translation stretched every bubble to the full 272dp lane and destroyed the shrink-wrap — plausible-looking and would have passed a test that didn't check width. The meta row is wrap-content, and `Modifier.align(alignment)` inside the bubble's `Column` puts it on the right side.
 
@@ -292,7 +294,7 @@ Two pre-existing suites were re-run rather than relaxed across #644's restyle, b
 
 ## Edge cases / limitations
 
-- **User variant is plain text; assistant variant renders markdown** (since #129, unchanged by #644). User messages render `Text(message.content)` with no parsing. Assistant messages render through [`MarkdownText`](./markdown-text.md): CommonMark element set, code-block styling from #130.
+- **User variant is plain text; assistant variant renders markdown** (since #129, unchanged by #644). User blank-line paragraphs have a 12dp gap while single line breaks remain literal. Assistant messages render through [`MarkdownText`](./markdown-text.md).
 - **Streaming reveal is character-by-character at a fixed rate; no token-batch awareness.** Unchanged since #184 — see [`streaming-assistant-turns.md`](./streaming-assistant-turns.md) for the Phase 4 live-feed behaviour.
 - **Streaming state is lost on `LazyColumn` item disposal.** Scrolling a streaming message off-screen disposes the item, cancels both `produceState` coroutines, and forgets `revealedLength`; scrolling back re-mounts and the reveal restarts from 0. Phase-0 acceptable.
 - **Caret inside an open markdown construct falls back to plain text.** Unchanged since #184 — see [`MarkdownText`](./markdown-text.md).

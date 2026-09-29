@@ -23,8 +23,9 @@ The body uses [`MarkdownText`](markdown-text.md#public-surface) in a `weight(1f)
 Both attachment and linked-note readers explicitly select M3 `bodyLarge` (16sp/24sp), 12dp block gaps
 and 6dp sibling-list-item gaps. Paragraphs, ordered/unordered/task-list text, ordinary markers and
 quote paragraphs share that size, including nested content; quote paragraphs retain italics.
-Finished and streaming thread markdown keep `bodyMedium` (14sp/20sp) and 8dp/4dp gaps.
-Headings, tables and code keep their existing typography, formatting, highlighting, copy controls and
+The reader explicitly keeps `bodyMedium` code. Thread markdown uses `bodyMedium` prose,
+12dp/4dp gaps and `bodySmall` code with a 20sp line height.
+Headings and tables keep their existing typography, formatting, highlighting, copy controls and
 horizontal scrolling; reader menu copies and link routing are unchanged.
 
 The back arrow and system back return to the same thread. An unreadable or invalid UTF-8 file leaves

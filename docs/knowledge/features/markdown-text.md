@@ -20,15 +20,16 @@ fun MarkdownText(
 )
 ```
 
-`MarkdownTextStyle(body: TextStyle, blockSpacing: Dp = 8.dp, listItemSpacing: Dp = 4.dp)`
-is an immutable body-presentation value. Finished and streaming [`MessageBubble`](message-bubble.md)
-use the default M3 `bodyMedium` (14sp/20sp), with 8dp block and 4dp sibling-item gaps.
+`MarkdownTextStyle(body: TextStyle, blockSpacing: Dp = 12.dp, listItemSpacing: Dp = 4.dp, code: TextStyle? = null)`
+is the presentation value. Finished and streaming [`MessageBubble`](message-bubble.md)
+use M3 `bodyMedium` (14sp/20sp), 12dp block gaps and 4dp sibling-item gaps.
 The [attachment and linked-note reader](markdown-reader-screen.md#what-it-does) explicitly supplies
-`bodyLarge` (16sp/24sp), 12dp block gaps and 6dp sibling-item gaps.
+`bodyLarge` (16sp/24sp), 12dp block gaps, 6dp sibling-item gaps and `bodyMedium` code.
 
 The style reaches paragraphs, ordered/unordered/task-list text, ordinary list markers and fallback
 prose, recursively through lists and quotes. Quote paragraphs add italics to the selected body style.
-Headings, tables and code retain their element-specific typography; inline formatting, highlighting,
+Headings and tables retain their element-specific typography; code uses `style.code` or the thread
+default `bodySmall` (12sp) with a 20sp line height. Inline formatting, highlighting,
 link routing, code copying and horizontal scrolling are independent of this body style.
 
 **No `color` parameter** — text inherits `LocalContentColor.current`; assistant bubbles and the reader
@@ -130,7 +131,7 @@ Two source forms, because the parser only recognises one of them as a node. `~~d
 
 ### Code blocks
 
-Both `CODE_FENCE` and `CODE_BLOCK` dispatch to a single `internal fun CodeBlock(content: String, language: String?, copyable: Boolean = false)`. Widened from `private` to `internal` in #131 (one-keyword edit, no body change) so [`ToolCallRow`](./tool-call-row.md) can reuse it for code-ish tool output via `language = null` — the same bordered monospace surface, the same horizontal-scroll behaviour, no duplication of the visual contract. `copyable` was added in #657 as an opt-in third parameter defaulted to `false`, so [`ToolCallRow`](./tool-call-row.md)'s existing call site compiles unchanged and renders the chrome with no copy control — whether tool output becomes copyable is #658's call, not this ticket's. Only the two markdown dispatch arms pass `copyable = true`.
+Both `CODE_FENCE` and `CODE_BLOCK` dispatch to `internal fun CodeBlock(content: String, language: String?, copyable: Boolean = false, textStyle: TextStyle = MaterialTheme.typography.bodyMedium)`. [`ToolCallRow`](./tool-call-row.md) reuses it for code-like tool output with its own `bodySmall` argument and copy behavior. The two markdown arms pass `copyable = true` and `style.code ?: bodySmall.copy(lineHeight = 20.sp)`: thread code follows the 12sp / 20sp Figma treatment while the reader explicitly retains `bodyMedium`. Changing `CodeBlock`'s shared default would silently change the reader and tool output. Source extraction, syntax color, scrolling and per-block copy keep the same path. [The code and boundary comparison](https://github.com/pyrycode/pyrycode-mobile/blob/44ac0889/app/src/androidTest/assets/thread-message-1207/code-boundary-side-by-side.png) uses a native-size crop of the 741dp-wide message-area node `132:3959`, inspected 2026-09-29; Figma last-modified date was unavailable.
 
 Visual structure since #657 (Figma `134:4809`, the assistant container's `Code` instance — header/divider/body, read off the node rather than #130's flat tile):
 
@@ -156,7 +157,7 @@ Surface(
         }
         Row(verticalAlignment = Alignment.Bottom) {
             Box(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
-                Text(annotated, softWrap = false, style = bodyMedium.copy(fontFamily = Monospace), ...)
+                Text(annotated, softWrap = false, style = textStyle.copy(fontFamily = Monospace), ...)
             }
             if (copyable) {
                 CompositionLocalProvider(LocalContentColor provides LocalContentColor.current.copy(alpha = CODE_COPY_ALPHA)) {
@@ -263,7 +264,7 @@ private val TaskMarkCornerRadius = 3.dp
 private val TaskMarkTopInset = 4.dp   // sits the mark on the first text line, not the item's top edge
 ```
 
-Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Same shape as [`MessageBubble`](./message-bubble.md)'s file-private constants — named for design intent, kept local until a second site in the same package needs the same value. **No `.sp` literal anywhere in this file**; every text size is reached through `MaterialTheme.typography.<slot>`.
+Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TABLE_ROWS = 256`; see [Tables](#tables)) — `internal` since #1067, the rest of this list stays file-private. Block spacing comes from `MarkdownTextStyle`, not a file-private constant: the message default is 12dp and the reader supplies its own 12dp. Text sizes use `MaterialTheme.typography` roles; the thread code role overrides line height to 20sp.
 
 ## Configuration
 
