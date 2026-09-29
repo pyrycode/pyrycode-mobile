@@ -20,9 +20,10 @@ immediately. Instead:
    fingerprint.
 2. **Park** — it fires `ScannerEvent.PairingPrepared(fingerprint, server)`, moving the VM to a new
    `ScannerUiState.AwaitingConfirm(fingerprint, server)` state. **Nothing is persisted.**
-3. **Confirm UI** — `ScannerScreen` renders the full-screen `PairingConfirmContent`: the fingerprint
-   verbatim (monospace, selectable/copyable, content-described) with copy telling the user to compare it
-   against their other device, plus Confirm and Decline buttons.
+3. **Confirm UI** — `ScannerScreen` renders `PairingConfirmContent` inside the shared
+   [mobile modal](mobile-modal.md): the fingerprint verbatim (monospace,
+   selectable/copyable, content-described) with an explicit comparison instruction,
+   plus `Confirm pairing` and `Don't pair` footer actions.
 4. **Confirm** → the route-scope `confirmPairAndNavigate(state.server)` saves and navigates to the
    channel list (since [#489](../codebase/489.md) it also starts the relay connection between the save
    and the navigate — `save → connect → navigate`). **This is the only `save` on the scan path.**
@@ -42,7 +43,7 @@ Decoded(payload)
 ```
 
 The [pair-with-code screen](paste-code-dialog.md) uses the same immutable
-`AwaitingConfirm` value and `ScannerScreen` confirmation surface. Its own
+`AwaitingConfirm` value and `ScannerScreen` confirmation modal. Its own
 `PairCodeViewModel` parses the trimmed draft, then handles Confirm through
 `confirmPairingAndConnect`; it no longer sends a paste through the camera's
 `QrDecoded`/`Decoded` events. Decline/Back restores the draft. After saving it
@@ -84,21 +85,26 @@ branch is unreachable (the parser already proved base64-std-of-32-bytes), so thi
 belt-and-suspenders** over #320's guarantee — different fabric (code, not a second stochastic check) —
 that routes a hypothetical bad stored key to the same Error path as a parse failure.
 
-### `PairingConfirmContent` — the full-screen confirm surface
+### `PairingConfirmContent` — the shared confirmation modal
 
 A `private`, **stateless** composable in [`ScannerScreen.kt`](scanner-screen.md), a peer of the
-`Error`/`Denied` `when(state)` branches (full-screen `Surface` + centered `Column`, mirroring
-`ScannerErrorContent`). Chosen full-screen over a dialog/sheet because a security checkpoint should be
-prominent, not reflexively dismissed, and it extends the screen's existing state-driven `when`.
+`Error`/`Denied` `when(state)` branches. Both QR and code routes present the existing
+`MobileModal` shell with its dark rounded container, close control, scrolling content
+and footer. The shell's dismiss callback and the `Don't pair` action both call the
+route's `onDecline`; dialog Back does the same. The route owns the state transition
+that removes the modal.
 
-- **Title** — *"Confirm the server fingerprint"* (`headlineSmall`).
-- **Compare copy** — *"Check this matches the Static-key fp: line that pyry pair shows on your other
-  device before you pair."* (`bodyMedium`, `onSurfaceVariant`).
+- **Title** — *"Pair"* in the modal header.
+- **Compare copy** — *"Verify that this fingerprint matches the Static-key fp: line shown by pyry pair
+  on your other device before you pair."* (`bodyMedium`, centered, `onPrimaryContainer`).
 - **Fingerprint** — rendered **verbatim** (already the #342 colon-lowercase-hex form; never uppercased,
   regrouped, or stripped), `FontFamily.Monospace`, wrapped in a `SelectionContainer` (selectable +
   long-press copy), with `Modifier.semantics { contentDescription = "Server fingerprint $fingerprint" }`.
-- **Confirm** — `Button`, `fillMaxWidth().heightIn(min = 48.dp)`, label *"Confirm pairing"*.
-- **Decline** — `OutlinedButton`, `fillMaxWidth().heightIn(min = 48.dp)`, label *"Don't pair"*.
+  The full-width `surfaceVariant` panel uses `MaterialTheme.shapes.small`, 12 dp horizontal and
+  16 dp vertical padding, centered `titleLarge` text, and can wrap at compact width or larger text.
+- **Actions** — the modal footer uses its standard cancel and submit buttons, labelled *"Don't pair"*
+  and *"Confirm pairing"*. The label overrides preserve explicit pairing decisions while other
+  callers keep the default *"Cancel"* and *"OK"*.
 
 **The token never reaches this composable** — it receives only the public-key `fingerprint` string +
 two callbacks; the token-bearing `PairedServer` stays in the owning confirmation
@@ -151,11 +157,12 @@ to Welcome. Disabled otherwise, so Back pops normally.
 
 ## Edge cases and limitations
 
-- **Design-later — no Figma.** The locked file `g2HIq2UyPhslEoHRokQmHG` has no confirm-pairing surface
-  (re-verified 2026-06-01, 599 nodes). `PairingConfirmContent` is a clean, **deliberately
-  non-decorative** Material 3 surface; a visual-fidelity retrofit is owed as a follow-up when the view is
-  drawn, and the spec's design source re-anchors to the new `node-id` then. The security behavior
-  (AC #1–#4) is visual-independent, so it does not wait on the pixels.
+- **Design references.** The [older verification content](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=487-2559)
+  is adapted into the current [mobile modal shell](mobile-modal.md), with the explicit desktop
+  comparison instruction retained. There is no dedicated mobile verification or keyboard-open
+  confirmation frame. The [labelled 412 × 892 comparison](../../../app/src/androidTest/assets/pairing-1270/labelled-comparison-412x892.png)
+  and [compact 360 × 640 capture](../../../app/src/androidTest/assets/pairing-1270/qr-confirm-360x640-dark-1.5x.png)
+  use synthetic records and show the full fingerprint and actions at 1.5× text scale.
 - **Camera double-confirm is not guarded.** A fast double-tap fires two idempotent same-record
   `save`s (last-writer-wins overwrite) + two `navigate`s (`launchSingleTop` + `popUpTo` dedupe).
   Manual pairing has a synchronous Saving guard,
@@ -172,8 +179,7 @@ to Welcome. Disabled otherwise, so Back pops normally.
   confirmation content; declining returns to the form rather than re-arming a
   camera. The legacy store-free dialog remains in source but is not mounted.
 - **TalkBack reads the raw colon-hex.** Whether TalkBack should spell the fingerprint group-by-group for
-  easier audible verification is a design-time polish item for the owed Figma retrofit, not a blocker —
-  the fingerprint is selectable/copyable today.
+  easier audible verification remains open; the fingerprint is selectable/copyable today.
 
 ## Related
 
