@@ -48,3 +48,7 @@ Pending documentation stage: update `docs/knowledge/features/channel-info-sheet.
 ## Open questions
 
 - Resolve during capture whether M3's default drag handle and top inset already match the Figma geometry; adjust only on observed mismatch.
+
+## Revisions
+
+- 2026-09-29: The first device render showed M3's default handle area placing the title roughly 20 px below the Figma slot. `ChannelInfoSheet` now supplies the node's 12/4/8 dp handle geometry. The final 412 × 892 capture places the sheet top within 4 px of the bottom-aligned Figma render. The same capture showed that an equal-width Folder value truncated a path that fits in the reference; the path row now gives the label its intrinsic width and lets the value use the remainder. The open question is resolved.

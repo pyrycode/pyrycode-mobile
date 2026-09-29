@@ -1,0 +1,7 @@
+Figma: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=20-48
+Inspected: 2026-09-29
+Reference node: 412 x 596. The comparison places it at the bottom of a black 412 x 892 viewport.
+Emulator: pixel2Api33Atd, API 33, wm size 412x892 or 320x692, wm density 160, static dark colours.
+Capture: ChannelInfoCaptureTest, Compose dialog pixels from the running emulator. The 412 x 892 fixture matches the Figma title, dates, counts and memory-absent state.
+Comparison: left Figma, middle emulator, right 50% overlay. Expected differences are Folder instead of retired Workspace, no Change workspace action, and the three supported action buttons reflowed into two rows. The isolated Figma node rounds its bottom corners; the Android sheet meets the viewport bottom.
+Device result: device-results.xml; 3 executed, 0 failed, 0 skipped.
