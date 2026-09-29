@@ -3,6 +3,8 @@ package de.pyryco.mobile.ui.onboarding
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -18,9 +20,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -29,21 +32,31 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.error
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @Composable
@@ -80,17 +93,17 @@ internal fun PairCodeScreen(
                 .systemBarsPadding()
                 .imePadding(),
         ) {
-            Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp, top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { onEvent(PairCodeEvent.Back) }, enabled = !saving, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    Icon(painterResource(R.drawable.ic_pair_back), contentDescription = "Back")
                 }
                 Text("Pairing", style = MaterialTheme.typography.titleLarge, color = colors.onPrimaryContainer)
             }
-            HorizontalDivider(Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp), color = colors.inversePrimary.copy(alpha = 0.6f))
+            HorizontalDivider(Modifier.padding(start = 20.dp, end = 20.dp), color = colors.inversePrimary.copy(alpha = 0.6f))
             BoxWithConstraints(
                 Modifier.weight(1f).fillMaxWidth().clipToBounds().drawBehind {
-                    val center = Offset(size.width * 0.48f, size.height * 0.30f)
-                    scale(scaleX = 1f, scaleY = 2.53f, pivot = center) {
+                    val center = Offset(size.width * 0.48f, size.height * 0.23f)
+                    scale(scaleX = 1f, scaleY = 1.5f, pivot = center) {
                         drawRect(
                             Brush.radialGradient(
                                 0f to colors.primaryContainer,
@@ -109,7 +122,7 @@ internal fun PairCodeScreen(
                             rememberScrollState(),
                         ).heightIn(min = maxHeight)
                         .height(IntrinsicSize.Min)
-                        .padding(horizontal = 32.dp, vertical = 28.dp),
+                        .padding(start = 32.dp, end = 32.dp, top = 28.dp, bottom = 4.dp),
                 ) {
                     Column(
                         Modifier.weight(1f).heightIn(min = 200.dp).fillMaxWidth(),
@@ -185,28 +198,71 @@ private fun PairCodeField(
     clearLabel: String,
     error: String? = null,
 ) {
-    // Keep M3's native empty-label placement; labels float when focused or populated.
-    // The Figma input-text variant shows the floated label even with an empty draft.
-    TextField(
-        value,
-        onChange,
-        modifier = Modifier.fillMaxWidth(),
-        enabled = enabled,
-        singleLine = true,
-        label = { Text(label) },
-        isError = error != null,
-        supportingText = error?.let { { Text(it) } },
-        colors =
-            TextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.8f),
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.8f),
-            ),
-        trailingIcon = {
+    val colors = MaterialTheme.colorScheme
+    val interactionSource = remember { MutableInteractionSource() }
+    val focusRequester = remember { FocusRequester() }
+    val focused by interactionSource.collectIsFocusedAsState()
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .background(colors.surfaceContainerLowest.copy(alpha = 0.8f), RoundedCornerShape(4.dp))
+                .drawBehind {
+                    drawLine(
+                        color =
+                            when {
+                                error != null -> colors.error
+                                focused -> colors.primary
+                                else -> colors.outline
+                            },
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = (if (focused || error != null) 2.dp else 1.dp).toPx(),
+                    )
+                },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f).padding(start = 16.dp, top = 8.dp, bottom = 8.dp)) {
+                Text(
+                    label,
+                    modifier =
+                        Modifier.clickable(
+                            enabled = enabled,
+                            interactionSource = null,
+                            indication = null,
+                        ) { focusRequester.requestFocus() },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (error != null) colors.error else colors.onSurfaceVariant,
+                )
+                BasicTextField(
+                    value = value,
+                    onValueChange = onChange,
+                    enabled = enabled,
+                    singleLine = true,
+                    modifier =
+                        Modifier.fillMaxWidth().heightIn(min = 20.dp).focusRequester(focusRequester).semantics {
+                            contentDescription = label
+                            if (error != null) error(error)
+                        },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.onSurface),
+                    cursorBrush = SolidColor(colors.primary),
+                    interactionSource = interactionSource,
+                )
+            }
             IconButton(onClick = { onChange("") }, enabled = enabled) {
                 Icon(Icons.Outlined.Cancel, contentDescription = clearLabel)
             }
-        },
-    )
+        }
+        if (error != null) {
+            Text(
+                error,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                color = colors.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
 }
 
 @Preview(name = "Pair code dark", widthDp = 412, heightDp = 892)

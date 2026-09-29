@@ -69,3 +69,8 @@ No documentation-only acceptance criterion was specified. The documentation stag
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-29
+
+## Revisions
+
+- 2026-09-29: The existing Material back arrow has different geometry from node 533:2151, so the route uses a 24 dp vector traced from that supplied SVG. The string-based M3 `TextField` API does not expose the permanently minimized label position available to the state-based overload; a controlled `BasicTextField` keeps `PairCodeState` as the sole draft owner and renders the empty label at the top of the filled container.
+- 2026-09-29: The real 412 × 892 capture showed that the scaffold owns the top and bottom system insets. The screen's header now starts at the consumed top inset, and its bottom body padding accounts for the already consumed navigation inset. `PairCodeScreenInsetsTest` now asserts the pair route's Figma header and safe-area contract directly instead of requiring its Back control to match `ScannerScreen`'s older offset.
