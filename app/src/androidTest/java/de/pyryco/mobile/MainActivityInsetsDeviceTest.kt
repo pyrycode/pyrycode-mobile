@@ -25,6 +25,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
@@ -300,7 +301,10 @@ class MainActivityInsetsDeviceTest {
             list.assertIsDisplayed()
             val field = rule.onNode(hasSetTextAction())
             val header = rule.onNodeWithContentDescription("Back")
-            val footer = rule.onNodeWithContentDescription("Expand status details")
+            // The unmerged icon is the visible footer. Its clickable parent extends into the
+            // bottom gap, so merged semantics cannot measure the design's visible 16 dp spacing.
+            val footer = rule.onNodeWithContentDescription("Expand status details", useUnmergedTree = true)
+            val footerTarget = footer.onParent()
             val send = rule.onNodeWithContentDescription("Send message")
             val label = "${theme.name.lowercase()}-wallpaper-$wallpaper"
             for (index in listOf(0, 4)) {
@@ -310,18 +314,22 @@ class MainActivityInsetsDeviceTest {
                 assertTrue("requested message anchor is established", if (index == 0) scrollBefore == 0f else scrollBefore >= index)
                 val headerBefore = screenBounds(header)
                 val footerGap = height - bars.bottom - screenBounds(footer).bottom
-                assertTrue("normal footer spacing", footerGap in 15f..17f)
+                assertEquals("visible footer gap: $footerGap", 16f, footerGap, 1f)
+                assertTrue("footer target above navigation bar", screenBounds(footerTarget).bottom <= height - bars.bottom)
                 val prefix = "$label-anchor-$index"
                 capture("$prefix-before")
                 openKeyboard(field)
                 if (index == 0) field.performTextInput("Keyboard draft")
                 rule.waitForIdle()
                 capture("$prefix-open")
-                assertEquals("header stays stationary", headerBefore.top, screenBounds(header).top, 1f)
-                assertTrue("header below status bar", screenBounds(header).top >= bars.top)
+                val headerTop = screenBounds(header).top
+                assertEquals("header stays stationary", headerBefore.top, headerTop, 1f)
+                val openBars = insets().getInsets(WindowInsetsCompat.Type.systemBars())
+                assertTrue("header top $headerTop below status bar ${openBars.top}", headerTop >= openBars.top)
                 val ime = insets().getInsets(WindowInsetsCompat.Type.ime()).bottom
                 assertTrue("actual nonzero keyboard inset", ime > 0)
                 assertEquals("one keyboard reservation with normal footer gap", footerGap, height - ime - screenBounds(footer).bottom, 1f)
+                assertTrue("footer target above keyboard", screenBounds(footerTarget).bottom <= height - ime)
                 assertTrue("send above keyboard", screenBounds(send.assertIsEnabled()).bottom <= height - ime)
                 assertTrue("messages retain a viewport", screenBounds(list).height > 48 * density)
                 val viewport = bounds(list)
@@ -350,6 +358,7 @@ class MainActivityInsetsDeviceTest {
                 assertEquals("header stationary on reopening", headerBefore.top, screenBounds(header).top, 1f)
                 val reopenedKeyboardTop = height - insets().getInsets(WindowInsetsCompat.Type.ime()).bottom
                 assertEquals("normal footer gap on reopening", footerGap, reopenedKeyboardTop - screenBounds(footer).bottom, 1f)
+                assertTrue("footer target above reopened keyboard", screenBounds(footerTarget).bottom <= reopenedKeyboardTop)
                 assertTrue("send reachable on reopening", screenBounds(send.assertIsEnabled()).bottom <= reopenedKeyboardTop)
                 // The preservation cycle above never scrolls; now prove scrolling with the IME open.
                 val beforeScroll = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
