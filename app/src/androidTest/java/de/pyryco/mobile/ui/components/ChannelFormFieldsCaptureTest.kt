@@ -14,36 +14,44 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import java.io.File
 
 /** Real 412 × 892 pixels for comparing the shared field wells with the current Figma form. */
 @RunWith(AndroidJUnit4::class)
 class ChannelFormFieldsCaptureTest {
-    @get:Rule val rule = createComposeRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var dialogView: View? = null
-    private var oldSize = "reset"
-    private var oldDensity = "reset"
 
-    @Before fun setDisplay() {
-        oldSize = overrideOf(shell("wm size"))
-        oldDensity = overrideOf(shell("wm density"))
-        shell("wm density 160")
-        shell("wm size 412x892")
-        instrumentation.waitForIdleSync()
-    }
+    // Configure the viewport before the Compose rule launches its host activity.
+    @get:Rule(order = 0)
+    val viewport =
+        TestRule { base, _ ->
+            object : Statement() {
+                override fun evaluate() {
+                    val size = overrideOf(shell("wm size"))
+                    val density = overrideOf(shell("wm density"))
+                    shell("wm density 160")
+                    shell("wm size 412x892")
+                    try {
+                        instrumentation.waitForIdleSync()
+                        base.evaluate()
+                    } finally {
+                        shell("wm size $size")
+                        shell("wm density $density")
+                        instrumentation.waitForIdleSync()
+                    }
+                }
+            }
+        }
 
-    @After fun restoreDisplay() {
-        shell("wm size $oldSize")
-        shell("wm density $oldDensity")
-        instrumentation.waitForIdleSync()
-    }
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
 
     @Test fun createFormAt412By892() {
         val name = mutableStateOf(TextFieldValue(""))

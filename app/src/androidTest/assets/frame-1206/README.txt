@@ -1,0 +1,7 @@
+Ticket #1206 thread frame comparison, inspected 2026-09-29.
+Figma nodes: 16:8 main thread; 533:1946 Chat container; 533:1948 Top bar; 568:3139 task-pill variant; 568:3162 task-pill detail.
+References: figma-16-8-412x892.png and figma-568-3139-412x892.png.
+Emulator: managed Pixel 8 API 35, forced 412 x 892 dp content; raw View.draw captured at 1079 x 2336 physical pixels and normalized to 412 x 892 with Lanczos for comparison. Menu files are full 1080 x 2400 UiAutomation screenshots, including system bars. Compact test is forced 320 x 640 dp at 1.5x font scale.
+The 50% overlay panels compare frame geometry. Deterministic fixture text, attachment thumbnails, notice content, footer controls and message styling differ from the Figma art; those visual treatments belong to their own tickets. The View.draw capture does not include physical display corner masking.
+Figma has no matching empty, IME-open, compact-width, enlarged-text or open-menu reference state. The 533:1946 container metadata has light-mode token values despite the dark thread screenshots; the dark renders and shared theme tokens determined the implementation.
+Real IME evidence: keyboard-* files from MainActivityInsetsDeviceTest populated-thread runs, dark static theme, anchor index 4, before/open/reopened. The full 412 x 892 and 360 x 640 methods passed with one executed test each, no skipped tests. Their captures include nonzero physical system bars and measured IME insets.

@@ -1,14 +1,26 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -19,6 +31,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * The Figma `16:8` frame (#643): the hand-rolled header, and the composer that now carries the
@@ -30,6 +43,7 @@ import org.junit.runner.RunWith
  * standalone foot-of-list stop control is gone rather than merely duplicated.
  */
 @RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ThreadFrameTest {
     @get:Rule
     val composeTestRule = createComposeRule()
@@ -67,6 +81,120 @@ class ThreadFrameTest {
                 )
             }
         }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun referenceFrame_placesHeaderAndMessageRegionAtFigmaAnchors() {
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    ThreadScreen(
+                        state = state("pyrycode discord integration"),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
+            }
+        }
+
+        val title = composeTestRule.onNodeWithText("pyrycode discord integration").getUnclippedBoundsInRoot()
+        val back = composeTestRule.onNodeWithContentDescription(string(R.string.cd_back)).getUnclippedBoundsInRoot()
+        val overflow = composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).getUnclippedBoundsInRoot()
+        assertEquals(56f, title.left.value, 1f)
+        assertEquals(8f, back.left.value, 1f)
+        assertEquals(16f, back.top.value, 1f)
+        assertEquals(404f, overflow.right.value, 1f)
+        val messages = composeTestRule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
+        assertEquals(97f, messages.top.value, 2f)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun referenceFrame_footerTouchTargetsClearTheSendButton() {
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
+            }
+        }
+
+        val send =
+            composeTestRule
+                .onNodeWithContentDescription(
+                    string(R.string.cd_send_message),
+                    useUnmergedTree = true,
+                ).onParent()
+                .getUnclippedBoundsInRoot()
+        val attach =
+            composeTestRule
+                .onNodeWithContentDescription(
+                    string(R.string.cd_attach_files),
+                    useUnmergedTree = true,
+                ).onParent()
+                .getUnclippedBoundsInRoot()
+        val status =
+            composeTestRule
+                .onNodeWithContentDescription(
+                    string(R.string.cd_thread_status_expand),
+                    useUnmergedTree = true,
+                ).onParent()
+                .getUnclippedBoundsInRoot()
+        val field = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true).onParent().getUnclippedBoundsInRoot()
+        assertTrue("attachment touch target must clear send: send=$send attach=$attach", attach.top >= send.bottom)
+        assertTrue("status touch target must clear send", status.top >= send.bottom)
+        assertTrue("footer touch targets must clear the input surface", minOf(attach.top, status.top) >= field.bottom)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun referenceFrame_pointerAtInputFooterBoundaryGoesToInputControls() {
+        var interrupts = 0
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        isBusy = true,
+                        onInterrupt = { interrupts++ },
+                    )
+                }
+            }
+        }
+
+        val send =
+            composeTestRule
+                .onNodeWithContentDescription(string(R.string.cd_thread_interrupt), useUnmergedTree = true)
+                .onParent()
+        val field = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
+        send.performTouchInput {
+            click(bottomCenter + Offset(0f, -2.dp.toPx()))
+        }
+        assertEquals("the stop control owns its lower edge", 1, interrupts)
+
+        field.onParent().performTouchInput {
+            click(bottomLeft + Offset(48.dp.toPx(), -2.dp.toPx()))
+        }
+        field.assertIsFocused()
+
+        composeTestRule
+            .onNodeWithContentDescription(string(R.string.cd_thread_status_expand), useUnmergedTree = true)
+            .onParent()
+            .performTouchInput { click(center) }
+        composeTestRule.onNodeWithText("Run configuration").assertIsDisplayed()
     }
 
     // AC#1: the title truncates inside its own slot. Both controls keep their full width and their
@@ -110,6 +238,7 @@ class ThreadFrameTest {
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
     }
 
     // AC#3: text present wins over the in-flight turn, so the tap that queues a message while the

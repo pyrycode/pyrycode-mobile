@@ -5,11 +5,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -18,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -30,17 +29,18 @@ import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.threadColors
 
-// Figma 16:8's `Top bar` (533:1948): a 24dp back glyph, the conversation title, a 24dp overflow glyph,
-// and the 1dp rule that closes the bar 16dp below them. The design positions bare glyphs; a real tap
-// target is 48dp and centres the glyph inside it, leaving `BarTouchSlack` on every side. Each of the
-// design's offsets is therefore taken less that slack, which puts the glyphs where the design draws
-// them — the same derivation `ChannelListTopBar` uses for the list's own bar in this design language.
+// Figma's `Top bar`: a 24dp back vector, title, 6 × 24dp overflow vector and a 1dp inset rule.
+// The overflow vector is centred in its 24dp design slot. Both glyphs keep 48dp tap targets; the
+// visible paths, not the targets, determine the 20dp gutter and vertical positions.
 // Internal since #1027: the markdown reader's bar is this bar without the overflow.
 internal val BarGlyphSize = 24.dp
 internal val BarTouchSize = 48.dp
 internal val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
 internal val BarGutter = 20.dp
+
+// The reader retains its established top gap; only the thread moves down to the live 16:8 anchor.
 internal val BarTopGap = 24.dp - BarTouchSlack
+private val ThreadBarTopGap = 28.dp - BarTouchSlack
 internal val BarRuleGap = 16.dp - BarTouchSlack
 internal val BarBottomGap = 16.dp
 internal const val BAR_RULE_ALPHA = 0.60f
@@ -83,15 +83,16 @@ fun ThreadTopAppBar(
                     .padding(
                         start = BarGutter - BarTouchSlack,
                         end = BarGutter - BarTouchSlack,
-                        top = BarTopGap,
+                        top = ThreadBarTopGap,
                     ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack, modifier = Modifier.size(BarTouchSize)) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    painter = painterResource(R.drawable.ic_thread_back),
                     contentDescription = stringResource(R.string.cd_back),
                     modifier = Modifier.size(BarGlyphSize),
+                    tint = MaterialTheme.colorScheme.onSurface,
                 )
             }
             Text(
@@ -109,9 +110,10 @@ fun ThreadTopAppBar(
             Box {
                 IconButton(onClick = onOverflowClick, modifier = Modifier.size(BarTouchSize)) {
                     Icon(
-                        imageVector = Icons.Filled.MoreVert,
+                        painter = painterResource(R.drawable.ic_thread_overflow),
                         contentDescription = stringResource(R.string.cd_more_actions),
-                        modifier = Modifier.size(BarGlyphSize),
+                        modifier = Modifier.size(width = 6.dp, height = BarGlyphSize).offset(y = (-4).dp),
+                        tint = MaterialTheme.colorScheme.primary,
                     )
                 }
                 ThreadOverflowMenu(
