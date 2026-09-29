@@ -109,18 +109,7 @@ it to seven — a specific number invites falling out of sync again the next tim
 fun BannerNoticeRow(item: ThreadItem.Banner, agent: ConversationAgent, modifier: Modifier = Modifier)
 ```
 
-Stateless, single `Row` inside the [`MessageContentGutter`](message-bubble.md), no bubble fill —
-borrows the thread's `Session reset` body-small treatment, since Figma 16:8 has no dedicated notice
-component. A `BannerLevel.Warning` row takes the theme's existing `colorScheme.warning` token for both a
-leading 16dp `Icons.Outlined.WarningAmber` (content description `cd_thread_banner_warning`, "Warning from
-%1$s") and the text; every other level uses `onSurfaceVariant` and draws no icon — the two read apart
-without relying on colour alone. The `Text` is one `AnnotatedString` built from three parts, in order: the
-client-owned `thread_banner_attribution` ("%1$s: ", the conversation's agent name from `agentName()`,
-[#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113); "Claude: " for a Claude conversation) in
-`FontWeight.Medium`, `bannerDisplayText(item.text)` in the row's normal weight, and — only when
-`item.truncated` — the client-owned `thread_banner_truncated` (" (truncated)") in `FontStyle.Italic`. No
-`SelectionContainer`, no markdown, no link detection, no click, and no second length cap beyond the
-daemon's 4 KiB bound.
+Stateless bare `Text` in the message stream, with no bubble, border or icon. The [thread notification component](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=620-1576) and [session warning thread](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-5466) use muted `bodyMedium` text within the message gutter. `BannerLevel.Warning` starts with a separate client-owned, medium-weight `Warning · ` span; both levels then show the conversation agent's client-owned attribution as its own medium-weight span, followed by `bannerDisplayText(item.text)` and the italic truncation mark when needed. One full-width `Text` handles wrapping within the gutter. It is inert: no markdown, links, selection container or click action. The daemon's 4 KiB bound remains the only length cap.
 
 `bannerDisplayText(text: String): String` is the pure render-boundary stripping function, mirroring
 desktop's set without its prefix/suffix concerns: OSC strings and DCS/SOS/PM/APC strings (terminated or
@@ -144,7 +133,7 @@ justify the added complexity (see [Development verification](development-verific
 evidence-based fix selection).
 
 **The agent name stays client-owned ([#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113)).**
-The name inside the attribution and the warning content description comes from `agentName(agent):
+The name inside the attribution comes from `agentName(agent):
 String` (`components/AgentName.kt`), an exhaustive `when` over the closed `ConversationAgent` enum
 resolving one of two string resources (`agent_name_claude`, `agent_name_codex`) — never text the daemon
 sent. `agent` is a **required** parameter on this row (no default), so a future call site cannot silently
@@ -197,9 +186,9 @@ replay is what restores a banner after a cold start or a fresh cache — not the
   whose banner the live thread already holds merges to one row; a repeated `ts` within one page yields
   one row.
 - `FileConversationCacheThreadTest`: `cacheableThreadRows` drops banner rows.
-- `BannerNoticeRowTest` (Compose instrumented, `app/src/androidTest/.../components/`): the attribution +
+- `BannerNoticeRowTest` (Compose shared screen test, `app/src/sharedTest/.../components/`): the attribution +
   sanitized text render as one string with escapes gone; a truncated row carries the mark and an
-  untruncated one does not; a `Warning` row exposes `cd_thread_banner_warning` and a `Notice` row does
+  untruncated one does not; a `Warning` row has the client-owned `Warning · ` prefix while a `Notice` row does
   not; the row has no click action even when its text contains something that looks like a link. Since
   #1113 every case passes `agent = ConversationAgent.Claude` and keeps asserting the literal "Claude: "
   copy — the "reads exactly as today" guard.
@@ -207,7 +196,7 @@ replay is what restores a banner after a cold start or a fresh cache — not the
   live verification against a real claude is [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679),
   per the ticket.
 - **#1113**: the new sharedTest `ThreadAgentAttributionTest` (Robolectric, through `ThreadScreen`) covers
-  a Codex conversation's warning banner — "Codex: …" text, "Warning from Codex" content description — and
+  a Codex conversation's warning banner — "Warning · Codex: …" text — and
   a Claude conversation rendering unchanged, proving the `state.agent` wiring end to end.
 
 ## Related

@@ -3,12 +3,19 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -29,6 +36,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * #1002: notices draw as pills in the thread's Top overlay, and the status row keeps only live turn status.
@@ -58,7 +66,9 @@ class ThreadTopOverlayTest {
     private var isBusy by mutableStateOf(false)
     private var resetting by mutableStateOf<ResetStatus?>(null)
     private var turnOutcome by mutableStateOf<TurnOutcomeReport?>(null)
+    private var connectionState by mutableStateOf<ConnectionState>(ConnectionState.Connected)
     private var rePairTaps = 0
+    private var retryTaps = 0
 
     private fun setScreen() {
         composeRule.setContent {
@@ -67,8 +77,8 @@ class ThreadTopOverlayTest {
                     state = state,
                     onBack = {},
                     onSendMessage = {},
-                    connectionState = ConnectionState.Connected,
-                    onRetry = {},
+                    connectionState = connectionState,
+                    onRetry = { retryTaps++ },
                     usageLimit = usageLimit,
                     dismissedUsageLimits = dismissed,
                     onDismissUsageLimit = { dismissed = dismissed + it.dismissalKey() },
@@ -160,6 +170,37 @@ class ThreadTopOverlayTest {
         composeRule.runOnIdle { assertEquals(1, rePairTaps) }
     }
 
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun offlineRetry_hasA48dpTarget_belowAUsagePill_withoutStealingDismissTaps() {
+        usageLimit = warning
+        connectionState = ConnectionState.Offline
+        setScreen()
+
+        val retry = composeRule.onNodeWithTag("offline_retry_target")
+        val retryTouch = retry.fetchSemanticsNode().touchBoundsInRoot
+        val dismissTouch = composeRule.onNodeWithContentDescription(dismissDescription).fetchSemanticsNode().touchBoundsInRoot
+        val usageBounds = composeRule.onNodeWithContentDescription(label("allowed_warning")).getUnclippedBoundsInRoot()
+        val retryPillBounds = composeRule.onNodeWithContentDescription(OFFLINE_RETRY_LABEL).getUnclippedBoundsInRoot()
+        val retryTextBounds = composeRule.onNodeWithText(OFFLINE_RETRY_LABEL, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(12f, (retryPillBounds.top - usageBounds.bottom).value, 0.5f)
+        assertTrue(
+            "retry pill $retryPillBounds text $retryTextBounds should show its short label on one line",
+            retryPillBounds.height <= 30.dp,
+        )
+        assertTrue("retry pill $retryPillBounds should stay legible", retryPillBounds.width >= 100.dp)
+        val minimumHeightPx = with(composeRule.density) { 48.dp.toPx() }
+        assertTrue("retry target $retryTouch must be at least 48dp high", retryTouch.height >= minimumHeightPx)
+        assertTrue("dismiss $dismissTouch must end before retry $retryTouch", dismissTouch.bottom <= retryTouch.top)
+
+        retry.performTouchInput { click(Offset(center.x, bottom - 2.dp.toPx())) }
+        composeRule.runOnIdle { assertEquals(1, retryTaps) }
+        composeRule.onNodeWithContentDescription(dismissDescription).performClick()
+        composeRule.runOnIdle { assertEquals(1, retryTaps) }
+        composeRule.onNodeWithContentDescription(label("allowed_warning")).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(OFFLINE_RETRY_LABEL).assertIsDisplayed()
+    }
+
     // AC #4: a live usage reading no longer masks live turn status.
     @Test
     fun aLiveReading_leavesTheRunningTool_theWrapUp_andInterruptedInTheStatusRow() {
@@ -204,5 +245,6 @@ class ThreadTopOverlayTest {
 
     private companion object {
         const val RE_PAIR_LABEL = "Pairing error - Re-pair"
+        const val OFFLINE_RETRY_LABEL = "Offline · Retry"
     }
 }

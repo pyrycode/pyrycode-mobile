@@ -15,8 +15,7 @@ File: `ModelRefusalRow.kt`. Type + wire DTOs: `data/repository/ConversationRepos
 thread writes live here, not in `RemoteConversationRepository`, which only holds the `onInbound` routing
 arm and the two `TYPE_MODEL_REFUSAL_*` constants. History decode: `data/repository/HistoryPageReducer.kt`
 (`withHistoryEntry`'s two arms, `holdsModelRefusal`). Sibling of [`BannerNoticeRow`](banner-notice-row.md)
-(reuses `bannerDisplayText`) and [`UnrecognizedMessageRow`](unrecognized-message-row.md) (reuses the
-collapsed-pill shape).
+(reuses `bannerDisplayText`).
 
 Wire SSOT: pyrycode `docs/protocol-mobile.md` § `model_refusal_fallback`, § `model_refusal_no_fallback`,
 § *Joining a page to the live stream* for the `(type, ts)` join key (sibling checkout). Desktop sibling:
@@ -102,14 +101,7 @@ and (transitively) `ThreadRow.listKey()` all agree with it.
 fun ModelRefusalRow(item: ThreadItem.ModelRefusal, agent: ConversationAgent, modifier: Modifier = Modifier)
 ```
 
-Stateful/stateless split matching [`UnrecognizedMessageRow`](unrecognized-message-row.md): the public
-`ModelRefusalRow` owns a `rememberSaveable` `expanded: Boolean` (only the toggle is saved, scoped by the
-row's `LazyColumn` key) and delegates to a private stateless `ModelRefusalRowContent`. Figma 16:8 has no
-refusal component, so the row draws `UnrecognizedMessageRow`'s collapsed pill: a 12dp rounded `Surface` on
-`colorScheme.surfaceContainer` with a 1dp `outlineVariant` border, a leading 18dp `Icons.Outlined.Info`
-glyph (`contentDescription = null` — the adjacent title carries the meaning), and one `bodySmall` line in
-`onSurfaceVariant`. The `Surface` is `clickable` only when the sanitized banner is non-blank; a row with no
-explanation has no click action at all.
+The public row keeps only its `rememberSaveable` expansion Boolean under the list row key. The [refusal stream reference](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=620-1577) uses bare text in the message gutter: a collapsed title and `Show details` label, then an attributed explanation and `Hide details` when expanded. There is no pill, icon, border or bubble. When the sanitized explanation is non-blank, the entire gutter-width column is clickable, including its far edge, and carries the agent-named expand/collapse accessibility label. Without an explanation the title has no details action. Title and explanation wrap within the gutter.
 
 The title is one `AnnotatedString`: client-owned copy (`thread_refusal_refused_on` "Refused on ",
 `thread_refusal_continued_on` ", continued on ", `thread_refusal_refused_by` "Refused by ") in
@@ -199,10 +191,9 @@ fresh cache — not the cache.
 - `ModelRefusalRowTest` (Compose instrumented, `app/src/androidTest/.../components/`): a fallback reads
   "Refused on X, continued on Y", a no-fallback reads "Refused by X", an empty model reads "unknown model",
   the banner stays hidden until tapped then shows "Claude: " + stripped text, the truncated mark shows only
-  when cut, and an empty banner leaves the row with no click action. Since #1113 every case passes
-  `agent = ConversationAgent.Claude`; the test only gained the argument, unchanged assertions. It is
-  `androidTest`-only, so #1113 compiled it but did not run it on a device — the sharedTest below carries
-  the actual Codex proof.
+  when cut, and an empty banner leaves the row with no click action. The test is
+  `androidTest`-only. The full managed-device suite on #1283 executed all nine methods with zero failures
+  or skips, including long-explanation gutter wrapping and a pointer tap at the far edge of the row.
 - **No rung-3 / rung-4 scenario.** The daemon has no scripted refusal emitter; live verification against a
   real claude is [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679), per the ticket. #679's own
   body does not yet mention either frame — the only record of that handoff is on #875 and here.

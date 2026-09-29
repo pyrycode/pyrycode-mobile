@@ -24,7 +24,6 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 
 // #777: the oldest-end loading row, sized to ThinkingIndicator's shipped spinner-and-label idiom and
@@ -79,10 +78,8 @@ internal fun HistoryLoadingRow() {
  *
  * The Figma thread frame (16:8) draws no history element, but it does draw one error-plus-action
  * affordance: the status-area "Pairing error - Re-pair" chip, an error-toned container with an emphasized
- * small label on a 6dp radius. This is that shape through its shipped Compose equivalent,
- * [de.pyryco.mobile.ui.conversations.components.ConnectionBanner]'s `errorContainer` /
- * `onErrorContainer` clickable surface, so the new state reads as the same family as the error
- * affordance the design already drew.
+ * small label on a 6dp radius. This row uses an `errorContainer` / `onErrorContainer` clickable
+ * surface, so it reads as the same family as the error affordance the design already drew.
  *
  * Both strings are local resources with no interpolation. In particular the server-authored
  * `RelayErrorException.message` is never surfaced here — the reader is told the page failed, not what the
