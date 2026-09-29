@@ -20,12 +20,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,6 +54,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.ui.components.MobileModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @Composable
@@ -404,12 +403,8 @@ private fun ScannerErrorContent(
     }
 }
 
-// The pairing security checkpoint (#343). A full-screen, stateless M3 surface — a peer of the
-// Error/Denied branches above — that renders the server's static-key fingerprint and gates the
-// persist behind an explicit confirm. Deliberately clean and non-decorative: the confirm-pairing
-// view is not yet drawn in the locked Figma file (design-later), so no atmospheric styling is
-// invented here; a visual-fidelity retrofit lands when the design exists. The token never reaches
-// this composable — it receives only the public-key [fingerprint] string + two callbacks.
+// The pairing security checkpoint receives only the public fingerprint and decision callbacks.
+// The pending server stays in route state so the displayed fingerprint and saved record stay bound.
 @Composable
 private fun PairingConfirmContent(
     fingerprint: String,
@@ -417,72 +412,42 @@ private fun PairingConfirmContent(
     onDecline: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        modifier = modifier.fillMaxSize(),
+    MobileModal(
+        title = "Pair",
+        onDismissRequest = onDecline,
+        onSubmit = onConfirm,
+        modifier = modifier,
+        cancelLabel = "Don't pair",
+        submitLabel = "Confirm pairing",
     ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .systemBarsPadding()
-                    .padding(horizontal = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = "Confirm the server fingerprint",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text =
-                    "Check this matches the Static-key fp: line that pyry pair shows on your " +
-                        "other device before you pair.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-            // Rendered verbatim — already the #342 colon-lowercase-hex form; never uppercased,
-            // regrouped, or stripped. Selectable + long-press copy via SelectionContainer; the
-            // content description lets TalkBack announce it (AC #4, #5).
-            SelectionContainer {
+        // The desktop's fingerprint is colon-hex, not the older Figma mock code. Keep it verbatim.
+        SelectionContainer {
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 12.dp, vertical = 16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
                 Text(
                     text = fingerprint,
-                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Server fingerprint $fingerprint" },
+                    style = MaterialTheme.typography.titleLarge,
                     fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
-                    modifier =
-                        Modifier.semantics {
-                            contentDescription = "Server fingerprint $fingerprint"
-                        },
                 )
             }
-            Spacer(modifier = Modifier.height(32.dp))
-            Button(
-                onClick = onConfirm,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp),
-            ) {
-                Text(text = "Confirm pairing")
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onDecline,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp),
-            ) {
-                Text(text = "Don't pair")
-            }
         }
+        Text(
+            text = "Verify that this fingerprint matches the Static-key fp: line shown by pyry pair on your other device before you pair.",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -518,10 +483,16 @@ private fun ScannerScreenDarkPreview() {
     }
 }
 
-@Preview(name = "Confirm", showBackground = true, widthDp = 412, heightDp = 892)
+@Preview(
+    name = "Confirm dark",
+    showBackground = true,
+    widthDp = 412,
+    heightDp = 892,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
 @Composable
 private fun PairingConfirmPreview() {
-    PyrycodeMobileTheme {
+    PyrycodeMobileTheme(darkTheme = true) {
         ScannerScreen(
             state =
                 ScannerUiState.AwaitingConfirm(

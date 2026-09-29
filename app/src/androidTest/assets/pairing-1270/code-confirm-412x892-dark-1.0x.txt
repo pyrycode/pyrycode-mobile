@@ -1,0 +1,1 @@
+api=35 sizeDp=412x892 density=160 fontScale=1.0 theme=dark record=synthetic keyboard=closed

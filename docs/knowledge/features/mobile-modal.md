@@ -1,7 +1,7 @@
 # Shared mobile modal
 
 [`MobileModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/MobileModal.kt)
-is the shared full-height editing shell. `MobileGateModal` applies decision-gate
+is the shared full-height editing and pairing shell. `MobileGateModal` applies decision-gate
 window security; `MobileReadOnlyModal` omits submit; `MobileDismissModal` provides a single filled dismissal action for Settings. All four share the same
 header, content area and footer layout. Callers own visibility, form values,
 validation, submission and operation cancellation.
@@ -21,6 +21,8 @@ internal fun MobileModal(
     submissionEnabled: Boolean = true,
     loading: Boolean = false,
     error: String? = null,
+    cancelLabel: String = "Cancel",
+    submitLabel: String = "OK",
     content: @Composable ColumnScope.() -> Unit,
 )
 ```
@@ -33,6 +35,13 @@ OK invokes `onSubmit` only when `submissionEnabled && !loading`; it never closes
 the modal automatically. Loading preserves the OK label beside a progress
 indicator and leaves all dismissal routes available. Set loading in the caller
 while work is in progress; the shell does not start or cancel operations.
+
+The footer labels default to `Cancel` and `OK`. Callers can override the text
+without changing either callback: [pairing confirmation](pairing-confirm-gate.md)
+uses `Don't pair` and `Confirm pairing` for both QR and code routes. Its close,
+cancel and dialog Back paths all invoke the route's decline callback; only submit
+invokes confirm. The shell receives only the public fingerprint in its content,
+while each route retains its pending server record.
 
 The content stays composed across loading and error changes. A non-null `error`
 appears after the content in the scroll area, with error color, error semantics
