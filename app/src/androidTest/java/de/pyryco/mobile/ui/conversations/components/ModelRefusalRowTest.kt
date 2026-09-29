@@ -1,15 +1,21 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -98,5 +104,33 @@ class ModelRefusalRowTest {
 
         composeTestRule.onNodeWithText("Refused on claude-opus-5-5, continued on claude-sonnet-5").assertIsDisplayed()
         composeTestRule.onNode(hasClickAction()).assertDoesNotExist()
+    }
+
+    @Test
+    fun tapping_the_far_edge_of_the_row_opens_and_closes_details() {
+        setContent(refusal())
+
+        composeTestRule.onNodeWithText("Show details").assertIsDisplayed()
+        composeTestRule.onNode(hasClickAction()).performTouchInput {
+            click(Offset(center.x * 2f - 2f, center.y))
+        }
+        composeTestRule.onNodeWithText("${attribution}Retried on another model.").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Hide details").assertIsDisplayed()
+        composeTestRule.onNode(hasClickAction()).performTouchInput {
+            click(Offset(center.x * 2f - 2f, center.y))
+        }
+        composeTestRule.onNodeWithText("${attribution}Retried on another model.").assertDoesNotExist()
+    }
+
+    @Test
+    fun long_explanation_wraps_inside_the_message_gutter() {
+        val explanation = "The request could not run on the selected model and continued on another model. ".repeat(3)
+        setContent(refusal(banner = explanation))
+
+        composeTestRule.onNode(hasClickAction()).performClick()
+        val text = composeTestRule.onNodeWithText("$attribution$explanation").getUnclippedBoundsInRoot()
+        val root = composeTestRule.onRoot().getUnclippedBoundsInRoot()
+        assertEquals(20f, text.left.value - root.left.value, 0.5f)
+        assertEquals(20f, root.right.value - text.right.value, 0.5f)
     }
 }

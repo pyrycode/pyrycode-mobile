@@ -1,7 +1,7 @@
 # Thread top overlay — `ThreadTopOverlay`
 
 The **notice surface** for the thread ([#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002)):
-claude's usage-limit report and the pairing-error notice, drawn as a right-aligned stack of
+claude's usage-limit report, the pairing-error notice and Offline Retry, drawn as a right-aligned stack of
 [`NoticePill`](notice-pill.md)s pinned over the top of the message area — replacing the two arms they used
 to share with live turn status inside `ThreadStatusArea`.
 
@@ -34,6 +34,8 @@ internal fun ThreadTopOverlay(
     showRePair: Boolean,
     onRePair: () -> Unit,
     modifier: Modifier = Modifier,
+    connectionState: ConnectionState = ConnectionState.Connected,
+    onRetryConnection: () -> Unit = {},
     agent: ConversationAgent = ConversationAgent.Claude,
 )
 ```
@@ -43,7 +45,7 @@ internal fun ThreadTopOverlay(
 own default — keeps every prior call site and preview compiling unchanged.
 
 Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, and
-`!showRePair`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
+`!showRePair`, and `connectionState != Offline`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
 nothing and the message area draws exactly as if it were absent. Otherwise a `Column(horizontalAlignment =
 End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill gap — with, top to bottom:
 
@@ -55,7 +57,7 @@ indicator](usage-limit-indicator.md) for `usageLimitLabel` / `usageLimitIsWarnin
 guarantees behind them, including how `agent` ([#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115))
 names the conversation's own agent in the lead string instead of a fixed "Claude".
 
-### The pairing pill
+### The pairing or Offline pill
 
 When `showRePair`: `NoticePill(text = stringResource(R.string.thread_re_pair), isError = true, onClick =
 onRePair)` — the local string resource "Pairing error - Re-pair", never daemon text (a code comment on this
@@ -66,7 +68,7 @@ rejected-pairing state; `onRePair` is bound at `MainActivity` to
 `navController.navigate(Routes.pairCode(target.serverId))`. This pill has no dismiss X — a rejected pairing
 is never hideable, unlike a warning reading.
 
-Usage sits above pairing, matching Figma `533:1956`.
+Usage sits above the lower action, matching Figma `533:1956`. When `connectionState` is Offline and `showRePair` is false, the lower action is the error-toned [Retry pill](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4910). Its 48 dp clickable box extends below the visible 24 dp pill, preserving the 12 dp gap and avoiding the usage dismiss target. The visible pill is currently 144 dp wide; the verifier noted that it extends farther left than the reference. `showRePair` wins when pairing is rejected, since a network retry cannot repair that state.
 
 ## Placement in `ThreadScreen`
 
@@ -92,8 +94,7 @@ dismissedUsageLimits` and binds the X to the reading it is currently showing
 `ThreadScreen(` call site and preview compiling unchanged; only `MainActivity` and any test asserting
 dismissal need the new arguments.
 
-`ConnectionBanner` stays suppressed while `showRePair` is true, unchanged from #843 — see [Thread screen —
-overlays and app bar § Connection-banner wiring](thread-screen-how-it-works-overlays-and-app-bar.md#connection-banner-wiring).
+Offline Retry is suppressed while `showRePair` is true; see [connection status placement](thread-screen-how-it-works-overlays-and-app-bar.md#connection-status-placement).
 
 ## Dismissal — `UsageLimitDismissals`
 
@@ -178,9 +179,7 @@ had one tap away. Dismissal tells the daemon nothing.
 - Usage reading: [Usage-limit indicator](usage-limit-indicator.md) — the label/warning helpers, the
   dismissal key extension, and the removed status-row arm's history.
 - Pairing notice: [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) — the rejected-pairing
-  signal (`ThreadViewModel.rePairAvailable`) and the `ConnectionBanner` suppression this overlay's pairing
-  pill continues, described in full at [Thread screen — overlays and app bar § trailing contextual-action
-  slot](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643).
+  signal (`ThreadViewModel.rePairAvailable`) and the Re-pair priority over Offline Retry, described in [connection status placement](thread-screen-how-it-works-overlays-and-app-bar.md#connection-status-placement).
 - Host: [Thread screen](thread-screen.md) — the `Box` overlap this composable draws into, and the two new
   defaulted parameters.
 - Status ladder left behind: [Resetting indicator § Placement](resetting-indicator.md#placement-in-the-thread)
