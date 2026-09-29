@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
@@ -107,7 +108,12 @@ fun ArchivedDiscussionsScreen(
             containerColor = Color.Transparent,
             topBar = {
                 Row(
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = 4.dp, end = 16.dp),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 64.dp)
+                            .padding(start = 4.dp, end = 16.dp)
+                            .testTag("archive_header"),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -168,7 +174,7 @@ private fun LoadedBody(
     Column(modifier = modifier.fillMaxSize()) {
         Column(
             modifier =
-                Modifier.fillMaxWidth().drawBehind {
+                Modifier.fillMaxWidth().testTag("archive_tabs").drawBehind {
                     drawLine(outline, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f))
                 },
         ) {
@@ -191,13 +197,31 @@ private fun LoadedBody(
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .background(if (state.selectedTab == ArchiveTab.Channels) MaterialTheme.colorScheme.primary else Color.Transparent),
+                        .testTag(
+                            if (state.selectedTab == ArchiveTab.Channels) {
+                                "archive_selected_indicator"
+                            } else {
+                                "archive_unselected_indicator"
+                            },
+                        ).background(
+                            if (state.selectedTab == ArchiveTab.Channels) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                Color.Transparent
+                            },
+                        ),
                 )
                 Box(
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .background(
+                        .testTag(
+                            if (state.selectedTab == ArchiveTab.Discussions) {
+                                "archive_selected_indicator"
+                            } else {
+                                "archive_unselected_indicator"
+                            },
+                        ).background(
                             if (state.selectedTab ==
                                 ArchiveTab.Discussions
                             ) {
@@ -274,7 +298,7 @@ private fun CenteredText(
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(text)
+        Text(text, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 

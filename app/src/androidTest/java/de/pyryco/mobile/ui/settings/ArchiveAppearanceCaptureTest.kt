@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
@@ -124,6 +125,10 @@ class ArchiveAppearanceCaptureTest {
             }
         }
         rule.onNodeWithText("Channels (1)").assertIsDisplayed()
+        rule.onNodeWithText("Discussions (0)").assertIsDisplayed()
+        val tabs = rule.onNodeWithTag("archive_tabs").getUnclippedBoundsInRoot()
+        val indicator = rule.onNodeWithTag("archive_selected_indicator").getUnclippedBoundsInRoot()
+        assertEquals(tabs.bottom, indicator.bottom)
         val restore = rule.onNodeWithContentDescription("Restore $name")
         restore.assertIsDisplayed()
         assertTrue(
