@@ -2,8 +2,11 @@ package de.pyryco.mobile.ui.components
 
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
@@ -24,12 +27,14 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -78,6 +83,7 @@ class EditHostModalTest {
 
     // The viewport the shell's own overflow case uses, and the one AC5 names.
     private val smallSize = DpSize(320.dp, 640.dp)
+    private val figmaSize = DpSize(412.dp, 892.dp)
 
     // One bodyMedium line is 20sp, so two lines of it clear this comfortably.
     private val singleLineCeiling = 28.dp
@@ -88,14 +94,16 @@ class EditHostModalTest {
         serverIdentity: String = identity,
         relayAddress: String = relay,
         small: Boolean = false,
+        figma: Boolean = false,
         fontScale: Float = 1f,
     ) {
         rule.setContent {
             PyrycodeMobileTheme {
-                if (small) {
-                    DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(smallSize)) {
+                if (small || figma) {
+                    val size = if (small) smallSize else figmaSize
+                    DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
                         DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
-                            Modal(serverIdentity, relayAddress, Modifier.size(smallSize))
+                            Modal(serverIdentity, relayAddress, Modifier.size(size))
                         }
                     }
                 } else {
@@ -178,6 +186,45 @@ class EditHostModalTest {
         rule.onNodeWithContentDescription("Close").assertIsDisplayed()
         rule.onNodeWithText("Cancel").assertIsDisplayed()
         rule.onNodeWithText("OK").assertIsDisplayed()
+    }
+
+    @Test
+    fun identityValuesFollowNaturalWidthLabelsAndNameWellMatchesDesignHeight() {
+        show(figma = true)
+        val valueStarts = mutableListOf<Dp>()
+        listOf(
+            string(R.string.edit_host_server_identity_label) to identity,
+            string(R.string.edit_host_relay_address_label) to relay,
+        ).forEach { (label, value) ->
+            val labelBounds = rule.onNodeWithText(label, useUnmergedTree = true).getUnclippedBoundsInRoot()
+            val valueBounds = valueNode(value).getUnclippedBoundsInRoot()
+            valueStarts += valueBounds.left
+            assertEquals(10f, (valueBounds.left - labelBounds.right).value, 1f)
+            assertEquals(labelBounds.top.value, valueBounds.top.value, 1f)
+        }
+        assertTrue("identity values must align within the reference row", (valueStarts[0] - valueStarts[1]).value < 7f)
+        val well = rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).getUnclippedBoundsInRoot()
+        assertEquals(52f, well.height.value, 1f)
+    }
+
+    @Test
+    fun clearingTheNameSubmitsBlankWithoutTriggeringUnpair() {
+        show()
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextClearance()
+        rule.onNodeWithText("OK").performClick()
+        rule.runOnIdle {
+            assertEquals(listOf(""), submitted)
+            assertEquals(0, unpairs)
+        }
+    }
+
+    @Test
+    fun keyboardDoneSubmitsTheEditedName() {
+        show()
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextClearance()
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextInput("Renamed host")
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performImeAction()
+        rule.runOnIdle { assertEquals(listOf("Renamed host"), submitted) }
     }
 
     @Test
@@ -351,5 +398,46 @@ class EditHostModalTest {
         rule.onNodeWithText("Cancel").assertIsDisplayed()
         rule.onNodeWithText("OK").assertIsDisplayed().performClick()
         rule.runOnIdle { assertEquals(listOf(hostName), submitted) }
+    }
+
+    @Test
+    fun unpairOutlineGrowsWithTextScaleWithoutClippingTheLabel() {
+        val fontScale = mutableFloatStateOf(1f)
+        var clicks = 0
+        rule.setContent {
+            PyrycodeMobileTheme {
+                CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.floatValue)) {
+                    UnpairAction(onClick = { clicks++ })
+                }
+            }
+        }
+
+        val unpair = string(R.string.edit_host_unpair)
+        val outline = rule.onNodeWithTag(EDIT_HOST_UNPAIR_OUTLINE_TAG, useUnmergedTree = true)
+        assertEquals(40f, outline.getUnclippedBoundsInRoot().height.value, 1f)
+        val defaultLabelHeight = rule.onNodeWithText(unpair, useUnmergedTree = true).getUnclippedBoundsInRoot().height
+
+        rule.runOnIdle { fontScale.floatValue = 1.5f }
+        val outlineBounds = outline.getUnclippedBoundsInRoot()
+        val actionBounds = rule.onNodeWithText(unpair).getUnclippedBoundsInRoot()
+        val labelBounds = rule.onNodeWithText(unpair, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val labelLayouts = mutableListOf<TextLayoutResult>()
+        rule
+            .onNodeWithText(unpair, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(labelLayouts) }
+        assertEquals(1, labelLayouts.single().lineCount)
+        assertFalse("Unpair label was ellipsized", labelLayouts.single().isLineEllipsized(0))
+        assertTrue("The test did not enlarge the Unpair label", labelBounds.height > defaultLabelHeight)
+        assertTrue("Unpair outline is ${outlineBounds.height}; expected growth beyond 40 dp", outlineBounds.height > 40.dp)
+        assertTrue(
+            "Unpair label extends beyond its outline",
+            labelBounds.left >= outlineBounds.left + 20.dp &&
+                labelBounds.right <= outlineBounds.right - 20.dp &&
+                labelBounds.top >= outlineBounds.top + 7.dp &&
+                labelBounds.bottom <= outlineBounds.bottom - 7.dp,
+        )
+        assertTrue("Unpair touch target must contain its outline", actionBounds.height >= outlineBounds.height)
+        rule.onNodeWithText(unpair).performClick()
+        rule.runOnIdle { assertEquals(1, clicks) }
     }
 }

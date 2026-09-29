@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.components
 
+import android.annotation.SuppressLint
 import android.app.UiAutomation
 import android.content.res.Configuration
 import android.hardware.display.DisplayManager
@@ -25,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -343,6 +345,62 @@ class MobileModalTest {
         }
         rule.onNodeWithText("Cancel").performClick()
         rule.runOnIdle { assertEquals(1, dismissals) }
+    }
+
+    @Test
+    @WithTestIme
+    @SuppressLint("ComposeModifierComposed") // Test-only hook reads the dialog's own composition locals.
+    fun editHostFieldAndUnpairRemainReachableWithKeyboard() {
+        var unpairs = 0
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                EditHostModal(
+                    serverIdentity = "345345-345345345-gw3vw-w4wv34-vw34t",
+                    relayAddress = "https://asdf.afwevawef.fwef/asdffe",
+                    initialHostName = "Pyrybox",
+                    onDismissRequest = {},
+                    onSubmit = {},
+                    onUnpairRequested = { unpairs++ },
+                    onUnpairConfirmed = {},
+                    onUnpairDeclined = {},
+                    modifier =
+                        Modifier.composed {
+                            dialogView = LocalView.current
+                            keyboardController = LocalSoftwareKeyboardController.current
+                            this
+                        },
+                )
+            }
+        }
+        rule.waitUntil(10_000) {
+            val focused = rule.runOnIdle { ::dialogView.isInitialized && dialogView.hasWindowFocus() }
+            if (!focused) {
+                ParcelFileDescriptor
+                    .AutoCloseInputStream(
+                        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(
+                            "am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS",
+                        ),
+                    ).use { it.readBytes() }
+            }
+            focused
+        }
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTouchInput { click(Offset(8f, center.y)) }.assertIsFocused()
+        rule.runOnIdle { assertEquals(0, unpairs) }
+        rule.runOnIdle { checkNotNull(keyboardController).show() }
+        rule.waitUntil(5_000) {
+            rule.runOnIdle {
+                ViewCompat.getRootWindowInsets(dialogView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertIsDisplayed().performTextInput(" two")
+        val action = rule.onNodeWithText("Unpair host").performScrollTo().assertIsDisplayed()
+        val fieldBounds = rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).fetchSemanticsNode().boundsInRoot
+        val actionBounds = action.fetchSemanticsNode().boundsInRoot
+        assertTrue("field and Unpair touch areas overlap", fieldBounds.bottom < actionBounds.top)
+        action.performTouchInput { click(Offset(center.x, 1f)) }
+        rule.runOnIdle { assertEquals(1, unpairs) }
+        rule.onNodeWithText("Cancel").assertIsDisplayed()
+        rule.onNodeWithText("OK").assertIsDisplayed()
     }
 
     @Test

@@ -1,0 +1,7 @@
+Ticket #1277; Figma nodes 487:2078, 533:2369 (dark 412x892 composition), 347:6446; inspected 2026-09-29.
+Actual Pixel 8 API 35 emulator capture from MobileModalCaptureTest.editHostAtFigmaViewport, static dark theme, 412x892 at 160 dpi.
+The Figma frame has no Android status/navigation bars; the emulator retains both through the shared MobileModal safe-drawing inset.
+Comparison panels preserve the original 412x892 pixel viewport. Overlay blends those two originals at 50%.
+No Figma loading, generic error, confirmation, compact-width, enlarged-text or keyboard state reference was available; those states are covered by behavior/layout tests.
+Observed: the shared shell's Android bars shift its header/footer relative to the bar-free Figma composition. Within that shell, the content retains the reference's 20 dp identity rows, 12 dp row gaps, 52 dp name well, and 40 dp visible outlined action. The server identity value starts a few pixels farther right because the device font measures its label wider.
+Focused device commands: pixel8Api35DebugAndroidTest selected MobileModalCaptureTest#editHostAtFigmaViewport with requireRealSystemBars=true (1 executed, 0 failures/skips); pixel2Api33AtdDebugAndroidTest selected MobileModalTest#editHostFieldAndUnpairRemainReachableWithKeyboard and MobileModalTest#ime_keeps_focused_field_final_item_and_actions_reachable separately (1 executed each, 0 failures/skips). XML files are adjacent to this note.

@@ -3,30 +3,34 @@ package de.pyryco.mobile.ui.components
 import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -39,12 +43,14 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 import de.pyryco.mobile.ui.theme.modalFieldContainer
 import de.pyryco.mobile.ui.theme.modalFieldText
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 
 /** The device suites' handle for the name field, which the design draws without a built-in label. */
 internal const val EDIT_HOST_NAME_FIELD_TAG: String = "edit-host-name"
+internal const val EDIT_HOST_UNPAIR_OUTLINE_TAG: String = "edit-host-unpair-outline"
 
 // The design's 20dp identity rows, its 10dp label/value gap and the 8dp gap above the name field.
 private val IdentityRowMinHeight = 20.dp
@@ -52,9 +58,11 @@ private val IdentityLabelGap = 10.dp
 private val FieldLabelGap = 8.dp
 private val UnpairTopPadding = 8.dp
 
-// The shell's recorded floor for its own Close, Cancel and OK, applied to this component's one
-// action for the same reason.
-private val ActionMinHeight = 48.dp
+private val NameWellHeight = 52.dp
+private val NameWellInset = 16.dp
+private val NameTrailingInset = 56.dp
+private val ActionTouchHeight = 48.dp
+private val ActionVisibleHeight = 40.dp
 
 /**
  * The Edit host frame, drawn through [MobileModal] and driven entirely by its caller.
@@ -192,25 +200,32 @@ private fun IdentityRow(
     label: String,
     value: String,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = IdentityRowMinHeight).semantics(mergeDescendants = true) {},
-        horizontalArrangement = Arrangement.spacedBy(IdentityLabelGap),
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
-        // The design already draws its own sample identity ellipsised: an over-long value truncates
-        // inside the row rather than stretching it.
-        Text(
-            text = value,
-            modifier = Modifier.weight(2f),
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // On compact viewports reserve a stable fraction for the label; the Figma-sized frame can
+        // use the label's natural width and put its value immediately after the 10 dp gap. The
+        // device's Roboto metrics make Server identity a few dp wider than Figma's sample; keep the
+        // label legible instead of clipping it to that sample width.
+        val compact = maxWidth < 320.dp
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = IdentityRowMinHeight).semantics(mergeDescendants = true) {},
+            horizontalArrangement = Arrangement.spacedBy(IdentityLabelGap),
+        ) {
+            Text(
+                text = label,
+                modifier = if (compact) Modifier.weight(1f) else Modifier,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            // The design already draws its own sample identity ellipsised: an over-long value truncates
+            // inside the row rather than stretching it.
+            Text(
+                text = value,
+                modifier = Modifier.weight(if (compact) 2f else 1f),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -230,55 +245,69 @@ private fun HostNameField(
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
         )
-        val fill = MaterialTheme.colorScheme.modalFieldContainer
-        TextField(
+        val label = stringResource(R.string.edit_host_name_label)
+        BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth().testTag(EDIT_HOST_NAME_FIELD_TAG),
-            textStyle = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = label }.testTag(EDIT_HOST_NAME_FIELD_TAG),
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.modalFieldText),
             singleLine = true,
-            shape = MaterialTheme.shapes.small,
             keyboardOptions =
                 KeyboardOptions(
                     capitalization = KeyboardCapitalization.None,
                     imeAction = ImeAction.Done,
                 ),
             keyboardActions = KeyboardActions(onDone = { onDone() }),
-            // The design draws a plain filled well with no underline, so the indicator is cleared in
-            // every state rather than restyled.
-            colors =
-                TextFieldDefaults.colors(
-                    focusedContainerColor = fill,
-                    unfocusedContainerColor = fill,
-                    disabledContainerColor = fill,
-                    focusedTextColor = MaterialTheme.colorScheme.modalFieldText,
-                    unfocusedTextColor = MaterialTheme.colorScheme.modalFieldText,
-                    cursorColor = MaterialTheme.colorScheme.primary,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent,
-                ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            decorationBox = { innerTextField ->
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = NameWellHeight)
+                            .background(MaterialTheme.colorScheme.modalFieldContainer, MaterialTheme.shapes.modalControl)
+                            .padding(start = NameWellInset, end = NameTrailingInset, top = NameWellInset, bottom = NameWellInset),
+                ) {
+                    innerTextField()
+                }
+            },
         )
     }
 }
 
-/** The frame's outlined `Unpair host` action, grown to the shell's touch floor. */
+/** The frame's outlined `Unpair host` action, with the shell's 48 dp touch floor. */
 @Composable
-private fun UnpairAction(onClick: () -> Unit) {
+internal fun UnpairAction(onClick: () -> Unit) {
+    val textLineHeight =
+        with(LocalDensity.current) {
+            MaterialTheme.typography.bodyLarge.lineHeight
+                .toDp()
+        }
+    val visibleHeight = maxOf(ActionVisibleHeight, textLineHeight + 16.dp)
     Column(modifier = Modifier.padding(top = UnpairTopPadding)) {
-        OutlinedButton(
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+        Surface(
             onClick = onClick,
-            modifier = Modifier.heightIn(min = ActionMinHeight),
-            shape = MaterialTheme.shapes.small,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+            modifier = Modifier.heightIn(min = ActionTouchHeight),
+            color = androidx.compose.ui.graphics.Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.primary,
         ) {
-            Text(
-                text = stringResource(R.string.edit_host_unpair),
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-            )
+            Box(contentAlignment = Alignment.TopCenter) {
+                Box(
+                    modifier =
+                        Modifier
+                            .heightIn(min = visibleHeight)
+                            .testTag(EDIT_HOST_UNPAIR_OUTLINE_TAG)
+                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary), MaterialTheme.shapes.modalControl)
+                            .padding(horizontal = 20.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = stringResource(R.string.edit_host_unpair),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
         }
     }
 }
