@@ -58,8 +58,9 @@ The viewport has no tap-to-pair gesture. Back and Paste have separate callbacks;
 a QR decode starts camera pairing. Colors and typography come from theme roles;
 `Color.Transparent` is used only for radial-gradient terminal stops.
 
-The viewport `Box` stacks `cameraPreview()` first, then the radial-gradient
-sibling, stripe `Canvas` and `ScannerGuides`. The private `ScannerGuides` layout
+The viewport `Box` stacks `cameraPreview()` first, then a 60%-opaque
+`colorScheme.scrim` layer, the radial-gradient sibling, stripe `Canvas`
+and `ScannerGuides`. The scrim darkens real imagery without hiding it. The private `ScannerGuides` layout
 measures the helper **including its 16 dp outer padding** before constraining the
 reticle. The reticle remains square, at most 248 dp and no larger than the window
 width or the height left above the padded helper. It stays centered when it fits,
@@ -67,6 +68,7 @@ otherwise moves upward and shrinks only when needed. The helper stays bottom
 aligned; its top padding provides the 16 dp reticle-to-card gap. Measurement is
 synchronous and adds no state, coroutine or camera lifecycle behavior.
 
+- **Root atmosphere**: `scannerAtmosphere` draws a theme-derived blue radial center over the surface behind the header, window and actions. It fills the column before `systemBarsPadding()`, so atmospheric color reaches the screen edges while content respects system bars. The same drawing helper serves the denied surface.
 - **Background**: `colorScheme.surfaceContainerLowest` (darker than `surface`, M3 dark-scheme convention) clipped to `RoundedCornerShape(24.dp)` — now a **fallback fill** behind the camera feed (visible only before/without a bound camera). The 24dp clip also bounds the `TextureView` preview (only because the preview is `COMPATIBLE`/in-hierarchy; see [Camera preview](camera-preview.md)).
 - **Radial gradients**: two `drawRect(brush = Brush.radialGradient(...))` calls in a single `Modifier.drawBehind`, **moved in #334 from the `Box`'s own modifier into a `Box(Modifier.matchParentSize().drawBehind { … })` child**. The relocation is the AC1 lever: the `Box`'s own `drawBehind` paints behind *all* children including the camera, so the camera would hide the gradients; a `matchParentSize` sibling placed *after* `cameraPreview()` layers the gradients **over** it. The draw is byte-for-byte identical (same stops/centres/`radius`). Centers and radius are derived from the lambda's `size` (`size.width * 0.30f`, `size.height * 0.70f`, `radius = maxOf(size.width, size.height) * 0.7f`), so the gradients adapt to any viewport dimension. Each gradient is a 3-stop: token-derived inner stop (`primary.copy(alpha = 0.12f)` / `tertiary.copy(alpha = 0.06f)`) → same color at `alpha = 0f` at offset 0.6 → `Color.Transparent` at offset 1.
 - **Atmospheric stripes**: a single `Canvas(Modifier.matchParentSize())` runs a `while (y <= size.height) { drawRect(...); y += 7.dp.toPx() }` loop with stripe color hoisted to a `val` at the call site (`colorScheme.onSurface.copy(alpha = 0.04f)` — `MaterialTheme.colorScheme` is not addressable from the `DrawScope` receiver). Stripe count self-terminates against the measured height; the Figma "exactly 105 stripes" figure is a function of the 736dp panel height in the locked design.
@@ -79,7 +81,7 @@ synchronous and adds no state, coroutine or camera lifecycle behavior.
   uses `bodyMedium` and `onSurface` at 92% opacity; only `pyry pair` uses
   `FontFamily.Monospace` and `tertiary`. The card is non-interactive.
 
-Recomposition seam: trivial. The whole screen recomposes when the M3 theme flips light/dark; nothing else mutates. The radial brushes, the `AnnotatedString`, the stripe color, the corner composables, and the scan-line `Canvas`'s `BlurMaskFilter`-backed `Paint` are all reallocated on every recomposition — all cheap, all intentional (no `remember` blocks). The scan-line shadow uses `android.graphics.BlurMaskFilter`, which renders correctly with hardware acceleration on API 28+; min SDK 33 is comfortably inside the supported envelope (#121 swapped from `Modifier.blur` to `BlurMaskFilter` for a true CSS-equivalent drop shadow, not just a coincidental SDK-floor improvement).
+Recomposition seam: trivial. The whole screen recomposes when the M3 theme changes; nothing else mutates. The radial brushes, the `AnnotatedString`, the stripe color, the corner composables, and the scan-line `Canvas`'s `BlurMaskFilter`-backed `Paint` are all reallocated on every recomposition — all cheap, all intentional (no `remember` blocks). The scan-line shadow uses `android.graphics.BlurMaskFilter`, which renders correctly with hardware acceleration on API 28+; min SDK 33 is comfortably inside the supported envelope (#121 swapped from `Modifier.blur` to `BlurMaskFilter` for a true CSS-equivalent drop shadow, not just a coincidental SDK-floor improvement).
 
 Three deliberate design points worth knowing:
 
@@ -230,11 +232,10 @@ Notes:
 - **Camera success retains Welcome underneath.** Only `Scanner` is popped, so Back from the channel list can return to Welcome. A cold start uses the [saved collection](navigation.md#how-it-works) to select its initial destination. Manual pairing instead clears prior graph entries after target readiness; see [return rules](navigation.md#manual-pairing-entry-and-return).
 - **Static scan-line.** The glow marks the scan area without animation; no `rememberInfiniteTransition` runs.
 - **Radial gradients are circular, not elliptical.** Figma's SVG payload uses a `gradientTransform` matrix that produces an *elliptical* radial. Compose's `Brush.radialGradient` is circular only; matching the ellipse exactly requires a wrapping `Modifier.scale(...)` Box. The circular approximation reads identically as atmospheric haze and is what shipped — parity-of-intent, not pixel-identity of the SVG matrix.
-- **Light-theme appearance uses the same theme roles.** The dark frame is the
-  supplied design target. Light/dark captures at both supported test sizes were
-  reviewed for #640; the helper now uses a 94%-opaque theme surface instead of a
-  dark scrim. Stripes remain subtle (`onSurface` at 4% opacity); there is no
-  `isSystemInDarkTheme()` layout branch.
+- **The production design target uses the fixed dark theme.** Earlier #640
+  light/dark fixture captures remain historical; #1213 compares the dark
+  412×892 frame and checks compact 360×640 and 1.5× text. Stripes remain
+  subtle (`onSurface` at 4% opacity); layout has no system-theme branch.
 - **Live camera acceptance remains separate from fixture coverage.** A fake
   preview slot proves layout and callback wiring, not CameraX binding or QR
   capture. `InteractiveStreamE2ETest` begins with injected pairing credentials:
@@ -261,6 +262,10 @@ confirmation callbacks and 48 dp actions. `ScannerFrameTest` exercises 412×892 
 360×640 dp in light and dark themes, asserting divider/camera presence, clickable
 Back/Paste, square reticle bounds, the centered 248 dp reference reticle, and
 separation between the reticle, helper card, camera window and paste action.
+The #1213 fixture also checks root atmospheric pixels and 1.5× text at
+360×640 dp. Its Scaffold padding must be consumed before the screen applies
+`systemBarsPadding()`; otherwise a screenshot can show doubled system insets
+while layout assertions still pass.
 
 `ScannerScreenTest.denied_backReturnsToCaller` exercises Back through the denied
 branch, checking “Pair with pyrycode”, the “Back” description, a minimum 48×48 dp
@@ -296,7 +301,16 @@ confirmed their execution in the broader UI/unit gates. The
 focused command and reviewed `scanner-{412,360}-{dark,light}.png` captures under
 `app/build/outputs/managed_device_android_test_additional_output/debug/pixel2Api33Atd/`.
 The captures use a non-secret fake preview; they establish frame appearance, not
-live camera rendering.
+live camera rendering. The [#1213 retained comparison](../../../app/src/androidTest/assets/scanner-1213/README.md)
+pairs the current Figma 13:2 render with nonblank 412×892 API 35 pixels and a
+labelled difference; the design was inspected 2026-09-29 and its modification
+date was unavailable. Static geometry evidence alone cannot establish how the
+60% scrim composites over CameraX.
+`ScannerLivePreviewDeviceTest.readyRoute_streamingCameraIsVisibleUnderOverlay`
+therefore enters the production ready route and waits for both a nonblank raw
+CameraX frame and visible composed pixels before capture: a streaming preview
+can briefly be black at startup. The retained result executes one method with
+no failures or skips and shows the virtual scene under the mask and guides.
 
 ## Related
 

@@ -48,7 +48,11 @@ fun ScannerDeniedScreen(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .systemBarsPadding()
+                    .scannerAtmosphere(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        MaterialTheme.colorScheme.surfaceContainerLowest,
+                        MaterialTheme.colorScheme.surface,
+                    ).systemBarsPadding()
                     .padding(top = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {

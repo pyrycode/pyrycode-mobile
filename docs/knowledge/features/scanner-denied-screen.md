@@ -30,7 +30,9 @@ fun ScannerDeniedScreen(
 )
 ```
 
-The root `Surface` receives `modifier`. Its column applies `systemBarsPadding()`
+The root `Surface` receives `modifier`. Its column draws the shared
+`scannerAtmosphere` blue radial center from dark theme roles before it applies
+`systemBarsPadding()`
 and 4 dp top padding, then a 64 dp header row with 4 dp start padding. The 48 dp
 Back button is vertically centered; the `titleLarge` title starts at x=52 dp.
 The header belongs to this state surface: the host supplies navigation callbacks,
@@ -73,7 +75,7 @@ resources is a tint mask; the SVG's exported colors do not set the runtime palet
 
 | Element | Slot |
 | --- | --- |
-| Root background | `colorScheme.surface` |
+| Root background | `colorScheme.surface` with `scannerAtmosphere(primaryContainer, surfaceContainerLowest, surface)` behind content |
 | Header title, Back arrow and heading | `colorScheme.onSurface` |
 | Camera outline and inner-lens fill | `colorScheme.onSurfaceVariant` |
 | Strike | `colorScheme.error` |
@@ -81,7 +83,8 @@ resources is a tint mask; the SVG's exported colors do not set the runtime palet
 | Filled action container / label | M3 defaults: `primary` / `onPrimary` |
 | Text action label | M3 default: `primary` |
 
-Light and dark previews use the same layout and theme roles at 412×892 dp.
+Production uses the fixed dark theme. The 412×892 dp dark reference is the
+visual target; compact width and 1.5× text checks keep the actions reachable.
 
 ## Configuration / usage
 
@@ -127,6 +130,14 @@ top-anchored content shifted down 24 dp and bottom actions shifted up 24 dp,
 accounting for bars once. A forced denied-state preview cannot prove the real
 permission route, and an API 33 ATD skip cannot substitute for this API 35 run.
 See [Compose evidence](development-verification.md#compose-evidence).
+
+The [#1213 retained comparison](../../../app/src/androidTest/assets/scanner-1213/README.md)
+places current Figma node 32:2 beside nonblank API 35 pixels and labels the
+difference. The design was inspected 2026-09-29; a last-modified date was
+unavailable. The existing node 32:8 illustration already matched, so its
+asset remained intact. Real system bars account for the remaining edge offsets.
+Compact width and enlarged text showed no clipping or overlap; keyboard and
+menu states do not apply to this surface.
 
 ## Related
 

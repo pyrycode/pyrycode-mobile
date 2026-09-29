@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
@@ -13,12 +14,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -42,26 +46,33 @@ class ScannerFrameTest {
 
     @Test fun compactLightAndDarkFrames() = checkFrame(DpSize(360.dp, 640.dp))
 
-    private fun checkFrame(size: DpSize) {
+    @Test fun compactEnlargedTextFrames() = checkFrame(DpSize(360.dp, 640.dp), fontScale = 1.5f)
+
+    private fun checkFrame(
+        size: DpSize,
+        fontScale: Float = 1f,
+    ) {
         var dark by mutableStateOf(true)
         var backs = 0
         var pastes = 0
         rule.runOnUiThread { rule.activity.enableEdgeToEdge() }
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
-                PyrycodeMobileTheme(darkTheme = dark) {
-                    Scaffold(
-                        modifier = Modifier.fillMaxSize().testTag("scanner_frame"),
-                        contentWindowInsets = WindowInsets.systemBars.union(WindowInsets(top = 24.dp, bottom = 24.dp)),
-                    ) { padding ->
-                        ScannerScreen(
-                            ScannerUiState.ReadyToScan,
-                            { backs++ },
-                            {},
-                            { pastes++ },
-                            Modifier.padding(padding),
-                            cameraPreview = { Box(Modifier.fillMaxSize().testTag("camera")) },
-                        )
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
+                    PyrycodeMobileTheme(darkTheme = dark) {
+                        Scaffold(
+                            modifier = Modifier.fillMaxSize().testTag("scanner_frame"),
+                            contentWindowInsets = WindowInsets.systemBars.union(WindowInsets(top = 24.dp, bottom = 24.dp)),
+                        ) { padding ->
+                            ScannerScreen(
+                                ScannerUiState.ReadyToScan,
+                                { backs++ },
+                                {},
+                                { pastes++ },
+                                Modifier.padding(padding).consumeWindowInsets(padding),
+                                cameraPreview = { Box(Modifier.fillMaxSize().testTag("camera")) },
+                            )
+                        }
                     }
                 }
             }
@@ -82,6 +93,10 @@ class ScannerFrameTest {
             val action = paste.getUnclippedBoundsInRoot()
             val camera = rule.onNodeWithTag("camera").getUnclippedBoundsInRoot()
             val frame = rule.onNodeWithTag("scanner_frame").getUnclippedBoundsInRoot()
+            if (dark && size.width == 412.dp) {
+                val pixels = rule.onNodeWithTag("scanner_frame").captureToImage().toPixelMap()
+                assertTrue("blue atmosphere above plain footer", pixels[4, pixels.height / 4].blue > pixels[4, pixels.height * 3 / 4].blue)
+            }
             assertTrue(action.bottom <= frame.bottom - 24.dp)
             assertTrue(reticle.top >= camera.top)
             if (size.width == 412.dp) {
