@@ -23,7 +23,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
-import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toJavaLocalDate
@@ -35,13 +34,13 @@ import java.util.Locale
 private val MetaRowSpacing = 8.dp
 private val CopyGlyphWidth = 11.dp
 
-// Keep the visible meta row at the design's 16dp. The glyph's horizontal hit area grows to 23dp;
-// a taller target would add height to every bubble and shift the next row.
+// Keep the visible meta row at the design's 16dp. Compose expands clickable pointer hit testing
+// toward its minimum touch target without enlarging layout; a compact-width pointer test covers it.
 private val CopyTouchHorizontalPadding = 6.dp
 private val CopyTouchVerticalPadding = 2.dp
 
-// Other palettes retain the previous alpha-based contrast treatment. The fixed dark reference uses
-// `inversePrimary` directly for the designed #32628D tint.
+// The Figma inverse-primary tint has insufficient contrast on either fixed-dark bubble. Derive
+// de-emphasis from the host's M3 on-container role so both bubbles retain readable metadata.
 private const val META_CONTENT_ALPHA = 0.80f
 
 /**
@@ -133,12 +132,7 @@ internal fun MessageMetaRow(
     modifier: Modifier = Modifier,
 ) {
     // One colour for both children: the control inherits the label's tint through the ambient.
-    val metaColor =
-        if (LocalStaticDarkPalette.current) {
-            MaterialTheme.colorScheme.inversePrimary
-        } else {
-            LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)
-        }
+    val metaColor = LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)
     // Two `DateTimeFormatter`s are built per call, so hold the result across recompositions. Keyed on
     // the zone and locale as well as the instant: both are read here rather than passed in, and keying
     // on them keeps the cache honest instead of relying on a configuration change to rebuild the tree.

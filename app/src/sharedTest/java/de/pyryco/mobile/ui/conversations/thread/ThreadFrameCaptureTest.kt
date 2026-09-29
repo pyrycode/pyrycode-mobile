@@ -7,12 +7,16 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -21,6 +25,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -37,6 +43,7 @@ import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -49,6 +56,19 @@ import java.util.TimeZone
 @RunWith(AndroidJUnit4::class)
 class ThreadFrameCaptureTest {
     @get:Rule val rule = createComposeRule()
+
+    private val clipboard =
+        object : ClipboardManager {
+            var copiedText: String? = null
+
+            override fun setText(annotatedString: AnnotatedString) {
+                copiedText = annotatedString.text
+            }
+
+            override fun getText(): AnnotatedString? = copiedText?.let(::AnnotatedString)
+
+            override fun hasText(): Boolean = copiedText != null
+        }
 
     private var state by mutableStateOf(ThreadUiState("frame", "pyrycode discord integration", isPromoted = true))
     private var thinking by mutableStateOf(false)
@@ -64,7 +84,10 @@ class ThreadFrameCaptureTest {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, height.dp))) {
                 val density = LocalDensity.current
-                CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+                CompositionLocalProvider(
+                    LocalDensity provides Density(density.density, fontScale),
+                    LocalClipboardManager provides clipboard,
+                ) {
                     PyrycodeMobileTheme(darkTheme = true) {
                         composeView = LocalView.current
                         ThreadScreen(
@@ -244,6 +267,11 @@ class ThreadFrameCaptureTest {
         assertTrue(back.right <= overflow.left)
         assertTrue(messageRegion.height > 0.dp)
         assertTrue(copy.left >= messageRegion.left && copy.right <= messageRegion.right)
+        // Tap outside the 16dp visual row: Compose must still route the pointer to copy at 1.5x text.
+        rule.onNodeWithContentDescription(string(R.string.cd_thread_copy_message)).performTouchInput {
+            click(Offset(center.x, bottom + 14.dp.toPx()))
+        }
+        assertEquals(message.message.content, clipboard.copiedText)
         capture("320x640-large-text")
         rule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
         rule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
