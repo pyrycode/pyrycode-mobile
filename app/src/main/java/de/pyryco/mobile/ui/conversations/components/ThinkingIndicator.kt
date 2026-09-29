@@ -1,18 +1,26 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -27,10 +35,10 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 private val IndicatorHorizontalPadding = 16.dp
-private val IndicatorVerticalPadding = 8.dp
-private val SpinnerSize = 16.dp
-private val SpinnerStrokeWidth = 2.dp
-private val SpinnerLabelGap = 8.dp
+private val IndicatorVerticalPadding = 4.dp
+private val GlyphWidth = 14.dp
+private val GlyphHeight = 16.dp
+private val IconLabelGap = 8.dp
 
 /**
  * The largest reading this row will put on screen. The largest documented extended-thinking budget for a
@@ -65,10 +73,10 @@ private const val MAX_PLAUSIBLE_THINKING_TOKENS = 1_000_000L
  * crossed, and the PTY surface emits none of these frames at all — so `null` degrades to the plain
  * "Thinking…" label and never to a stalled, failed or errored presentation.
  *
- * **One [Row] and one [CircularProgressIndicator], deliberately.** Splitting the two label variants
+ * **One [Row] and one icon, deliberately.** Splitting the two label variants
  * across an `if`/`else` would give Compose two groups, so the first reading to arrive would dispose the
- * spinner and compose a fresh one — restarting its rotation exactly when the reading appears. Only the
- * [Text]'s argument and the row's content description vary, which keeps the spinner's composition
+ * icon and compose a fresh one — restarting its pulse exactly when the reading appears. Only the
+ * [Text]'s argument and the row's content description vary, which keeps the icon's composition
  * identity stable across the transition. There is likewise no `remember`-cached label and no
  * `derivedStateOf`: either would freeze a changing reading (the [ApiRetryIndicator] rule).
  *
@@ -76,11 +84,11 @@ private const val MAX_PLAUSIBLE_THINKING_TOKENS = 1_000_000L
  * (see `openToolCall` beside the thread screen) and the label reads `Running <tool>…`, with claude's latest
  * `tool_progress` reading appended in the tool row's elapsed format. It replaces both thinking labels
  * and raises the row on its own, so a tool running in the `responding` phase is named too. It varies the
- * same [Text] argument, so the spinner keeps its identity when a tool opens or closes. With no reading the
+ * same [Text] argument, so the icon keeps its identity when a tool opens or closes. With no reading the
  * label shows no time; nothing here counts seconds.
  *
- * The design-owed Figma frame draws a static glyph and a `Schemes/Primary` label; the visual here
- * follows the app's existing Material 3 progress idiom until that retune lands, unchanged by this slice.
+ * Figma's input status glyph keeps its 14 × 16 bounds while its opacity pulses; no animation frame
+ * rotates or stretches the supplied shape.
  */
 @Composable
 fun ThinkingIndicator(
@@ -133,6 +141,14 @@ fun ThinkingIndicator(
             tokens != null -> stringResource(R.string.thread_thinking_progress_label, tokens)
             else -> stringResource(R.string.thread_thinking_label)
         }
+    val glyphPulse = rememberInfiniteTransition(label = "thinking glyph")
+    val glyphAlpha =
+        glyphPulse.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.7f,
+            animationSpec = infiniteRepeatable(animation = tween(900), repeatMode = RepeatMode.Reverse),
+            label = "thinking glyph opacity",
+        )
     Row(
         modifier =
             modifier
@@ -142,18 +158,19 @@ fun ThinkingIndicator(
                     vertical = IndicatorVerticalPadding,
                 ).semantics(mergeDescendants = true) { contentDescription = description },
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(SpinnerLabelGap),
+        horizontalArrangement = Arrangement.spacedBy(IconLabelGap),
     ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(SpinnerSize),
-            strokeWidth = SpinnerStrokeWidth,
+        Image(
+            painter = painterResource(R.drawable.ic_thread_thinking),
+            contentDescription = null,
+            modifier = Modifier.size(GlyphWidth, GlyphHeight).alpha(glyphAlpha.value).testTag("thinking_glyph"),
         )
         // A tool name is daemon text from an open set: one ellipsized line bounds it, as on the tool row.
         // The thinking labels keep their shipped wrapping.
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.primary,
             maxLines = if (toolName != null) 1 else Int.MAX_VALUE,
             overflow = if (toolName != null) TextOverflow.Ellipsis else TextOverflow.Clip,
         )

@@ -34,10 +34,9 @@ Pure function of `status`: no `ViewModel` reference, no flow collection, no `rem
 - **`if (status == null) return`** — emits nothing while no reset is running, the same early-return
   idiom as `CompactingIndicator`/`ThinkingIndicator`. `ThreadStatusArea`'s `when` normally keeps it from
   being called at all in that state; the early return keeps the composable total anyway.
-- Renders the identical `Row` shape as `CompactingIndicator` (`fillMaxWidth`, 16dp horizontal / 8dp
-  vertical padding, `CenterVertically`, 8dp spacing) containing a small indeterminate
-  `CircularProgressIndicator` (`size(16.dp)`, `strokeWidth = 2.dp`) and a `Text` (`bodySmall` /
-  `onSurfaceVariant`) — **indeterminate, deliberately**: neither phase streams a counter, percent, or ETA
+- Renders the identical `Row` shape as `CompactingIndicator` (16dp horizontal / 4dp
+  vertical padding, 8dp spacing) containing a 16dp fixed-length rotating arc and
+  `bodySmall` / `primary` text. It is **indeterminate, deliberately**: neither phase streams a counter, percent, or ETA
   on the wire, so a determinate bar would invent data.
 - **`resettingLabelRes(status, agent = ConversationAgent.Claude): @StringRes Int`** (`internal`,
   unit-tested directly) is total over both `ResetStatus` enums, not a partial mapping of the three
@@ -153,8 +152,8 @@ Threaded exactly like `isCompacting` — a **defaulted hoisted value**, sibling 
 
 - `ResetStatus` is a `data class` of two enums — a stable type — so the new `ThreadScreen` parameter adds
   no recomposition instability.
-- No internal mutable state, no `remember`, no side effect, no coroutine — pure projection of `status` to
-  a rendered (or absent) row.
+- No mutable Reset state is owned here. The shared arc's composition-scoped transition rotates while
+  a Reset phase is visible.
 - `ThreadScreen` gains one param and a `when` arm at an existing single-child slot — no impact on the
   `LazyColumn`'s item recomposition.
 
@@ -190,14 +189,8 @@ one rendered case.
   component's four `thread_resetting_*` labels out of scope — #1114's verifier flagged that as a
   non-blocking NIT for whichever sibling ticket covered the rest of the ladder. #1112 closed it for the one
   label that actually names an agent: see [The agent name (#1112)](#the-agent-name-1112).
-- **Visual is design-owed**, the same gap already recorded for
-  [`ThinkingIndicator`](thinking-indicator.md), [`ApiRetryIndicator`](api-retry-indicator.md) and
-  [`CompactingIndicator`](compacting-indicator.md#edge-cases--limitations): Figma `111:3525` draws one
-  generic status row ("Thinking..." in `Schemes/Primary`), not a resetting-specific treatment, so the
-  arm follows the shipped M3 idiom (`onSurfaceVariant`, not the Figma `Primary` scheme) until a
-  resetting-specific frame lands.
-- **No animation.** The `when`-branch swap between phases, and into/out of this arm, is instant, matching
-  every sibling status affordance.
+- Figma has no dedicated Reset frame. The current reading uses [input status `533:1957`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957) as its component reference.
+  The arc rotates while the `when`-branch swap between phases remains instant.
 - **A stuck rising edge renders an indefinite status** if a daemon sends one and never the falling one —
   deliberately undefended, the same posture [`resetting-state.md`](resetting-state.md#edge-cases--limitations)
   and [`compacting-state.md`](compacting-state.md#edge-cases--limitations) already accept at the data

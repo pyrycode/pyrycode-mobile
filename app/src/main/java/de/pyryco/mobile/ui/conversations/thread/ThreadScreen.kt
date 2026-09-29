@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
@@ -906,8 +907,18 @@ private fun ThreadStatusArea(
     }
     // The reading's own 16dp padding lands its content on the 20dp gutter; the pill ends on it. A reading
     // that emits nothing takes its weight with it, and Arrangement.End keeps the pill at the right end.
+    val hasReading =
+        apiRetry != ApiRetryStatus.NotRetrying || resetting != null || isCompacting || turnOutcome != null ||
+            isThinking || runningTool != null
+    // The 24dp reading stays centered in a 28dp combined band. That height also keeps the task
+    // pill at its Figma anchor when a reading and task count appear together.
+    val bandModifier =
+        Modifier
+            .fillMaxWidth()
+            .padding(start = ComposerStatusGutter, end = ComposerGutter)
+            .then(if (hasReading) Modifier.heightIn(min = 28.dp) else Modifier)
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter),
+        modifier = bandModifier,
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {

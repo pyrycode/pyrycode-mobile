@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -23,9 +21,7 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 private val IndicatorHorizontalPadding = 16.dp
-private val IndicatorVerticalPadding = 8.dp
-private val SpinnerSize = 16.dp
-private val SpinnerStrokeWidth = 2.dp
+private val IndicatorVerticalPadding = 4.dp
 private val SpinnerLabelGap = 8.dp
 
 /**
@@ -48,10 +44,8 @@ private val SpinnerLabelGap = 8.dp
  *
  * The status this renders is **conversation-level, not turn-scoped** — it neither opens nor closes a
  * turn, so it decorates the existing thinking affordance's slot rather than altering the turn lifecycle,
- * and it must show even when `turn_state` says `idle`. The design-owed Figma frame is not yet drawn
- * (Figma 16-8 has no status-affordance treatment); the visual follows the app's existing Material 3
- * progress idiom until it lands, exactly as [ThinkingIndicator], [ApiRetryIndicator] and
- * [StallPromotionBanner] shipped their M3 defaults.
+ * and it must show even when `turn_state` says `idle`. With no dedicated compacting frame, its spacing
+ * and primary colour follow the input status area.
  */
 @Composable
 fun CompactingIndicator(
@@ -78,14 +72,11 @@ fun CompactingIndicator(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(SpinnerLabelGap),
     ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(SpinnerSize),
-            strokeWidth = SpinnerStrokeWidth,
-        )
+        ThreadStatusSpinner()
         Text(
             text = stringResource(R.string.thread_compacting_label),
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.primary,
         )
     }
 }

@@ -1,25 +1,16 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.StopCircle
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -28,9 +19,6 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 private val IndicatorHorizontalPadding = 16.dp
-private val IndicatorVerticalPadding = 8.dp
-private val IconSize = 16.dp
-private val IconLabelGap = 8.dp
 
 /** The most characters of one claude-authored token this row shows; the daemon's 256-byte bound is not a layout bound. */
 private const val MAX_TOKEN_CHARS = 40
@@ -150,34 +138,19 @@ fun TurnOutcomeIndicator(
                     append(stringResource(R.string.thread_turn_outcome_agent_reports_error, name))
             }
         }
-    Row(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .padding(
-                    horizontal = IndicatorHorizontalPadding,
-                    vertical = IndicatorVerticalPadding,
-                ).semantics(mergeDescendants = true) { contentDescription = label },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(IconLabelGap),
-    ) {
-        Icon(
-            imageVector =
+    Row(modifier = modifier.fillMaxWidth().padding(horizontal = IndicatorHorizontalPadding)) {
+        NoticePill(
+            text = label,
+            isError = true,
+            contentDescription = label,
+            shadowElevation = 0.dp,
+            leadingIcon =
                 if (report.kind == TurnOutcomeReport.Kind.Interrupted) {
                     Icons.Outlined.StopCircle
                 } else {
                     Icons.Outlined.ErrorOutline
                 },
-            contentDescription = null,
-            modifier = Modifier.size(IconSize),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
         )
     }
 }

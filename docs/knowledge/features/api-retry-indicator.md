@@ -49,10 +49,9 @@ List<QueuedMessage>)` — no UI-layer mirror type was introduced.
     positionally formatted with `current` and `total` ("Retrying — attempt 3/10").
   - **counter-less** (`AttemptUnknown`, **or** an `Attempt` that fails the gate) — `thread_api_retry_label_unknown`
     (visible) and `cd_thread_api_retry_unknown` or its `_codex` twin ("Retrying…").
-- Renders a `Row` (`fillMaxWidth`, 16dp horizontal / 8dp vertical padding, `CenterVertically`,
-  `Arrangement.spacedBy(8.dp)`) containing a small indeterminate `CircularProgressIndicator`
-  (`size(16.dp)`, `strokeWidth = 2.dp`) and an adjacent `Text` (`bodySmall` /
-  `onSurfaceVariant`) — the identical M3 shape as `ThinkingIndicator`.
+- Renders a `Row` (16dp horizontal / 4dp vertical padding, 8dp gap) with a 16dp
+  fixed-length rotating arc and adjacent `bodySmall` / `primary` text. Its 24dp
+  status reading follows the input status component shared with the other active readings.
 - **Accessibility** — `Modifier.semantics(mergeDescendants = true) { contentDescription = … }` on the
   `Row` so it reads as **one** merged TalkBack node (AC #1), sourced from whichever `cd_*` resource
   matches the rendered case.
@@ -191,8 +190,8 @@ See [API-retry status](api-retry-status.md) for the upstream data path (#593's `
 
 - `status: ApiRetryStatus` is a stable-by-structural-equality param (`data class`/`data object`), so
   recomposition tracks value changes correctly, including a climbed counter.
-- No internal mutable state, no `remember`, no side effect, no coroutine — pure projection of `status`
-  to a rendered (or absent) row.
+- No mutable counter state is owned here. The shared arc's composition-scoped transition rotates while
+  the reading is visible.
 - `ThreadScreen` gains one param and an either/or branch at an existing single-child slot — no impact on
   the `LazyColumn`'s item recomposition.
 
@@ -228,12 +227,7 @@ both rendered branches are covered.
 
 ## Edge cases / limitations
 
-- **Visual is design-owed.** No retry treatment is drawn in
-  [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — the same design-owed gap
-  already recorded for [`ThinkingIndicator`](thinking-indicator.md) (and, until [#883](../../specs/architecture/883-retire-literal-screen.md)
-  retired it, the stall promotion banner). Until it lands the visual follows the app's
-  existing M3 progress idiom; when the frame arrives, re-tune spinner/typography here — no contract
-  change.
+- Figma has no dedicated retry frame. The current reading uses [input status `533:1957`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957) as its component reference.
 - **No `liveRegion` on any of the status affordances** (this indicator, its counter-less sibling,
   `ThinkingIndicator`) — flagged as a non-gating NIT in #594's code review, same
   class of deferred a11y enhancement as `ThinkingIndicator`'s. Folded into the design-owed follow-up

@@ -1,0 +1,33 @@
+Thread activity indicator visual comparison — 2026-09-29
+
+Figma nodes inspected live: input status 533:1957, pill variants 347:6618, thread 16:8.
+The full thread render and the emulator captures are both 412 × 892 logical pixels.
+The emulator uses pixel8Api35 at density 160, fixed dark palette, with a deterministic empty-thread fixture.
+Its empty content, absent attachments, placeholder draft and footer values differ from the populated Figma scene.
+The full screenshots are shown side by side for placement, not claimed as a full-screen pixel match.
+
+The labelled comparison PNG aligns the 372 × 24 input-status component from Figma with
+the emulator's x=20..392, y=764..788 crop. The status background is RGB (11,14,17)
+on both; the error pill container is RGB (147,0,10) on both the Figma pill render
+and emulator outcome capture. The component difference view amplifies the remaining
+text rasterization, existing ellipsis wording and pulse-frame opacity differences.
+The aligned component has a mean absolute RGB difference of (1.82, 2.42, 3.02).
+
+The Figma file has only the thinking status frame. API retry, compacting and Reset
+session reuse its Status area layout. Turn outcome uses the shared Pill error
+container and radius from 347:6618 while retaining its existing leading outcome
+icon and bounded, attributed label. No dedicated Figma frame specifies those
+variants or the combined task-count state. Compact 320 × 692 / 1.5× captures
+cover thinking, retry, compacting, Reset wrap-up and outcome beside the task
+pill. The outcome ellipsizes to two lines, with its full accessibility description.
+Retry, compacting and Reset use a constant-length rotating arc: the first compact
+Reset capture exposed a nearly invisible stroke from Material's changing arc.
+
+The 412 × 892 menu capture shows the status row remains visible when overflow is
+open. Existing populated-thread keyboard tests pass at both 412 × 892 and
+360 × 640, including focus and touch routing; their API 33 XML is retained beside
+the comparison. The local visual crop concerns the status area, which has no input focus.
+
+Evidence: pixel8Api35-results.xml and pixel2Api33Atd-results.xml each record
+2 capture tests, 0 failures/skips. keyboard-412x892-api33.xml and
+keyboard-360x640-api33.xml each record 1 executed regression, 0 failures/skips.

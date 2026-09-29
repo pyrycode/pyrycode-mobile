@@ -32,7 +32,7 @@ Three design points pinned in #201:
 ```kotlin
 bottomBar = {
     Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true })
+        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true }, agent = state.agent)
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
     }
@@ -58,8 +58,11 @@ private fun ThreadStatusArea(
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
         return
     }
+    val hasReading = apiRetry != ApiRetryStatus.NotRetrying || resetting != null || isCompacting ||
+        turnOutcome != null || isThinking || runningTool != null
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter),
+        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter)
+            .then(if (hasReading) Modifier.heightIn(min = 28.dp) else Modifier),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -103,7 +106,7 @@ private fun StatusReading(
 `agent` reaches both functions from `ThreadScreen`'s own `state.agent` (see [Thinking indicator § The agent
 name](thinking-indicator.md#the-agent-name-1114)); `resetting`'s branch is the only one of the five that
 picked up `agent` after #1114 shipped, closed by #1112 — see [Resetting indicator § The agent
-name](resetting-indicator.md#the-agent-name-1112). `turnOutcome` is still unnamed.
+name](resetting-indicator.md#the-agent-name-1112). The turn-outcome lead stays client-owned and its daemon detail stays bounded by `turnOutcomeReport`.
 
 **[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count pill at the band's
 right end, and split the `when` out into `StatusReading` to make room for it.** Above zero,
@@ -130,6 +133,13 @@ proves the band's collapse is exact rather than assumed: it measures the newest 
 moves that edge) at zero tasks, again once the pill raises it by exactly 32dp (the pill's 24dp plus the
 column's 8dp gap), and again after it returns to zero, asserting the second zero-count measurement equals
 the first.
+
+When a reading and task pill coexist, the reading stays 24dp high and is centered in a 28dp minimum band;
+that extra height preserves the task pill's 412 × 892 top-right anchor. With only the pill, the row keeps
+its intrinsic height. The fixed 16dp arc for retry, compaction and Reset came from device capture: a
+Material indeterminate arc could shrink to a barely visible stroke at one animation frame while a bounds
+assertion still passed. Native-graphics tests sample visible pixels over multiple frames, and the compact
+device capture checks the two-line outcome label beside the task pill. See [capture evidence](../../../app/src/androidTest/assets/thread-activity-1209/comparison.txt).
 
 **[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed `usageLimit`, `showRePair` and
 `onRePair` from this composable, and deleted the private `RePairButton` it used to hold.** From #804 to
