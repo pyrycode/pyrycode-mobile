@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -34,6 +35,19 @@ class WelcomeScreenTest {
     @Test
     fun bodyAtNarrowWidth_shrinksToAvailableWidth() = assertBodyWidth(360, 296)
 
+    @Test
+    fun referenceHeroStartsAtInsetAdjustedPosition() {
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    WelcomeScreen(onPaired = {}, onSetup = {})
+                }
+            }
+        }
+        val titleTop = composeTestRule.onNodeWithText("Pyrycode Mobile").getUnclippedBoundsInRoot().top
+        assertEquals(304f, titleTop.value, 1f)
+    }
+
     private fun assertBodyWidth(
         width: Int,
         expected: Int,
@@ -53,6 +67,25 @@ class WelcomeScreenTest {
             .assertIsDisplayed()
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         assertEquals(expected.toFloat(), layouts.single().size.width / density, 1f)
+        if (width == 412) {
+            val layout = layouts.single()
+            assertEquals(4, layout.lineCount)
+            val lines =
+                (0 until layout.lineCount).map { line ->
+                    layout.layoutInput.text.text
+                        .substring(layout.getLineStart(line), layout.getLineEnd(line, visibleEnd = true))
+                        .trim()
+                }
+            assertEquals(
+                listOf(
+                    "Pyrycode runs Claude on your computer",
+                    "or home server. Channels and",
+                    "conversation history live on your machine,",
+                    "accessible from any device.",
+                ),
+                lines,
+            )
+        }
     }
 
     @Test

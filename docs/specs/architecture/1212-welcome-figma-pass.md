@@ -49,3 +49,9 @@ No new I/O boundary or failure mode. `MainActivity` continues to own navigation 
 ## Documentation handoff
 
 Pending for the documentation stage: update `docs/knowledge/features/welcome-screen.md` § How it works and § Edge cases / limitations with the current radial transform, reference layout offsets, compact/enlarged-text behavior, and the current four-line Figma observation.
+
+## Revisions
+
+- Fresh real-activity pixels on 2026-09-29 report a 24 px top system inset, rather than the 63 px retained by #1150. Use a 172 dp hero top inset to place the logo at the Figma 196 px reference position on the current activity. The CTA's 4 dp bottom inset places its primary pill at the reference 704 px top.
+- The 360 × 800, 1.5× text capture showed the primary label clipping inside the fixed-height button. Keep 56 dp as its minimum height and let the button grow when its label wraps. The screen scrolls to preserve both actions and footer.
+- A stable side-by-side showed that the live Figma and Android body both occupy four 24 dp lines at 320 dp width, but break at different words. Tracking changes cannot reproduce all four breaks with Android's Roboto metrics. Preserve the shared `bodyLarge` style and use the reference's four line breaks only when the body has the 320 dp measure at normal text scale; compact or enlarged text retains natural wrapping.
