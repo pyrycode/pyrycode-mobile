@@ -15,14 +15,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
@@ -31,6 +34,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
@@ -308,9 +312,16 @@ class PairCodeScreenTest {
 
     @Test fun softwareKeyboardKeepsBothFieldsClearControlsAndActionsReachable() {
         show(small = true)
-        rule.onNodeWithContentDescription("Host name").performClick()
-        rule.waitUntil(5_000) {
-            rule.runOnIdle { ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
+        for (label in listOf("Host name", "Pairing code")) {
+            val field = rule.onNodeWithContentDescription(label).performScrollTo()
+            val bounds = field.fetchSemanticsNode().boundsInRoot
+            val density = rule.runOnIdle { view.resources.displayMetrics.density }
+            assertTrue("$label field target is shorter than 48 dp: $bounds", bounds.height >= 48f * density)
+            field.performTouchInput { click(Offset(8f * density, 4f * density)) }
+            field.assertIsFocused()
+            rule.waitUntil(5_000) {
+                rule.runOnIdle { ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
+            }
         }
         for (label in listOf("Host name", "Pairing code")) {
             rule.onNodeWithText(label).performScrollTo()

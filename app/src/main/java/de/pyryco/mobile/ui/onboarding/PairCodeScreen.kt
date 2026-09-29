@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -39,8 +38,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -200,14 +197,13 @@ private fun PairCodeField(
 ) {
     val colors = MaterialTheme.colorScheme
     val interactionSource = remember { MutableInteractionSource() }
-    val focusRequester = remember { FocusRequester() }
     val focused by interactionSource.collectIsFocusedAsState()
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = 56.dp)
-                .background(colors.surfaceContainerLowest.copy(alpha = 0.8f), RoundedCornerShape(4.dp))
+                .background(colors.surfaceContainerLowest.copy(alpha = 0.8f), MaterialTheme.shapes.extraSmall)
                 .drawBehind {
                     drawLine(
                         color =
@@ -223,33 +219,33 @@ private fun PairCodeField(
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f).padding(start = 16.dp, top = 8.dp, bottom = 8.dp)) {
-                Text(
-                    label,
-                    modifier =
-                        Modifier.clickable(
-                            enabled = enabled,
-                            interactionSource = null,
-                            indication = null,
-                        ) { focusRequester.requestFocus() },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (error != null) colors.error else colors.onSurfaceVariant,
-                )
-                BasicTextField(
-                    value = value,
-                    onValueChange = onChange,
-                    enabled = enabled,
-                    singleLine = true,
-                    modifier =
-                        Modifier.fillMaxWidth().heightIn(min = 20.dp).focusRequester(focusRequester).semantics {
-                            contentDescription = label
-                            if (error != null) error(error)
-                        },
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.onSurface),
-                    cursorBrush = SolidColor(colors.primary),
-                    interactionSource = interactionSource,
-                )
-            }
+            BasicTextField(
+                value = value,
+                onValueChange = onChange,
+                enabled = enabled,
+                singleLine = true,
+                modifier =
+                    Modifier.weight(1f).heightIn(min = 56.dp).semantics {
+                        contentDescription = label
+                        if (error != null) error(error)
+                    },
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.onSurface),
+                cursorBrush = SolidColor(colors.primary),
+                interactionSource = interactionSource,
+                decorationBox = { innerTextField ->
+                    Column(
+                        Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (error != null) colors.error else colors.onSurfaceVariant,
+                        )
+                        Box(Modifier.fillMaxWidth().heightIn(min = 20.dp)) { innerTextField() }
+                    }
+                },
+            )
             IconButton(onClick = { onChange("") }, enabled = enabled) {
                 Icon(Icons.Outlined.Cancel, contentDescription = clearLabel)
             }
