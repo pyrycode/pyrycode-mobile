@@ -4,6 +4,8 @@ See [the shared shell](mobile-modal.md) for layout, behavior and verification.
 
 ## Callers
 
+[`RenameDialog`](rename-dialog.md) is the thread Rename action's editing-shell caller. It keeps Rename/Name/Cancel/Save copy and a single selected, prefilled field. The content mirrors the shared Input large label gap and well geometry with modal field colors and the `modalControl` shape; the shell supplies the close row, footer, scrolling and IME avoidance. Save and Done share the changed, nonblank trimmed-name guard, while Cancel, Close and Back dismiss. Figma has no dedicated Rename composition; the [labelled comparison](../../../app/src/androidTest/assets/rename-1278/labelled-component-comparison.png) checks shared Modal `489:1942` and Input large `347:6446` against the 412 × 892 emulator capture.
+
 `SettingsScreen` uses `MobileDismissModal` for its notifications-only dialog. This variant puts content directly below the header and one filled Done action at the footer's right edge. Close, Done and dialog Back dismiss the route; the sound row is inert. Its push switch remains backed by `AppPreferences`. At compact width, the text column must take the available width: a fractional intrinsic width can report visual overflow even when a semantics text matcher passes. The [device capture and text-layout check](settings-screen.md#wiring-and-verification) cover that case.
 
 `DebugBundleModal` still calls the editing shell, but the Settings Storage row that opened it was removed. Its download state machine remains documented in [SettingsViewModel](settings-viewmodel-how-it-works.md#log-data-download-683); it is not a current Settings caller.
