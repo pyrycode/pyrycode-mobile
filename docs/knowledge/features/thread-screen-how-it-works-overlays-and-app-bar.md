@@ -2,28 +2,11 @@
 
 Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Thread screen](thread-screen.md); see that document for what it does, its edge cases and its links.
 
-### Connection-banner wiring
+### Connection status placement
 
-The Scaffold content slot wraps the [`ConnectionBanner`](connection-banner.md) above the `LazyColumn` in a `Column`:
+`connectionState` remains a flat `ThreadScreen` parameter collected from `ThreadViewModel.connectionState`, separate from the conversation state. [Connecting](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-1740) and [Reconnecting](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4657) render through `ConnectionStatusIndicator` in the composer `ThreadStatusArea`, in muted `onSurfaceVariant` body-small text. They take precedence over turn readings while the link is unavailable; the task-count pill can still sit beside them. Connected and Offline emit no composer connection reading.
 
-```kotlin
-Column(modifier = Modifier.padding(inner).fillMaxSize()) {
-    ConnectionBanner(state = connectionState, onRetry = onRetry)
-    LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), reverseLayout = true) { … }
-}
-```
-
-Three design points pinned in #201:
-
-- **Structural, not overlay.** Per the AC, the banner pushes the message list down by its intrinsic height; under `Connected` the banner's early `return` collapses to zero height so the steady-state look is byte-identical to pre-#201. Alternatives (`Box` with manual offset, `Scaffold` content overlay, `topBar = { Column { TopAppBar; ConnectionBanner } }`) all either change the overlay semantics (the AC forbids overlay) or force a refactor of `ThreadTopAppBar`. The `Column` wrapper is structurally minimal.
-- **`Modifier.padding(inner)` lives on the outer `Column`, not the `LazyColumn`.** The Scaffold's content-inset wraps the banner *and* the list — applying `padding(inner)` only to the `LazyColumn` (leaving the banner outside the inset) would let the banner draw under the AppBar's status-bar inset on edge-to-edge devices.
-- **`Connected` short-circuit is the steady state.** The fake's `FakeConnectionStateSource` always emits `Connected`; the banner's public-entry `when` returns early on `Connected` with no composition. Under normal use the banner is invisible; the integration is exercised by VM unit tests that push `Offline` / `Connecting` / `Reconnecting` through the fake (see [Testing](thread-screen-testing.md#testing) below).
-
-`connectionState: ConnectionState` is a flat parameter rather than a field on `ThreadUiState` — see [`#201`'s ticket notes](../codebase/201.md) for the full rationale. Short version: the existing `state` derivation stays untouched (no `combine(...)` ceremony, no churn to the seven existing tests that pattern-match `ThreadUiState`); connection state is global (every screen would consume the same source under future work) while conversation state is per-screen; reflecting that orthogonality at the type level is cleaner than artificial fusion. The destination block consumes two `collectAsStateWithLifecycle()` calls — the same shape `SettingsViewModel` already uses for its four separate flows. [`#406`](../codebase/406.md) added a **second** such sibling signal to the VM on this same rationale: `val isThinking: StateFlow<Boolean>` (`ThreadViewModel.kt:216`), the live `turn_state` thinking-phase flag reduced from the [coordinator](relay-repository-coordinator.md)'s `liveSessionEvents` seam — a transient, connection-scoped cross-cutting signal kept off `ThreadUiState` so the `state` combine stays zero-touch. [`#407`](../codebase/407.md) then threaded it into `ThreadScreen` as a **third** flat sibling parameter — `isThinking: Boolean = false` (defaulted, after `modifier`, `ThreadScreen.kt:74`), collected at `MainActivity` via `vm.isThinking.collectAsStateWithLifecycle()` exactly parallel to `connectionState` — and rendered the at-work [`ThinkingIndicator`](thinking-indicator.md) at the foot of the content `Column` (see [Thinking-indicator placement (post-#407, moved in #643)](#thinking-indicator-placement-post-407-moved-in-643) below). See [Turn-state thinking flag](turn-state-thinking-flag.md) for the data path. [`#396`](../codebase/396.md) had added a **fourth** sibling signal on the *same* rationale: `val isStalled: StateFlow<Boolean>` (beside `isThinking`), sourced straight off the already-injected `repository.observeStall(conversationId)` (#395), threaded into `ThreadScreen` as a defaulted flat sibling parameter and collected at `MainActivity` via `vm.isStalled.collectAsStateWithLifecycle()`. [#883](../../specs/architecture/883-retire-literal-screen.md) removed both the `ThreadScreen` parameter and the `MainActivity` collection, since the only renderer of the flag — the stall promotion banner — was retired; see [Stall-promotion-banner placement (post-#396, retired from the screen in #883)](#stall-promotion-banner-placement-post-396-retired-from-the-screen-in-883) below. `ThreadViewModel.isStalled` itself is untouched — see [Stall state](stall-state.md). [#459](../codebase/459.md) added a **fifth** sibling on the *same* rationale: `val isBusy: StateFlow<Boolean>` (`ThreadViewModel.kt:296`, beside `isThinking`) — declared **identically** to `isThinking` over the same `liveSessionEvents` seam but **broadened** to `thinking` **or** `responding` via a dedicated `busyTransition` reducer (a "a turn is running" signal, not the `thinking`-only one; see [Interrupt affordance](interrupt-affordance.md)) — and threaded into `ThreadScreen` as two defaulted siblings, `isBusy: Boolean = false` plus the flat `onInterrupt: () -> Unit = {}` callback (`:102`), collected at `MainActivity` via `vm.isBusy.collectAsStateWithLifecycle()` with `onInterrupt = vm::onInterrupt`.
-
-`onRetry` binds to `vm::retry` at the destination — method reference, not a fresh lambda, so the binding is stable across recompositions (the lambda allocation only happens once per VM lifecycle, not per recomposition).
-
-**Withheld under a rejected pairing (#843).** `ConnectionBanner` is not drawn while `showRePair` holds: `if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)`. A rejected pairing still derives to the legacy `ConnectionState.Offline` (see [Reconnect supervision § derivation table](relay-reconnect-supervisor.md#derivation-and-visual-tables)), so without this gate the banner would offer a retry that cannot succeed — the relay leg halts redial on a rejection and only a fresh pairing clears it. The pairing pill in [`ThreadTopOverlay`](thread-top-overlay.md#the-pairing-pill) replaces it in that state — a status-area **Re-pair** button until [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) moved it into the Top overlay alongside the usage-limit notice; see [Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) below for what stayed behind. Network loss (`Reconnecting`, `DaemonAbsent`, the 30s-cap `Offline`) is unaffected — `showRePair` is `false` for all of those, so the banner and its retry render exactly as before.
+[Offline](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4910) shows Retry in [`ThreadTopOverlay`](thread-top-overlay.md), using the existing `onRetry = vm::retry` route. A rejected pairing also derives Offline, but `showRePair` takes precedence: Re-pair navigates to pairing because network retry cannot repair rejected credentials. Neither action changes message-list height. The older `ConnectionBanner` and its structural placement above the list were removed.
 
 ### Thinking-indicator placement (post-#407, moved in #643)
 
@@ -183,7 +166,7 @@ The `bottomBar` column's third band was `ThreadStatusRow(model = …, effort = �
 ### Thread top overlay placement (post-#1002)
 
 [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) draws
-[`ThreadTopOverlay`](thread-top-overlay.md) — the usage-limit and pairing-error pills this section's
+[`ThreadTopOverlay`](thread-top-overlay.md) — the usage-limit, pairing-error and Offline Retry pills this section's
 callouts describe leaving `ThreadStatusArea` for — as an **overlap**, not a `Column` child, inside the
 message-area `Box` in the content `Column` (not the `bottomBar` column `ThreadStatusArea` lives in):
 
@@ -200,6 +183,8 @@ Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
         onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
         showRePair = showRePair,
         onRePair = onRePair,
+        connectionState = connectionState,
+        onRetryConnection = onRetry,
         modifier = Modifier.align(Alignment.TopEnd).padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
     )
 }
@@ -306,7 +291,7 @@ fun retry() {
 }
 ```
 
-The VM exposes `retry()` as a non-`suspend` method; the `viewModelScope.launch` body wraps the source's `suspend fun retry()`. UI callers bind `vm::retry` directly to `ConnectionBanner`'s `onRetry: () -> Unit` slot without `rememberCoroutineScope { ... }.launch { ... }`. Same shape as `fun sendMessage(text: String)` from #188 — the convention in this codebase is never to expose `suspend` on a VM. If the screen is destroyed mid-call the launch is cancelled, which is fine for the Phase-2 no-op body; in Phase 4 the real source's `suspend fun retry()` may do network I/O, and `viewModelScope` cancellation will propagate as expected.
+The VM exposes `retry()` as a non-`suspend` method; the `viewModelScope.launch` body wraps the source's `suspend fun retry()`. UI callers bind `vm::retry` directly to `ThreadTopOverlay`'s Retry callback without `rememberCoroutineScope { ... }.launch { ... }`. Same shape as `fun sendMessage(text: String)` from #188 — the convention in this codebase is never to expose `suspend` on a VM. If the screen is destroyed mid-call the launch is cancelled, which is fine for the Phase-2 no-op body; in Phase 4 the real source's `suspend fun retry()` may do network I/O, and `viewModelScope` cancellation will propagate as expected.
 
 No `try/catch` around `connectionStateSource.retry()`. Per the `ConnectionStateSource` interface KDoc (#196), failures surface as state transitions (`Offline`), not exceptions; the Phase-2 fake cannot throw. No `.catch { ... }` on the upstream `observe()` either — premature defense.
 
