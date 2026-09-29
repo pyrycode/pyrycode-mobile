@@ -1368,7 +1368,7 @@ peer-attachment, #1020; markdown-link, #1050; mute-channel round trip, #1021; in
 interrupted-retrieval and cross-host-attachment-recovery, #1017; second-host rename and unpair, #1085;
 Log data diagnostic download, #684; two-host default workspace and Archive, #1086;
 channel create, edit and archive with its prompt read back, #1088;
-a peer-set workspace label reaching every open surface, per host, #1089; an attention dot following a
+an attention dot following a
 real turn, #1090; background-agent progress on the running card, #1076/#1107)
 ride the wrapped mode.
 
@@ -1437,8 +1437,7 @@ starts the subagent), #1107. Delete, archive-restore,
 change-workspace, rename, save-as-channel,
 list-archive-entry, two-host separation, the model-change scenario, the mute-channel round trip
 (#1021), the second-host rename and unpair scenario (#1085), the Log data diagnostic-download
-scenario (#684), the two-host default-workspace and Archive scenario (#1086), and the peer-set workspace
-label scenario (#1089) spend no Claude
+scenario (#684) and the two-host default-workspace and Archive scenario (#1086) spend no Claude
 turns. Allow a few
 minutes of wall clock; the run is subscription-covered.
 
@@ -1464,7 +1463,8 @@ then from 45 to 44 when #1190 retired the host-row-only #1087 method, and from 4
 \#1193 removed eight ignored methods from the curated selector pending #1245/#1246 and the older
 workspace-switching follow-ups, then from 36 to 37 when #1223 added the remembered-model first-turn
 scenario, and from 37 to 38 when #1246 restored the operator-bypass permission method, then from 38 to 40
-when #1249 restored the two Archive methods. `LIVE_MINIMUM` is
+when #1249 restored the two Archive methods. #1250 retired the peer workspace-label method after its
+transient 41-method branch failed the live gate; the remaining selector and floor are 40. `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -1568,14 +1568,12 @@ python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.Interacti
 The [#1249 full live gate](#verification-status) executed both selected methods; no separate focused
 run is claimed.
 
-#1189 revised three existing methods: Create channel opens from an initially empty host Channels
-section and uses the daemon default; the peer workspace-label method checks the thread, Settings and
-cross-host state without a deleted tree-row assertion; the folder-settings method keeps the repository
+#1189 revised Create channel to open from an initially empty host Channels
+section and use the daemon default; the folder-settings method keeps the repository
 rename/archive and Archive restore round trip without a tree-row pencil. The create-channel test archives
 the harness's seeded promoted channel for the empty-section check and restores it in `finally`.
 #1190 moves `createChat()` and the save-as-channel setup through the host's Chats plus and confirmation;
-the folder-use method now creates a chat before using the thread's picker, and the peer-label method moves
-A's new chat into the chosen folder before relabeling it. At #1190, the two-host defaults method also checked that
+the folder-use method now creates a chat before using the thread's picker. At #1190, the two-host defaults method also checked that
 Chats creation used the daemon default independently of saved app defaults; #1249 later removed that
 obsolete Settings proof and retained the host-isolated Archive round trip. The host-row-only #1087 method
 is retired; its selector and the executed-test floor were lowered together.
@@ -1969,7 +1967,14 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-09-28 (#1249).** The dispatcher ran the full
+**Current live verification — 2026-09-29 (#1250).** The dispatcher ran
+`python3 scripts/android-test-gate.py live` against `feature/1250` at `97b0b734d8`,
+merged with `origin/main` at `9eefb829be`: **40 executed, 40 passed, 0 failed, 0 skipped**,
+exit 0, against the curated 40-method selector and `LIVE_MINIMUM = 40`. The retired
+peer workspace-label method was absent. See the [issue's dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1250)
+for the recorded run and report path.
+
+**Previous live verification — 2026-09-28 (#1249).** The dispatcher ran the full
 `python3 scripts/android-test-gate.py live` gate against `feature/1249` at `35f0140c5d`, merged with
 `origin/main` at `4eb735654c`: **40 executed, 40 passed, 0 failed, 0 skipped**, exit 0, against
 `LIVE_MINIMUM = 40`. The fresh XML has passing testcases for both
@@ -2584,6 +2589,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — retired:** [#1250](https://github.com/pyrycode/pyrycode-mobile/issues/1250)
+  removed `InteractiveStreamE2ETest.interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost`
+  after the workspace UI was retired. The curated selector and executed-test floor now contain 40
+  methods. The 2026-09-29 full live gate executed 40, passed 40, failed 0 and skipped 0;
+  no replacement label scenario or focused run of the deleted method is required.
 
 - **Coverage — shipped:** [#1249](https://github.com/pyrycode/pyrycode-mobile/issues/1249)
   restores `InteractiveStreamE2ETest.interactiveTurn_archiveRestore_roundTripsListMembership` and

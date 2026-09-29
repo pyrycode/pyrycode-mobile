@@ -1133,7 +1133,8 @@ elif [ -n "${LIVE}" ]; then
   # #977 temporarily removed the #687 method; #981 restored it after the missing reply fix.
   # #1193 excluded it again after the timing assertion failed; #1246 restores it with reply-based settlement.
   # Historical list-size counts in this block predate the temporary exclusions for #1245 and
-  # the two already ignored workspace-switching scenarios. The active list and gate floor contain 40 methods.
+  # the two already ignored workspace-switching scenarios. #1250 retired the peer workspace-label
+  # method, so the active list and gate floor contain 40 methods.
   TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
   # #965: the stop method joins the list, so it holds 21 methods and 17 turns while #687 stays out.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain"
@@ -1183,9 +1184,6 @@ elif [ -n "${LIVE}" ]; then
   # #1088: a channel created from a workspace row's plus, renamed and re-prompted from Edit channel, read
   # back before and after a new session, archived and restored. Two pings (Reset session also runs the
   # daemon's wrap-up turn), so the list holds 41 methods and 41 turns.
-  # #1089: a workspace label set and cleared from the second client reaches host A's chip, tree row and
-  # Settings row live, and never host B's workspace at the same folder. It joins at no turn cost, so the
-  # list holds 42 methods and 41 turns.
   # #1090: a conversation's attention dot follows a real turn on the answer daemon: Unread after the peer's
   # ping, Idle once opened, Waiting while the peer holds a prompt. It adds one method and two turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attentionDot_followsARealTurn"
