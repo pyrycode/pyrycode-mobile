@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.view.View
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -24,6 +25,8 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -36,6 +39,7 @@ import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.thread.ATTACHMENT_STRIP_TEST_TAG
+import de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStrip
 import de.pyryco.mobile.ui.conversations.thread.PendingAttachment
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
@@ -48,7 +52,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 
-/** Real device pixels for the current dark-theme Figma file field. */
+/** Real device pixels for the current dark-theme attachment design. */
 @RunWith(AndroidJUnit4::class)
 class AttachmentVisualCaptureTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
@@ -57,41 +61,89 @@ class AttachmentVisualCaptureTest {
     private var draft by mutableStateOf("My message")
 
     @Test
-    fun sentFilePage_usesFigmaInversePrimary() {
+    fun fileArtworkAndLabels_haveReadableContrastOnBothBubblesAndThread() {
         val id = "file-1"
         rule.setContent {
             PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 Surface {
-                    MessageBubble(
-                        message =
-                            Message(
-                                id = "message-1",
-                                sessionId = "session-1",
-                                role = Role.Assistant,
-                                content = "Here is the file",
-                                timestamp = Instant.parse("2026-01-13T11:55:00Z"),
-                                isStreaming = false,
-                                attachments = listOf(MessageAttachment(id, "report.pdf", "application/pdf")),
-                            ),
-                        attachmentStates =
-                            mapOf(id to AttachmentViewState.Ready(AttachmentSource.Kept(File("/fixture/report.pdf")), null, null)),
-                    )
+                    Column {
+                        for (role in listOf(Role.Assistant, Role.User)) {
+                            MessageBubble(
+                                message =
+                                    Message(
+                                        id = "message-$role",
+                                        sessionId = "session-1",
+                                        role = role,
+                                        content = "Here is the file",
+                                        timestamp = Instant.parse("2026-01-13T11:55:00Z"),
+                                        isStreaming = false,
+                                        attachments = listOf(MessageAttachment(id, "report.pdf", "application/pdf")),
+                                    ),
+                                attachmentStates =
+                                    mapOf(id to AttachmentViewState.Ready(AttachmentSource.Kept(File("/fixture/report.pdf")), null, null)),
+                            )
+                        }
+                        ComposerAttachmentStrip(
+                            attachments =
+                                listOf(
+                                    PendingAttachment(
+                                        key = 1,
+                                        uri = "content://com.example.docs/report.pdf",
+                                        displayName = "report.pdf",
+                                        mimeType = "application/pdf",
+                                        size = 1,
+                                    ),
+                                ),
+                            sending = false,
+                            onRemove = {},
+                        )
+                    }
                 }
             }
         }
 
-        val page = rule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).captureToImage().asAndroidBitmap()
-        val expected = Color.rgb(0x32, 0x62, 0x8D)
-        val matches =
-            (0 until 45).sumOf { x ->
-                (0 until 25).count { y ->
-                    val pixel = page.getPixel(x, y)
-                    kotlin.math.abs(Color.red(pixel) - Color.red(expected)) < 16 &&
-                        kotlin.math.abs(Color.green(pixel) - Color.green(expected)) < 16 &&
-                        kotlin.math.abs(Color.blue(pixel) - Color.blue(expected)) < 16
-                }
+        val bubbleColors = listOf(Color.rgb(0x00, 0x1D, 0x34), Color.rgb(0x00, 0x33, 0x55))
+        bubbleColors.forEachIndexed { index, background ->
+            val row = rule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)[index].captureToImage().asAndroidBitmap()
+            assertReadablePixels("sent page $index", row, background, 0, 45, 0, 25)
+            assertReadablePixels("sent name $index", row, background, 55, row.width, 0, row.height)
+        }
+        val pending = rule.onNodeWithContentDescription("report.pdf").captureToImage().asAndroidBitmap()
+        val threadBackground = Color.rgb(0x0B, 0x0E, 0x11)
+        assertReadablePixels("pending page", pending, threadBackground, 0, pending.width, 0, 25)
+        assertReadablePixels("pending type label", pending, threadBackground, 8, pending.width - 8, 35, 55)
+    }
+
+    private fun assertReadablePixels(
+        label: String,
+        bitmap: Bitmap,
+        background: Int,
+        left: Int,
+        right: Int,
+        top: Int,
+        bottom: Int,
+    ) {
+        val readable =
+            (left until right).sumOf { x ->
+                (top until bottom).count { y -> contrast(bitmap.getPixel(x, y), background) >= 4.5 }
             }
-        assertTrue("file page should draw the inverse-primary Figma stroke, matches=$matches", matches > 10)
+        assertTrue("$label needs readable pixels, found $readable", readable > 10)
+    }
+
+    private fun contrast(
+        first: Int,
+        second: Int,
+    ): Double {
+        fun luminance(color: Int): Double {
+            fun channel(value: Int): Double {
+                val scaled = value / 255.0
+                return if (scaled <= 0.04045) scaled / 12.92 else Math.pow((scaled + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * channel(Color.red(color)) + 0.7152 * channel(Color.green(color)) + 0.0722 * channel(Color.blue(color))
+        }
+        val lighter = maxOf(luminance(first), luminance(second))
+        val darker = minOf(luminance(first), luminance(second))
+        return (lighter + 0.05) / (darker + 0.05)
     }
 
     @Test
