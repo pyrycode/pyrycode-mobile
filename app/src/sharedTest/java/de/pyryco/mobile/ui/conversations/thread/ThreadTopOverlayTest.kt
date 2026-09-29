@@ -149,6 +149,12 @@ class ThreadTopOverlayTest {
         val usageTop = usageBounds.top
         assertTrue("usage pill at $usageTop should sit above the pairing pill at $pairingTop", usageTop < pairingTop)
         assertEquals(12f, (pairingTop - usageBounds.bottom).value, 0.5f)
+        val dismissTouch = composeRule.onNodeWithContentDescription(dismissDescription).fetchSemanticsNode().touchBoundsInRoot
+        val pairingTouch = composeRule.onNodeWithContentDescription(RE_PAIR_LABEL).fetchSemanticsNode().touchBoundsInRoot
+        assertTrue(
+            "dismiss $dismissTouch and re-pair $pairingTouch touch bounds must not overlap",
+            dismissTouch.bottom <= pairingTouch.top || dismissTouch.right <= pairingTouch.left,
+        )
 
         composeRule.onNodeWithText(RE_PAIR_LABEL).performClick()
         composeRule.runOnIdle { assertEquals(1, rePairTaps) }
