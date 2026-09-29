@@ -667,3 +667,8 @@ be created before the test's UI or repository wait returns, so fixture cleanup
 records each host's conversation IDs before creation and recovers a new ID for
 bounded deletion if setup fails. Preserve these checks when changing the list
 mapping, Archive navigation or live fixtures. See the [rung-3 Archive coverage](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay).
+
+For a channel prompt edit followed by Reset session, wait for a distinct second
+real reply before checking `SessionPromptStatus.Matches`. Reusing the first turn's
+reply text could let a display assertion match an old-session message and make the
+post-reset check pass without proving the new turn rendered.
