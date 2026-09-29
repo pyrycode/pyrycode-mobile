@@ -2109,18 +2109,17 @@ class InteractiveStreamE2ETest {
      * name and a prompt and opens it. One ping starts its session with that prompt. The row's pen opens #667's
      * Edit channel, which renames it and changes the prompt; reopened, it reads both back from the host and
      * says the prompt applies from the next session, since the running one was spawned with the old prompt.
-     * After Reset session and a second ping, a session spawned after the edit runs, and the reopened modal
+     * After Reset session and a distinct second reply, a session spawned after the edit runs, and the reopened modal
      * drops that line. Archive channel moves it to host A's Archive, and restoring it returns it to Channels
      * under its new name.
      *
      * A throwaway unpromoted chat created with omitted `cwd` supplies the daemon's actual default folder for
      * comparison. The live harness seeds a promoted collision row, so this test temporarily archives the
      * host's existing channels to exercise an empty section. **Shared host state.** Those channels are restored,
-     * both new conversations are deleted and the app's saved default is restored in `finally`.
+     * both new conversations are deleted in `finally`.
      *
-     * **Two real-claude turns**: the two pings. Reset session also runs the daemon's wrap-up turn.
+     * **Two real-claude turns**: the initial ping and the post-reset pong. Reset session also runs the daemon's wrap-up turn.
      */
-    @Ignore("blocked on #1245 — channel setup still uses removed Settings controls")
     @Test
     fun interactiveTurn_createEditArchiveChannel_readsPromptBack() {
         val serverId = twoHostArg(ARG_SERVER_ID)
@@ -2128,9 +2127,6 @@ class InteractiveStreamE2ETest {
         val firstName = "${CHANNEL_E2E_PREFIX}$stamp-a"
         val newName = "${CHANNEL_E2E_PREFIX}$stamp-b"
         val nextSessionLine = string(R.string.edit_channel_prompt_next_session)
-        val preferences = GlobalContext.get().get<AppPreferences>()
-        val originalDefault = runBlocking { preferences.defaultWorkspace(serverId).first() }
-        val appOnlyDefault = "/app-only-default-$stamp"
         var channelId: String? = null
         var defaultProbeId: String? = null
         val archivedFixtureIds = mutableListOf<String>()
@@ -2146,12 +2142,11 @@ class InteractiveStreamE2ETest {
                 archivedFixtureIds.add(id)
             }
             hostConversationIds(serverId, "an empty Channels section", ConversationFilter.Channels) { it.isEmpty() }
-            runBlocking { preferences.setDefaultWorkspace(serverId, appOnlyDefault).getOrThrow() }
             val daemonDefault = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).createDiscussion(null) } }
             defaultProbeId = daemonDefault.id
             val before = hostConversationIds(serverId, "the default-folder probe") { daemonDefault.id in it }
 
-            // 1. AC-4: the empty Channels section creates in the daemon default, ignoring the app default.
+            // 1. The empty Channels section creates in the host's default working folder.
             val plus = hasTestTag(treeHostChannelAddTestTag(serverId))
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 runCatching { scrollListTo(plus) }.isSuccess
@@ -2173,7 +2168,6 @@ class InteractiveStreamE2ETest {
             val id = newHostConversationId(serverId, before).also { channelId = it }
             val createdCwd = heldConversation(serverId, id).cwd
             assertEquals("the channel did not use the daemon default", daemonDefault.cwd, createdCwd)
-            assertNotEquals("the channel used the app's saved default", appOnlyDefault, createdCwd)
 
             // 2. AC-1: one ping starts the channel's session with the first prompt.
             sendFromPhone(PING_PROMPT)
@@ -2197,7 +2191,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNodeWithText(modalCancel).performClick()
             awaitChannelEditorClosed()
 
-            // 5. AC-2: Reset session, then a second ping. Whether the respawn was eager or the ping spawned the
+            // 5. AC-2: Reset session, then a distinct reply. Whether the respawn was eager or the send spawned the
             //    session, the host reports it runs with the stored prompt once one started after the edit.
             openRow(newName)
             composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
@@ -2206,7 +2200,14 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
             composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
-            sendFromPhone(PING_PROMPT)
+            sendFromPhone("Reply with exactly the word: pong (nothing else).")
+            val secondReply =
+                composeTestRule.onNode(
+                    hasText("pong", ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG)),
+                    useUnmergedTree = true,
+                )
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { secondReply.isDisplayed() }
+            secondReply.assertIsDisplayed()
             val live = hostRepository(serverId)
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
@@ -2230,11 +2231,14 @@ class InteractiveStreamE2ETest {
             }
             archivedIds(serverId) { id in it }
 
-            // 8. AC-3: restore it from the Archive's Channels tab. The snackbar wait keeps the restore coroutine
-            //    from being cancelled by the Back that follows (#551).
-            openSettings()
-            showHostSettings(serverId)
-            composeTestRule.onNodeWithText(ARCHIVED_ROW).performScrollTo().performClick()
+            // 8. Restore it from the selected host's Archive through the list toolbar. The snackbar wait
+            //    keeps the restore coroutine from being cancelled by the Back that follows (#551).
+            val koin = GlobalContext.get()
+            selectHost(koin.get(), koin.get(), serverId)
+            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+            }
             val channelsTab = string(R.string.archived_tab_channels).substringBefore(" (")
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(channelsTab, substring = true).fetchSemanticsNodes().isNotEmpty()
@@ -2248,16 +2252,10 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodesWithText(RESTORED_SNACKBAR, substring = true).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitChannelRow(newName)
             composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
         } finally {
-            runCatching { runBlocking { preferences.setDefaultWorkspace(serverId, originalDefault).getOrThrow() } }
-                .onFailure { Log.w("E2E", "channel default restore failed: ${it::class.simpleName}") }
             listOfNotNull(channelId, defaultProbeId).forEach { id ->
                 runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } } }
                     .onFailure { Log.w("E2E", "channel cleanup failed: ${it::class.simpleName}") }

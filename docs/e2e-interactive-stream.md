@@ -179,6 +179,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    host's list toolbar after proving its active and archived membership changes;
    `interactiveTurn_twoHostsArchive_staysPerHost` archives and restores A's chat through A's toolbar
    while B's active and archived sets remain unchanged. Both wait for restore completion before Back.
+   **Channel create, edit and archive** is live again in `InteractiveStreamE2ETest` (#1251):
+   `interactiveTurn_createEditArchiveChannel_readsPromptBack` creates from an empty Channels section,
+   reads the original and edited prompt, waits for a distinct reply after Reset session, then restores
+   through the selected host's list-toolbar Archive entry and finds the edited name on the list.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -1354,7 +1358,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 40 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 41 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1464,7 +1468,8 @@ then from 45 to 44 when #1190 retired the host-row-only #1087 method, and from 4
 workspace-switching follow-ups, then from 36 to 37 when #1223 added the remembered-model first-turn
 scenario, and from 37 to 38 when #1246 restored the operator-bypass permission method, then from 38 to 40
 when #1249 restored the two Archive methods. #1250 retired the peer workspace-label method after its
-transient 41-method branch failed the live gate; the remaining selector and floor are 40. `LIVE_MINIMUM` is
+transient 41-method branch failed the live gate, leaving 40. #1251 restored the channel
+create-edit-archive method through reachable controls, bringing the selector and floor to 41. `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -1519,7 +1524,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 40 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 41 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1543,7 +1548,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** The current curated selector passes 40 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 41 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The restored
 `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551/#1249)
@@ -1556,8 +1561,17 @@ created chats even when setup fails before their IDs are captured. The two-host 
 the second pairing.
 These are daemon round trips and spend no real Claude turns. The independent
 `InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740) still proves the toolbar
-entry reaches Archive without creating a conversation. Three Settings-dependent methods and two older
-workspace-switching methods remain ignored and outside the curated selector.
+entry reaches Archive without creating a conversation.
+
+`InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` (#1088/#1251)
+starts with an empty Channels section, creates a channel in its host's default working folder,
+and reads back its name and system prompt before and after editing. After Reset session, a
+distinct real `pong` reply precedes the prompt-status check, so the check belongs to the new
+session. It archives from Edit channel, restores through the selected host's list-toolbar
+Archive entry and its Channels tab, then finds the edited name back on the list. The test
+restores the pre-existing channel fixtures and deletes its temporary conversations in `finally`.
+Three Settings-dependent methods and two older workspace-switching methods remain ignored and
+outside the curated selector.
 
 A focused selection of the restored methods is:
 
@@ -1567,6 +1581,15 @@ python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.Interacti
 
 The [#1249 full live gate](#verification-status) executed both selected methods; no separate focused
 run is claimed.
+
+The channel method's focused selection is:
+
+```bash
+python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack
+```
+
+The [#1251 full live gate](#verification-status) includes this passing testcase. The separate
+focused run executed 1, passed 1, failed 0 and skipped 0; its fresh XML names only this method.
 
 #1189 revised Create channel to open from an initially empty host Channels
 section and use the daemon default; the folder-settings method keeps the repository
@@ -1967,7 +1990,17 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-09-29 (#1250).** The dispatcher ran
+**Current live verification — 2026-09-29 (#1251).** The dispatcher ran
+`python3 scripts/android-test-gate.py live` against `feature/1251` at `f81261c6af`,
+merged with `origin/main` at `85186aa1ac`: **41 executed, 41 passed, 0 failed, 0 skipped**,
+exit 0, against the curated 41-method selector and `LIVE_MINIMUM = 41`. The fresh XML
+contains a passing `interactiveTurn_createEditArchiveChannel_readsPromptBack` testcase. This
+is full-suite evidence, including the channel method. A separate focused run on `feature/1251`
+at `b84fdfbd` executed 1, passed 1, failed 0 and skipped 0, with exit 0 and fresh XML naming
+only that method. See the [full-suite evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1251#issuecomment-5886640553)
+and [focused-run evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1251#issuecomment-5886827815).
+
+**Previous live verification — 2026-09-29 (#1250).** The dispatcher ran
 `python3 scripts/android-test-gate.py live` against `feature/1250` at `97b0b734d8`,
 merged with `origin/main` at `9eefb829be`: **40 executed, 40 passed, 0 failed, 0 skipped**,
 exit 0, against the curated 40-method selector and `LIVE_MINIMUM = 40`. The retired
@@ -2590,9 +2623,17 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **Coverage — shipped:** [#1251](https://github.com/pyrycode/pyrycode-mobile/issues/1251)
+  restores `InteractiveStreamE2ETest.interactiveTurn_createEditArchiveChannel_readsPromptBack` to
+  the curated live selector through the empty Channels section and selected host's list-toolbar
+  Archive entry. Its post-reset prompt check follows a distinct real reply, and fixture restoration
+  and conversation deletion remain in `finally`. `LIVE_MINIMUM` is 41; the 2026-09-29 full live
+  gate executed 41, failed 0 and skipped 0, including this method. The separate focused run
+  executed 1, failed 0 and skipped 0; its fresh XML names the method.
+
 - **Coverage — retired:** [#1250](https://github.com/pyrycode/pyrycode-mobile/issues/1250)
   removed `InteractiveStreamE2ETest.interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost`
-  after the workspace UI was retired. The curated selector and executed-test floor now contain 40
+  after the workspace UI was retired. That branch's curated selector and executed-test floor contained 40
   methods. The 2026-09-29 full live gate executed 40, passed 40, failed 0 and skipped 0;
   no replacement label scenario or focused run of the deleted method is required.
 

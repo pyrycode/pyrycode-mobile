@@ -1134,7 +1134,7 @@ elif [ -n "${LIVE}" ]; then
   # #1193 excluded it again after the timing assertion failed; #1246 restores it with reply-based settlement.
   # Historical list-size counts in this block predate the temporary exclusions for #1245 and
   # the two already ignored workspace-switching scenarios. #1250 retired the peer workspace-label
-  # method, so the active list and gate floor contain 40 methods.
+  # method, so the active list and gate floor contain 41 methods after #1251.
   TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
   # #965: the stop method joins the list, so it holds 21 methods and 17 turns while #687 stays out.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain"
@@ -1181,9 +1181,8 @@ elif [ -n "${LIVE}" ]; then
   # change and a cancelled picker. It joins at no turn cost (pairing, a mute and two archive transfers).
   # #1086: each host's default workspace and Archive stay its own with both hosts paired. It joins at no turn
   # cost (folder creation, chat creation, rename, archive and restore), so the list holds 40 methods and 39 turns.
-  # #1088: a channel created from a workspace row's plus, renamed and re-prompted from Edit channel, read
-  # back before and after a new session, archived and restored. Two pings (Reset session also runs the
-  # daemon's wrap-up turn), so the list holds 41 methods and 41 turns.
+  # #1251 restores #1088's channel flow through the Channels plus and list-toolbar Archive, with a
+  # ping before editing and a distinct pong after Reset session (which also runs a wrap-up turn).
   # #1090: a conversation's attention dot follows a real turn on the answer daemon: Unread after the peer's
   # ping, Idle once opened, Waiting while the peer holds a prompt. It adds one method and two turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attentionDot_followsARealTurn"
@@ -1195,6 +1194,7 @@ elif [ -n "${LIVE}" ]; then
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsArchive_staysPerHost"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_createEditArchiveChannel_readsPromptBack"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
