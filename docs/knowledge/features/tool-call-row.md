@@ -301,6 +301,8 @@ rendering doesn't ripple into the data-layer fake.
 - **E2E:** the existing rung-3 `interactiveTurn_toolPrompt_rendersToolStepInThread` now looks for
   the resolved row's accessible Done status, absent before the prompt and visible after the turn.
   A described header omits the tool name, so a name-based matcher could fail while the row is correct.
+  The fresh full live suite executed all 43 selected methods with 0 failures and 0 skips, including
+  this named method as a passing testcase; no separate focused live run was needed.
   The scripted `tool` / `tool-failed` scenarios still use the kept running/failed descriptions.
   The elapsed reading depends on transient heartbeats and remains under component coverage.
 - **Visual evidence:** [`tool-row-1208` captures](../../../app/src/androidTest/assets/tool-row-1208/capture-context.txt)

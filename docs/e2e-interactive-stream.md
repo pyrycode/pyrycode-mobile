@@ -278,7 +278,7 @@ clamping rule.
 
 Rung 3 covers twenty-three scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
-tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
+tool step renders, keyed on the resolved row's accessible Done status); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
 the spinner is displayed mid-turn, keyed tolerantly on the `cd_thread_thinking` content-description); a
 **create-workspace-folder** scenario (#566, migrated in #1190 —
@@ -356,7 +356,7 @@ no percentage hard-coded — proving the daemon's post-turn `context_usage` push
 no reconnect or subscription-time ask is exercised, since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946)'s
 Rework 1 removed the phone's `request_context_usage` send outright — see [Thread composer footer § Context
 usage segment](knowledge/features/thread-composer-footer.md#context-usage-segment-946)). The tool-use
-test asserts the **durable** terminal signal — the tool name in the resolved row —
+test asserts the **durable** terminal signal — the resolved row's accessible Done status —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
 (it is why rung 4's `tool` scenario needs a two-fragment release).
@@ -745,8 +745,8 @@ permission case had a settle-window assertion failure now diagnosed by
 remain ignored and excluded. #1249 restored two of the five Settings-dependent methods through the
 list toolbar; #1251 restored the channel method and #1252 replaced the Log data method with a
 host-backed archive proof. The remaining two Settings methods and two older workspace-switching
-methods stay excluded. `scripts/e2e-emulator.sh` now lists 42 runnable methods and
-`android-test-gate.py` requires 42 executed tests. Script tests check the floor and the
+methods stay excluded. With #1208's tool-use method, `scripts/e2e-emulator.sh` now lists 43
+runnable methods and `android-test-gate.py` requires 43 executed tests. Script tests check the floor and the
 restored methods' explicit presence, as well as excluding ignored methods.
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
@@ -1359,7 +1359,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 42 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 43 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1471,7 +1471,8 @@ scenario, and from 37 to 38 when #1246 restored the operator-bypass permission m
 when #1249 restored the two Archive methods. #1250 retired the peer workspace-label method after its
 transient 41-method branch failed the live gate, leaving 40. #1251 restored the channel
 create-edit-archive method through reachable controls, bringing the selector and floor to 41.
-#1252 restored the host-backed diagnostic archive method, bringing both to 42. `LIVE_MINIMUM` is
+#1252 restored the host-backed diagnostic archive method, bringing both to 42. #1208 included the
+existing #481 tool-use method, bringing both to 43. `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -1526,7 +1527,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 42 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 43 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1550,9 +1551,11 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** The current curated selector passes 42 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 43 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
-against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The restored
+against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The #481
+`InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread` now rides this full
+selector and checks the resolved row's accessible Done status. The restored
 `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551/#1249)
 uses the selected host's list toolbar Archive entry and proves the uniquely named discussion is on the
 active list, leaves it after archive, appears in Archive, then returns to the active list after restore.
@@ -1656,8 +1659,7 @@ are daemon round-trips too, #1021; pairing, rename and unpair are daemon round-t
 #1085; a mute and two host-ID archive transfers are daemon round-trips too, #1252; folder creation, chat creation,
 rename, archive and restore are daemon round-trips too, #1086; and setting and clearing a workspace label
 from the peer are daemon round-trips too, #1089).
-The full class also includes the
-\#481 tool-use test and #950's `@Ignore`d elapsed-reading twin, which stay excluded from LIVE;
+The full class also includes #950's `@Ignore`d elapsed-reading twin, which stays excluded from LIVE;
 `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`
 rode `@Ignore`d until [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020) let a stored
 `message` entry's `attachment_ids` survive history replay and now rides LIVE with the rest. The
@@ -2004,6 +2006,14 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Current live verification — 2026-09-30 (#1208).** The dispatcher ran the full
+`python3 scripts/android-test-gate.py live` suite against `feature/1208` at `5c7283e264`,
+merged with `origin/main` at `ad946824a3`: **43 executed, 43 passed, 0 failed, 0 skipped**.
+The fresh XML includes a passing
+`InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread` testcase.
+This is full-suite evidence, with no separate focused live run. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1208#issuecomment-5900517078).
 
 **Current live verification — 2026-09-29 (#1252).** The dispatcher ran
 `python3 scripts/android-test-gate.py live` against `feature/1252` at `56f9995c4b`,
@@ -2646,6 +2656,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — shipped:** [#1208](https://github.com/pyrycode/pyrycode-mobile/issues/1208)
+  put #481's existing `InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread`
+  into the curated LIVE selector. The test checks the resolved row's accessible Done status, which
+  remains present when a described header omits the tool name. The selector and `LIVE_MINIMUM` are
+  43; the fresh full suite executed 43, failed 0 and skipped 0, including this passing method.
 
 - **Coverage — shipped:** [#1252](https://github.com/pyrycode/pyrycode-mobile/issues/1252)
   restores `InteractiveStreamE2ETest.interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts`
