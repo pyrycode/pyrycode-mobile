@@ -59,6 +59,7 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.R
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.CodeStructure
@@ -141,8 +142,9 @@ internal val MarkdownFlavour = GFMFlavourDescriptor()
 /** Body presentation; headings, tables and code keep their own element-specific styles. */
 data class MarkdownTextStyle(
     val body: TextStyle,
-    val blockSpacing: Dp = 8.dp,
+    val blockSpacing: Dp = 12.dp,
     val listItemSpacing: Dp = 4.dp,
+    val code: TextStyle? = null,
 )
 
 /**
@@ -216,10 +218,20 @@ private fun MarkdownBlock(
                     ?.toString()
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
-            CodeBlock(code, language, copyable = true)
+            CodeBlock(
+                code,
+                language,
+                copyable = true,
+                textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
+            )
         }
         MarkdownElementTypes.CODE_BLOCK ->
-            CodeBlock(indentedCodeText(node, source), language = null, copyable = true)
+            CodeBlock(
+                indentedCodeText(node, source),
+                language = null,
+                copyable = true,
+                textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
+            )
         else -> {
             val text = node.getTextInNode(source).toString().trim()
             if (text.isNotEmpty()) {

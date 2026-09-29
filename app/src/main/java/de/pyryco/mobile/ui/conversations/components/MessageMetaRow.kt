@@ -3,8 +3,10 @@ package de.pyryco.mobile.ui.conversations.components
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +23,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toJavaLocalDate
@@ -30,22 +33,15 @@ import java.time.format.FormatStyle
 import java.util.Locale
 
 private val MetaRowSpacing = 8.dp
+private val CopyGlyphWidth = 11.dp
 
-// The design draws the glyph at 11x12 with no padding around it, which is a 12dp tap target. 6dp of
-// symmetric padding inside the clickable widens that to 24dp, growing the meta row from 16dp to 24dp.
-// Still under Material's 48dp guidance — a full IconButton would inflate every bubble by ~32dp and
-// visibly miss the frame — but the deviation runs toward accessibility and is identical on both roles.
-private val CopyTouchPadding = 6.dp
+// Keep the visible meta row at the design's 16dp. The glyph's horizontal hit area grows to 23dp;
+// a taller target would add height to every bubble and shift the next row.
+private val CopyTouchHorizontalPadding = 6.dp
+private val CopyTouchVerticalPadding = 2.dp
 
-// De-emphasis for the meta row, taken off the host bubble's own content colour rather than a named
-// role: M3 has no "de-emphasised content inside a filled container" slot, and one alpha expression
-// reads correctly in both bubble variants and both colour schemes. The design names
-// `Schemes/inverse-primary` (#32628D), which is the light-scheme primary tone and only reads as
-// de-emphasis against the dark reference frame.
-//
-// 0.80 rather than 0.70: at 0.70 this 12sp `bodySmall` label lands around 4.4:1 against either bubble
-// fill in dark, which is on the WCAG AA line rather than clear of it. 0.80 keeps margin and still reads
-// as de-emphasised beside the body.
+// Other palettes retain the previous alpha-based contrast treatment. The fixed dark reference uses
+// `inversePrimary` directly for the designed #32628D tint.
 private const val META_CONTENT_ALPHA = 0.80f
 
 /**
@@ -107,7 +103,7 @@ internal fun CopyTextControl(
             modifier
                 .clickable(role = Role.Button) {
                     clipboard.setText(AnnotatedString(text.take(MAX_CLIPBOARD_CHARS)))
-                }.padding(CopyTouchPadding),
+                }.padding(horizontal = CopyTouchHorizontalPadding, vertical = CopyTouchVerticalPadding),
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_copy),
@@ -136,9 +132,13 @@ internal fun MessageMetaRow(
     copyText: String,
     modifier: Modifier = Modifier,
 ) {
-    // One de-emphasised colour for both children: the label takes it directly, the control inherits it
-    // through the ambient so it stays reusable at full strength on a surface that wants full strength.
-    val metaColor = LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)
+    // One colour for both children: the control inherits the label's tint through the ambient.
+    val metaColor =
+        if (LocalStaticDarkPalette.current) {
+            MaterialTheme.colorScheme.inversePrimary
+        } else {
+            LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)
+        }
     // Two `DateTimeFormatter`s are built per call, so hold the result across recompositions. Keyed on
     // the zone and locale as well as the instant: both are read here rather than passed in, and keying
     // on them keeps the cache honest instead of relying on a configuration change to rebuild the tree.
@@ -148,21 +148,24 @@ internal fun MessageMetaRow(
         remember(timestamp, timeZone, locale) {
             formatShortDateTime(instant = timestamp, timeZone = timeZone, locale = locale)
         }
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(MetaRowSpacing),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = formattedTimestamp,
-            style = MaterialTheme.typography.bodySmall,
-            color = metaColor,
-        )
-        CompositionLocalProvider(LocalContentColor provides metaColor) {
-            CopyTextControl(
-                text = copyText,
-                contentDescription = stringResource(R.string.cd_thread_copy_message),
+    BoxWithConstraints(modifier = modifier) {
+        val timestampMaxWidth = (maxWidth - CopyGlyphWidth - CopyTouchHorizontalPadding * 2 - MetaRowSpacing).coerceAtLeast(0.dp)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(MetaRowSpacing),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = formattedTimestamp,
+                modifier = Modifier.widthIn(max = timestampMaxWidth),
+                style = MaterialTheme.typography.bodySmall,
+                color = metaColor,
             )
+            CompositionLocalProvider(LocalContentColor provides metaColor) {
+                CopyTextControl(
+                    text = copyText,
+                    contentDescription = stringResource(R.string.cd_thread_copy_message),
+                )
+            }
         }
     }
 }

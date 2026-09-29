@@ -73,3 +73,9 @@ Pending documentation stage: update `docs/knowledge/features/message-bubble.md` 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-29
+
+## Revisions
+
+- While implementing code typography, the shared `CodeBlock` default proved to be used by the Markdown reader and tool output. The thread-specific 12 sp / 20 sp code role now comes from `MarkdownTextStyle.code` (default for thread messages); `MarkdownReaderScreen` explicitly retains its prior `bodyMedium` code role, and `ToolCallRow` keeps its own `bodySmall` argument. This adds `MarkdownReaderScreen.kt` as a fifth production file without changing parser or copy behavior.
+- The first emulator comparison showed the user bubble's literal blank line occupying a 20 sp text line where Figma separates plain-text paragraphs by 12 dp. `UserMessageBubble` now emits each blank-line-delimited paragraph as a plain `Text` child inside the existing spaced column. Single line breaks remain literal and `MessageMetaRow` still copies the original full source.
+- A focused 320 dp / 1.5× emulator check exposed timestamp wrapping that pushed the copy control beyond the bubble. `MessageMetaRow` now reserves the glyph, touch padding and gap before measuring the timestamp. The timestamp may wrap at compact widths while the copy control remains visible; the 412 dp row stays on one line and short bubbles still hug content.

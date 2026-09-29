@@ -169,7 +169,10 @@ class MessageBubblePaletteTest {
         val timestamps = rule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true)
         assertEquals(3, timestamps.fetchSemanticsNodes().size)
         for (index in 0..2) {
-            assertTextColor(timestamps[index], (if (index == 0) userBody else assistantBody).copy(alpha = 0.8f))
+            assertTextColor(
+                timestamps[index],
+                if (dark && !wallpaper) Color(0xFF32628D) else (if (index == 0) userBody else assistantBody).copy(alpha = 0.8f),
+            )
         }
     }
 

@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
@@ -55,6 +56,7 @@ private val ToolNestingIndent = MessageAreaRowSpacing
 internal const val MESSAGE_BUBBLE_TEST_TAG = "message-bubble"
 
 private const val STREAMING_CARET_GLYPH = "▎"
+private val UserParagraphBreak = Regex("\\r?\\n[\\t ]*\\r?\\n")
 private const val STREAMING_REVEAL_CHARS_PER_SECOND = 50
 private const val STREAMING_REVEAL_STEP_CHARS = 1
 private const val STREAMING_REVEAL_STEP_MS: Long = 1000L / STREAMING_REVEAL_CHARS_PER_SECOND
@@ -137,10 +139,12 @@ private fun UserMessageBubble(
         modifier = modifier,
     ) {
         if (message.hasNoBody()) return@MessageContainer
-        Text(
-            text = message.content,
-            style = MaterialTheme.typography.bodyMedium,
-        )
+        message.content.split(UserParagraphBreak).forEach { paragraph ->
+            Text(
+                text = paragraph,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
     }
 }
 
@@ -232,7 +236,7 @@ private fun MessageContainer(
         horizontalArrangement = Arrangement.spacedBy(0.dp, alignment),
     ) {
         Surface(
-            modifier = Modifier.testTag(MESSAGE_BUBBLE_TEST_TAG),
+            modifier = Modifier.shadow(4.dp, BubbleShape).testTag(MESSAGE_BUBBLE_TEST_TAG),
             shape = BubbleShape,
             color = bubbleColor,
             contentColor = bubbleContentColor,

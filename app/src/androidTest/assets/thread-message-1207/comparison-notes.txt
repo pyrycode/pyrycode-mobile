@@ -1,0 +1,5 @@
+Figma nodes 16:8 and 132:3959 inspected 2026-09-29; Figma last-modified date unavailable.
+Both emulator panels are 412x892 logical dp captured on managed API 33; source bitmap 886x1918 pixels, normalized for comparison.
+Long-text sheet uses identical message source; Figma also shows status overlays, attachments, thinking, and a prefilled composer that are absent from this deterministic fixture. Reverse-layout thread anchors the shorter fixture lower than the static design.
+Code/boundary sheet uses native-size component crops from the 741dp-wide 132:3959 design. Figma shows a generic Session reset; product requires reason/time, explanation and conditional memory link. Code and message text match, but desktop-width code is cropped instead of resized.
+The overlay and pixel difference compare the entire 16:8 frame. Nonmatching fixture state and vertical anchoring contribute strongly; it is not a per-component color metric.
