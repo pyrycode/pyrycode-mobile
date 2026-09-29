@@ -1,18 +1,11 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -21,7 +14,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -40,19 +32,13 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 
 private val RefusalRowVerticalSpacing = 12.dp
-private val RefusalCornerRadius = 12.dp
-private val RefusalHorizontalPadding = 12.dp
 private val RefusalVerticalPadding = 8.dp
-private val RefusalHeaderGap = 8.dp
-private val RefusalIconSize = 18.dp
-private val RefusalBorderWidth = 1.dp
-private val RefusalExpandedTopPadding = 8.dp
+private val RefusalCollapsedGap = 4.dp
+private val RefusalExpandedGap = 8.dp
 
 /**
- * claude refused a turn on one model and retried on another or did not (#875), drawn as
- * [UnrecognizedMessageRow]'s collapsed pill: "Refused on X, continued on Y" or "Refused by X". When claude
- * sent an explanation, a tap opens it in place, attributed to claude. Figma 16:8 has no refusal component,
- * so the pill takes the drawn `16-28` tool-row tokens [UnrecognizedMessageRow] already uses.
+ * A refusal appears as bare text in the message stream, matching Figma's Thread notification component.
+ * When the agent sent an explanation, a tap opens it in place with attribution.
  *
  * Security — every string on [ThreadItem.ModelRefusal] is claude-authored and unsanitized. The render-time
  * obligations:
@@ -100,49 +86,32 @@ private fun ModelRefusalRowContent(
         } else {
             stringResource(R.string.cd_thread_refusal_expand, name)
         }
-    Row(
+    Column(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(start = MessageContentGutter, end = MessageContentGutter, bottom = RefusalRowVerticalSpacing),
+                .padding(start = MessageContentGutter, end = MessageContentGutter, bottom = RefusalRowVerticalSpacing)
+                .then(if (expandable) Modifier.clickable(onClickLabel = clickLabel, onClick = onToggle) else Modifier)
+                .padding(vertical = RefusalVerticalPadding),
+        verticalArrangement = Arrangement.spacedBy(if (expanded) RefusalExpandedGap else RefusalCollapsedGap),
     ) {
-        Surface(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .then(if (expandable) Modifier.clickable(onClickLabel = clickLabel, onClick = onToggle) else Modifier),
-            shape = RoundedCornerShape(RefusalCornerRadius),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            border = BorderStroke(RefusalBorderWidth, MaterialTheme.colorScheme.outlineVariant),
-        ) {
-            Column(modifier = Modifier.padding(horizontal = RefusalHorizontalPadding, vertical = RefusalVerticalPadding)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(RefusalHeaderGap),
-                ) {
-                    // The adjacent title carries the meaning, so the glyph is decorative.
-                    Icon(
-                        imageVector = Icons.Outlined.Info,
-                        contentDescription = null,
-                        modifier = Modifier.size(RefusalIconSize),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = refusalTitle(item),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                if (expandable && expanded) {
-                    Text(
-                        text = attributedBanner(name, banner, item.bannerTruncated),
-                        modifier = Modifier.padding(top = RefusalExpandedTopPadding),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-            }
+        Text(
+            text = refusalTitle(item),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (expandable && expanded) {
+            Text(
+                text = attributedBanner(name, banner, item.bannerTruncated),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        if (expandable) {
+            Text(
+                text = stringResource(if (expanded) R.string.thread_refusal_hide_details else R.string.thread_refusal_show_details),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }

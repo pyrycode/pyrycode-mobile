@@ -59,7 +59,7 @@ private const val MAX_PLAUSIBLE_THINKING_TOKENS = 1_000_000L
  * indistinguishable from a wedged session (#803).
  *
  * Stateless and a pure function of [isThinking] and [progress] — it holds no local state and emits
- * nothing when not thinking, mirroring [ConnectionBanner]'s early-return idiom.
+ * nothing when not thinking, mirroring the connection status indicator's early-return idiom.
  *
  * **What the label may not claim.** [progress] is cumulative within *one inference request*, not within
  * a turn, and restarts near zero at every request boundary — repeatedly inside a single turn. The

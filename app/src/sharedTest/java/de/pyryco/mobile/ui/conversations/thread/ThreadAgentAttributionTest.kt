@@ -74,11 +74,13 @@ class ThreadAgentAttributionTest {
     fun a_codex_conversation_credits_codex_in_every_row() {
         setScreen(ConversationAgent.Codex)
 
-        composeRule.onNodeWithText("Codex: Blocked by hook").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Warning from Codex").assertIsDisplayed()
+        composeRule.onNodeWithText("Warning · Codex: Blocked by hook").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Warning from Codex").assertDoesNotExist()
         composeRule.onNodeWithContentDescription("Turn failed · Codex reports prompt_too_long").assertIsDisplayed()
+        composeRule.onNodeWithText("Show details").assertIsDisplayed()
         composeRule.onNode(hasClickLabel("Show Codex's explanation")).performClick()
         composeRule.onNodeWithText("Codex: Retried on another model.").assertIsDisplayed()
+        composeRule.onNodeWithText("Hide details").assertIsDisplayed()
         composeRule.onNode(hasClickLabel("Hide Codex's explanation")).assertExists()
         composeRule.onNodeWithText("Claude", substring = true).assertDoesNotExist()
     }
@@ -94,8 +96,8 @@ class ThreadAgentAttributionTest {
     fun a_claude_conversation_reads_exactly_as_today() {
         setScreen(ConversationAgent.Claude)
 
-        composeRule.onNodeWithText("Claude: Blocked by hook").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Warning from Claude").assertIsDisplayed()
+        composeRule.onNodeWithText("Warning · Claude: Blocked by hook").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Warning from Claude").assertDoesNotExist()
         composeRule.onNodeWithContentDescription("Turn failed · Claude reports prompt_too_long").assertIsDisplayed()
         composeRule.onNode(hasClickLabel("Show Claude's explanation")).performClick()
         composeRule.onNodeWithText("Claude: Retried on another model.").assertIsDisplayed()

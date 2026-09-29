@@ -81,7 +81,7 @@ import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
 import de.pyryco.mobile.ui.conversations.components.CompactingIndicator
 import de.pyryco.mobile.ui.conversations.components.CompactionBoundaryDivider
-import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
+import de.pyryco.mobile.ui.conversations.components.ConnectionStatusIndicator
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
@@ -414,6 +414,7 @@ fun ThreadScreen(
                         isThinking = isThinking,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
+                        connectionState = connectionState,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
                         agent = state.agent,
@@ -473,9 +474,6 @@ fun ThreadScreen(
                         .padding(inner)
                         .fillMaxSize(),
             ) {
-                // #843: a rejected pairing reads as Offline here, and its retry cannot succeed — the Top
-                // overlay's pairing pill replaces it. Network loss still gets the banner and its retry.
-                if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)
                 Spacer(Modifier.height(12.dp))
                 // #782: the thread's rows are the join of its items with the daemon's queued backlog, so a
                 // message the daemon parked draws once — in place, carrying the queue treatment — instead
@@ -677,6 +675,8 @@ fun ThreadScreen(
                         onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
                         showRePair = showRePair,
                         onRePair = onRePair,
+                        connectionState = connectionState,
+                        onRetryConnection = onRetry,
                         modifier =
                             Modifier
                                 .align(Alignment.TopEnd)
@@ -854,7 +854,9 @@ fun ThreadScreen(
  * Figma `16:8`'s `Status area` (`111:3525`) — the composer's top band, carrying whichever live turn-status
  * signal is current (#643 moved this block here from the foot of the content `Column`).
  *
- * One status slot, top wins: api-retry → resetting → compaction → turn outcome → thinking / running tool.
+ * One status slot, top wins: connecting / reconnecting → api-retry → resetting → compaction → turn
+ * outcome → thinking / running tool. While the link is unavailable, turn readings cannot be refreshed;
+ * Offline is instead shown in the Top overlay as a retry pill.
  * No two may ever stack. Single-sourcing the mutual exclusion here, in the screen, is deliberate:
  * `isThinking` stays defined as the `turn_state` phase (other tests assert it directly), so suppressing it
  * at its source would make the VM's contract lie.
@@ -894,12 +896,24 @@ private fun ThreadStatusArea(
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
+    connectionState: ConnectionState,
     taskCount: Int,
     onTasksClick: () -> Unit,
     agent: ConversationAgent,
 ) {
     val reading: @Composable (Modifier) -> Unit = { modifier ->
-        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, agent, modifier)
+        StatusReading(
+            apiRetry,
+            resetting,
+            isCompacting,
+            turnOutcome,
+            isThinking,
+            thinkingProgress,
+            runningTool,
+            connectionState,
+            agent,
+            modifier,
+        )
     }
     if (taskCount <= 0) {
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
@@ -908,12 +922,17 @@ private fun ThreadStatusArea(
     // The reading's own 16dp padding lands its content on the 20dp gutter; the pill ends on it. A reading
     // that emits nothing takes its weight with it, and Arrangement.End keeps the pill at the right end.
     val hasReading =
-        apiRetry != ApiRetryStatus.NotRetrying ||
-            resetting != null ||
-            isCompacting ||
-            turnOutcome != null ||
-            isThinking ||
-            runningTool != null
+        when (connectionState) {
+            ConnectionState.Connecting, is ConnectionState.Reconnecting -> true
+            ConnectionState.Offline -> false
+            ConnectionState.Connected ->
+                apiRetry != ApiRetryStatus.NotRetrying ||
+                    resetting != null ||
+                    isCompacting ||
+                    turnOutcome != null ||
+                    isThinking ||
+                    runningTool != null
+        }
     // The 24dp reading stays centered in a 28dp combined band. That height also keeps the task
     // pill at its Figma anchor when a reading and task count appear together.
     val bandModifier =
@@ -951,10 +970,13 @@ private fun StatusReading(
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
+    connectionState: ConnectionState,
     agent: ConversationAgent,
     modifier: Modifier = Modifier,
 ) {
     when {
+        connectionState == ConnectionState.Offline -> Unit
+        connectionState != ConnectionState.Connected -> ConnectionStatusIndicator(state = connectionState, modifier = modifier)
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)

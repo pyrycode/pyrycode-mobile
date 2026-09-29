@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.NoticePill
@@ -30,10 +31,11 @@ private val OverlayPillGap = 12.dp
  * to the top of the message area, drawn over the messages so it takes no layout space. Notices live here
  * rather than in the status row, so they never hide what the running turn is doing.
  *
- * Top to bottom: claude's usage-limit report, then the pairing error. The report is a Default pill with an
+ * Top to bottom: the usage-limit report, then a pairing error or offline retry. The report is a Default pill with an
  * X only when [usageLimitIsWarning] says so, and it is left out once [usageLimitDismissed]; any other
- * reading is an Error pill that cannot be hidden. The pairing pill shows while [showRePair] does and
- * starts the re-pair flow on tap. With neither, nothing is emitted. The report names [agent] (#1115).
+ * reading is an Error pill that cannot be hidden. Pairing failure takes precedence over the offline pill
+ * because a network retry cannot repair a rejected pairing. With neither, nothing is emitted. The report
+ * names [agent] (#1115).
  */
 @Composable
 internal fun ThreadTopOverlay(
@@ -43,10 +45,13 @@ internal fun ThreadTopOverlay(
     showRePair: Boolean,
     onRePair: () -> Unit,
     modifier: Modifier = Modifier,
+    connectionState: ConnectionState = ConnectionState.Connected,
+    onRetryConnection: () -> Unit = {},
     agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
-    if (usage == null && !showRePair) return
+    val showOffline = connectionState == ConnectionState.Offline && !showRePair
+    if (usage == null && !showRePair && !showOffline) return
     val viewConfiguration = LocalViewConfiguration.current
     val pillTouchConfiguration =
         remember(viewConfiguration) {
@@ -78,6 +83,8 @@ internal fun ThreadTopOverlay(
             if (showRePair) {
                 // The label is a local resource, never daemon text.
                 NoticePill(text = stringResource(R.string.thread_re_pair), isError = true, onClick = onRePair)
+            } else if (showOffline) {
+                NoticePill(text = stringResource(R.string.thread_connection_offline_retry), isError = true, onClick = onRetryConnection)
             }
         }
     }

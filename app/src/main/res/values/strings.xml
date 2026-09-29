@@ -195,6 +195,10 @@
     <string name="cd_thread_history_retry">Couldn\'t load earlier messages. Try again.</string>
     <!-- #843, #1002: Figma 541:2499, the Top overlay's Error pill while the thread's host rejects the pairing. -->
     <string name="thread_re_pair">Pairing error - Re-pair</string>
+    <string name="thread_connection_connecting">Connecting…</string>
+    <string name="thread_connection_reconnecting">Reconnecting in %1$ds</string>
+    <string name="thread_connection_offline_retry">Offline · Retry</string>
+    <string name="thread_banner_warning_prefix">"Warning · "</string>
     <!-- #1002: the X on a dismissible Top overlay pill. -->
     <string name="thread_notice_dismiss">Dismiss notice</string>
     <string name="thread_history_dead_end_label">Earlier messages are unavailable</string>
@@ -226,6 +230,8 @@
     <string name="thread_refusal_continued_on">", continued on "</string>
     <string name="thread_refusal_refused_by">"Refused by "</string>
     <string name="thread_refusal_unknown_model">unknown model</string>
+    <string name="thread_refusal_show_details">Show details</string>
+    <string name="thread_refusal_hide_details">Hide details</string>
     <string name="cd_thread_refusal_expand">Show %1$s\'s explanation</string>
     <string name="cd_thread_refusal_collapse">Hide %1$s\'s explanation</string>
     <string name="cd_tool_running">Tool call running</string>

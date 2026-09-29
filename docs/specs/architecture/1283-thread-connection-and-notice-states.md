@@ -57,4 +57,8 @@ Pending documentation stage: update `docs/knowledge/features/thread-screen.md` a
 
 ## Open questions
 
-- Confirm whether the existing scripted reconnect harness can hold an Offline state long enough for a deterministic Retry interaction; if it cannot, the live follow-up remains the separate proof.
+- Resolved in the revision below.
+
+## Revisions
+
+2026-09-29, implementation check: `setHostLink` in the existing live harness intentionally closes the supervisor to `Idle`, whose derived connection reading is hidden. It cannot hold the `Offline` failure state needed to exercise the Retry pill. Keep that live proof in a focused follow-up. The existing device-only `ModelRefusalRowTest` now adds pointer and wrapping assertions because the full-width tap target is a device interaction; run its affected class on the managed API 33 emulator. The shared notice wrapping test uses Robolectric native graphics for reliable line measurement.
