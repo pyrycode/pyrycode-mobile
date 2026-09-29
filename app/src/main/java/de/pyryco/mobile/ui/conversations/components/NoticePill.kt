@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -8,8 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -17,7 +16,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -36,9 +37,8 @@ private val PillHorizontalPadding = 8.dp
 private val PillVerticalPadding = 4.dp
 private val PillGap = 8.dp
 
-// The Close glyph fills about 14/24 of its box, so a 14dp icon draws Figma's 8dp X. The tap area is
-// Compose's minimum touch target around it, so the pill keeps its hug height.
-private val DismissIconSize = 14.dp
+// Figma 541:2188 is an 8dp X. The drawable is rendered from its exported vector at 4x resolution.
+private val DismissIconSize = 8.dp
 
 // Figma 541:2446's overlay drop shadow (0, 6, blur 4), drawn per pill.
 private val PillShadow = 4.dp
@@ -90,13 +90,14 @@ internal fun NoticePill(
                 overflow = TextOverflow.Ellipsis,
             )
             if (onDismiss != null) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
+                Image(
+                    painter = painterResource(R.drawable.ic_notice_pill_close),
                     contentDescription = stringResource(R.string.thread_notice_dismiss),
                     modifier =
                         Modifier
                             .size(DismissIconSize)
                             .clickable(role = Role.Button, onClick = onDismiss),
+                    colorFilter = ColorFilter.tint(content),
                 )
             }
         }
