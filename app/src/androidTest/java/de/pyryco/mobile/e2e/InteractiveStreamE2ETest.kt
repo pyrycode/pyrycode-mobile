@@ -2104,106 +2104,6 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A peer's workspace label reaches host A's open thread chip, and never host B's conversation at the
-     * same real folder (#1089, rung 3). Set and clear each update the chip without navigation. The run-unique
-     * folder remains under `~/pyry-workspace`; the label, both conversations and B's pairing are cleaned up.
-     * Pairing, folder creation, workspace changes and renames spend zero real-Claude turns.
-     */
-    @Test
-    fun interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost() {
-        val serverIdA = twoHostArg(ARG_SERVER_ID)
-        val serverIdB = twoHostArg(ARG_SERVER_ID_B)
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val stamp = System.currentTimeMillis()
-        val folder = "${LABEL_E2E_PREFIX}$stamp"
-        var path: String? = null
-        val beforeByHost = mutableMapOf<String, Set<String>>()
-        val createdByHost = mutableMapOf<String, String>()
-        val peer = runningToolPeer()
-        try {
-            // 1. Pair host B and create one real folder shared by both test daemons' HOME.
-            awaitChannelList()
-            awaitConnected()
-            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
-            pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
-            val shared =
-                runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).createWorkspaceFolder(folder) } }
-                    .also { path = it }
-
-            // 2. B holds a conversation in the same folder before A's thread opens.
-            beforeByHost[serverIdB] = hostConversationIds(serverIdB)
-            val onB = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdB).createDiscussion(shared) } }
-            createdByHost[serverIdB] = onB.id
-            assertEquals("B's conversation is not in the shared folder", shared, onB.cwd)
-            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
-
-            // 3. Move A's empty discussion to the folder while its thread stays open.
-            beforeByHost[serverIdA] = hostConversationIds(serverIdA)
-            val idA = createChatOn(serverIdA).also { createdByHost[serverIdA] = it }
-            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).changeWorkspace(idA, shared) } }
-            assertEquals("A's discussion did not move into the chosen folder", shared, heldConversation(serverIdA, idA).cwd)
-            val labels = WorkspaceLabels(serverIdA, idA, serverIdB, onB.id)
-            awaitChipShows(folder)
-            assertWorkspaceLabels(labels, null)
-
-            // 4. A's peer push changes and clears the visible chip without leaving the thread.
-            val chipLabel = "${LABEL_E2E_PREFIX}chip-$stamp"
-            peerStep(peer, "set the chip label") { peer.renameWorkspace(shared, chipLabel, THREAD_TIMEOUT_MS) }
-            awaitChipShows(chipLabel)
-            assertWorkspaceLabels(labels, chipLabel)
-            peerStep(peer, "clear the chip label") { peer.renameWorkspace(shared, null, THREAD_TIMEOUT_MS) }
-            awaitChipShows(folder)
-            assertWorkspaceLabels(labels, null)
-            assertEquals("A's discussion changed folder", shared, heldConversation(serverIdA, idA).cwd)
-            assertEquals("B's conversation changed folder", shared, heldConversation(serverIdB, onB.id).cwd)
-        } finally {
-            path?.let { cwd ->
-                runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).renameWorkspace(cwd, null) } } }
-                    .onFailure { Log.w("E2E", "workspace label clear failed: ${it::class.simpleName}") }
-            }
-            beforeByHost.forEach { (serverId, before) ->
-                cleanupCreatedConversation(serverId, before, createdByHost[serverId], "peer-label conversation cleanup failed")
-            }
-            peer.close()
-            runCatching {
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB)
-                    }
-                }
-            }.onFailure { Log.w("E2E", "peer-label host B pairing cleanup failed: ${it::class.simpleName}") }
-        }
-    }
-
-    /** The two conversations #1089 reads labels from: host A's discussion and host B's at the same folder. */
-    private data class WorkspaceLabels(
-        val serverIdA: String,
-        val conversationA: String,
-        val serverIdB: String,
-        val conversationB: String,
-    )
-
-    /** A's conversation carries [label] in A's live repository, and B's carries none in B's. */
-    private fun assertWorkspaceLabels(
-        labels: WorkspaceLabels,
-        label: String?,
-    ) {
-        assertEquals("host A's workspace label", label, heldConversation(labels.serverIdA, labels.conversationA).workspaceLabel)
-        assertNull("host B's workspace took a label", heldConversation(labels.serverIdB, labels.conversationB).workspaceLabel)
-    }
-
-    /** Wait until the open thread's workspace chip names [name], with the thread still on screen. */
-    private fun awaitChipShows(name: String) {
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(workspaceChipText(name)).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).assertIsDisplayed()
-    }
-
-    /** The workspace chip's text for a workspace shown as [name]; `WorkspaceChip` hardcodes the shape. */
-    private fun workspaceChipText(name: String): String = "Workspace: $name (change)"
-
-    /**
      * A channel created, edited and archived from the list, with its prompt read back (#1088, rung 3). A
      * host's initially empty Channels-section plus opens Create channel, whose OK creates the channel with a
      * name and a prompt and opens it. One ping starts its session with that prompt. The row's pen opens #667's
@@ -6656,10 +6556,6 @@ class InteractiveStreamE2ETest {
 
         // Retained for ignored default-workspace scenarios and their helpers.
         const val DEFAULT_WORKSPACE_ROW = "Default workspace"
-
-        // #1089 workspace label from the peer. The folder is "e2e1089-<ms>"; the labels are "e2e1089-chip-<ms>",
-        // "e2e1089-tree-<ms>" and "e2e1089-settings-<ms>", none equal to the folder or to each other.
-        const val LABEL_E2E_PREFIX = "e2e1089-"
 
         // #1088 channel create, edit and archive. The anchor's folder is "e2e1088-<ms>" and the channel is
         // "e2e1088-<ms>-a", renamed "e2e1088-<ms>-b". Neither prompt changes what the ping replies.

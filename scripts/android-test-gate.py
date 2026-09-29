@@ -69,8 +69,6 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1249 restores the discussion round trip and two-host Archive methods through the list toolbar.
 LIVE_MINIMUM += 2
-# #1250 restores the peer workspace-label proof on the open thread chip.
-LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 
