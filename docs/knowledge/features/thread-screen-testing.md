@@ -4,6 +4,26 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ## Testing
 
+The [frame captures](../../../app/src/androidTest/assets/frame-1206/README.txt) compare live Figma
+`16:8` and `568:3139` renders inspected on 2026-09-29 with real 412 × 892 emulator captures and
+labelled overlays. Header paths, inset rule, message-region origin, radial canvas, input-area
+position and task-pill anchor match the reference. Figma supplies no matching empty, compact,
+enlarged-text, keyboard-open or menu-open state; the companion captures check those states for
+clipping and reachability. The `533:1946` container metadata reports light tokens despite the dark
+renders, so the dark render and shared theme roles govern this frame. Fixture text, attachments,
+notices and footer controls differ from the art and retain their own visual owners.
+
+`ThreadFrameTest` uses native graphics to check visible geometry and real pointer taps at the
+send/field/footer boundary. Layout bounds alone missed Compose's automatic touch-target expansion:
+an earlier footer placement looked clear by measurement yet intercepted input and send taps.
+`ThreadComposerFooter` keeps 32 dp touch boxes in this frame, while its content sits 12 dp higher
+and the reported band is 20 dp; its default outside the thread frame remains 32 dp. The real-IME
+`MainActivityInsetsDeviceTest` checks the footer's unmerged visible icon separately from its
+clickable parent, which extends below it, and checks scroll position and draft across keyboard
+reopening at 412 × 892 and 360 × 640. Forced-size Compose captures constrain the content view,
+whereas popup windows use the physical emulator window; full-device menu captures preserve that
+distinction.
+
 `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt` — thirty-four JUnit 4 tests post-[#722](https://github.com/pyrycode/pyrycode-mobile/issues/722) (seven from #139, two from #188, three from #201, six from #137 in the workspace-chip group, one added in #246 for the `items` passthrough, two added in #145 for the stub effort/tokenPercent + default-model fields, four added in #253 for `selectedModel` plumbing, three added in #226 for channel-info open/dismiss/ingredient-population, four added in #227 for the delete family + one-shot nav, two added in #722 for the label-first rule's live-emission coverage — the numbered list below covers the #139→#253 core plus #722's two additions, appended after it; the #226/#227 additions are summarised in the sibling-test paragraph after that). The pre-#139 plain-JUnit shape (no `runTest`, no `Dispatchers.setMain`) no longer works because `stateIn(viewModelScope, …)` requires a `Main` test dispatcher to publish emissions in test scope; post-#253 the file additionally needs the `runTest { }` wrapper around every test because `makeVm` is now a `TestScope.()` receiver function that constructs a `TemporaryFolder`-backed `AppPreferences` on `backgroundScope`. The file adopts the canonical scaffold from `ChannelListViewModelTest:1-60` (extended in #253 with the prefs-DataStore harness from `AppPreferencesTest`):
 
 ```kotlin
