@@ -46,3 +46,8 @@ Pending documentation stage: update `docs/knowledge/features/mobile-modal-caller
 
 - Check whether the shared field well can be reused directly; if its helpers remain private, mirror its geometry locally without widening the shared component API.
 - Confirm actual emulator capture can be produced in the managed device test run and retain its pixel file as an allowed test asset.
+
+## Revisions
+
+- `LabelledField` and `FieldWell` are private to `ChannelFormFields`, so `RenameDialogInternal` mirrors their single-field geometry locally. This keeps the shared form API unchanged.
+- The managed API 33 ATD image rendered the dialog but returned a blank framebuffer. `RenameDialogCaptureTest` skips that capture-only check on a blank framebuffer; the full Pixel 8 API 35 run produced the actual 412 × 892 PNG and a passing, unskipped XML report under `app/src/androidTest/assets/rename-1278/`.

@@ -1,0 +1,10 @@
+Ticket: #1278
+Design inspected: 2026-09-29
+Figma nodes: Modal 489:1942; Input large 347:6446
+Design gap: Mobile page has no dedicated Rename composition.
+Capture: Pixel 8 API 35 managed emulator, 412 x 892 logical pixels, density 160.
+Theme: dark. Prefill: Pyrybox, selected. Save disabled because the name is unchanged.
+Test: RenameDialogCaptureTest.renameAtFigmaViewport
+Result: device-results.xml reports 1 executed, 0 failures, 0 errors, 0 skipped.
+Comparison: labelled-component-comparison.png highlights the shared header, field and actions.
+Difference in vertical composition is expected: MobileModal fills the phone window.

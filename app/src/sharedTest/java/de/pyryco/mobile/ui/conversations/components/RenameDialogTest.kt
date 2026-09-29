@@ -1,15 +1,25 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.text.TextRange
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -45,7 +55,8 @@ class RenameDialogTest {
             }
         }
 
-        composeTestRule.onNode(hasSetTextAction() and hasText("old name")).assertIsDisplayed()
+        val field = composeTestRule.onNode(hasSetTextAction() and hasText("old name")).assertIsDisplayed()
+        assertEquals(TextRange(0, "old name".length), field.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange])
     }
 
     /**
@@ -182,5 +193,67 @@ class RenameDialogTest {
 
         assertEquals(1, dismissed)
         assertNull(submitted)
+    }
+
+    @Test
+    fun ime_done_submits_only_a_changed_trimmed_name() {
+        val submitted = mutableListOf<String>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                RenameDialog(initialName = "old", onSubmit = { submitted += it }, onDismiss = {})
+            }
+        }
+
+        composeTestRule.onNode(hasSetTextAction()).performImeAction()
+        composeTestRule.onNode(hasSetTextAction()).performTextReplacement("   ")
+        composeTestRule.onNode(hasSetTextAction()).performImeAction()
+        composeTestRule.onNode(hasSetTextAction()).performTextReplacement(" old ")
+        composeTestRule.onNode(hasSetTextAction()).performImeAction()
+        assertEquals(emptyList<String>(), submitted)
+
+        composeTestRule.onNode(hasSetTextAction()).performTextReplacement("  new  ")
+        composeTestRule.onNode(hasSetTextAction()).performImeAction()
+        assertEquals(listOf("new"), submitted)
+    }
+
+    @Test
+    fun close_and_back_dismiss_without_submitting() {
+        var dismissed = 0
+        var submitted = 0
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                RenameDialog(initialName = "old", onSubmit = { submitted++ }, onDismiss = { dismissed++ })
+            }
+        }
+
+        composeTestRule.onNode(hasSetTextAction()).performTextReplacement("new")
+        composeTestRule.onNodeWithContentDescription("Close").performClick()
+        assertEquals(1, dismissed)
+        assertEquals(0, submitted)
+
+        Espresso.pressBack()
+        assertEquals(2, dismissed)
+        assertEquals(0, submitted)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun compact_width_and_large_text_keep_field_and_actions_reachable() {
+        var submitted: String? = null
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    RenameDialog(initialName = "old", onSubmit = { submitted = it }, onDismiss = {})
+                }
+            }
+        }
+
+        val field = composeTestRule.onNode(hasSetTextAction()).assertIsDisplayed()
+        field.performTouchInput { click() }
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).assertIsDisplayed()
+        field.performTextReplacement("new")
+        composeTestRule.onNodeWithText("Cancel").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Save").assertIsDisplayed().performTouchInput { click() }
+        assertEquals("new", submitted)
     }
 }
