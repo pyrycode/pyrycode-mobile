@@ -1588,8 +1588,8 @@ The channel method's focused selection is:
 python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack
 ```
 
-The [#1251 full live gate](#verification-status) includes this passing testcase. A separate
-focused run has not produced XML evidence.
+The [#1251 full live gate](#verification-status) includes this passing testcase. The separate
+focused run executed 1, passed 1, failed 0 and skipped 0; its fresh XML names only this method.
 
 #1189 revised Create channel to open from an initially empty host Channels
 section and use the daemon default; the folder-settings method keeps the repository
@@ -1995,8 +1995,10 @@ only and must not be used to diagnose a current deterministic run.
 merged with `origin/main` at `85186aa1ac`: **41 executed, 41 passed, 0 failed, 0 skipped**,
 exit 0, against the curated 41-method selector and `LIVE_MINIMUM = 41`. The fresh XML
 contains a passing `interactiveTurn_createEditArchiveChannel_readsPromptBack` testcase. This
-is full-suite evidence, including the channel method, not a separate focused run. See the
-[#1251 dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1251#issuecomment-5886640553).
+is full-suite evidence, including the channel method. A separate focused run on `feature/1251`
+at `b84fdfbd` executed 1, passed 1, failed 0 and skipped 0, with exit 0 and fresh XML naming
+only that method. See the [full-suite evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1251#issuecomment-5886640553)
+and [focused-run evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1251#issuecomment-5886827815).
 
 **Previous live verification — 2026-09-29 (#1250).** The dispatcher ran
 `python3 scripts/android-test-gate.py live` against `feature/1250` at `97b0b734d8`,
@@ -2626,8 +2628,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
   the curated live selector through the empty Channels section and selected host's list-toolbar
   Archive entry. Its post-reset prompt check follows a distinct real reply, and fixture restoration
   and conversation deletion remain in `finally`. `LIVE_MINIMUM` is 41; the 2026-09-29 full live
-  gate executed 41, failed 0 and skipped 0, including this method. Separate focused-run XML is
-  still pending.
+  gate executed 41, failed 0 and skipped 0, including this method. The separate focused run
+  executed 1, failed 0 and skipped 0; its fresh XML names the method.
 
 - **Coverage — retired:** [#1250](https://github.com/pyrycode/pyrycode-mobile/issues/1250)
   removed `InteractiveStreamE2ETest.interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost`
