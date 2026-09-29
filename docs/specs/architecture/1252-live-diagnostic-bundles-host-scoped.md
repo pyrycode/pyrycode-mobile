@@ -41,7 +41,7 @@ The test uses the existing paired connections and `runBlocking` with `withTimeou
 
 ## Documentation handoff
 
-Pending for the documentation stage: update `docs/e2e-interactive-stream.md` sections “Live mode (rung 3: live relay)” and “Verification status” to name the host-backed archive proof, remove the obsolete Settings/picker claim, and record the focused live result. Update `docs/knowledge/features/relay-debug-bundle-transfer.md` section “Testing” with the live two-host proof, without suggesting a Settings export.
+Pending for the documentation stage: update `docs/e2e-interactive-stream.md` sections “Live mode (rung 3, live relay)” and “Verification status” to name the host-backed archive proof, remove the obsolete Settings/picker claim, and record the focused live result. Update `docs/knowledge/features/relay-debug-bundle-transfer.md` section “Testing” with the live two-host proof, without suggesting a Settings export.
 
 ## Open questions
 
