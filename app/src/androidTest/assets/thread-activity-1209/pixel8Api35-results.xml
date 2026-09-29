@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="25.501" timestamp="2026-09-29T12:23:07" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadActivityIndicatorCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="23.042" timestamp="2026-09-29T12:23:07" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="compactLargeTextKeepsOutcomeInTheStatusArea" classname="de.pyryco.mobile.ui.conversations.thread.ThreadActivityIndicatorCaptureTest" time="6.975" />
+    <testcase name="fiveReadingsAndMenuAt412By892" classname="de.pyryco.mobile.ui.conversations.thread.ThreadActivityIndicatorCaptureTest" time="16.067" />
+  </testsuite>
+</testsuites>

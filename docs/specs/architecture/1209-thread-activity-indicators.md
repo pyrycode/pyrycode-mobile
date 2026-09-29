@@ -74,3 +74,8 @@ The ticket has no documentation-only acceptance criterion or named reference-doc
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-29
+
+## Revisions
+
+- Implementation resolution, 2026-09-29: the vector keeps the supplied SVG fill. At the 412 × 892 dark-theme viewport, the aligned Figma and emulator status backgrounds both sample RGB (11,14,17), and the error pill containers both sample RGB (147,0,10). The compact 320 × 692 / 1.5× fixture keeps the full outcome accessibility description and a bounded two-line visible label beside the task pill; no layout contract or priority change was needed.
+- Device-capture revision, 2026-09-29: the compact Reset capture exposed the Material indeterminate spinner shrinking to a tiny stroke during its animation. `ThreadStatusSpinner` now draws one fixed 270° arc that rotates within the existing 16 dp slot for retry, compacting and Reset. A native-graphics frame test first observed 13 to 35 visible blue pixels over eight frames and now bounds the variation to a rasterization tolerance. This keeps the status mark visibly present throughout the cycle without changing labels or state ownership. This supersedes the State and concurrency sentence that mentioned only the thinking glyph: all four active-reading animations are composition-scoped and disposed with their reading, with no explicit coroutine job or transport lifetime.

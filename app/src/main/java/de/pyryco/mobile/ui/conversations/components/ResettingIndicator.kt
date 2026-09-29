@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -26,9 +24,7 @@ import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 private val IndicatorHorizontalPadding = 16.dp
-private val IndicatorVerticalPadding = 8.dp
-private val SpinnerSize = 16.dp
-private val SpinnerStrokeWidth = 2.dp
+private val IndicatorVerticalPadding = 4.dp
 private val SpinnerLabelGap = 8.dp
 
 /**
@@ -61,14 +57,11 @@ fun ResettingIndicator(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(SpinnerLabelGap),
     ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(SpinnerSize),
-            strokeWidth = SpinnerStrokeWidth,
-        )
+        ThreadStatusSpinner()
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.primary,
         )
     }
 }

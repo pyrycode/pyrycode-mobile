@@ -17,11 +17,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -42,8 +44,9 @@ private val DismissIconSize = 14.dp
 private val PillShadow = 4.dp
 
 /**
- * One notice in the thread's Top overlay (#1002), Figma `347:6617`: a pill that hugs its right-aligned
- * label and wraps it when it would be wider than the space it is given.
+ * Shared thread pill, Figma `347:6617`: hugs its right-aligned label and wraps it when it would be wider
+ * than the space it is given. The Top overlay uses it for notices; turn outcomes use its error treatment
+ * inside the input status area with a leading icon and a two-line limit.
  *
  * The **Default** variant (`primaryContainer` / `onPrimaryContainer`) is a notice the operator may hide
  * and carries a trailing X when [onDismiss] is set. The **Error** variant ([isError], `errorContainer` /
@@ -60,6 +63,8 @@ internal fun NoticePill(
     onClick: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
     shadowElevation: Dp = PillShadow,
+    leadingIcon: ImageVector? = null,
+    maxLines: Int = Int.MAX_VALUE,
 ) {
     val container = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
     val content = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
@@ -69,11 +74,20 @@ internal fun NoticePill(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PillGap),
         ) {
+            if (leadingIcon != null) {
+                Icon(
+                    imageVector = leadingIcon,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
             Text(
                 text = text,
                 modifier = Modifier.weight(1f, fill = false),
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.End,
+                maxLines = maxLines,
+                overflow = TextOverflow.Ellipsis,
             )
             if (onDismiss != null) {
                 Icon(
