@@ -382,6 +382,7 @@ fun MarkdownReaderScreen(
                                 body = MaterialTheme.typography.bodyLarge,
                                 blockSpacing = 12.dp,
                                 listItemSpacing = 6.dp,
+                                code = MaterialTheme.typography.bodyMedium,
                             ),
                         modifier =
                             Modifier.padding(

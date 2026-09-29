@@ -1,13 +1,24 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.view.View
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BoundaryReason
@@ -18,10 +29,13 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @RunWith(AndroidJUnit4::class)
 class SessionBoundaryDelimiterScreenTest {
     @get:Rule
@@ -76,6 +90,40 @@ class SessionBoundaryDelimiterScreenTest {
     }
 
     private val absent = MemorySearchReport(MemorySearchAvailability.Absent, emptyList())
+
+    @Test
+    fun dark_reset_rule_uses_the_reference_inverse_primary_at_sixty_percent() {
+        var density = 1f
+        var expected = Color.Unspecified
+        var view: View? = null
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                density = LocalDensity.current.density
+                expected =
+                    MaterialTheme.colorScheme.inversePrimary
+                        .copy(alpha = 0.6f)
+                        .compositeOver(MaterialTheme.colorScheme.surface)
+                view = LocalView.current
+                Surface {
+                    SessionBoundaryDelimiter(boundary = clearBoundary())
+                }
+            }
+        }
+
+        val label = composeTestRule.onNodeWithText("New session — ", substring = true).getUnclippedBoundsInRoot()
+        val actual =
+            composeTestRule.runOnIdle {
+                val root = checkNotNull(view)
+                val image = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+                root.draw(Canvas(image))
+                Color(image.getPixel((24 * density).toInt(), ((label.top.value + label.height.value / 2) * density).toInt())).also {
+                    image.recycle()
+                }
+            }
+        assertTrue("rule red differs: $actual vs $expected", kotlin.math.abs(actual.red - expected.red) < 2f / 255f)
+        assertTrue("rule green differs: $actual vs $expected", kotlin.math.abs(actual.green - expected.green) < 2f / 255f)
+        assertTrue("rule blue differs: $actual vs $expected", kotlin.math.abs(actual.blue - expected.blue) < 2f / 255f)
+    }
 
     @Test
     fun installed_or_unknown_report_keeps_reset_explanation_without_install() {
