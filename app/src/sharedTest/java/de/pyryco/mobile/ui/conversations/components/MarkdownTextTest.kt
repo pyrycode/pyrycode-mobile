@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
@@ -27,15 +28,18 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -79,6 +83,27 @@ class MarkdownTextTest {
     private val clipboard = RecordingClipboard()
 
     private val copyCode: String get() = context.getString(R.string.cd_thread_copy_code)
+
+    @Test
+    fun message_paragraphs_follow_the_twelve_dp_component_gap() {
+        render("First paragraph.\n\nSecond paragraph.")
+
+        val first = composeTestRule.onNodeWithText("First paragraph.").getUnclippedBoundsInRoot()
+        val second = composeTestRule.onNodeWithText("Second paragraph.").getUnclippedBoundsInRoot()
+        assertEquals(12.dp.value, (second.top - first.bottom).value, 1.5f)
+    }
+
+    @Test
+    fun fenced_code_uses_the_designs_twelve_sp_monospace_type_with_twenty_sp_lines() {
+        render("```kotlin\nval x = 1\n```")
+
+        val layouts = mutableListOf<TextLayoutResult>()
+        composeTestRule.onNodeWithText("val x = 1").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val style = layouts.single().layoutInput.style
+        assertEquals(12.sp, style.fontSize)
+        assertEquals(20.sp, style.lineHeight)
+        assertEquals(FontFamily.Monospace, style.fontFamily)
+    }
 
     private fun render(
         markdown: String,

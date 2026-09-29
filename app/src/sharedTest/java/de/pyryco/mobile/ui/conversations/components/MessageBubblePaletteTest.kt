@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
@@ -29,6 +30,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -169,7 +171,18 @@ class MessageBubblePaletteTest {
         val timestamps = rule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true)
         assertEquals(3, timestamps.fetchSemanticsNodes().size)
         for (index in 0..2) {
-            assertTextColor(timestamps[index], (if (index == 0) userBody else assistantBody).copy(alpha = 0.8f))
+            val body = if (index == 0) userBody else assistantBody
+            assertTextColor(
+                timestamps[index],
+                body.copy(alpha = 0.8f),
+            )
+            if (dark && !wallpaper) {
+                val fill = if (index == 0) userFill else assistantFill
+                val foreground = body.copy(alpha = 0.8f).compositeOver(fill).luminance()
+                val background = fill.luminance()
+                val contrast = (foreground + 0.05f) / (background + 0.05f)
+                assertTrue("metadata contrast must be at least 4.5:1; got $contrast", contrast >= 4.5f)
+            }
         }
     }
 

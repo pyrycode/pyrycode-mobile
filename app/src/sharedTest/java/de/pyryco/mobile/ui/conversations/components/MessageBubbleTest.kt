@@ -22,6 +22,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -116,6 +117,38 @@ class MessageBubbleTest {
                 .fetchSemanticsNodes()
                 .size,
         )
+    }
+
+    @Test
+    fun copy_hit_area_keeps_the_visible_metadata_row_at_body_small_height() {
+        setBothRoles()
+
+        val controls = composeTestRule.onAllNodesWithContentDescription(copyDescription)
+        assertEquals(2, controls.fetchSemanticsNodes().size)
+        repeat(2) { index ->
+            val bounds = controls[index].getUnclippedBoundsInRoot()
+            assertTrue("copy hit area must be wider than its 11dp glyph", bounds.width > 11.dp)
+            assertTrue("copy hit area must stay within the 16dp metadata line", bounds.height <= 17.dp)
+        }
+    }
+
+    @Test
+    fun user_blank_line_separates_plain_text_paragraphs_by_the_design_gap_and_copy_keeps_source() {
+        val source = "First paragraph.\n\nSecond paragraph."
+        val clipboard = RecordingClipboard()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                CompositionLocalProvider(LocalClipboardManager provides clipboard) {
+                    Surface { MessageBubble(message(Role.User, source)) }
+                }
+            }
+        }
+
+        val first = composeTestRule.onNodeWithText("First paragraph.").getUnclippedBoundsInRoot()
+        val second = composeTestRule.onNodeWithText("Second paragraph.").getUnclippedBoundsInRoot()
+        assertEquals(BubbleContentSpacing.value, (second.top - first.bottom).value, 1.5f)
+        composeTestRule.onNodeWithContentDescription(copyDescription).performClick()
+        assertEquals(listOf(source), clipboard.writes)
     }
 
     // AC #1 (each side's alignment, and the 272dp-in-372dp geometry the 100dp role inset produces).
