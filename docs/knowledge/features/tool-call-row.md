@@ -1,13 +1,12 @@
 # ToolCallRow
 
-Stateless row primitive rendering a single `ToolCall` payload in the conversation thread surface.
+Row primitive rendering a single `ToolCall` payload in the conversation thread surface.
 Two states — **collapsed** (default) and **expanded** — toggled by tapping anywhere on the row.
-Restyled to the mobile tool-use design in #895 (Figma `134:4939` collapsed / `134:4941` expanded):
-a bordered outline card (no fill tint), the verbatim tool name, a **subject** picked from the tool's
-own input fields the way desktop picks its headline, a trailing **status** slot distinguishable
-without colour, and a chevron. Expanded, it shows the input, the output once resolved, and — on a
-denied call — claude's reason. Routed from [`MessageBubble`](./message-bubble.md)'s `Role.Tool` arm
-via a null-safe `?.let`.
+The dark mobile variants use a bordered outline card: a supplied description selects the described
+header and chevron; otherwise the row shows the verbatim tool name and a subject picked from its
+input fields. Both variants retain a status slot distinguishable without colour. Expanded, the row
+shows supplied input, resolved output and, for a denied call, claude's reason. It is routed from
+[`MessageBubble`](./message-bubble.md)'s `Role.Tool` arm via a null-safe `?.let`.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`).
 Files: `ToolCallRow.kt` (the composable) and `ToolRowFormat.kt` (the pure, Compose-free text rules —
@@ -22,15 +21,15 @@ Consumes a [`ToolCall`](./data-model.md) instance — the payload unwrapped from
 `MessageBubble`'s `Role.Tool` arm — and renders it as a full-width, 6dp-rounded outline card with a
 single `M3` click target spanning the whole tile.
 
-**Collapsed (default).** One line: the verbatim `toolName` (monospace, `tertiary`, capped at 160dp so
-a long `mcp__server__tool` name cannot starve the rest of the row), then the **subject** (see
-[Subject and elapsed text](#subject-and-elapsed-text)) taking the remaining weighted width with
-ellipsis, then the **trailing status** (see [Trailing status](#trailing-status)), then a chevron. Name
-and subject are two separate `Text` nodes — not one `AnnotatedString` — because the scripted-scenario
-matchers and `ScriptedToolRowTest` need the tool name to appear in exactly one text node per row.
+**Collapsed (default).** A nonempty `inputFields["description"]` appears verbatim as a body-medium
+description with a small right chevron. Without it, the simple header shows `toolName` in tertiary
+monospace (capped at 160dp) and the [subject](#subject-and-elapsed-text), if nonempty, in body-medium
+text; it has no chevron. Both variants keep the [trailing status](#trailing-status). The text
+ellipsizes within compact width while status stays visible. The whole row remains the accessible
+expand/collapse target, including the simple variant without a visible chevron.
 
-**Expanded.** Below the header, a height-bounded (`heightIn(max = 320.dp)`), internally scrolling
-`Column` of sections — Input always, Output once resolved, Denial on a denied call with a denial — see
+**Expanded.** The described chevron points down. Below the header, a height-bounded
+(`heightIn(max = 320.dp)`), internally scrolling `Column` shows only nonempty supplied sections — see
 [Expanded body](#expanded-body).
 
 Every string on the row — tool name, input field values, the `input` précis, output, `denial.message`,
@@ -63,9 +62,9 @@ own indent from this value; the caller ([`MessageBubble`](./message-bubble.md)) 
 
 ```kotlin
 @Composable
-fun ToolCallRow(toolCall: ToolCall, modifier: Modifier = Modifier) {
+fun ToolCallRow(toolCall: ToolCall, modifier: Modifier = Modifier, subagentDepth: Int = 0) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    ToolCallRowContent(toolCall = toolCall, expanded = expanded, onToggle = { expanded = !expanded }, modifier = modifier)
+    ToolCallRowContent(toolCall, expanded, { expanded = !expanded }, modifier, subagentDepth)
 }
 ```
 
@@ -75,10 +74,6 @@ because the `LazyColumn` item slot keys items on `Message.id`. A `ToolCall` that
 place (a status flip, a new `elapsedSeconds` reading) is a **new value at the same call site**, so
 `expanded` survives the update — this is the property #895's elapsed-reading and status-flip live
 updates depend on, and `ToolCallRowTest.a_row_stays_expanded_while_it_is_updated_in_place` pins it.
-
-**Lifetime tied to `LazyColumn` item disposal**, as before: scrolling a row off-screen and back resets
-`expanded` to `false`. Unchanged Phase-0 trade-off; the fix if it becomes a problem is hoisting
-`expanded` into the `ViewModel` keyed on `Message.id`, not a different `remember*` variant.
 
 ### Container and header
 
@@ -99,10 +94,11 @@ tile — the card now reads as an outline, not a tonal surface. The click target
 `onClickLabel` (the localized "Show/Hide tool details" string) and `Role.Button`, which the pre-#895
 row did not — a TalkBack user now hears the row is a toggle, not just gets a bare click.
 
-`HeaderRow` is a `Row` whose **trailing status and chevron are unweighted and the name-plus-subject
-group is `weight(1f)`**: because a `Row` measures unweighted children first, the status and chevron
-always get their width and the group only gets what is left — this is what makes the subject
-ellipsize instead of pushing the status off-row when it is long.
+`HeaderRow` has a 20dp minimum height, yielding a 36dp collapsed card with its 8dp vertical padding.
+The first 412dp device capture measured only 32dp without that minimum: text style line height alone
+did not guarantee the designed row height. The status is unweighted; the headline receives remaining
+width and ellipsizes. In the described variant, the chevron sits beside the description within that
+weighted group. The simple variant omits it. Consecutive cards retain 12dp bottom spacing.
 
 ### Subagent step description (since #896)
 
@@ -185,15 +181,16 @@ its absence without matching against a specific formatted string.
 
 Figma's collapsed instance also shows a result count ("184 lines"); that slot is **not drawn** on
 mobile — the wire's `tool_result` carries only `result_summary`, with no count, and nothing derives
-one from the output text.
+one from the output text. Figma's component examples omit the mobile status slot, so a combined
+row is not a literal pixel match to any one component canvas.
 
 ### Expanded body
 
 ```kotlin
 Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()), spacedBy(12.dp))
-├── ExpandedSection("Input")   { one entry per inputFields key, else the input précis }
-├── ExpandedSection("Output")  { only when status is Done or Failed }
-└── ExpandedSection("Denied by claude") { only when status == Denied and denial != null }
+├── ExpandedSection("Input")   { nonempty input fields, else nonempty input précis }
+├── ExpandedSection("Output")  { nonempty output when status is Done or Failed }
+└── ExpandedSection("Denied by claude") { nonempty denial on Denied }
 ```
 
 The body is **height-bounded with internal scroll** rather than growing the thread row without limit
@@ -201,33 +198,35 @@ The body is **height-bounded with internal scroll** rather than growing the thre
 (`tool_row_input` / `tool_row_output` / `tool_row_denial` string resources, replacing the pre-#895
 English-only inline literals) over its content.
 
-**Input.** When `inputFields` is non-empty, one `InputField(key, value)` per entry **in map order**
-— the key as a monospace `labelSmall` caption over its value. Falls back to the single `input` précis
-when the map is empty, which is always true for a cache-restored row.
+**Input.** Nonempty `inputFields` render in map order, each key as a monospace `labelSmall` caption
+over its value. Empty field values are omitted. If no nonempty fields remain, the nonempty `input`
+précis is used instead. A cache-restored row normally follows that fallback because fields are not
+persisted. If neither source has content, there is no Input section.
 
-**Output.** Gated on `status == Done || status == Failed`, unchanged in spirit from #388's
-resolution gate — a `Running` row has no output yet (the data layer fills it on the correlated
-`tool_result`) and a `Denied` row's reason belongs in the Denied section instead, not Output.
+**Output.** Gated on `status == Done || status == Failed` and nonempty `output`. A `Running` row
+has no output yet (the data layer fills it on the correlated `tool_result`) and a `Denied` row's
+reason belongs in the Denied section instead.
 
-**Denied.** Gated on `status == Denied && denial != null`. `denial.message` renders, then
-`denial.decisionReason` when it is non-empty. **A cache-restored `Denied` row has no `denial`**
+**Denied.** Gated on `status == Denied`, a nonnull denial and at least one nonempty denial string.
+`denial.message` renders, then `denial.decisionReason`, omitting either when empty. **A cache-restored
+`Denied` row has no `denial`**
 (that field is not persisted — see [Live tool-call § Denied](./live-tool-call.md#denied-811)) and
 shows no Denied section at all, not an empty one.
 
-**Content rendering (`ToolContent`).** Code-like content — contains `\n`, longer than 80 chars, or is
-the `command` input field specifically — takes `CodeBlock(content, language = null, textStyle =
-bodySmall)`; anything else wraps as `bodySmall` `FontFamily.Monospace` `Text` in `onBackground`
-(Figma's 12sp mono prose; #895 lowered this from `bodyMedium` — see
-[Configuration](#configuration)). The `command`-field special case exists so a `Bash` call's command
-always gets code-block chrome even when it is a single short line that the length/newline heuristic
-alone would not catch.
+**Content rendering (`ToolContent`).** The `command` field always uses the shared bordered
+`CodeBlock`; other input and denial content uses it for line breaks or more than 80 characters.
+Results use it only for line breaks. A long single-paragraph result wraps as 12sp monospace prose:
+the earlier length heuristic boxed that prose even though the design shows it wrapping. Code blocks
+keep their 6dp border, 16 × 12dp padding, horizontal scrolling and `copyable = false`; the old Figma
+copy glyph does not change the product's no-copy rule. All other content is inert 12sp monospace
+`Text` with 20sp line height and no URL or Markdown action.
 
 ### File-private spacing constants
 
 Renamed and re-tuned to the #895 design (`ToolCallCornerRadius` 12dp → 6dp, new
-`ToolCallBorderWidth`, `ToolCallStatusIconSize`/`ToolCallSpinnerSize`/`ToolCallChevronSize` replacing
-the single `ToolCallIconSize`, new `ToolNameMaxWidth` and `ToolCallExpandedMaxHeight`). Every value is
-still a `dp` literal at the declaration site only — no `.dp` literal at any call site.
+`ToolCallBorderWidth`, status/spinner sizing, `ToolNameMaxWidth` and `ToolCallExpandedMaxHeight`).
+The described variant adds a small chevron slot, a 20dp header minimum and 12dp expanded gap.
+Every value is still a `dp` literal at the declaration site only — no `.dp` literal at any call site.
 `MessageRowVerticalSpacing = 12.dp` is still redeclared here rather than imported from
 `MessageBubble.kt`, same rule-of-three deferral as before #895.
 
@@ -288,7 +287,8 @@ rendering doesn't ripple into the data-layer fake.
   [development-verification § where a screen test goes](./development-verification.md#where-a-screen-test-goes).
   Covers each status's own content description (and that `Denied` does *not* also show
   `cd_tool_failed`), the elapsed text at a running reading vs. no reading vs. a stale reading on a
-  resolved row, the subject sourced from `inputFields`, the Denied section's message, and the
+  resolved row, simple/described selection, chevron presence, supplied-only sections, inert
+  noncopyable content, the Denied section's message, compact enlarged-text reachability and the
   expanded-stays-expanded-through-an-in-place-update case.
 - **Compose testing gotcha (#895 lesson):** `onNodeWithTag(TOOL_ELAPSED_TAG)` *finds* the elapsed
   `Text` node fine even though it sits inside the row's `clickable` `Column` (a merge-descendants
@@ -298,11 +298,17 @@ rendering doesn't ripple into the data-layer fake.
   green even if the child were actually clipped, because it matches against the merged parent row —
   so a tag-scoped display assertion inside any `clickable`/merged row in this codebase should default
   to `useUnmergedTree = true`, not just this component.
-- **E2E:** no new scenario for #895. The rung-3 `interactiveTurn_toolPrompt_rendersToolStepInThread`
-  (#481) and the scripted `tool` / `tool-failed` scenarios keep matching the verbatim `Bash` name (now
-  its own text node, unchanged by the restyle) and the kept `cd_tool_running` / `cd_tool_failed`
-  descriptions. The elapsed reading depends on claude's transient heartbeats, which a durable scenario
-  cannot pin, so only the unit and component tests cover its render.
+- **E2E:** the existing rung-3 `interactiveTurn_toolPrompt_rendersToolStepInThread` now looks for
+  the resolved row's accessible Done status, absent before the prompt and visible after the turn.
+  A described header omits the tool name, so a name-based matcher could fail while the row is correct.
+  The scripted `tool` / `tool-failed` scenarios still use the kept running/failed descriptions.
+  The elapsed reading depends on transient heartbeats and remains under component coverage.
+- **Visual evidence:** [`tool-row-1208` captures](../../../app/src/androidTest/assets/tool-row-1208/capture-context.txt)
+  pair actual 412 × 892 API 33 emulator frames with the inspected Figma nodes and a labelled
+  comparison/difference image. The 320dp, 1.5× font-scale capture includes a scrolled result.
+  `ToolRowDesignCaptureTest` executed 2 tests with 0 failures and 0 skips; the focused
+  `MainActivityInsetsDeviceTest.populatedThreadKeyboardAt412By892` executed 1 with 0 failures and
+  0 skips. The wide Figma canvases and missing combined mobile state limit pixel comparison.
 - **`subagentDepth` (#896) is not covered by `ToolCallRowTest`.** It is exercised end to end through the
   real `ThreadScreen` fold instead: `ToolRowNestingTest` (`app/src/sharedTest/.../thread/`) asserts that a
   matched child and a grandchild each carry their own "Subagent step, level N" description and that a
@@ -312,10 +318,9 @@ rendering doesn't ripple into the data-layer fake.
 
 ## Edge cases / limitations
 
-- **Toggle state is lost on `LazyColumn` item disposal** — unchanged Phase-0 trade-off; see
-  [Stateful wrapper + stateless content split](#stateful-wrapper--stateless-content-split).
-- **Empty `input` / empty `toolName`** still render as empty text at that slot rather than crashing;
-  not special-cased, same posture as before #895.
+- **Expansion is local to the keyed row.** In-place updates preserve it; it is not repository state.
+- **Missing supplied data.** Empty input, output and denial values do not create sections. A simple
+  row with an empty `toolName` still renders that empty text slot without crashing.
 - **No result count.** Figma shows one; the wire has none to show. Not derived from output length.
 - **No expand/collapse animation.** The conditional `if (expanded) ExpandedBody(toolCall)` still
   adds/removes the subtree directly; a future ticket could wrap it in `AnimatedVisibility` without
@@ -325,10 +330,8 @@ rendering doesn't ripple into the data-layer fake.
 - **No language inference from path extension** for the Input/Output code blocks — `language` is
   always `null`. Open since before #895; a future ticket could add a path-extension → language helper
   for `Read`/`Edit` fields specifically.
-- **The composer's open-tool status indicator is a separate, not-yet-built ticket** — it's the reason
-  `formatToolElapsed` lives in its own Compose-free file rather than as a private function in
-  `ToolCallRow.kt`. (Subagent nesting, listed here as open before #895, shipped in #896 — see [Subagent
-  step description](#subagent-step-description-since-896) above.)
+- **The composer's open-tool status indicator is separate** and reuses `formatToolElapsed` from
+  the Compose-free formatter. Subagent nesting shipped in #896.
 - **Bidi-override characters in a subject are unguarded** (security review, SHOULD NOT FIX, no
   observed failure) — a bidi-override in a subject field could visually reorder that one text node,
   but name, subject and trailing status are separate nodes so it cannot reorder the status glyph or
@@ -354,7 +357,7 @@ rendering doesn't ripple into the data-layer fake.
     content gutter
   - [`MarkdownText`](./markdown-text.md) — `internal CodeBlock(content, language, copyable = false,
     textStyle = bodySmall)` reused for code-ish input/output; `textStyle` added by #895, `copyable`
-    stays at its `false` default here (whether tool content becomes copyable is still open, #658's call)
+    stays at its `false` default here per the current no-copy product decision
   - [development-verification](./development-verification.md) — component-test placement
     (`sharedTest` vs. `androidTest`) and the managed-device gate this row's tests run under
 - Downstream:
