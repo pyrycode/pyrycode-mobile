@@ -91,6 +91,8 @@ class ThreadScreenChannelInfoTest {
         setContent(mutableListOf())
 
         composeTestRule.onNodeWithText("About").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Folder").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Workspace").assertDoesNotExist()
         composeTestRule.onNodeWithText("~/Workspace/Projects/KitchenClaw").assertIsDisplayed()
         composeTestRule.onNodeWithText("Total sessions").assertIsDisplayed()
         composeTestRule.onNodeWithText("Total messages").assertIsDisplayed()

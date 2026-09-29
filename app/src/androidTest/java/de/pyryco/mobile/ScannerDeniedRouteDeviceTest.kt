@@ -4,6 +4,7 @@ import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.view.View
@@ -122,6 +123,7 @@ class ScannerDeniedRouteDeviceTest {
         val bitmap = checkNotNull(automation.takeScreenshot())
         assertEquals(412, bitmap.width)
         assertEquals(892, bitmap.height)
+        assertTrue("blue denied atmosphere", Color.blue(bitmap.getPixel(4, 250)) > Color.blue(bitmap.getPixel(4, 650)))
         assertTrue(
             "nonblank pixels",
             (0 until bitmap.height step 8).flatMap { y -> (0 until bitmap.width step 8).map { x -> bitmap.getPixel(x, y) } }.toSet().size >

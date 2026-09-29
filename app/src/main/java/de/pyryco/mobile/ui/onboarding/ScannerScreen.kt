@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.Layout
@@ -112,6 +113,7 @@ private fun ScannerViewport(
     val blueStop = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
     val coralStop = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.06f)
     val stripeColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
+    val colors = MaterialTheme.colorScheme
     Surface(
         color = MaterialTheme.colorScheme.surface,
         modifier = modifier.fillMaxSize(),
@@ -120,6 +122,7 @@ private fun ScannerViewport(
             modifier =
                 Modifier
                     .fillMaxSize()
+                    .scannerAtmosphere(colors.primaryContainer, colors.surfaceContainerLowest, colors.surface)
                     .systemBarsPadding(),
         ) {
             Row(
@@ -154,6 +157,7 @@ private fun ScannerViewport(
                 // Back-most layer: the live camera feed (route injects it for ReadyToScan; renders
                 // nothing otherwise). The atmosphere/reticle/hint overlay below composites over it.
                 cameraPreview()
+                Box(Modifier.matchParentSize().background(colors.scrim.copy(alpha = 0.6f)))
                 // Figma uses elliptical gradients; retain the existing circular atmospheric approximation.
                 // Atmosphere gradients, moved off the Box's own drawBehind (which paints behind ALL
                 // children incl. the camera) into a matchParentSize child so they layer over the feed.
@@ -219,6 +223,26 @@ private fun ScannerViewport(
         }
     }
 }
+
+internal fun Modifier.scannerAtmosphere(
+    center: Color,
+    shadow: Color,
+    edge: Color,
+): Modifier =
+    drawBehind {
+        drawRect(edge)
+        drawRect(
+            brush =
+                Brush.radialGradient(
+                    0f to center,
+                    0.7f to lerp(center, shadow, 0.9f),
+                    0.76f to edge,
+                    1f to edge,
+                    center = Offset(size.width * 0.476f, size.height * 0.297f),
+                    radius = maxOf(size.width, size.height) * 0.56f,
+                ),
+        )
+    }
 
 // Measure the helper first: preserve Figma's centered reticle when it fits, then move it
 // upward (and only shrink if necessary) to keep a 16 dp gap on compact windows.

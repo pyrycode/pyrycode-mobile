@@ -1,0 +1,5 @@
+activity=MainActivity api=35 sizeDp=360x800 density=1.0 systemBarsPx=Insets{left=0, top=24, right=0, bottom=24} bodyBoundsPx=Rect.fromLTRB(32.0, 474.0, 328.0, 711.0) fontScale=1.5 state=scrolled theme=DARK wallpaperColors=false
+visibleBody: Rect.fromLTRB(32.0, 323.0, 328.0, 560.0)
+primary: Rect.fromLTRB(32.0, 560.0, 328.0, 640.0)
+secondary: Rect.fromLTRB(32.0, 652.0, 328.0, 708.0)
+footer: Rect.fromLTRB(32.0, 728.0, 328.0, 776.0)

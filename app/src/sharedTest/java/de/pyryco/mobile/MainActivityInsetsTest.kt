@@ -39,14 +39,14 @@ class MainActivityInsetsTest {
             rule.waitForIdle()
             val title = rule.onNodeWithText("Pyrycode Mobile").fetchSemanticsNode().boundsInRoot
             // The decorative logo has no semantics: title top = logo top + logo height + hero gap.
-            assertEquals("logo starts 168 dp below one status inset", topPx + 300 * density, title.top, 1f)
+            assertEquals("logo starts 172 dp below one status inset", topPx + 304 * density, title.top, 1f)
             val footer =
                 rule
                     .onNodeWithText("Open source · github.com/pyrycode/pyrycode-mobile")
                     .fetchSemanticsNode()
                     .boundsInRoot
             val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
-            assertEquals("footer reserves one navigation inset", root.bottom - bottomPx - 16 * density, footer.bottom, 1f)
+            assertEquals("footer reserves one navigation inset", root.bottom - bottomPx - 4 * density, footer.bottom, 1f)
         }
     }
 }

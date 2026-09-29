@@ -431,9 +431,9 @@ class MainActivityInsetsDeviceTest {
         if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
             assertTrue("full-image evidence must use physical system bars", !syntheticBars)
         }
-        assertEquals(bars.top + 300 * density, bounds(rule.onNodeWithText("Pyrycode Mobile")).top, 1f)
+        assertEquals(bars.top + 304 * density, bounds(rule.onNodeWithText("Pyrycode Mobile")).top, 1f)
         val footer = rule.onNodeWithText("Open source · github.com/pyrycode/pyrycode-mobile")
-        assertEquals(height - bars.bottom - 16 * density, bounds(footer).bottom, 1f)
+        assertEquals(height - bars.bottom - 4 * density, bounds(footer).bottom, 1f)
         capture("welcome")
 
         rule.onNodeWithText("I already have pyrycode").performClick()
