@@ -201,6 +201,8 @@ each took the `weight(1f)` slot directly. The overlay draws *after* (so *over*) 
 and `Alignment.TopEnd` plus the overlay's own early-return-to-nothing keeps it from taking layout space —
 the list never reflows as a pill appears or clears. See [Thread top overlay](thread-top-overlay.md) for the
 composable itself, the dismissal holder `UsageLimitDismissals`, and why this replaced the status-row arms.
+The current frame sets `TopOverlayTopGap = 0.dp`: its visible content begins at the message region's
+top edge, 12 dp below the completed bar, and its right edge shares the 20 dp gutter with the rows.
 
 ### Interrupt-affordance placement (post-#459, retired from the screen in #643)
 
@@ -312,17 +314,16 @@ val connectionState: StateFlow<ConnectionState> =
 
 **[#643](../codebase/643.md) replaced the stock M3 `TopAppBar` with a hand-rolled bar plus a closing rule** — the Figma `16:8` `Top bar` frame (`533:1948`), the same design language [`ChannelListTopBar`](channel-list-screen.md) already shipped for the channel list. `ThreadTopAppBar(title, onBack, onTitleClick, onOverflowClick, overflowExpanded, onOverflowDismiss, onOverflowEvent, isPromoted, mutationsSupported, modifier)` (the `onShowLiteralScreen` parameter [#382](../codebase/382.md) had added here was removed by [#883](../../specs/architecture/883-retire-literal-screen.md)) stays a **public** stateless composable in its own file (`ThreadTopAppBar.kt`); only its body changed. It is now a `Column` of a content `Row` and a `HorizontalDivider`:
 
-- **Back** — a 48dp `IconButton(onClick = onBack)` around a 24dp `Icons.AutoMirrored.Filled.ArrowBack`, `R.string.cd_back` ("Back") reused from every other back-arrow in the app.
+- **Back** — a 48dp `IconButton(onClick = onBack)` around the 24dp `ic_thread_back` Figma vector, tinted `onSurface`; `R.string.cd_back` ("Back") remains its accessible name.
 - **Title** — `Text(text = title, modifier = Modifier.weight(1f).clickable(onClick = onTitleClick).semantics { role = Role.Button }, style = titleLarge, color = onPrimaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)`, sitting between the two controls. `weight(1f)` precedes `.clickable(...)`, so the `Text` measures to the **full title slot**, not just its visible glyphs — the tap area and ripple cover the trailing space after a short title too (harmless: `Row` siblings never overlap, so it can't reach either control, and it is arguably a better target than the stock bar's text-sized one). `maxLines = 1` + `TextOverflow.Ellipsis` is what makes a display name longer than the slot truncate inside it rather than overlap or cover a control. `Role.Button` keeps TalkBack announcing the title as activatable.
-- **Overflow** — kept its pre-#643 `Box { IconButton; ThreadOverflowMenu }` wrap unchanged; that `Box` is what anchors the menu directly beneath its own glyph rather than against the row ([#252](../codebase/252.md)), and losing it on the rewrite would have reopened that bug. 48dp touch target around a 24dp `Icons.Filled.MoreVert`, `R.string.cd_more_actions` ("More actions").
-- **Rule** — a `HorizontalDivider` closing the bar, **inset 20dp on both sides** (not full-width — the plan's design-source prose said "full-width rule", but the Figma frame has the rule at the same `x=20 w=372` as the content row, and the shipped code and `ChannelListTopBar` both draw it inset; don't repeat "full-width" elsewhere). The existing 1dp thickness and geometry are retained. Colour comes from `threadColors.headerRule` at 60% alpha: `inversePrimary` (`#32628D`) in static dark, and the existing `outlineVariant` in static light and wallpaper light/dark.
-- **Touch-slack derivation.** Back and overflow keep 48dp `IconButton` touch targets around the design's 24dp glyphs; the bar's own paddings are the design's offsets **less the touch slack** `(48dp − 24dp) / 2 = 12dp`, the identical derivation `ChannelListTopBar` uses for the list's own bar, so both bars land their glyphs on the same 20dp gutter. The constants (`BarGlyphSize`, `BarTouchSize`, `BarGutter`, `BarTopGap`, `BarRuleGap`, `BarBottomGap`, `BAR_RULE_ALPHA`) are file-private here exactly as `ChannelListTopBar`'s are file-private there — deliberately not shared between the two files.
+- **Overflow** — keeps the `Box { IconButton; ThreadOverflowMenu }` anchor. Its 48dp target contains the Figma `ic_thread_overflow` vector, a 6 × 24dp path tinted `primary` and shifted 4dp upward; `R.string.cd_more_actions` ("More actions") remains its accessible name.
+- **Rule** — a 1dp `HorizontalDivider` at y=68, inset 20dp on both sides (`x=20`, width 372dp at the reference viewport). Colour comes from `threadColors.headerRule` at 60% alpha: `inversePrimary` (`#32628D`) in static dark, and `outlineVariant` in static light and wallpaper modes.
+- **Geometry.** At 412 × 892 dp, the 61dp top-bar frame starts at (20, 24), its rule is at y=68, and the message region begins at y=97. The visible back and title use the 20dp gutter while 48dp targets extend into available space. `ThreadBarTopGap` raises only this bar; the markdown reader keeps `BarTopGap`, avoiding an unrelated 4dp shift. The title still truncates inside its middle slot.
 
-Under the app root's static dark palette, the thread canvas is `#0B0E11`
-(30% black scrim over `#101418`). `ThreadScreen` uses `threadColors.background` for its `Scaffold`
-and `threadColors.surface` for the composer surround, covering the transparent header and blank
-space in both empty and populated threads. Explicit static light and wallpaper light/dark variants in isolated tests retain
-the scheme's `background` for the Scaffold and `surface` for the composer surround.
+Under the static dark palette, `ThreadScreen` draws a radial `primaryContainer` glow over the
+theme surface with a 30% scrim, matching the live `16:8` root. Its `Scaffold` is transparent in
+this mode so the glow reaches the header and blank message region; the composer surround retains
+`threadColors.surface`. Static light and wallpaper variants keep the flat thread background.
 
 `PyrycodeMobileTheme` provides the immutable `ThreadColors` palette from the resolved app mode and
 wallpaper setting, also used by the [markdown reader](markdown-reader-screen.md#what-it-does).

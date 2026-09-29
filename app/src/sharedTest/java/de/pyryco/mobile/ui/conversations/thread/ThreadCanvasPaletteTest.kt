@@ -33,6 +33,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -146,14 +147,23 @@ class ThreadCanvasPaletteTest {
                 assertEquals("$location blue", expected.blue, actual.blue, 1f / 255f)
             }
             val canvas = if (reader) surface else background
-            pixel(2f, 30f, canvas) // Header, outside the back glyph.
-            pixel(2f, 200f, canvas) // Empty/populated message or reader gutter.
-            pixel(160f, 64.5f, divider.compositeOver(canvas)) // Existing 1dp rule.
-            pixel(10f, 64.5f, canvas) // Retained 20dp rule inset.
-            pixel(160f, 63f, canvas)
-            pixel(160f, 66f, canvas)
+            val ruleY = if (reader) 64.5f else 68.5f
+            if (dark && !wallpaper && !reader) {
+                val glow = Color(bitmap.getPixel((bounds.left + 2 * density).toInt(), (bounds.top + 200 * density).toInt()))
+                val rule = Color(bitmap.getPixel((bounds.left + 160 * density).toInt(), (bounds.top + 68.5f * density).toInt()))
+                val above = Color(bitmap.getPixel((bounds.left + 160 * density).toInt(), (bounds.top + 67 * density).toInt()))
+                assertTrue("static dark thread has the Figma canvas glow", glow.blue > canvas.blue)
+                assertTrue("the rule remains visible over the glow", rule.blue > above.blue)
+            } else {
+                pixel(2f, 30f, canvas)
+                pixel(2f, 200f, canvas)
+                pixel(160f, ruleY, divider.compositeOver(canvas))
+                pixel(10f, ruleY, canvas)
+                pixel(160f, ruleY - 1.5f, canvas)
+                pixel(160f, ruleY + 1.5f, canvas)
+            }
             pixel(2f, bounds.height / density - 30f, surface) // Composer surround or trailing reader space.
-            if (!populated) pixel(160f, 300f, canvas)
+            if (!populated && (reader || !dark || wallpaper)) pixel(160f, 300f, canvas)
             System.getProperty("canvas.capture.dir")?.let { directory ->
                 File(directory, "canvas-$reader-$dark-$wallpaper-$populated.png").outputStream().use {
                     bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)

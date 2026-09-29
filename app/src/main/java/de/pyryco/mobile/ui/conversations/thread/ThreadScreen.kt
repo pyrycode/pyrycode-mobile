@@ -6,9 +6,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
@@ -41,15 +43,21 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
@@ -111,14 +119,38 @@ internal val ComposerGutter = 20.dp
 private val ComposerSectionGap = 8.dp
 private val ComposerTopGap = 12.dp
 private val ComposerBottomGap = 16.dp
+private val AttachmentStripTouchOverlap = 5.dp
+
+// The footer's 32dp boxes start below the input gap. Compose expands them to 48dp, using that gap
+// without entering the input surface. The visible controls stay in their 20dp design band.
+private val FooterTouchBottomOverflow = 12.dp
+private val FrameFooterTouchHeight = 32.dp
 
 // The three status indicators each carry their own 16dp horizontal padding, sized for the full-bleed
 // foot-of-list mount they had until #643. Inset them by the remainder so their content lands on the
 // same 20dp gutter as the input field and the footer, with their own files untouched.
 private val ComposerStatusGutter = ComposerGutter - 16.dp
 
-// #1002: the Top overlay's inset from the message area's top edge, clear of the app bar.
-private val TopOverlayTopGap = 8.dp
+// Figma's top overlay shares the message area's top edge.
+private val TopOverlayTopGap = 0.dp
+private val FrameGlowRadius = 480.dp
+private const val FRAME_GLOW_STOP = 0.76012f
+private const val FRAME_SCRIM_ALPHA = 0.30f
+
+// Reserve the design's visible band height while allowing an existing control's touch area to extend
+// into the adjacent gap. Neither extension reaches the next visible control.
+private fun Modifier.frameHeightWithTouchOverflow(
+    top: Dp = 0.dp,
+    bottom: Dp = 0.dp,
+): Modifier =
+    layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        val topPx = top.roundToPx()
+        val bottomPx = bottom.roundToPx()
+        layout(placeable.width, (placeable.height - topPx - bottomPx).coerceAtLeast(0)) {
+            placeable.placeRelative(0, -topPx)
+        }
+    }
 
 // #778: the ONE oldest-end slot. Loading, retry and dead-end share this key because they share the slot —
 // at most one of them is ever emitted.
@@ -310,12 +342,36 @@ fun ThreadScreen(
     // #885: the input field's text-aligned window bounds, where the slash-command suggestions anchor.
     var inputAnchor by remember { mutableStateOf<Rect?>(null) }
     val imeVisible = WindowInsets.isImeVisible
+    val scheme = MaterialTheme.colorScheme
+    val frameColors = scheme.threadColors
     Box(
-        modifier = modifier.onGloballyPositioned { layerOrigin = it.positionInWindow() },
+        modifier =
+            modifier
+                .drawWithCache {
+                    val brush =
+                        frameColors.glow?.let { glow ->
+                            Brush.radialGradient(
+                                0f to glow,
+                                (FRAME_GLOW_STOP / 2f) to lerp(glow, scheme.onPrimary, 0.5f).copy(alpha = 0.5f),
+                                FRAME_GLOW_STOP to scheme.onPrimary.copy(alpha = 0f),
+                                center = Offset(size.width * (196f / 412f), 265.dp.toPx()),
+                                radius = FrameGlowRadius.toPx(),
+                            )
+                        }
+                    onDrawBehind {
+                        if (brush == null) {
+                            drawRect(frameColors.background)
+                        } else {
+                            drawRect(scheme.surface)
+                            drawRect(brush)
+                            drawRect(scheme.scrim.copy(alpha = FRAME_SCRIM_ALPHA))
+                        }
+                    }
+                }.onGloballyPositioned { layerOrigin = it.positionInWindow() },
     ) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            containerColor = MaterialTheme.colorScheme.threadColors.background,
+            containerColor = if (frameColors.glow == null) frameColors.background else Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onBackground,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
@@ -368,7 +424,10 @@ fun ThreadScreen(
                             attachments = attachments,
                             sending = attachmentsSending,
                             onRemove = onRemoveAttachment,
-                            modifier = Modifier.padding(horizontal = ComposerGutter),
+                            modifier =
+                                Modifier
+                                    .padding(horizontal = ComposerGutter)
+                                    .frameHeightWithTouchOverflow(top = AttachmentStripTouchOverlap),
                         )
                     }
                     ThreadInputBar(
@@ -395,9 +454,14 @@ fun ThreadScreen(
                         onOpen = { openControl = it },
                         onStatusClick = { sheetVisible = true },
                         onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
-                        modifier = Modifier.padding(horizontal = ComposerGutter),
+                        modifier =
+                            Modifier
+                                .padding(horizontal = ComposerGutter)
+                                .frameHeightWithTouchOverflow(bottom = FooterTouchBottomOverflow),
                         onAttach = openAttachmentPicker,
                         agent = state.agent,
+                        touchHeight = FrameFooterTouchHeight,
+                        contentBottomPadding = FooterTouchBottomOverflow,
                     )
                 }
             },
@@ -411,6 +475,7 @@ fun ThreadScreen(
                 // #843: a rejected pairing reads as Offline here, and its retry cannot succeed — the Top
                 // overlay's pairing pill replaces it. Network loss still gets the banner and its retry.
                 if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)
+                Spacer(Modifier.height(12.dp))
                 // #782: the thread's rows are the join of its items with the daemon's queued backlog, so a
                 // message the daemon parked draws once — in place, carrying the queue treatment — instead
                 // of once as an optimistic echo and again in a foot-of-list section. Pure and cached on
@@ -425,7 +490,7 @@ fun ThreadScreen(
                 // hasMessages already covers that case.
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
-                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
                     if (!state.hasMessages && state.queuedMessages.isEmpty()) {
                         EmptyThreadState(
                             modifier =
