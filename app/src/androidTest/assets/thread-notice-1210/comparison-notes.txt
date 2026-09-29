@@ -1,0 +1,24 @@
+Ticket #1210, inspected 2026-09-29.
+Figma file: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG
+Inspected nodes: 16:8 thread, 347:6618 pill variants, I533:1956;541:2430 normal pill,
+I533:1956;541:2499 error pill, 541:2188 close vector. The MCP did not expose a
+separate last-modified date, so the inspection date is the design evidence date.
+
+The Figma frame and emulator capture are both shown at 412 x 892 logical pixels in
+side-by-side-412x892.png. The Figma image includes example conversation content, while the deterministic emulator fixture shows an empty conversation. Only the notice region is the visual comparison target. The emulator image is a real managed-device capture
+normalized from its physical pixel density to logical size. The normal pill uses
+live usage information, which is longer than Figma's short example copy. It wraps
+without truncating the report. That content difference is not a geometry target.
+The error pill has the same copy in both images. Its 137 x 24 logical-pixel crops
+are aligned in error-pill-difference.png so the difference isolates fill, type
+rasterization, radius and edge pixels from the variable warning height above it.
+The visible error pill remains right aligned. The stack gap is 12 dp after the
+Material minimum layout height is disabled for the clickable pill.
+
+emulator-320x700-large-text.png checks compact width and 1.5x text. Both pills
+remain visible and wrap or expand without clipping. The existing overlay tests
+also prove dismissal and re-pair actions.
+
+The live file has no dedicated reference for ConnectionBanner, BannerNoticeRow or
+ModelRefusalRow. Those states are tracked in #1283. No exact visual-match claim is
+made for them in #1210.
