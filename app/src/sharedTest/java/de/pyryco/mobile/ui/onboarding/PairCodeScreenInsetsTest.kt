@@ -11,15 +11,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -36,6 +39,38 @@ class PairCodeScreenInsetsTest {
     private var statusTop = 0
     private var navigationBottom = 0
     private lateinit var view: View
+
+    @Test
+    fun confirmingCodeUsesSharedFingerprintModalAndRoutesDecisions() {
+        val events = mutableListOf<PairCodeEvent>()
+        val fingerprint = "32:0b:5e:a9:9e:65:3b:c2"
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                PairCodeScreen(
+                    state =
+                        PairCodeState(
+                            phase = PairCodePhase.Confirming,
+                            confirmation =
+                                ScannerUiState.AwaitingConfirm(
+                                    fingerprint,
+                                    PairedServer(
+                                        "synthetic",
+                                        "synthetic",
+                                        "wss://example.invalid",
+                                        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                                    ),
+                                ),
+                        ),
+                    onEvent = { events += it },
+                )
+            }
+        }
+        rule.onNodeWithText("Pair").assertIsDisplayed()
+        rule.onNodeWithText(fingerprint).assertIsDisplayed()
+        rule.onNodeWithText("Don't pair").performClick()
+        rule.onNodeWithText("Confirm pairing").performClick()
+        rule.runOnIdle { assertEquals(listOf(PairCodeEvent.Back, PairCodeEvent.Confirm), events) }
+    }
 
     // Robolectric reports no system bars, so fixed ones are applied to the Compose view. On a device the
     // real bars may replace them; the assertions use whatever insets Compose actually read.

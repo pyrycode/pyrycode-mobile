@@ -12,6 +12,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -216,6 +217,29 @@ class ScannerScreenTest {
     }
 
     // ---- AwaitingConfirm: the fingerprint confirm gate (#343) ------------------
+
+    @Test
+    fun awaitingConfirm_usesMobileModalWithExactFingerprintAndCloseDecline() {
+        var declines = 0
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ScannerScreen(
+                    state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
+                    onNavigateBack = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                    onDeclinePairing = { declines++ },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Pair").assertExists()
+        composeTestRule.onNodeWithText(FINGERPRINT).assertExists()
+        composeTestRule.onNodeWithText("Confirm pairing").assertHasClickAction()
+        composeTestRule.onNodeWithText("Don't pair").assertHasClickAction()
+        composeTestRule.onNodeWithContentDescription("Close").performClick()
+        composeTestRule.runOnIdle { assertEquals(1, declines) }
+    }
 
     @Test
     fun awaitingConfirm_rendersFingerprintVerbatimAndCompareCopy() {
