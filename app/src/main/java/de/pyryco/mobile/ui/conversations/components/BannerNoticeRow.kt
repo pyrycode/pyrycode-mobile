@@ -1,15 +1,9 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.WarningAmber
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -22,23 +16,17 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import de.pyryco.mobile.ui.theme.warning
 import kotlinx.datetime.Instant
 
-private val BannerIconSize = 16.dp
-private val BannerIconGap = 8.dp
-
 /**
- * Text claude printed about the session (#873), drawn as one line of body-small copy on the thread's
- * gutter. Figma 16:8 has no notice component, so the row borrows the `Session reset` treatment: no bubble,
- * `bodySmall`. A [BannerLevel.Warning] takes the theme's `warning` colour and a leading icon, so it reads
- * as a warning without relying on colour alone; every other level is a muted `onSurfaceVariant` notice.
+ * Text the agent printed about the session (#873), drawn without a bubble or icon in the message stream.
+ * Figma's `Thread notification` component uses muted body text for both levels. A [BannerLevel.Warning]
+ * starts with a client-owned "Warning · " prefix so its meaning does not depend on colour.
  *
  * Security — [ThreadItem.Banner.text] is claude-authored and unsanitized, and a notice styled like the
  * app's own chrome is the realistic abuse. The render-time obligations:
@@ -58,40 +46,28 @@ fun BannerNoticeRow(
     modifier: Modifier = Modifier,
 ) {
     val warning = item.level == BannerLevel.Warning
-    val color = if (warning) MaterialTheme.colorScheme.warning else MaterialTheme.colorScheme.onSurfaceVariant
     val name = agentName(agent)
+    val warningPrefix = stringResource(R.string.thread_banner_warning_prefix)
     val attribution = stringResource(R.string.thread_banner_attribution, name)
     val truncatedMark = stringResource(R.string.thread_banner_truncated)
     val text =
         buildAnnotatedString {
+            if (warning) withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(warningPrefix) }
             withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(attribution) }
             append(bannerDisplayText(item.text))
             if (item.truncated) {
                 withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(truncatedMark) }
             }
         }
-    Row(
+    Text(
+        text = text,
         modifier =
             modifier
                 .fillMaxWidth()
                 .padding(start = MessageContentGutter, end = MessageContentGutter, bottom = MessageAreaRowSpacing),
-        horizontalArrangement = Arrangement.spacedBy(BannerIconGap),
-    ) {
-        if (warning) {
-            Icon(
-                imageVector = Icons.Outlined.WarningAmber,
-                contentDescription = stringResource(R.string.cd_thread_banner_warning, name),
-                modifier = Modifier.size(BannerIconSize),
-                tint = color,
-            )
-        }
-        Text(
-            text = text,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodySmall,
-            color = color,
-        )
-    }
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 // desktop's `bannerDisplayText` set, in its order: OSC strings, DCS/SOS/PM/APC strings, CSI sequences,

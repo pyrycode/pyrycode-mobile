@@ -30,7 +30,6 @@ class BannerNoticeRowTest {
     // Matches the string resources added in #873.
     private val attribution = "Claude: "
     private val truncatedMark = " (truncated)"
-    private val warningDescription = "Warning from Claude"
 
     private fun banner(
         level: BannerLevel = BannerLevel.Warning,
@@ -50,37 +49,38 @@ class BannerNoticeRowTest {
     fun shows_the_text_attributed_to_claude_with_escapes_stripped() {
         setContent(banner(text = "Blocked \u001b[31mby\u001b[0m hook"))
 
-        composeTestRule.onNodeWithText("${attribution}Blocked by hook").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Warning · ${attribution}Blocked by hook").assertIsDisplayed()
     }
 
     @Test
     fun a_truncated_banner_is_marked_as_cut() {
         setContent(banner(truncated = true))
 
-        composeTestRule.onNodeWithText("${attribution}Blocked by hook$truncatedMark").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Warning · ${attribution}Blocked by hook$truncatedMark").assertIsDisplayed()
     }
 
     @Test
     fun an_untruncated_banner_carries_no_mark() {
         setContent(banner(truncated = false))
 
-        composeTestRule.onNodeWithText("${attribution}Blocked by hook").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Warning · ${attribution}Blocked by hook").assertIsDisplayed()
         composeTestRule.onNodeWithText(truncatedMark, substring = true).assertDoesNotExist()
     }
 
     @Test
-    fun a_warning_shows_the_warning_icon() {
+    fun a_warning_names_itself_in_text_without_an_icon() {
         setContent(banner(level = BannerLevel.Warning))
 
-        composeTestRule.onNodeWithContentDescription(warningDescription).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Warning · ${attribution}Blocked by hook").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Warning from Claude").assertDoesNotExist()
     }
 
     @Test
-    fun a_notice_shows_no_warning_icon() {
+    fun a_notice_has_no_warning_prefix() {
         setContent(banner(level = BannerLevel.Notice))
 
         composeTestRule.onNodeWithText("${attribution}Blocked by hook").assertIsDisplayed()
-        composeTestRule.onNodeWithContentDescription(warningDescription).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Warning", substring = true).assertDoesNotExist()
     }
 
     @Test

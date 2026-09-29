@@ -1,35 +1,35 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Layer 1b (#474): the thread's connection banner (#200/#201) driven through the real
+ * Layer 1b (#474): the thread's connection state (#200/#201) driven through the real
  * [ThreadViewModel.connectionState] (`ConnectionStateSource.observe()` → `stateIn`, #307) and rendered
- * by [de.pyryco.mobile.ui.conversations.components.ConnectionBanner] on the [ScriptedThreadHarness].
- * The banner reacts to its **own** connection seam — disjoint from the `FakeSessionPump` envelope
+ * on the [ScriptedThreadHarness]. The reading reacts to its **own** connection seam — disjoint from the `FakeSessionPump` envelope
  * stream that drives the #432 deltas / #472 tool rows — so this case scripts `ConnectionState` via
  * `pushConnectionState`, not the pump.
  *
- * Assertions are **tolerant** (presence/absence of the distinctive rendered substring, generous
- * `waitUntil`), never on timing — the `docs/e2e-interactive-stream.md` ladder-doc rule. Banner strings
- * carry non-ASCII glyphs (`Connecting…` U+2026, `Offline — tap to retry` U+2014); each assertion keys
- * on an ASCII-only substring **before** the glyph so the match never depends on reproducing it.
+ * Assertions wait for distinctive rendered text, then check its placement. Connecting and Reconnecting
+ * live in the composer status row; Offline is a top pill with a retry action.
  *
  * Runs under `./gradlew connectedAndroidTest` (device/emulator required), alongside
  * [ScriptedToolRowTest] / [ScriptedThreadRenderTest].
  */
 @RunWith(AndroidJUnit4::class)
-class ScriptedConnectionBannerTest {
+class ScriptedConnectionStatusTest {
     @get:Rule
     val composeRule = createComposeRule()
 
@@ -46,9 +46,7 @@ class ScriptedConnectionBannerTest {
         harness.close()
     }
 
-    // Connecting (AC #1): push Connecting → the banner shows the "Connecting…" affordance. Assert on the
-    // ASCII "Connecting" substring, before the U+2026 ellipsis. The capital-C cannot collide with
-    // Reconnecting's lowercase "connecting" — only one banner is on screen per single-state test.
+    // Connecting uses the composer's status row.
     @Test
     fun connecting_showsConnectingAffordance() {
         harness.pushConnectionState(ConnectionState.Connecting)
@@ -60,11 +58,19 @@ class ScriptedConnectionBannerTest {
                 .isNotEmpty()
         }
         composeRule.onNodeWithText("Connecting", substring = true).assertIsDisplayed()
+        assertTrue(
+            composeRule
+                .onNodeWithText("Connecting", substring = true)
+                .getUnclippedBoundsInRoot()
+                .top.value >
+                composeRule
+                    .onRoot()
+                    .getUnclippedBoundsInRoot()
+                    .bottom.value * 0.7f,
+        )
     }
 
-    // Reconnecting (AC #2): push Reconnecting(12) → the banner shows the countdown affordance. Assert the
-    // full all-ASCII literal "Reconnecting in 12s" — proves the countdown value 12 is surfaced, which the
-    // AC explicitly requires (the literal must stay in sync with the pushed secondsRemaining).
+    // Reconnecting keeps the countdown in the same status row.
     @Test
     fun reconnecting_showsCountdownAffordance() {
         harness.pushConnectionState(ConnectionState.Reconnecting(secondsRemaining = 12))
@@ -76,29 +82,41 @@ class ScriptedConnectionBannerTest {
                 .isNotEmpty()
         }
         composeRule.onNodeWithText("Reconnecting in 12s", substring = true).assertIsDisplayed()
+        assertTrue(
+            composeRule
+                .onNodeWithText("Reconnecting in 12s", substring = true)
+                .getUnclippedBoundsInRoot()
+                .top.value >
+                composeRule
+                    .onRoot()
+                    .getUnclippedBoundsInRoot()
+                    .bottom.value * 0.7f,
+        )
     }
 
-    // Offline (AC #3): push Offline → the banner shows the offline / tap-to-retry affordance. Assert the
-    // ASCII "tap to retry" substring, after the U+2014 em-dash, so the match dodges the glyph.
+    // Offline appears in the top overlay rather than the status row.
     @Test
-    fun offline_showsTapToRetryAffordance() {
+    fun offline_showsTopRetryPill() {
         harness.pushConnectionState(ConnectionState.Offline)
 
         composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
             composeRule
-                .onAllNodesWithText("tap to retry", substring = true)
+                .onAllNodesWithText("Offline · Retry", substring = true)
                 .fetchSemanticsNodes()
                 .isNotEmpty()
         }
-        composeRule.onNodeWithText("tap to retry", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Offline · Retry", substring = true).assertIsDisplayed()
+        assertTrue(
+            composeRule
+                .onNodeWithText("Offline · Retry", substring = true)
+                .getUnclippedBoundsInRoot()
+                .top.value < 200f,
+        )
     }
 
-    // Connected (AC #4): a present→absent fence (mirrors the spinner test) so absence is not a trivial
-    // never-shown false-green. Push Connecting → wait for it to render → push Connected → wait for the
-    // banner to vanish (ConnectionBanner early-returns for Connected) → assert it is gone. Proves the
-    // banner appears then disappears on reconnect, which is stronger than asserting the default-absent state.
+    // Connected removes the earlier connection reading after recovery.
     @Test
-    fun connected_hidesBannerAfterDisconnect() {
+    fun connected_hidesConnectionReadingAfterRecovery() {
         harness.pushConnectionState(ConnectionState.Connecting)
         composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
             composeRule
