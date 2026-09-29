@@ -57,6 +57,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -68,6 +69,7 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.unit.DpSize
@@ -76,6 +78,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -345,6 +348,67 @@ class MobileModalTest {
         }
         rule.onNodeWithText("Cancel").performClick()
         rule.runOnIdle { assertEquals(1, dismissals) }
+    }
+
+    @Test
+    @WithTestIme
+    @SuppressLint("ComposeModifierComposed") // Capture the Rename dialog window, not the host activity.
+    fun rename_compact_width_keeps_field_and_actions_above_keyboard() {
+        var submitted: String? = null
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
+                    RenameDialog(
+                        initialName = "old",
+                        onSubmit = { submitted = it },
+                        onDismiss = {},
+                        modifier =
+                            Modifier.size(320.dp, 640.dp).composed {
+                                dialogView = LocalView.current
+                                keyboardController = LocalSoftwareKeyboardController.current
+                                this
+                            },
+                    )
+                }
+            }
+        }
+        rule.waitUntil(10_000) {
+            val focused = rule.runOnIdle { ::dialogView.isInitialized && dialogView.hasWindowFocus() }
+            if (!focused) {
+                ParcelFileDescriptor
+                    .AutoCloseInputStream(
+                        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(
+                            "am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS",
+                        ),
+                    ).use { it.readBytes() }
+            }
+            focused
+        }
+        val field = rule.onNode(hasSetTextAction()).assertIsDisplayed()
+        assertTrue(
+            "Rename field exceeds compact viewport",
+            field.fetchSemanticsNode().boundsInRoot.width <= 320f * dialogView.resources.displayMetrics.density,
+        )
+        field.performTouchInput { click() }.assertIsFocused()
+        rule.runOnIdle { checkNotNull(keyboardController).show() }
+        rule.waitUntil(5_000) {
+            rule.runOnIdle {
+                ViewCompat.getRootWindowInsets(dialogView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        assertAboveKeyboard(field.fetchSemanticsNode().boundsInRoot)
+        listOf("Cancel", "Save").forEach { label ->
+            assertAboveKeyboard(
+                rule
+                    .onNodeWithText(label)
+                    .assertIsDisplayed()
+                    .fetchSemanticsNode()
+                    .boundsInRoot,
+            )
+        }
+        field.performTextReplacement("new")
+        rule.onNodeWithText("Save").performTouchInput { click() }
+        rule.runOnIdle { assertEquals("new", submitted) }
     }
 
     @Test
