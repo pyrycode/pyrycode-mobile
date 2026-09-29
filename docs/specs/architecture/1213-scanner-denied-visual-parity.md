@@ -48,3 +48,8 @@ Pending documentation stage: update `docs/knowledge/features/scanner-screen.md` 
 
 - Does the current checked-in denied illustration exactly match the live node export? Compare before deciding whether an asset edit is necessary.
 - How much of the Figma atmosphere is visible over a real camera preview? Resolve from device pixels without weakening preview/QR functionality.
+
+## Revisions
+
+- 2026-09-29: The checked-in `DeniedIllustration` path, size and dark-theme tints match node 32:8, so no asset replacement is needed. The scanner keeps `cameraPreview` beneath a translucent scrim and decorative guides; the route's image analyzer remains unchanged.
+- 2026-09-29: Real scanner capture initially had twice the production system inset because `ScannerFrameTest.checkFrame` did not consume Scaffold padding. The fixture now mirrors `MainActivity`'s consumed-inset wiring, and the final comparison uses the corrected capture.
