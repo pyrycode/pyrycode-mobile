@@ -17,3 +17,7 @@ Run `./gradlew spotlessCheck --rerun-tasks --console=plain` before and after the
 ## Documentation handoff
 
 None requested by the ticket.
+
+## Revisions
+
+- The forced pre-edit `spotlessCheck` succeeded on the original expression, so the ticket's reported formatter failure did not reproduce in this worktree. Keep the requested one-condition-per-line layout and verify it with the same forced check; there is no meaningful RED assertion for this whitespace-only change.
