@@ -47,7 +47,7 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 3
 # #1085 adds the second-host rename and unpair method.
 LIVE_MINIMUM += 1
-# #684 adds the Log data diagnostic-download method.
+# #684 originally added a diagnostic-download method; #1193 later excluded it after Settings removed the action.
 LIVE_MINIMUM += 1
 # #1086 added the two-host Archive method, temporarily excluded by #1193.
 LIVE_MINIMUM += 1
@@ -70,6 +70,8 @@ LIVE_MINIMUM += 1
 # #1249 restores the discussion round trip and two-host Archive methods through the list toolbar.
 LIVE_MINIMUM += 2
 # #1251 restores the channel create/edit/archive method through reachable list controls.
+LIVE_MINIMUM += 1
+# #1252 restores the two-host diagnostic archive proof through explicit registry requests.
 LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"

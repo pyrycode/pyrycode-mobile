@@ -46,3 +46,8 @@ Pending for the documentation stage: update `docs/e2e-interactive-stream.md` sec
 ## Open questions
 
 - Whether the focused live gate can use this runner's Claude authentication and managed emulator; record the actual outcome in the PR and hand off any dispatcher-owned live execution.
+
+## Revisions
+
+- The existing `scripts/test_android_test_gate.py` assertion hardcodes the curated floor, so the implementation updates it to 42 and asserts selection of the renamed method. Its focused selector tests pass.
+- This runner's `claude auth status` reports authentication unavailable, including with normal sandbox escalation. The focused live gate exits before running a test, so executed, failed and skipped counts remain unavailable here; the `needs-real-claude` dispatcher gate must supply XML evidence and those counts after verifier.

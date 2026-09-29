@@ -1177,8 +1177,9 @@ elif [ -n "${LIVE}" ]; then
   # #1085: the second host's rename and unpair from its Edit host modal joins at no turn cost (pairing,
   # rename and a phone-local unpair), so the list holds 38 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched"
-  # #684: Log data saves the owning host's diagnostic archive with a second host paired, across a selection
-  # change and a cancelled picker. It joins at no turn cost (pairing, a mute and two archive transfers).
+  # #1252: registry requests complete diagnostic archives for both paired hosts; only A's contains A's
+  # daemon-log marker. No Settings export or picker is involved, and it spends no Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts"
   # #1086: each host's default workspace and Archive stay its own with both hosts paired. It joins at no turn
   # cost (folder creation, chat creation, rename, archive and restore), so the list holds 40 methods and 39 turns.
   # #1251 restores #1088's channel flow through the Channels plus and list-toolbar Archive, with a

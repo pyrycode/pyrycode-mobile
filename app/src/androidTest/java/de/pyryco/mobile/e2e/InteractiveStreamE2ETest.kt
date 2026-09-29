@@ -132,8 +132,6 @@ import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
-import de.pyryco.mobile.ui.settings.DEBUG_BUNDLE_FILE_NAME
-import de.pyryco.mobile.ui.settings.DEBUG_BUNDLE_MEDIA_TYPE
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -1762,120 +1760,44 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Log data saves the owning host's diagnostic archive (#684, rung 3). With host B paired by code beside A,
-     * A's Settings requests the archive through the Log data modal, and the save goes through the system
-     * document picker, answered by an [ActivityIntentStub] with a `MediaStore` download this app owns.
-     *
-     * **Whose archive.** The archive names no host, and its `logs.txt` is the requested daemon's own 200-line
-     * log ring. So just before the request, A mints a discussion and mutes it: A's daemon logs the new id
-     * (`set_conversation_muted applied`), and B's never sees it. A's saved archive must hold that id and an
-     * archive requested from B through the registry must not. The seeded collision id is on both hosts, so it
-     * cannot be the marker.
-     *
-     * **Selection cannot redirect it.** Selection is the last-saved record, and re-saving an unchanged record
-     * moves it without reconnecting. A is selected so the gear opens A's Settings, and B is selected right
-     * after A's request is sent, before either save.
-     *
-     * **The archive is sensitive.** A and B run under the operator's real `HOME`, so `recording.cast` can be a
-     * real session. It is parsed in memory only; no assertion message or log line carries any of its content,
-     * and the saved document is deleted in `finally`.
-     *
-     * **Zero real-claude turns**: pairing, the marker and both archives are daemon round-trips.
+     * The live registry returns each paired host's own complete diagnostic archive (#1252, rung 3). A's
+     * daemon alone logs a newly muted discussion id; B's archive must not contain it even while B is selected.
+     * Archive content stays in memory and never enters assertion messages or logs. Pairing, the marker and
+     * both transfers spend zero real-claude turns.
      */
-    @Ignore("blocked on #1245 — Log data was removed from Settings")
     @Test
-    fun interactiveTurn_logData_savesTheOwningHostsArchive() {
+    fun interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts() {
         val serverIdA = twoHostArg(ARG_SERVER_ID)
         val serverIdB = twoHostArg(ARG_SERVER_ID_B)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
         val registry = GlobalContext.get().get<RelayConnectionRegistry>()
         val store = GlobalContext.get().get<PairedServerCollectionStore>()
-        val stub = ActivityIntentStub()
-        val inserted = mutableListOf<Uri>()
         var marker: String? = null
-        instrumentation.addMonitor(stub)
         try {
-            // 1. Pair host B by code, as #1085 does. B is now the selected host.
+            // Pair host B by code, then keep B selected while requesting A's archive by exact host id.
             awaitChannelList()
             awaitConnected()
-            instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
             pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
+            selectHost(registry, store, serverIdB)
 
-            // 2. Select A, so the gear opens A's Settings, and open its Log data modal.
-            selectHost(registry, store, serverIdA)
-            val nameA =
-                runBlocking { store.loadById(serverIdA) }?.displayName?.takeIf { it.isNotBlank() } ?: serverIdA
-            composeTestRule.onNode(hasContentDescription(CD_OPEN_SETTINGS)).performClick()
-            val logDataRow = hasText(string(R.string.log_data_settings_row)) and hasClickAction()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(logDataRow).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(logDataRow).performScrollTo().performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(context.getString(R.string.log_data_scope, nameA)).fetchSemanticsNodes().isNotEmpty()
-            }
-
-            // 3. Mint A's marker as late as possible, so A's log ring still holds it, then request.
+            // Mint A's marker immediately before both requests so it remains in A's bounded log ring.
             val repositoryA = hostRepository(serverIdA)
             val minted = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repositoryA.createDiscussion().id } }
             marker = minted
             runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repositoryA.setMuted(minted, true) } }
-            composeTestRule.onNode(hasText(OK_BUTTON) and hasClickAction()).performClick()
-
-            // 4. AC-2: B becomes the selected host while A's archive is on its way, and A's still arrives.
-            selectHost(registry, store, serverIdB)
-            val arrived = awaitLogDataLine(LOG_DATA_TIMEOUT_MS, R.string.log_data_ready, *LOG_DATA_TRANSFER_FAILURES)
-            assertLogDataLine(context, R.string.log_data_ready, arrived)
-
-            // 5. AC-3: a cancelled picker reports no save and creates no document.
-            stub.answer(Intent.ACTION_CREATE_DOCUMENT) { Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null) }
-            val downloads = ownDownloadCount()
-            composeTestRule.onNode(hasText(OK_BUTTON) and hasClickAction()).performClick()
-            awaitLogDataLine(THREAD_TIMEOUT_MS, R.string.log_data_failed_cancelled)
-            val picks = stub.answered.filter { it.action == Intent.ACTION_CREATE_DOCUMENT }
-            assertEquals("pickers started by the first save", 1, picks.size)
-            assertEquals("the picker's suggested name", DEBUG_BUNDLE_FILE_NAME, picks.single().getStringExtra(Intent.EXTRA_TITLE))
-            assertEquals("the picker's media type", DEBUG_BUNDLE_MEDIA_TYPE, picks.single().type)
-            composeTestRule.onAllNodes(hasText(logDataPrefix(R.string.log_data_saved), substring = true)).assertCountEquals(0)
-            assertEquals("documents after a cancelled picker", downloads, ownDownloadCount())
-
-            // 6. AC-3: saving again from the same modal succeeds.
-            val target = insertDownload(LOG_DATA_FILE_PREFIX + "saved-${System.nanoTime()}.bin", "application/octet-stream", null, inserted)
-            stub.answer(Intent.ACTION_CREATE_DOCUMENT) { Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(target)) }
-            composeTestRule.onNode(hasText(OK_BUTTON) and hasClickAction()).performClick()
-            val saved = awaitLogDataLine(THREAD_TIMEOUT_MS, R.string.log_data_saved, R.string.log_data_failed_write)
-            assertLogDataLine(context, R.string.log_data_saved, saved)
-            assertEquals("pickers started by both saves", 2, stub.answered.count { it.action == Intent.ACTION_CREATE_DOCUMENT })
-
-            // 7. AC-1 + AC-2: the saved document is a complete archive of A's, holding A's marker.
-            assertTrue("A's saved archive lacks the marker only A's daemon logged", completeBundleLogs(readUri(target)).contains(minted))
-
-            // 8. AC-1: an archive requested from B is complete too, and does not hold A's marker.
-            val transfer = registry.requestDebugBundle(serverIdB)
-            val status =
-                runBlocking {
-                    withTimeout(
-                        LOG_DATA_TIMEOUT_MS,
-                    ) { transfer.state.first { it.status != DebugBundleStatus.RECEIVING }.status }
-                }
-            assertEquals("host B's archive transfer", DebugBundleStatus.COMPLETE, status)
-            val archiveB =
-                ByteArrayOutputStream().also {
-                    checkNotNull(
-                        transfer.takeArchive(),
-                    ) { "host B's archive was not held" }.writeTo(it)
-                }
+            assertTrue(
+                "A's archive lacks the marker only A's daemon logged",
+                completeBundleLogs(requestArchive(registry, serverIdA)).contains(minted),
+            )
             assertFalse(
                 "host B's archive holds the marker only A's daemon logged",
-                completeBundleLogs(archiveB.toByteArray()).contains(minted),
+                completeBundleLogs(requestArchive(registry, serverIdB)).contains(minted),
             )
         } finally {
-            instrumentation.removeMonitor(stub)
-            deleteFixtures(inserted)
             marker?.let { id ->
                 runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).delete(id) } } }
-                    .onFailure { Log.w("E2E", "log data marker cleanup failed: ${it::class.simpleName}") }
+                    .onFailure { Log.w("E2E", "diagnostic marker cleanup failed: ${it::class.simpleName}") }
             }
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
         }
@@ -1901,46 +1823,22 @@ class InteractiveStreamE2ETest {
         assertSame("re-saving an unchanged record replaced the host's connection", bundle, registry.connectionFor(serverId))
     }
 
-    /** The part of a Log data modal sentence before its first argument; the whole sentence when it has none. */
-    private fun logDataPrefix(id: Int): String = string(id).substringBefore("%1")
-
-    /** Wait until the Log data modal draws one of [lines] and return which, the first listed winning a tie. */
-    private fun awaitLogDataLine(
-        timeoutMs: Long,
-        vararg lines: Int,
-    ): Int {
-        var shown: Int? = null
-        composeTestRule.waitUntil(timeoutMs) {
-            shown =
-                lines.firstOrNull { id ->
-                    composeTestRule.onAllNodes(hasText(logDataPrefix(id), substring = true)).fetchSemanticsNodes().isNotEmpty()
-                }
-            shown != null
-        }
-        return checkNotNull(shown)
+    /** Consume a completed transfer once, with no archive bytes or daemon text in failure output. */
+    private fun requestArchive(
+        registry: RelayConnectionRegistry,
+        serverId: String,
+    ): ByteArray {
+        val transfer = registry.requestDebugBundle(serverId)
+        val status =
+            runBlocking {
+                withTimeout(
+                    DEBUG_BUNDLE_TIMEOUT_MS,
+                ) { transfer.state.first { it.status != DebugBundleStatus.RECEIVING }.status }
+            }
+        assertEquals("diagnostic archive transfer status", DebugBundleStatus.COMPLETE, status)
+        val archive = checkNotNull(transfer.takeArchive()) { "completed diagnostic archive was not held" }
+        return ByteArrayOutputStream().also { archive.writeTo(it) }.toByteArray()
     }
-
-    /** [shown] is [expected], named by resource entry: a static id, never the sentence's drawn arguments. */
-    private fun assertLogDataLine(
-        context: Context,
-        expected: Int,
-        shown: Int,
-    ) {
-        assertEquals(
-            "the Log data modal's line",
-            context.resources.getResourceEntryName(expected),
-            context.resources.getResourceEntryName(shown),
-        )
-    }
-
-    /** How many `MediaStore` downloads this app can see: its own, which is where a save would land. */
-    private fun ownDownloadCount(): Int =
-        checkNotNull(
-            InstrumentationRegistry
-                .getInstrumentation()
-                .targetContext.contentResolver
-                .query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Downloads._ID), null, null, null),
-        ) { "MediaStore answered no cursor" }.use { it.count }
 
     /**
      * Check [archive] is a complete daemon diagnostic archive and return its `logs.txt` as text: the gzip
@@ -6644,21 +6542,8 @@ class InteractiveStreamE2ETest {
         const val DOCUMENT_BYTES = 100_000
         const val FIXTURE_COLOR = 0xFF2A6FDB.toInt()
 
-        // #684: the Log data download. The archive can carry a multi-megabyte recording in 45000-byte chunks.
-        const val LOG_DATA_FILE_PREFIX = "e2e684-"
-        const val LOG_DATA_TIMEOUT_MS = 180_000L
-
-        // The modal lines a transfer can end on other than ready: each non-terminal DebugBundleStatus's sentence.
-        val LOG_DATA_TRANSFER_FAILURES =
-            intArrayOf(
-                R.string.log_data_failed_unavailable,
-                R.string.log_data_failed_busy,
-                R.string.log_data_failed_reconnect,
-                R.string.log_data_failed_send,
-                R.string.log_data_failed_refused,
-                R.string.log_data_failed_stream,
-                R.string.log_data_failed_disconnected,
-            )
+        // A diagnostic archive can carry a multi-megabyte recording in 45000-byte chunks.
+        const val DEBUG_BUNDLE_TIMEOUT_MS = 180_000L
 
         // The daemon's fixed archive members and manifest keys (pyrycode `debugbundle.Assemble`, `Manifest`).
         const val BUNDLE_MANIFEST = "manifest.json"

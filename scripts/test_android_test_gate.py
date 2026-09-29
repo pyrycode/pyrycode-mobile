@@ -118,8 +118,9 @@ class AndroidGateTest(unittest.TestCase):
         self.assertTrue(any("#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage" in target for target in targets))
         self.assertTrue(any("#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild" in target for target in targets))
         self.assertTrue(any("#interactiveTurn_createEditArchiveChannel_readsPromptBack" in target for target in targets))
+        self.assertTrue(any("#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts" in target for target in targets))
         self.assertFalse(any("#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost" in target for target in targets))
-        self.assertEqual(gate.LIVE_MINIMUM, 41)
+        self.assertEqual(gate.LIVE_MINIMUM, 42)
         self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))
