@@ -743,10 +743,11 @@ all 37 selected methods with no failures or skips.
 permission case had a settle-window assertion failure now diagnosed by
 [#1246](https://github.com/pyrycode/pyrycode-mobile/issues/1246). Two older workspace-switching methods
 remain ignored and excluded. #1249 restored two of the five Settings-dependent methods through the
-list toolbar; three still await #1245. With the bypass method and two Archive methods restored,
-`scripts/e2e-emulator.sh` lists 40 runnable
-methods and `android-test-gate.py` requires 40 executed tests. Script tests check both the floor and the
-bypass method's explicit presence, as well as excluding ignored methods.
+list toolbar; #1251 restored the channel method and #1252 replaced the Log data method with a
+host-backed archive proof. The remaining two Settings methods and two older workspace-switching
+methods stay excluded. `scripts/e2e-emulator.sh` now lists 42 runnable methods and
+`android-test-gate.py` requires 42 executed tests. Script tests check the floor and the
+restored methods' explicit presence, as well as excluding ignored methods.
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
 `effective_effort` (an omitted key fails the method) and that the reopened footer's label and note match
@@ -1358,7 +1359,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 41 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 42 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1370,7 +1371,7 @@ permission-answer and question-answer, #966; reconnect-footer, reconnect-command
 background-push-turn-end and background-push-prompt, #955; attachments-from-phone and claude-offered-file, #1016;
 peer-attachment, #1020; markdown-link, #1050; mute-channel round trip, #1021; interrupted-upload,
 interrupted-retrieval and cross-host-attachment-recovery, #1017; second-host rename and unpair, #1085;
-Log data diagnostic download, #684; two-host default workspace and Archive, #1086;
+host-backed diagnostic archives, #1252; two-host default workspace and Archive, #1086;
 channel create, edit and archive with its prompt read back, #1088;
 an attention dot following a
 real turn, #1090; background-agent progress on the running card, #1076/#1107)
@@ -1440,8 +1441,8 @@ its held permission prompt, #1090, and the background-task-progress scenario's o
 starts the subagent), #1107. Delete, archive-restore,
 change-workspace, rename, save-as-channel,
 list-archive-entry, two-host separation, the model-change scenario, the mute-channel round trip
-(#1021), the second-host rename and unpair scenario (#1085), the Log data diagnostic-download
-scenario (#684) and the two-host default-workspace and Archive scenario (#1086) spend no Claude
+(#1021), the second-host rename and unpair scenario (#1085), the host-backed diagnostic archive
+scenario (#1252) and the two-host default-workspace and Archive scenario (#1086) spend no Claude
 turns. Allow a few
 minutes of wall clock; the run is subscription-covered.
 
@@ -1469,7 +1470,8 @@ workspace-switching follow-ups, then from 36 to 37 when #1223 added the remember
 scenario, and from 37 to 38 when #1246 restored the operator-bypass permission method, then from 38 to 40
 when #1249 restored the two Archive methods. #1250 retired the peer workspace-label method after its
 transient 41-method branch failed the live gate, leaving 40. #1251 restored the channel
-create-edit-archive method through reachable controls, bringing the selector and floor to 41. `LIVE_MINIMUM` is
+create-edit-archive method through reachable controls, bringing the selector and floor to 41.
+#1252 restored the host-backed diagnostic archive method, bringing both to 42. `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -1524,7 +1526,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 41 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 42 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1548,7 +1550,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** The current curated selector passes 41 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 42 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The restored
 `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551/#1249)
@@ -1570,7 +1572,7 @@ distinct real `pong` reply precedes the prompt-status check, so the check belong
 session. It archives from Edit channel, restores through the selected host's list-toolbar
 Archive entry and its Channels tab, then finds the edited name back on the list. The test
 restores the pre-existing channel fixtures and deletes its temporary conversations in `finally`.
-Three Settings-dependent methods and two older workspace-switching methods remain ignored and
+Two Settings-dependent methods and two older workspace-switching methods remain ignored and
 outside the curated selector.
 
 A focused selection of the restored methods is:
@@ -1590,6 +1592,19 @@ python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.Interacti
 
 The [#1251 full live gate](#verification-status) includes this passing testcase. The separate
 focused run executed 1, passed 1, failed 0 and skipped 0; its fresh XML names only this method.
+
+The host-backed diagnostic archive selection is:
+
+```bash
+python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts
+```
+
+`InteractiveStreamE2ETest#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts` (#1252)
+requests complete archives from both paired hosts by exact registry host ID while B is selected.
+It checks that only A's archive contains a marker written to A's daemon log. It exercises no
+Settings export or document picker, spends no Claude turn, and cleans up the marker and B pairing.
+The builder's focused attempt stopped at Claude authentication preflight: 0 executed, 0 failed,
+0 skipped, with no XML. The passing evidence below comes from the full 42-method live suite.
 
 #1189 revised Create channel to open from an initially empty host Channels
 section and use the daemon default; the folder-settings method keeps the repository
@@ -1631,14 +1646,14 @@ its held permission prompt (#1090); the background-task-progress scenario's own 
 starts the subagent (#1076/#1107); the delete,
 archive-restore, change-workspace, rename,
 save-as-channel, list-archive-entry, two-host, model-change, mute-channel, second-host
-rename-and-unpair, Log data diagnostic-download, two-host defaults-and-Archive and peer-set
+rename-and-unpair, host-backed diagnostic archives, two-host defaults-and-Archive and peer-set
 workspace label scenarios each add a
 method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
 list-archive-entry is pure navigation with no daemon round-trip at all; two-host separation is pairing,
 navigation, rename and link cycling, also daemon round-trips; mute-channel's promote, mute and unmute
 are daemon round-trips too, #1021; pairing, rename and unpair are daemon round-trips or phone-local too,
-#1085; a mute and two archive transfers are daemon round-trips too, #684; folder creation, chat creation,
+#1085; a mute and two host-ID archive transfers are daemon round-trips too, #1252; folder creation, chat creation,
 rename, archive and restore are daemon round-trips too, #1086; and setting and clearing a workspace label
 from the peer are daemon round-trips too, #1089).
 The full class also includes the
@@ -1716,7 +1731,7 @@ background-task-progress scenario's own turn — the prompt that starts the suba
 none beyond the ping that primes the session; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
 \#740, two-host separation, #847, model change, the mute-channel round trip, #1021, the second-host
-rename-and-unpair scenario, #1085, the Log data diagnostic-download scenario, #684, the two-host
+rename-and-unpair scenario, #1085, the host-backed diagnostic archive scenario, #1252, the two-host
 default-workspace and Archive scenario, #1086, and
 the peer-set workspace label scenario, #1089,
 each spend
@@ -1724,7 +1739,7 @@ none — create/rename/delete/archive/restore/
 change-workspace/promote are daemon round-trips, list-archive-entry is pure navigation, two-host
 separation is pairing, navigation, rename and link cycling, also daemon round-trips, mute-channel's
 promote, mute and unmute are daemon round-trips too, the second-host scenario's pairing, rename and
-unpair are daemon round-trips or phone-local, the Log data scenario's mute and two archive transfers
+unpair are daemon round-trips or phone-local, the diagnostic scenario's mute and two host-ID archive transfers
 are daemon round-trips too, the two-host defaults-and-Archive scenario's folder creation, chat
 creation, rename, archive and restore are daemon round-trips too, the workspace add-rename-archive
 scenario's folder creation, chat start, renames, archive and restore are daemon round-trips too, and
@@ -1989,6 +2004,15 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Current live verification — 2026-09-29 (#1252).** The dispatcher ran
+`python3 scripts/android-test-gate.py live` against `feature/1252` at `56f9995c4b`,
+merged with `origin/main` at `5e8128cde9`: **42 executed, 42 passed, 0 failed, 0 skipped**,
+exit 0. The fresh full-suite XML contains a passing
+`interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts` testcase. This is full-suite
+evidence, not a separate focused run. The builder's focused attempt stopped before execution
+because Claude authentication was unavailable (0 executed, 0 failed, 0 skipped; no XML).
+See the [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1252#issuecomment-5888293250).
 
 **Current live verification — 2026-09-29 (#1251).** The dispatcher ran
 `python3 scripts/android-test-gate.py live` against `feature/1251` at `f81261c6af`,
@@ -2622,6 +2646,13 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — shipped:** [#1252](https://github.com/pyrycode/pyrycode-mobile/issues/1252)
+  restores `InteractiveStreamE2ETest.interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts`
+  through explicit `RelayConnectionRegistry.requestDebugBundle(serverId)` calls. With B selected,
+  complete archives from A and B are checked for a marker logged only on A; no Settings or picker
+  path is involved. The curated selector and `LIVE_MINIMUM` are 42. The 2026-09-29 full live
+  gate executed 42, failed 0 and skipped 0, including the named method.
 
 - **Coverage — shipped:** [#1251](https://github.com/pyrycode/pyrycode-mobile/issues/1251)
   restores `InteractiveStreamE2ETest.interactiveTurn_createEditArchiveChannel_readsPromptBack` to
