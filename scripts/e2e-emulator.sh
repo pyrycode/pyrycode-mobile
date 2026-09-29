@@ -6,7 +6,7 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated set of rung-3 scenarios (thirty-two methods, thirty-four real claude turns — listed at the LIVE
+#     curated set of rung-3 scenarios (listed at the LIVE
 #     TEST_TARGET below) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
@@ -1128,8 +1128,7 @@ elif [ -n "${LIVE}" ]; then
   # the thirteenth and fourteenth, the #687 tool-free ping and outside-workspace Read the fifteenth and sixteenth, the
   # #950 permission-held python3 command the seventeenth; delete, archive-restore, change-workspace, rename, save-as-channel,
   # list-archive-entry, two-host and the #545 model round trip spend none), passed as a comma-separated
-  # class#method list. The class' #481 tool-use test stays excluded from LIVE for cost (it runs only in the
-  # default whole-class rung-3 run).
+  # class#method list. #1208 adds #481's durable resolved tool-row assertion to this full live gate.
   # #977 temporarily removed the #687 method; #981 restored it after the missing reply fix.
   # #1193 excluded it again after the timing assertion failed; #1246 restores it with reply-based settlement.
   # Historical list-size counts in this block predate the temporary exclusions for #1245 and
@@ -1196,6 +1195,7 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsArchive_staysPerHost"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_createEditArchiveChannel_readsPromptBack"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolPrompt_rendersToolStepInThread"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

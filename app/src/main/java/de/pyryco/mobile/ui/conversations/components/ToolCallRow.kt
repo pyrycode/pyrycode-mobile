@@ -4,6 +4,7 @@ import android.content.res.Configuration
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,8 +16,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -35,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -54,6 +55,7 @@ private val ToolCallCornerRadius = 6.dp
 private val ToolCallBorderWidth = 1.dp
 private val ToolCallHorizontalPadding = 12.dp
 private val ToolCallTopPadding = 8.dp
+private val ToolCallHeaderMinHeight = 20.dp
 private val ToolCallCollapsedBottomPadding = 8.dp
 private val ToolCallExpandedBottomPadding = 12.dp
 private val ToolCallGap = 12.dp
@@ -61,7 +63,13 @@ private val ToolCallTrailingGap = 6.dp
 private val ToolCallStatusIconSize = 16.dp
 private val ToolCallSpinnerSize = 14.dp
 private val ToolCallSpinnerStrokeWidth = 2.dp
-private val ToolCallChevronSize = 16.dp
+private val ToolCallChevronSlotWidth = 8.dp
+private val ToolCallChevronSlotHeight = 10.dp
+private val ToolCallChevronRightWidth = 4.dp
+private val ToolCallChevronRightHeight = 8.dp
+private val ToolCallChevronDownWidth = 8.dp
+private val ToolCallChevronDownHeight = 4.dp
+private val ToolCallDescriptionGap = 8.dp
 private val ToolCallSectionCaptionGap = 4.dp
 
 // Keeps a long MCP tool name (`mcp__server__tool`) from taking the subject's whole width.
@@ -75,11 +83,13 @@ private const val COMMAND_FIELD = "command"
 
 /** Tags the running row's elapsed reading, so tests can assert its absence without guessing a value. */
 internal const val TOOL_ELAPSED_TAG = "tool-row-elapsed"
+internal const val TOOL_DESCRIPTION_CHEVRON_TAG = "tool-description-chevron"
+internal const val TOOL_EXPANDED_BODY_TAG = "tool-expanded-body"
 
 /**
- * One tool call in the thread (#895, Figma `134:4939` collapsed / `134:4941` expanded): the verbatim tool
- * name, the subject picked by [toolRowSubject], a trailing status and an expand chevron. Tapping expands the
- * input, the output once resolved and, on a denied row, claude's reason.
+ * One tool call in the thread: the supplied description takes the described Figma header, otherwise the
+ * verbatim name and [toolRowSubject] take the simple header. Tapping expands the input, the output once
+ * resolved and, on a denied row, claude's reason.
  *
  * Every string on the row — tool name, input fields, précis, output, denial — is claude's or the daemon's
  * and renders only as inert [Text] or [CodeBlock]: never a link, a path to open, markup or a log line.
@@ -156,48 +166,82 @@ private fun ToolCallRowContent(
 }
 
 /**
- * The trailing status and chevron sit outside the weighted name-and-subject group: a `Row` measures its
- * unweighted children first, so they always get their width and the subject ellipsizes into what is left.
+ * The trailing status sits outside the weighted headline: a `Row` measures it first, leaving the headline
+ * to ellipsize within the thread gutter. The described chevron follows its text as in Figma `134:4904`.
  */
 @Composable
 private fun HeaderRow(
     toolCall: ToolCall,
     expanded: Boolean,
 ) {
+    val description = toolCall.inputFields["description"]?.takeIf { it.isNotEmpty() }
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().heightIn(min = ToolCallHeaderMinHeight),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
     ) {
-        Row(
-            modifier = Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
-        ) {
-            Text(
-                text = toolCall.toolName,
-                modifier = Modifier.widthIn(max = ToolNameMaxWidth),
-                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.tertiary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = toolRowSubject(toolCall.toolName, toolCall.inputFields, toolCall.input),
+        if (description != null) {
+            Row(
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ToolCallDescriptionGap),
+            ) {
+                Text(
+                    text = description,
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Box(
+                    modifier = Modifier.size(ToolCallChevronSlotWidth, ToolCallChevronSlotHeight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter =
+                            painterResource(
+                                if (expanded) R.drawable.tool_row_chevron_down else R.drawable.tool_row_chevron_right,
+                            ),
+                        contentDescription = null,
+                        modifier =
+                            Modifier
+                                .size(
+                                    width = if (expanded) ToolCallChevronDownWidth else ToolCallChevronRightWidth,
+                                    height = if (expanded) ToolCallChevronDownHeight else ToolCallChevronRightHeight,
+                                ).testTag(TOOL_DESCRIPTION_CHEVRON_TAG),
+                        tint = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
+            ) {
+                Text(
+                    text = toolCall.toolName,
+                    modifier = Modifier.widthIn(max = ToolNameMaxWidth),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.tertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val subject = toolRowSubject(toolCall.toolName, toolCall.inputFields, toolCall.input)
+                if (subject.isNotEmpty()) {
+                    Text(
+                        text = subject,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
         TrailingStatus(toolCall)
-        Icon(
-            imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-            contentDescription = null,
-            modifier = Modifier.size(ToolCallChevronSize),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -276,25 +320,32 @@ private fun ExpandedBody(toolCall: ToolCall) {
             Modifier
                 .fillMaxWidth()
                 .heightIn(max = ToolCallExpandedMaxHeight)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(rememberScrollState())
+                .testTag(TOOL_EXPANDED_BODY_TAG),
         verticalArrangement = Arrangement.spacedBy(ToolCallGap),
     ) {
-        ExpandedSection(label = stringResource(R.string.tool_row_input)) {
-            if (toolCall.inputFields.isEmpty()) {
-                ToolContent(toolCall.input, isCommand = false)
-            } else {
-                toolCall.inputFields.forEach { (key, value) -> InputField(key, value) }
+        val suppliedFields = toolCall.inputFields.filterValues { it.isNotEmpty() }
+        if (suppliedFields.isNotEmpty() || toolCall.input.isNotEmpty()) {
+            ExpandedSection(label = stringResource(R.string.tool_row_input)) {
+                if (suppliedFields.isEmpty()) {
+                    ToolContent(toolCall.input, isCommand = false)
+                } else {
+                    suppliedFields.forEach { (key, value) -> InputField(key, value) }
+                }
             }
         }
         // Output arrives on the correlated `tool_result`; a running or denied call has none.
-        if (toolCall.status == ToolCallStatus.Done || toolCall.status == ToolCallStatus.Failed) {
+        if ((toolCall.status == ToolCallStatus.Done || toolCall.status == ToolCallStatus.Failed) && toolCall.output.isNotEmpty()) {
             ExpandedSection(label = stringResource(R.string.tool_row_output)) {
-                ToolContent(toolCall.output, isCommand = false)
+                ToolContent(toolCall.output, isCommand = false, isResult = true)
             }
         }
         // A denied row restored from the disk cache has no denial and shows no reason.
         val denial = toolCall.denial
-        if (toolCall.status == ToolCallStatus.Denied && denial != null) {
+        if (toolCall.status == ToolCallStatus.Denied &&
+            denial != null &&
+            (denial.message.isNotEmpty() || denial.decisionReason.isNotEmpty())
+        ) {
             ExpandedSection(label = stringResource(R.string.tool_row_denial)) {
                 DenialContent(denial)
             }
@@ -345,14 +396,16 @@ private fun DenialContent(denial: ToolDenial) {
 private fun ToolContent(
     content: String,
     isCommand: Boolean,
+    isResult: Boolean = false,
 ) {
-    if (isCommand || isCodeIsh(content)) {
-        CodeBlock(content = content, language = null, textStyle = MaterialTheme.typography.bodySmall)
+    val monoStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, lineHeight = 20.sp, letterSpacing = 0.sp)
+    if (isCommand || (if (isResult) content.contains('\n') else isCodeIsh(content))) {
+        CodeBlock(content = content, language = null, textStyle = monoStyle)
     } else {
         Text(
             text = content,
             modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            style = monoStyle,
             color = MaterialTheme.colorScheme.onBackground,
         )
     }
@@ -435,7 +488,7 @@ private fun ToolCallRowPreviewMatrix() {
         ).forEach { toolCall ->
             ToolCallRowContent(toolCall = toolCall, expanded = false, onToggle = {})
         }
-        listOf(PreviewReadToolCall, PreviewRunningToolCall, PreviewDeniedToolCall).forEach { toolCall ->
+        listOf(PreviewBashToolCall, PreviewReadToolCall, PreviewRunningToolCall, PreviewDeniedToolCall).forEach { toolCall ->
             ToolCallRowContent(toolCall = toolCall, expanded = true, onToggle = {})
         }
     }

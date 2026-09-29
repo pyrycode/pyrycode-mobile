@@ -73,6 +73,8 @@ LIVE_MINIMUM += 2
 LIVE_MINIMUM += 1
 # #1252 restores the two-host diagnostic archive proof through explicit registry requests.
 LIVE_MINIMUM += 1
+# #1208 includes #481's durable tool-row proof in the full live suite.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

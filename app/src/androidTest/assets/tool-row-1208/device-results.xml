@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="5.74" timestamp="2026-09-29T21:16:51" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.components.ToolRowDesignCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="4.693" timestamp="2026-09-29T21:16:51" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="referenceVariantsAt412By892" classname="de.pyryco.mobile.ui.conversations.components.ToolRowDesignCaptureTest" time="2.491" />
+    <testcase name="compactLargeTextKeepsDescriptionAndStatusReachable" classname="de.pyryco.mobile.ui.conversations.components.ToolRowDesignCaptureTest" time="2.202" />
+  </testsuite>
+</testsuites>

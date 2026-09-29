@@ -43,6 +43,7 @@ import androidx.compose.ui.test.isOn
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -397,19 +398,17 @@ class InteractiveStreamE2ETest {
      * running row, `tool_result` → done — #387 correlation / #388 tool-row status UI) is already shipped
      * and reviewed; this exercises it end to end against real claude.
      *
-     * The load-bearing signal is the **durable** terminal one: the verbatim tool name [TOOL_NAME] sits in
-     * the collapsed tool-row header in all three states, carried verbatim through the #387 fold. We do
-     * **not** race the transient running spinner — rung 3 has no scripted backend to hold the turn open
-     * (that is what #455's two-drop fence is for), and chasing the transient over a real relay turn is
-     * exactly the "never on timing" failure the ladder forbids.
+     * The load-bearing signal is the durable Done content description on the tool row. The described
+     * Figma variant replaces the verbatim tool name in the header, so text matching that name would
+     * miss a correctly rendered row. We do not race the transient running spinner.
      *
-     * [TOOL_PROMPT] deliberately contains neither "Bash" nor "bash", so [TOOL_NAME] is absent from
-     * everything on screen before claude responds (the echoed user bubble, the auto-derived thread title,
-     * the thinking spinner). A non-empty match can therefore only come from the rendered tool row — a
-     * presence check, not a count.
+     * The new discussion has no resolved tool step before the prompt. After the turn, the Done glyph
+     * is a stable signal of the rendered row regardless of which header variant claude supplies.
      */
     @Test
     fun interactiveTurn_toolPrompt_rendersToolStepInThread() {
+        val doneDescription =
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_tool_done)
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
         awaitChannelList()
 
@@ -421,31 +420,28 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
+        composeTestRule.onAllNodesWithContentDescription(doneDescription).assertCountEquals(0)
 
         // 4. Type the tool-forcing prompt into the only editable field, then send.
         composeTestRule.onNode(hasSetTextAction()).performTextInput(TOOL_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
 
-        // 5. Wait for the verbatim tool name to appear, then confirm it is on screen. Because the prompt
-        //    omits the token, the only source of a match is the rendered tool row's header.
+        // 5. Wait for the resolved tool-row status, then confirm it is visible.
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(TOOL_NAME, substring = true).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithContentDescription(doneDescription).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule
-            .onAllNodesWithText(TOOL_NAME, substring = true)
+            .onAllNodesWithContentDescription(doneDescription)
             .onFirst()
             .assertIsDisplayed()
     }
 
     /**
-     * Negative control (manual) for the tool-use test. Un-ignore once to confirm the [TOOL_NAME] matcher
-     * is selective: it sends the same tool prompt but waits for [TOOL_NEVER_USED] — a real, distinct tool
-     * name the read-only echo prompt never asks claude to use. On a correct build this wait **times out
-     * and the test FAILS**, proving the positive assertion genuinely observes a rendered tool row rather
-     * than matching everything. Left `@Ignore` so it does not burn a claude turn on every suite run; the
-     * operator un-ignores it once to confirm, then re-ignores.
+     * Manual sentinel for an unexpected Edit step in the read-only tool prompt. This text matcher is
+     * separate from the positive test's resolved-status matcher because a described header omits its
+     * tool name. On a correct build the wait times out. It remains ignored to avoid another live turn.
      */
-    @Ignore("manual negative control — un-ignore to confirm the tool-name matcher is selective")
+    @Ignore("manual sentinel — un-ignore to check for an unexpected Edit step")
     @Test
     fun negativeControl_toolClaudeNeverUses_isNeverDisplayed() {
         awaitChannelList()
@@ -473,7 +469,7 @@ class InteractiveStreamE2ETest {
      * twin of #454 (rung 4 scripted) and #432 (Layer 1a component).
      *
      * **`@Ignore`d by default — a documented manual case (AC #3), not a flaky always-on test.** This is the
-     * flakiest scenario on the ladder. Unlike #481's tool row — whose verbatim tool name [TOOL_NAME] is a
+     * flakiest scenario on the ladder. Unlike #481's tool row — whose resolved status is a
      * **durable** terminal signal that survives turn-end — the spinner leaves **no durable artifact**: the
      * instant real claude emits its first token the daemon flips `turn_state` to `responding`, `isThinking`
      * goes false, and `ThinkingIndicator` early-returns, so the node disappears with no trace. Rung 3 has no
