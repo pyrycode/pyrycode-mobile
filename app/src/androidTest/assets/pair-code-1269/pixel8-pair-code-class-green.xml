@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="9" failures="0" errors="0" skipped="0" time="53.589" timestamp="2026-09-29T05:00:56" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" tests="9" failures="0" errors="0" skipped="0" time="51.625" timestamp="2026-09-29T05:00:56" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="scannerPasteReturnsFromEveryRecoveryStateWithoutSaving" classname="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" time="16.633" />
+    <testcase name="cancelToolbarAndAndroidBackReturnToCallerWithoutSaving" classname="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" time="7.757" />
+    <testcase name="softwareKeyboardKeepsBothFieldsClearControlsAndActionsReachable" classname="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" time="7.889" />
+    <testcase name="fullSizeLightAndDarkFrames" classname="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" time="3.49" />
+    <testcase name="targetedRouteNamesItsHostAndBackReturnsWithoutSaving" classname="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" time="2.562" />
+    <testcase name="targetModeNamesTheHostReadOnlyAndShowsWrongHostOnTheCode" classname="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" time="2.813" />
+    <testcase name="compactLargeTextKeepsErrorsAndActionsReachable" classname="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" time="2.851" />
+    <testcase name="emptyFieldLabelsSitAboveTheirClearActions" classname="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" time="2.353" />
+    <testcase name="clearControlsErrorsAndConfirmationBack" classname="de.pyryco.mobile.ui.onboarding.PairCodeScreenTest" time="5.277" />
+  </testsuite>
+</testsuites>

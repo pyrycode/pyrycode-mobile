@@ -20,10 +20,22 @@ unchanged. Pair submits; persistence/connection failures change that action to
 Retry. Cancel and the toolbar back arrow share the Android Back event.
 The footer opens `https://github.com/pyrycode/pyrycode-mobile`.
 
-The 412×892 design uses theme colors and typography, an atmospheric glow and
-bottom-aligned 56 dp actions. Native M3 empty labels remain centered until focus
-or input, an explicit adaptation from the supplied frame's floated empty labels.
-Light and dark previews use the same layout and tokens.
+The 412×892 mobile design uses theme colors and typography, an atmospheric glow,
+the supplied 24 dp back-arrow asset and bottom-aligned 56 dp actions. Each filled
+field keeps its label at the top even when empty, with the draft below it and a
+separate trailing clear control. A controlled `BasicTextField` puts label and text
+inside one full-height editable surface; placing only the text line there made
+most of the 56 dp well inert to taps. The field uses the theme's extra-small
+shape, and invalid or wrong-host code feedback appears directly below the code
+field with error semantics and a polite live region. Other failures stay near
+Pair/Retry. Light and dark previews use the same layout and tokens.
+
+The [412×892 Figma/emulator comparison](../../../app/src/androidTest/assets/pair-code-1269/comparison-412x892.png)
+and [compact, enlarged-text and visible-IME captures](../../../app/src/androidTest/assets/pair-code-1269/)
+record the route against the mobile frame. The older form reference has a
+different field order and desktop card; the mobile frame supplies this route's
+geometry. Figma has no target-host, error, saving/connecting or keyboard frame,
+so those states follow the existing product controls and behavior.
 
 The form applies `imePadding()` and scrolls at smaller heights. The scrolled
 column combines a viewport minimum height with `height(IntrinsicSize.Min)` before
@@ -41,10 +53,9 @@ When hosted alone, that modifier reserves and consumes the bars itself.
 `imePadding()` then adds only keyboard height beyond the bottom inset already
 consumed by the activity or the screen. See
 [navigation § Insets](navigation.md#configuration) for once-only ownership.
-The toolbar Back `IconButton` is explicitly sized `Modifier.size(48.dp)`, the same as the
-scanner's — M3's default `IconButton` is 40 dp centred in a 48 dp touch
-target, so two headers with identical row padding can otherwise report Back
-tops several dp apart even though their arrows sit in the same place. The
+The toolbar Back `IconButton` is explicitly sized `Modifier.size(48.dp)`.
+The pair route starts this target at the consumed status inset; the scanner
+retains its separate 18 dp header offset. The
 `Confirming` phase returns `ScannerScreen` before this `Column` is composed,
 so it does not gain a second system-bar inset.
 
@@ -206,27 +217,28 @@ An already-connected A alone cannot establish success for B.
 
 `PairCodeScreenTest` covers independent clears, validation and confirmation
 callbacks, failure/Retry/Cancel, light/dark frames, and actual production-route
-return via Cancel, toolbar and Android Back. Its 360×640 test selects the real
-test IME before Activity launch and uses the app's edge-to-edge/Scaffold shape.
-It asserts visible IME insets, scrolls to both fields and clear controls, and
-checks action bounds above the keyboard. Focus or text input alone can pass with
-no keyboard; see [Compose evidence](development-verification.md#compose-evidence).
+return via Cancel, toolbar and Android Back. It also checks empty labels above
+the text line and reachability of inline errors and actions at 360×640 with
+enlarged text. Its real-IME test selects the test keyboard before Activity
+launch and uses the app's edge-to-edge/Scaffold shape. It taps the upper field
+surface, asserts a full-height focus target and visible IME insets, then scrolls
+to both fields, clear controls, Pair, Retry and Cancel and checks action bounds
+above the keyboard. Focus or text input alone can pass with no keyboard; see
+[Compose evidence](development-verification.md#compose-evidence). A screenshot
+of the Compose root also omits the keyboard window; the visible-IME captures use
+`UiAutomation.takeScreenshot()`.
 
-(#1141) `PairCodeScreenInsetsTest` (Robolectric, `app/src/sharedTest`) puts the
-host activity edge to edge and applies fixed nonzero status-bar/navigation-bar
-insets to its window with `ViewCompat.dispatchApplyWindowInsets`, since
-Robolectric reports none on its own. It renders `ScannerScreen(ReadyToScan)`,
-records the Back button's top, switches the same content to `PairCodeScreen`,
-and asserts the two tops match within 1 px, that Back clears the status-bar
-inset, and that Cancel and the footer clear the navigation-bar inset. Reading
-`WindowInsets` from the test content keeps Compose's inset listener attached
-across the content switch — without that read, the listener detaches and a
-fresh `requestApplyInsets` puts the real zero insets back, and the test would
-pass vacuously. The fixture hosts each screen without the production outer
-`Scaffold` padding described above, so it proves the composables' own insets,
-not once-only ownership across the full production stack. The
-[activity inset regressions](navigation.md#testing) cover that boundary and
-pair/scanner header parity through the production routes.
+`PairCodeScreenInsetsTest` (Robolectric, `app/src/sharedTest`) puts the host
+activity edge to edge and applies fixed nonzero status and navigation insets
+with `ViewCompat.dispatchApplyWindowInsets`, since Robolectric reports none on
+its own. It asserts the pair Back target starts at the status inset and Cancel
+and the footer clear the navigation inset. Reading `WindowInsets` in the test
+content keeps Compose's inset listener attached; otherwise a fresh inset
+request can replace the fixed values with zero and make the test pass
+vacuously. The fixture has no production outer `Scaffold`, so the
+[activity inset regressions](navigation.md#testing) also check the production
+route's once-only inset ownership. The pair and scanner headers keep their
+separate offsets.
 Two (#842) additions: `targetedRouteNamesItsHostAndBackReturnsWithoutSaving` navigates through
 `Routes.PAIR_CODE_ROUTE` with a `serverId` argument via a real `NavHostController`, asserts the
 disabled Host name field shows the target's name, and Back returns to `Routes.WELCOME` without a

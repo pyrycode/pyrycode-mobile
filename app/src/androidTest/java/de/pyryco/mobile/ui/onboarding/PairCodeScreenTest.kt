@@ -1,25 +1,31 @@
 package de.pyryco.mobile.ui.onboarding
 
 import android.Manifest
+import android.graphics.Bitmap
 import android.os.ParcelFileDescriptor
 import android.provider.Settings
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
@@ -28,6 +34,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
@@ -52,6 +59,7 @@ import org.junit.Test
 import org.junit.rules.TestRule
 import org.junit.runners.model.Statement
 import org.koin.core.context.GlobalContext
+import java.io.File
 
 @OptIn(ExperimentalTestApi::class)
 class PairCodeScreenTest {
@@ -102,24 +110,40 @@ class PairCodeScreenTest {
         rule.saveScreenshot(dir, name) { rule.onNode(isRoot() and hasAnyDescendant(hasText("Pairing"))) }
     }
 
-    private fun show(small: Boolean = false) {
+    private fun captureDevice(name: String) {
+        rule.waitForIdle()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val dir =
+            InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+                ?: instrumentation.targetContext.getExternalFilesDir(null)?.path ?: return
+        val bitmap = instrumentation.uiAutomation.takeScreenshot() ?: error("Device screenshot unavailable")
+        File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+    }
+
+    private fun show(
+        small: Boolean = false,
+        fontScale: Float = 1f,
+    ) {
         rule.runOnUiThread { rule.activity.enableEdgeToEdge() }
         rule.setContent {
             view = LocalView.current
             DeviceConfigurationOverride(
                 DeviceConfigurationOverride.ForcedSize(if (small) DpSize(360.dp, 640.dp) else DpSize(412.dp, 892.dp)),
             ) {
-                PyrycodeMobileTheme(darkTheme = dark) {
-                    Scaffold { padding ->
-                        PairCodeScreen(state, { event ->
-                            events += event
-                            state =
-                                when (event) {
-                                    is PairCodeEvent.Name -> state.copy(name = event.value)
-                                    is PairCodeEvent.Code -> state.copy(code = event.value)
-                                    else -> state
-                                }
-                        }, Modifier.padding(padding))
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
+                    PyrycodeMobileTheme(darkTheme = dark) {
+                        Scaffold { padding ->
+                            PairCodeScreen(state, { event ->
+                                events += event
+                                state =
+                                    when (event) {
+                                        is PairCodeEvent.Name -> state.copy(name = event.value)
+                                        is PairCodeEvent.Code -> state.copy(code = event.value)
+                                        else -> state
+                                    }
+                            }, Modifier.padding(padding).consumeWindowInsets(padding))
+                        }
                     }
                 }
             }
@@ -166,7 +190,7 @@ class PairCodeScreenTest {
             }
         }
         rule.runOnIdle { nav.navigate(Routes.pairCode("unsaved/host id")) }
-        rule.onNodeWithText("Host name").assertTextContains("unsaved/host id").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("Host name").assertTextContains("unsaved/host id").assertIsNotEnabled()
         Espresso.pressBack()
         rule.waitUntil(5_000) { nav.currentDestination?.route == Routes.WELCOME }
         assertEquals(before, runBlocking { store.list() })
@@ -217,10 +241,33 @@ class PairCodeScreenTest {
         capture("pair-code-light")
     }
 
+    @Test fun emptyFieldLabelsSitAboveTheirClearActions() {
+        state = PairCodeState()
+        show()
+        for ((label, clear) in listOf("Host name" to "Clear host name", "Pairing code" to "Clear pairing code")) {
+            val labelTop =
+                rule
+                    .onNodeWithText(label, useUnmergedTree = true)
+                    .fetchSemanticsNode()
+                    .boundsInRoot.top
+            val clearBounds = rule.onNodeWithContentDescription(clear).fetchSemanticsNode().boundsInRoot
+            assertTrue("$label should stay at the top of its empty field", labelTop < clearBounds.top + clearBounds.height / 4)
+        }
+    }
+
+    @Test fun compactLargeTextKeepsErrorsAndActionsReachable() {
+        state = PairCodeState(error = WRONG_HOST_ERROR)
+        show(small = true, fontScale = 1.5f)
+        for (label in listOf("Host name", "Pairing code", WRONG_HOST_ERROR, "Pair", "Cancel")) {
+            rule.onNodeWithText(label).performScrollTo().assertIsDisplayed()
+        }
+        capture("pair-code-compact-large-text")
+    }
+
     @Test fun targetModeNamesTheHostReadOnlyAndShowsWrongHostOnTheCode() {
         state = PairCodeState(targetName = "Pyrybox", code = "draft")
         show()
-        rule.onNodeWithText("Host name").assertTextContains("Pyrybox").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("Host name").assertTextContains("Pyrybox").assertIsNotEnabled()
         rule.onNodeWithContentDescription("Clear host name").assertIsNotEnabled()
         rule.runOnIdle { state = state.copy(error = WRONG_HOST_ERROR) }
         rule.onNodeWithText(WRONG_HOST_ERROR).assertIsDisplayed()
@@ -232,7 +279,7 @@ class PairCodeScreenTest {
         show()
         capture("pair-code-frame")
         rule.onNodeWithContentDescription("Clear host name").performClick()
-        rule.onNodeWithText("Pairing code").assertTextContains("draft")
+        rule.onNodeWithContentDescription("Pairing code").assertTextContains("draft")
         rule.runOnIdle { state = state.copy(name = "Other") }
         rule.onNodeWithContentDescription("Clear pairing code").performClick()
         rule.runOnIdle {
@@ -252,20 +299,29 @@ class PairCodeScreenTest {
         }
         rule.onNodeWithText("Confirm pairing").performClick()
         rule.runOnIdle { assertEquals(PairCodeEvent.Confirm, events.last()) }
-        Espresso.pressBack()
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
         rule.runOnIdle { assertEquals(PairCodeEvent.Back, events.last()) }
         rule.runOnIdle { state = state.copy(phase = PairCodePhase.Editing, error = "Pairing saved. Host unavailable. Retry or cancel.") }
         rule.onNodeWithText("Retry").performClick()
         rule.runOnIdle { assertEquals(PairCodeEvent.Pair, events.last()) }
+        rule.runOnIdle { state = state.copy(phase = PairCodePhase.Connecting, error = null) }
+        rule.onNodeWithText("Connecting…").assertIsDisplayed().assertIsNotEnabled()
         rule.onNodeWithText("Cancel").performClick()
         rule.runOnIdle { assertEquals(PairCodeEvent.Back, events.last()) }
     }
 
     @Test fun softwareKeyboardKeepsBothFieldsClearControlsAndActionsReachable() {
         show(small = true)
-        rule.onNodeWithText("Host name").performClick()
-        rule.waitUntil(5_000) {
-            rule.runOnIdle { ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
+        for (label in listOf("Host name", "Pairing code")) {
+            val field = rule.onNodeWithContentDescription(label).performScrollTo()
+            val bounds = field.fetchSemanticsNode().boundsInRoot
+            val density = rule.runOnIdle { view.resources.displayMetrics.density }
+            assertTrue("$label field target is shorter than 48 dp: $bounds", bounds.height >= 48f * density)
+            field.performTouchInput { click(Offset(8f * density, 4f * density)) }
+            field.assertIsFocused()
+            rule.waitUntil(5_000) {
+                rule.runOnIdle { ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
+            }
         }
         for (label in listOf("Host name", "Pairing code")) {
             rule.onNodeWithText(label).performScrollTo()
@@ -279,7 +335,7 @@ class PairCodeScreenTest {
             rule.onNodeWithText(label).performScrollTo()
             capture("pair-code-field-$label")
             rule.onNodeWithText(label).assertIsDisplayed()
-            capture("pair-code-ime-$label")
+            captureDevice("pair-code-ime-$label")
             val bounds = rule.onNodeWithText(label).fetchSemanticsNode().boundsInRoot
             rule.runOnIdle {
                 val inset = ViewCompat.getRootWindowInsets(view)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
@@ -291,6 +347,16 @@ class PairCodeScreenTest {
                     location[1] + bounds.bottom <= view.resources.displayMetrics.heightPixels - inset + 1,
                 )
             }
+        }
+        rule.runOnIdle { state = state.copy(error = "Pairing saved. Host unavailable. Retry or cancel.") }
+        rule.onNodeWithText("Retry").performScrollTo().assertIsDisplayed()
+        captureDevice("pair-code-ime-retry")
+        val retryBounds = rule.onNodeWithText("Retry").fetchSemanticsNode().boundsInRoot
+        rule.runOnIdle {
+            val inset = ViewCompat.getRootWindowInsets(view)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            assertTrue(inset > 0 && location[1] + retryBounds.bottom <= view.resources.displayMetrics.heightPixels - inset + 1)
         }
     }
 }

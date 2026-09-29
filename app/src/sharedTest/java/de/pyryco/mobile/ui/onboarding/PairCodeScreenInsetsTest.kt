@@ -6,9 +6,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.assertIsDisplayed
@@ -35,7 +32,6 @@ class PairCodeScreenInsetsTest {
     @get:Rule
     val rule = createAndroidComposeRule<ComponentActivity>()
 
-    private var pairCode by mutableStateOf(false)
     private var statusTop = 0
     private var navigationBottom = 0
     private lateinit var view: View
@@ -95,7 +91,7 @@ class PairCodeScreenInsetsTest {
             .boundsInRoot.top
 
     @Test
-    fun backMatchesScannerBelowStatusBarAndActionsSitAboveNavigationBar() {
+    fun backStartsAtStatusInsetAndActionsSitAboveNavigationBar() {
         rule.runOnUiThread { rule.activity.enableEdgeToEdge() }
         rule.setContent {
             view = LocalView.current
@@ -104,22 +100,15 @@ class PairCodeScreenInsetsTest {
             statusTop = WindowInsets.statusBars.getTop(density)
             navigationBottom = WindowInsets.navigationBars.getBottom(density)
             PyrycodeMobileTheme(darkTheme = true) {
-                if (pairCode) {
-                    PairCodeScreen(PairCodeState(), {})
-                } else {
-                    ScannerScreen(ScannerUiState.ReadyToScan, {}, {}, {})
-                }
+                PairCodeScreen(PairCodeState(), {})
             }
         }
-        applyBars()
-        val scannerBack = backTop()
-        rule.runOnIdle { pairCode = true }
         applyBars()
         val pairBack = backTop()
 
         assertTrue("status bar inset $statusTop", statusTop > 0)
         assertTrue("navigation bar inset $navigationBottom", navigationBottom > 0)
-        assertEquals(scannerBack, pairBack, 1f)
+        assertEquals(statusTop.toFloat(), pairBack, 1f)
         assertTrue("Back top $pairBack under status bar $statusTop", pairBack >= statusTop)
 
         val footer = "Open source · github.com/pyrycode/pyrycode-mobile"
