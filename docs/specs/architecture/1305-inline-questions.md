@@ -116,3 +116,7 @@ The verifier found that excluding batch arrival from auto-follow also hid the ba
 - Test cleanups from the verifier's NITs: the rung-3 absence check also requires the actions and the always-composed waiting label to be gone, the daemon text bound is one named constant, and a misplaced coordinator test comment returns to its test.
 
 Size audit: the preview adds a ninth production Kotlin file. The one-consumer floor from the previous entry still applies; the remaining boundaries hold. Security review unchanged: the reveal moves no protection boundary and renders no new daemon text.
+
+### Rework 3: isolate an inherited live failure
+
+The live gate at `7fba6c4b` passed the named question method (44 executed, 43 passed). Its one failure, `interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`, also fails on `origin/main` alone. It last passed against daemon `fe0f9452`, and the failing runs used `36acd04c`, which adds daemon #2699's push of the sender's own delivered message. The fix belongs in the phone's inbound `message` handling, outside this ticket, so #1369 tracks it. This branch isolates the method as #1193 did: `@Ignore` pointing at #1369, removed from the LIVE curated list, `LIVE_MINIMUM` and its script test lowered to 43. No production code changes.
