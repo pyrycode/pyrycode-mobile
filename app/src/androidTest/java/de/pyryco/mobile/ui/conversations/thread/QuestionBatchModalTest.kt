@@ -9,14 +9,18 @@ import android.view.inspector.WindowInspector
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
@@ -25,6 +29,9 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertWidthIsEqualTo
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -32,6 +39,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
@@ -82,6 +90,7 @@ class QuestionBatchModalTest {
     private fun show(
         batch: QuestionBatch = batch(),
         small: Boolean = false,
+        fontScale: Float = 1f,
     ) {
         val vm =
             ThreadViewModel(
@@ -104,7 +113,9 @@ class QuestionBatchModalTest {
                 val state by vm.questionModal.collectAsStateWithLifecycle()
                 val size = if (small) DpSize(320.dp, 640.dp) else DpSize(412.dp, 892.dp)
                 DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
-                    state?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent, modifier = Modifier.size(size)) }
+                    DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
+                        state?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent, modifier = Modifier.size(size)) }
+                    }
                 }
             }
         }
@@ -124,6 +135,56 @@ class QuestionBatchModalTest {
         rule.onAllNodesWithText("Other")[0].assertIsSelected()
         rule.onNodeWithText("Rust").performClick()
         rule.onAllNodesWithText("Other")[0].assertIsNotSelected()
+    }
+
+    @Test
+    fun question_components_use_figma_control_geometry_and_keep_other_editable() {
+        show()
+        rule.onNodeWithTag("question_header_glyph_0", useUnmergedTree = true).assertWidthIsEqualTo(14.dp).assertHeightIsEqualTo(16.dp)
+        rule.onNodeWithTag("question_control_0_0", useUnmergedTree = true).assertWidthIsEqualTo(20.dp).assertHeightIsEqualTo(20.dp)
+        rule.onNodeWithTag("question_control_1_0", useUnmergedTree = true).assertWidthIsEqualTo(20.dp).assertHeightIsEqualTo(20.dp)
+        rule
+            .onNodeWithText("Kotlin")
+            .assertHeightIsAtLeast(48.dp)
+            .performTouchInput { click(center) }
+            .assertIsSelected()
+        rule
+            .onNodeWithTag("question_other_0")
+            .performScrollTo()
+            .assertHeightIsAtLeast(48.dp)
+            .performTouchInput { click(Offset(center.x, 2f)) }
+            .assertIsFocused()
+        rule.onNodeWithTag("question_other_0").performTextInput("Go")
+        rule.onNodeWithText("Kotlin").assertIsNotSelected()
+        rule.onNodeWithTag("question_control_0_other", useUnmergedTree = true).performTouchInput { click(center) }
+        rule.onAllNodesWithText("Other")[0].assertIsNotSelected()
+        rule.onNodeWithTag("question_other_0").assertTextContains("Go")
+    }
+
+    @Test
+    fun long_daemon_text_wraps_and_other_draft_survives_a_choice_change_at_large_text() {
+        val longLabel = "A deliberately long server-authored choice with https://example.invalid/a/b and more words to wrap"
+        val longQuestion =
+            Question(
+                question = "Which of these very long alternatives should be used when the available width is narrow?",
+                header = "Clarification with a longer header that must wrap safely",
+                options =
+                    listOf(
+                        QuestionOption(longLabel, "More server-authored explanation that spans several lines"),
+                        QuestionOption("Last choice", "Short"),
+                    ),
+                multiSelect = false,
+            )
+        show(batch = batch().copy(questions = listOf(longQuestion)), small = true, fontScale = 1.5f)
+        val label = rule.onNodeWithText(longLabel).performScrollTo().assertIsDisplayed()
+        assertTrue("the full server label should wrap", label.fetchSemanticsNode().boundsInRoot.height > 32f)
+        rule.onNodeWithText("Last choice").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("question_other_0").performScrollTo().performTextInput("saved draft")
+        rule.onNodeWithText("Last choice").performScrollTo().performClick()
+        rule.onNodeWithText("Other").performScrollTo().performClick()
+        rule.onNodeWithTag("question_other_0").performScrollTo().assertTextContains("saved draft")
+        rule.onNodeWithText("Cancel").assertIsDisplayed()
+        rule.onNodeWithText("Continue").assertIsDisplayed()
     }
 
     @Test
@@ -177,7 +238,7 @@ class QuestionBatchModalTest {
 
     @Test
     fun ime_keeps_the_last_other_field_and_actions_reachable_at_320_by_640() {
-        show(batch(extra = 3), small = true)
+        show(batch(extra = 3), small = true, fontScale = 1.5f)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         var focusEvidence = "no process windows observed"
         try {
@@ -214,6 +275,7 @@ class QuestionBatchModalTest {
             .performScrollTo()
             .performClick()
             .assertIsFocused()
+        rule.onNodeWithTag(last).performTextInput("draft")
         rule.runOnIdle { dialogView().windowInsetsController?.show(WindowInsets.Type.ime()) }
         rule.waitUntil(5_000) {
             rule.runOnIdle { ViewCompat.getRootWindowInsets(dialogView())?.isVisible(WindowInsetsCompat.Type.ime()) == true }
@@ -222,7 +284,9 @@ class QuestionBatchModalTest {
             .onNodeWithTag(last)
             .assertIsFocused()
             .assertIsDisplayed()
-            .performTextInput("typed")
+            .assertTextContains("draft")
+            .performTextInput(" typed")
+        rule.onNodeWithTag(last).assertTextContains("draft typed")
         rule.onNodeWithText("Extra 4 option").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Kotlin").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Cancel").assertIsDisplayed()

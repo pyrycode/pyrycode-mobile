@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="6" failures="0" errors="0" skipped="0" time="12.488" timestamp="2026-09-30T08:29:24" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" tests="6" failures="0" errors="0" skipped="0" time="12.183" timestamp="2026-09-30T08:29:24" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="failed_refusal_shows_an_error_and_keeps_selections" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="2.516" />
+    <testcase name="multiple_choice_uses_checkboxes_and_continue_sends_one_answer" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="2.047" />
+    <testcase name="ime_keeps_the_last_other_field_and_actions_reachable_at_320_by_640" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="2.562" />
+    <testcase name="question_components_use_figma_control_geometry_and_keep_other_editable" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.407" />
+    <testcase name="single_choice_uses_radio_semantics_and_other_clears_the_pick" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.8" />
+    <testcase name="long_daemon_text_wraps_and_other_draft_survives_a_choice_change_at_large_text" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.851" />
+  </testsuite>
+</testsuites>
