@@ -1,0 +1,110 @@
+package de.pyryco.mobile.ui.conversations.thread
+
+import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.network.RelayLog
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+
+/** An accepted "don't ask again this session" offer (#818), keyed on the request and the exact rules it offered. */
+internal data class PermissionGrantDraft(
+    val modalId: String,
+    val rules: List<String>,
+)
+
+/**
+ * Process-only session-grant drafts (#1306), keyed by server and conversation, so leaving a chat through Back
+ * keeps the checkbox for the same outstanding request. A bound host's collector retires a draft as soon as its
+ * modal stops being that request with that offer, including while no thread for the conversation is open.
+ */
+class PermissionDraftStore(
+    dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+) {
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
+    private val drafts = MutableStateFlow<Map<Pair<String, String>, PermissionGrantDraft>>(emptyMap())
+
+    private class Binding(
+        val owner: Any,
+        val job: Job,
+    )
+
+    private val bindings = mutableMapOf<String, Binding>()
+
+    /** Follow [serverId]'s host modal. The same [owner] rebinds as a no-op; a new one starts that host afresh. */
+    @Synchronized
+    fun bind(
+        serverId: String,
+        owner: Any,
+        modals: StateFlow<ModalUiState>,
+    ) {
+        if (bindings[serverId]?.owner === owner) return
+        bindings.remove(serverId)?.job?.cancel()
+        clearHost(serverId)
+        bindings[serverId] = Binding(owner, scope.launch { modals.collect { retireStale(serverId, owner, it) } })
+    }
+
+    @Synchronized
+    private fun retireStale(
+        serverId: String,
+        owner: Any,
+        modal: ModalUiState,
+    ) {
+        if (bindings[serverId]?.owner !== owner) return
+        val next =
+            drafts.value.filter { (key, draft) ->
+                key.first != serverId ||
+                    (
+                        modal is ModalUiState.Open &&
+                            modal.offersAlwaysAllow &&
+                            modal.conversationId == key.second &&
+                            draft == PermissionGrantDraft(modal.modalId, modal.alwaysAllowRules)
+                    )
+            }
+        if (next.size != drafts.value.size) {
+            RelayLog.d { "event=permission_grant_draft action=retired" }
+            drafts.value = next
+        }
+    }
+
+    internal fun observe(
+        serverId: String,
+        conversationId: String,
+    ): Flow<PermissionGrantDraft?> = drafts.map { it[serverId to conversationId] }.distinctUntilChanged()
+
+    internal fun current(
+        serverId: String,
+        conversationId: String,
+    ): PermissionGrantDraft? = drafts.value[serverId to conversationId]
+
+    @Synchronized
+    internal fun set(
+        serverId: String,
+        conversationId: String,
+        draft: PermissionGrantDraft?,
+    ) {
+        val key = serverId to conversationId
+        drafts.value = if (draft == null) drafts.value - key else drafts.value + (key to draft)
+        RelayLog.d { "event=permission_grant_draft action=${if (draft == null) "cleared" else "set"}" }
+    }
+
+    @Synchronized
+    private fun clearHost(serverId: String) {
+        drafts.value = drafts.value.filterKeys { it.first != serverId }
+    }
+
+    @Synchronized
+    fun dispose() {
+        scope.cancel()
+        bindings.clear()
+        drafts.value = emptyMap()
+    }
+}
