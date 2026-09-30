@@ -70,3 +70,12 @@ Pending for the documentation stage:
 - `docs/knowledge/features/status-sheet.md` (model selection): the inherited mark rule, tier order, and the settings.json caveat.
 - `docs/knowledge/features/thread-composer-footer.md` (model label): the label fallback chain, never "Default".
 - `docs/e2e-interactive-stream.md`: `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` now runs one real turn and asserts the announced-model mark.
+
+## Revisions
+
+### 2026-10-01 — verifier review on PR #1377
+
+- **Render cap.** `ThreadRunConfig` gains `overflowChoices: List<ThreadModelChoice>`, the visible rows `runConfig` cuts past `MAX_RENDERED_MODEL_CHOICES`, never composed. The announced tiers count candidates over `choices + overflowChoices`; a tier decides as before, and marks its rendered row only when that is the tier's only candidate. A match past the cap therefore makes a rendered match ambiguous, as `inheritedResolutionUnique` already does for the default resolution.
+- **Never "Default".** The inherited label's family fallbacks drop a family that reads as the hidden default's name, so an identifier beginning with `default` falls through to the unavailable label.
+- **Unit test.** `ambiguousEarlierTierStopsBeforeFamily` uses a twin of another family, so only an early stop at the ambiguous `resolvedModel` tier yields nothing. New cases cover a match past the cap and a default-named announcement; the ViewModel render-cap case asserts `overflowChoices`.
+- **Rung 3.** `awaitAnnouncedMark` replaces `awaitNoModelMarked`: it counts every selected radio labelled by any non-default Claude row of the fresh menu, including rows that share a family label, and requires exactly the expected row's label and `resolved_model` detail, or none with the note shown outside a radio. The e2e `inheritedModelLabel` falls back to the default resolution's family.

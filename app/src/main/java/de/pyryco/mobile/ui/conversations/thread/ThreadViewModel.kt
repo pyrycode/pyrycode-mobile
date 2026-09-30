@@ -2244,6 +2244,7 @@ private fun runConfig(
         }
     return ThreadRunConfig(
         choices = visibleRows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
+        overflowChoices = visibleRows.drop(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
         inheritedChoice = defaultRow?.toChoice(agent),
         inheritedResolutionUnique =
             defaultRow != null && visibleRows.count { it.resolvedModel == defaultRow.resolvedModel } == 1,

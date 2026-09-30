@@ -210,6 +210,12 @@ data class ThreadRunConfig(
     val menuAvailable: Boolean = false,
     val droppedModels: Int = 0,
     val hiddenChoices: Int = 0,
+    /**
+     * The rows past [MAX_RENDERED_MODEL_CHOICES], never composed. The announced mark (#1308) counts its
+     * candidates over them too, as [inheritedResolutionUnique] does, so a match the sheet cannot show still
+     * makes a rendered one ambiguous.
+     */
+    val overflowChoices: List<ThreadModelChoice> = emptyList(),
     val settingsAvailable: Boolean = false,
     val savedModel: String = "",
     val savedEffort: String = "",
@@ -293,8 +299,9 @@ data class ThreadRunConfig(
                         { family.isNotEmpty() && it.value.modelFamily() == family },
                     )
                 for (matches in tiers) {
-                    val candidates = choices.filter(matches)
-                    if (candidates.isNotEmpty()) return candidates.singleOrNull()
+                    val rendered = choices.filter(matches)
+                    val candidates = rendered.size + overflowChoices.count(matches)
+                    if (candidates > 0) return rendered.singleOrNull()?.takeIf { candidates == 1 }
                 }
                 return null
             }
@@ -341,11 +348,15 @@ data class ThreadRunConfig(
                 selectedChoice != null -> selectedChoice?.label.orEmpty()
                 inherited ->
                     announcedKey
-                        .modelFamily()
-                        .ifEmpty { defaultResolution.modelFamily() }
+                        .labelFamily()
+                        .ifEmpty { defaultResolution.labelFamily() }
                         .ifEmpty { UNAVAILABLE_MODEL_LABEL }
                 else -> selectedModel.inert().ifEmpty { UNAVAILABLE_MODEL_LABEL }
             }
+
+    /** A fallback label's family, `""` when it would read as the hidden default's name. */
+    private fun String.labelFamily(): String =
+        modelFamily().takeUnless { it.equals(INHERITED_DEFAULT_MODEL_VALUE, ignoreCase = true) }.orEmpty()
 
     /** Text for an unrepresented confirmed or pending choice in the sheet, never a radio label. */
     val modelSelectionNote: String?

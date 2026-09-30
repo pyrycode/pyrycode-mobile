@@ -88,6 +88,7 @@ class ThreadViewModelAgentModelMenuTest {
             val config = runConfigFor(ConversationAgent.Claude, ModelMenu(rows, 0), savedModel = "")
 
             assertEquals(1, config.hiddenChoices)
+            assertEquals(listOf("shadow"), config.overflowChoices.map { it.value })
             assertEquals(null, config.selectedChoice)
             // #1308: nothing marked, so the label names the default resolution's family.
             assertEquals("Same", config.modelLabel)

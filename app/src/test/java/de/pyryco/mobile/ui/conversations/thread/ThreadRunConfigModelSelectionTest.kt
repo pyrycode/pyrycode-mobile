@@ -92,10 +92,34 @@ class ThreadRunConfigModelSelectionTest {
 
     @Test
     fun ambiguousEarlierTierStopsBeforeFamily() {
-        val twin = choice("opus-alt", "claude-opus-5", "Opus")
+        // Another family resolving to the announced id: only the family tier would single out opus[1m].
+        val twin = choice("sonnet-alt", "claude-opus-5", "Sonnet")
         val current = config(ordinary = listOf(sonnet, opus, twin), announced = "claude-opus-5")
         assertNull(current.selectedChoice)
         assertEquals("Opus", current.modelLabel)
+    }
+
+    @Test
+    fun aMatchPastTheRenderCapMakesTheRenderedMatchAmbiguous() {
+        val shadow = choice("opus-shadow", "claude-opus-5", "Opus")
+        val ambiguous = config(announced = "claude-opus-5").copy(overflowChoices = listOf(shadow))
+        assertNull(ambiguous.selectedChoice)
+        assertEquals("Opus", ambiguous.modelLabel)
+
+        // An exact-value match past the cap decides its tier, so the rendered resolvedModel match is not marked.
+        val exactHidden = config(announced = "opus-shadow").copy(overflowChoices = listOf(shadow))
+        assertNull(exactHidden.selectedChoice)
+
+        val unrelated = config(announced = "claude-opus-5").copy(overflowChoices = listOf(choice("other", "other-1", "Other")))
+        assertEquals("opus[1m]", unrelated.selectedChoice?.value)
+    }
+
+    @Test
+    fun anAnnouncementNamedLikeTheDefaultNeverLabelsDefault() {
+        val current = config(announced = "default-next", default = null)
+        assertNull(current.selectedChoice)
+        assertEquals(UNAVAILABLE_MODEL_LABEL, current.modelLabel)
+        current.assertNoDefault()
     }
 
     @Test

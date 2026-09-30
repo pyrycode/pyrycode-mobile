@@ -2642,13 +2642,10 @@ class InteractiveStreamE2ETest {
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
             val announced = announcedModel(chatX.id)
             check(announced.isNotEmpty()) { "claude's announced model was cut" }
-            val marked = announcedRow(publishedMenu(chatX.id), announced)
-            if (marked != null) {
-                awaitFooter(changeModelLabel, marked.dropdownLabel(ConversationAgent.Claude))
-            } else {
-                val labels = rows.map { it.dropdownLabel(ConversationAgent.Claude) }.toSet()
-                awaitNoModelMarked(claudeFamily(announced).ifEmpty { UNAVAILABLE_MODEL_LABEL }, labels)
-            }
+            val freshMenu = publishedMenu(chatX.id)
+            val marked = announcedRow(freshMenu, announced)
+            awaitAnnouncedMark(freshMenu, marked, claudeFamily(announced).ifEmpty { UNAVAILABLE_MODEL_LABEL })
+            if (marked != null) awaitFooter(changeModelLabel, marked.dropdownLabel(ConversationAgent.Claude))
             assertNoDefaultModelRadio()
 
             // A pick is exact-value and is never moved by the announcement.
@@ -5620,27 +5617,56 @@ class InteractiveStreamE2ETest {
         return null
     }
 
-    /** Run configuration marks none of the model radios labelled [labels] and names [note] instead (#1308). */
-    private fun awaitNoModelMarked(
+    /**
+     * Run configuration marks exactly [marked]'s radio, told apart by its label and `resolved_model` detail,
+     * or, with [marked] `null`, no model radio at all and shows [note] outside the radios (#1308). Every
+     * non-default Claude row of [menu] counts, including rows whose family label another row shares, since
+     * those are the rows a wrong mark would land on.
+     */
+    private fun awaitAnnouncedMark(
+        menu: ModelMenu,
+        marked: ModelMenuRow?,
         note: String,
-        labels: Set<String>,
     ) {
-        openRunConfiguration()
-        val markedRadio =
+        val labels =
+            menu.rows
+                .filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
+                .map { it.dropdownLabel(ConversationAgent.Claude) }
+                .toSet()
+        val markedModelRadio =
             SemanticsMatcher("a marked model radio") { node ->
                 node.config.getOrNull(SemanticsProperties.Role) == SemanticsRole.RadioButton &&
                     node.config.getOrNull(SemanticsProperties.Selected) == true &&
                     node.config
                         .getOrNull(SemanticsProperties.Text)
-                        .orEmpty()
-                        .any { it.text in labels }
+                        ?.firstOrNull()
+                        ?.text in labels
             }
+        val expected =
+            marked?.let { row ->
+                val label = row.dropdownLabel(ConversationAgent.Claude)
+                val detail = row.resolvedModel.inert().takeIf { it.isNotBlank() && it != label }
+                listOfNotNull(label, detail)
+            }
+
+        fun markedTexts() =
+            composeTestRule.onAllNodes(markedModelRadio).fetchSemanticsNodes().map { node ->
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    .orEmpty()
+                    .map { it.text }
+            }
+        openRunConfiguration()
         try {
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(note).fetchSemanticsNodes().isNotEmpty() }
-            assertTrue(
-                "a model radio is marked for an ambiguous or unmatched announcement",
-                composeTestRule.onAllNodes(markedRadio).fetchSemanticsNodes().isEmpty(),
-            )
+            if (expected != null) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { markedTexts() == listOf(expected) }
+            } else {
+                val standaloneNote = hasText(note) and SemanticsMatcher.keyNotDefined(SemanticsProperties.Role)
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(standaloneNote).fetchSemanticsNodes().isNotEmpty()
+                }
+                assertEquals("a model radio is marked for an ambiguous or unmatched announcement", emptyList<List<String>>(), markedTexts())
+            }
         } finally {
             composeTestRule.onNodeWithContentDescription("Close").performClick()
         }
@@ -5667,10 +5693,12 @@ class InteractiveStreamE2ETest {
         if (resolved.isBlank() || resolved.startsWith("<") || "resolved_model" in default?.truncatedFields.orEmpty()) {
             return UNAVAILABLE_MODEL_LABEL
         }
+        // #1308: with no unique row, the label names the default resolution's family, never "Default".
         return claudeRows
             .filter { it.value != INHERITED_MODEL_VALUE && it.resolvedModel == resolved }
             .singleOrNull()
-            ?.dropdownLabel(ConversationAgent.Claude) ?: UNAVAILABLE_MODEL_LABEL
+            ?.dropdownLabel(ConversationAgent.Claude)
+            ?: claudeFamily(resolved).ifEmpty { UNAVAILABLE_MODEL_LABEL }
     }
 
     /**
