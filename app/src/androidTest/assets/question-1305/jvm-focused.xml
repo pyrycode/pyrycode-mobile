@@ -1,0 +1,41 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites tests="28" failures="0" skipped="0">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-30T17:43:26.618Z" time="0.109">
+    <testcase name="navigation_keeps_picks_and_owners_are_isolated" classname="de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest" time="0.023" />
+    <testcase name="dismissal_replacement_and_reconnect_invalidate_stale_callbacks_even_with_same_id" classname="de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest" time="0.001" />
+    <testcase name="host_observation_keeps_invalidating_without_a_screen_and_reconnect_does_not_need_a_null_tick" classname="de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest" time="0.082" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-09-30T17:43:32.732Z" time="0.109">
+    <testcase name="a_codex_conversations_batch_names_codex_and_keeps_its_picks_when_the_list_arrives_late" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.053" />
+    <testcase name="one_send_while_in_flight_and_after_success" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.007" />
+    <testcase name="continue_is_enabled_only_when_every_question_has_an_answer" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.005" />
+    <testcase name="popping_and_reopening_retains_only_the_current_process_draft" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.011" />
+    <testcase name="navigation_cancels_a_send_without_stranding_the_retained_draft_locked" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.01" />
+    <testcase name="single_choice_other_clears_the_pick_and_multi_choice_keeps_both" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.003" />
+    <testcase name="failed_send_keeps_selections_and_allows_retry" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.003" />
+    <testcase name="a_claude_or_unlisted_conversations_batch_names_claude" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.003" />
+    <testcase name="another_conversations_batch_never_shows_or_receives_answers" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.002" />
+    <testcase name="cancel_refuses_once_and_a_failure_can_retry" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.003" />
+    <testcase name="dismissal_and_replacement_discard_selections" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.003" />
+    <testcase name="stale_edits_submissions_and_completions_cannot_touch_a_rebuilt_same_id_request" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.003" />
+    <testcase name="late_completion_never_touches_a_newer_batch" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.002" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-30T17:43:26.807Z" time="5.026">
+    <testcase name="arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="4.549" />
+    <testcase name="empty_thread_has_inline_questions_active_back_and_composer_without_history_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.181" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-09-30T17:43:31.836Z" time="0.49">
+    <testcase name="loading_row_is_shown_at_the_oldest_end_only_while_a_page_is_in_flight" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.089" />
+    <testcase name="retry_row_is_shown_for_a_retryable_failure_and_its_press_reaches_the_callback" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.086" />
+    <testcase name="dead_end_row_is_shown_for_a_permanent_failure_with_nothing_to_press" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.063" />
+    <testcase name="toggling_the_loading_flag_with_the_rows_unchanged_issues_no_further_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.089" />
+    <testcase name="cycling_the_whole_tail_with_the_rows_unchanged_issues_no_further_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.076" />
+    <testcase name="a_prepended_page_leaves_the_row_the_reader_is_looking_at_where_it_was" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.084" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-09-30T17:43:32.329Z" time="0.399">
+    <testcase name="a_reader_scrolled_away_is_not_pulled_back_by_a_streaming_reply" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.133" />
+    <testcase name="a_scroll_refused_under_a_resting_finger_does_not_stop_later_rows_being_followed" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.115" />
+    <testcase name="a_reader_scrolled_away_is_not_pulled_back_by_a_complete_reply" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.091" />
+    <testcase name="a_complete_reply_arriving_at_the_newest_end_is_composed_and_visible" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.057" />
+  </testsuite>
+</testsuites>
