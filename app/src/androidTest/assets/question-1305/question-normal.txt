@@ -1,0 +1,1 @@
+staticFixture=true width=412 fullHeight=892 fontScale=1.0 imeInset=0 secure=true

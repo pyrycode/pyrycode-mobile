@@ -496,6 +496,18 @@ rather than "by composition": host A's sealed error then `4412` → `UpdateRequi
 unaffected and still dialling, an explicit retry on A dials once, and a bare `4412` with no error halts
 with no minimum (see the plan's Revisions).
 
+**#1318 added** (spec: `docs/specs/architecture/1318-thread-connected-after-handshake.md`): a second,
+two-leg mapping, `internal fun ConnectionStatus.toConnectionState(): ConnectionState`, beside the
+relay-only one above — for the thread, which needs `Connected` to mean the pyrycode leg's Noise
+handshake finished, not just the relay socket opening. Relay `Connected` maps to `Connected` only when
+the pyrycode leg is also `Connected`; to `Connecting` when the pyrycode leg is `Handshaking`/`Down`;
+every other relay value falls back to `relay.toConnectionState()` unchanged. The single new test,
+`connectionStatusToConnectionState_isConnectedOnlyWhenBothLegsAreUp`, drives every `RelayLinkStatus` ×
+`PyrycodeLinkStatus` pair, plus explicit assertions that `Idle` stays `Connected` and `Reconnecting(n)`
+keeps its countdown regardless of the pyrycode leg. This function does not change the supervisor's own
+`observe()` or the relay-only mapping — see [Connection state § #1318](connection-state.md) and
+[Connection status § #1318](connection-status.md) for the consumer wiring.
+
 ## Related
 
 - Ticket notes: [`../codebase/307.md`](../codebase/307.md) (original supervisor) ·

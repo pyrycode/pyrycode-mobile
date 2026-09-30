@@ -905,9 +905,14 @@ running. The same prompt sent again in A shows no second `modal_shown` and still
 proving the grant held; the same prompt sent in B (whose session holds no grant) shows the dialog again,
 and the peer allowing it closes the dialog with no phone tap. Three real claude turns. The question-answer
 scenario opens one conversation and sends a prompt asking claude to call `AskUserQuestion` with two labels
-and then echo the chosen one back (`QUESTION_PROMPT`); the phone answers one label from the batch modal and
-claude's reply names it and not the other, then the peer answers the modal shown for a repeat of the same
-prompt, closing it with no phone tap. Two real claude turns. Both scenarios resolved open questions from
+and then echo the chosen one back (`QUESTION_PROMPT`); the phone answers one label from the batch and
+claude's reply names it and not the other, then the peer answers the batch shown for a repeat of the same
+prompt, closing it with no phone tap. Two real claude turns. #1305 moved the batch from its own dialog into
+`ThreadScreen`'s scrollable stream (see [Question batch modal § Placement](knowledge/features/question-batch-modal.md#placement-inline-in-threadscreen-since-1305));
+`awaitInlineQuestion` / `awaitNoInlineQuestion` scroll the lazy list to the `question-batch-title` tag
+instead of waiting on a dialog-scoped title match, and the absence check also requires the
+`question-batch-actions` tag and the always-composed "Waiting for answers" status label to be gone, since a
+lazy row can be merely offscreen rather than actually absent. Both scenarios resolved open questions from
 the plan on their first live pass: claude does supply decision context and does offer don't-ask-again for a
 default-mode `python3` ask, and real claude did call `AskUserQuestion` reliably from the scripted prompt, so
 no deterministic-only fallback was needed. The protocol doc's paragraph that a `question_answer` is
@@ -1508,7 +1513,10 @@ transient 41-method branch failed the live gate, leaving 40. #1251 restored the 
 create-edit-archive method through reachable controls, bringing the selector and floor to 41.
 #1252 restored the host-backed diagnostic archive method, bringing both to 42. #1208 included the
 existing #481 tool-use method, bringing both to 43. #1286 adds the Offline Retry
-method, bringing both to 44. `LIVE_MINIMUM` is
+method, bringing both to 44. #1305 excluded the cross-host file method
+(`interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`), `@Ignore`d pointing at #1369 after
+daemon #2699 made the phone's ready-file row go missing on `main` too, bringing both back to 43; #1369
+restores all three (the method, its LIVE list entry and `LIVE_MINIMUM`). `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the

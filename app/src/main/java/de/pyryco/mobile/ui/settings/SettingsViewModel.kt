@@ -398,6 +398,9 @@ class SettingsViewModel(
 
     fun confirmHostUnpair() = hostEditorController.confirmUnpair()
 
+    /** Fires after an unpair here leaves no saved host (#1323). */
+    val lastHostUnpaired: Flow<Unit> = hostEditorController.lastHostUnpaired
+
     fun dismissHostEditor() = hostEditorController.dismiss()
 
     /**

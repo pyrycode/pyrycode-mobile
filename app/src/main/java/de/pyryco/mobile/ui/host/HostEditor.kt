@@ -11,9 +11,12 @@ import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -92,6 +95,16 @@ class HostEditorController(
 
     /** The host whose Edit host modal is open, or null when none is. */
     val state: StateFlow<HostEditorState?> = editor.asStateFlow()
+
+    // Conflated so a send while no destination collects (a rotation) waits for the next collector and
+    // never suspends the removal that sent it.
+    private val lastHostGone = Channel<Unit>(Channel.CONFLATED)
+
+    /**
+     * Fires once after a successful unpair leaves no saved host (#1323), as desktop's `runUnpairServer`
+     * re-reads its servers and calls `onLastServerUnpaired`. The owner's destination returns to Welcome.
+     */
+    val lastHostUnpaired: Flow<Unit> = lastHostGone.receiveAsFlow()
 
     // Read and written only from a tap dispatch on the main dispatcher, so it needs no synchronisation.
     private var openJob: Job? = null
@@ -240,6 +253,17 @@ class HostEditorController(
             appPreferences.removeDefaultWorkspace(target.serverId)
             editor.compareAndSet(pending, null)
             RelayLog.d { "event=host_unpaired" }
+            // Last, after every cleanup above: the signal pops this owner's destination, and clearing its
+            // view model cancels this scope. A failed read keeps the operator on the list.
+            val remaining =
+                try {
+                    pairedServers.list().size
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    RelayLog.d { "event=host_last_check_failed" }
+                    return@launch
+                }
+            if (remaining == 0) lastHostGone.trySend(Unit)
         }
     }
 
