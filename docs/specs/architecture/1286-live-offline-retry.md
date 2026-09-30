@@ -53,3 +53,10 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md` in the rung
 
 - Does stopping the first daemon cause the relay to report daemon absence to the still-open phone, or only a generic drop? The focused deterministic run will resolve this; if generic, the test can still wait for the supervisor's capped Offline state without changing production behavior.
 - Can the seeded channel answer a second prompt after its daemon restarts? The focused deterministic run will resolve this through the rendered scripted reply.
+
+## Revisions
+
+- During implementation, `RelayConnectionSupervisor.backoff` showed that a `4404` daemon-absent dial retains `RelayLinkStatus.DaemonAbsent` even at the 30-second cap; it never becomes `RelayLinkStatus.Offline`. Both derive to the actual UI `ConnectionState.Offline`. The test enters the capped wait and requires reconnection within 12 seconds of the tap, shorter than the cap's 24-second minimum. This replaces the plan's proposed wait for a capped `relayStatus.Offline` value.
+- The focused scripted run showed early post-stop failures reported as ordinary reconnects before the relay returned `4404`. The test now counts six failed supervisor dial transitions of either kind, then separately requires the actual Offline pill before restart. The sixth failed dial starts the same capped wait; the pill proves the user-visible Offline state.
+- The next focused run reached `host_retry_requested`, but the daemon's relay registration lagged the tap and that dial got another `4404`. The test controller's `start` response now waits for the new child to establish its relay connection, so the tap acts on an available host inside the capped wait.
+- The final focused deterministic run resolved both open questions: initial drops were ordinary reconnects, then `4404` produced the actual Offline pill; the seeded channel accepted a new prompt after daemon restart and rendered the scripted reply. Its fresh XML recorded one executed, unskipped passing testcase.

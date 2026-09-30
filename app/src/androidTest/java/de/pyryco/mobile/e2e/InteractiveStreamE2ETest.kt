@@ -2556,6 +2556,52 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** The foreground thread's real Offline pill retries its owning daemon after six failed dials (#1286). */
+    @Test
+    fun interactiveTurn_offlineRetry_reconnectsSameHostAndReplies() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId))
+        val fault = DaemonFaultControl()
+        awaitChannelList()
+        awaitConnected()
+        val before = hostConversationIds(serverId)
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val conversationId = newHostConversationId(serverId, before)
+        try {
+            fault.stopUntilRetryWindow(bundle.supervisor) {
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
+            }
+            assertNull("the old host repository survived the daemon failure", bundle.coordinator.currentRepository.value)
+
+            // A sixth failed dial begins a 24–36 s wait. Recovery within 12 s after this tap
+            // cannot be the next passive dial; the pill and absent repository are checked immediately before it.
+            fault.start()
+            composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
+            assertNull(bundle.coordinator.currentRepository.value)
+            composeTestRule.onNodeWithTag("offline_retry_target").performClick()
+            runBlocking {
+                withTimeout(RETRY_TAP_TIMEOUT_MS) {
+                    bundle.coordinator.currentRepository.first { it != null }
+                }
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isEmpty()
+            }
+            assertTrue("the thread's conversation moved off its original host", conversationId in hostConversationIds(serverId))
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).assertIsDisplayed()
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        } finally {
+            runCatching { fault.start() }
+        }
+    }
+
     /**
      * A model change made on the phone reaches only its own conversation and survives a reopen (#545).
      * Two chats are prepared through the host's own repository: `create_conversation` binds a session, so
@@ -6705,6 +6751,7 @@ class InteractiveStreamE2ETest {
 
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
+        const val RETRY_TAP_TIMEOUT_MS = 12_000L
         const val THREAD_TIMEOUT_MS = 30_000L
 
         // How long a failed one-shot waits for the host's redial (#1029): the supervisor's first three

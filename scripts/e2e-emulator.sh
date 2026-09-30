@@ -612,6 +612,10 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reconnect-open.jsonl}"      # drop A: thinking, held open across the drop
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/reconnect-done.jsonl}"  # drop B: complete reply + turn_end, post-reconnect
       ;;
+    offline-retry)
+      TEST_METHOD="interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
+      ;;
     replay-order)
       TEST_METHOD="interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/replay-order-open.jsonl}"  # drop A: thinking, held open across the outage
@@ -619,7 +623,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       DROP_B_FENCE=disconnect                                                  # drop B fences on the phone-leg disconnect, not enqueue #2
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | replay-order)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -776,6 +780,7 @@ else
   log "claude revision: ${CLAUDE_REVISION:-unavailable}"
 fi
 log "starting pyry daemon (PYRY_MOBILE_V2=1) → ${DAEMON_RELAY_URL}…"
+DAEMON_COMMAND=(env)
 if [ -n "${DETERMINISTIC}" ]; then
   # The fake speaks the current runner protocol and replays the first fragment
   # on its first user envelope. A second fragment waits for our release signal.
@@ -785,24 +790,31 @@ if [ -n "${DETERMINISTIC}" ]; then
     REPLAY_ENV+=("PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND=${FIXTURE_FILE_2}"
       "PYRY_FAKE_CLAUDE_STREAM_REPLAY_RELEASE=${REPLAY_RELEASE}")
   fi
-  env "HOME=${ISO_HOME}" \
-    PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" \
-    "${REPLAY_ENV[@]}" \
-    "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" -pyry-claude="${FAKE_BIN}" -pyry-workdir="${ISO_HOME}" \
-    >"${DAEMON_LOG}" 2>&1 &
-  DAEMON_PID=$!
+  DAEMON_COMMAND+=("HOME=${ISO_HOME}" PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
+    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${REPLAY_ENV[@]}" "${PYRY_BIN}"
+    "-pyry-name=${PYRY_NAME}" "-pyry-claude=${FAKE_BIN}" "-pyry-workdir=${ISO_HOME}")
 elif [ -n "${LIVE}" ]; then
   # LIVE (rung 3): dial the PRODUCTION relay over wss:// (TLS). PYRY_ALLOW_INSECURE_RELAY is NEVER set on
   # this path — TLS-only transport is enforced by omitting the flag here, not by a runtime toggle. Runs
   # under the real HOME (real claude needs ~/.claude auth); isolation is by -pyry-name (~/.pyry/e2e-live/).
-  PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" -pyry-workdir="${HOME}" \
-    >"${DAEMON_LOG}" 2>&1 &
-  DAEMON_PID=$!
+  DAEMON_COMMAND+=(PYRY_MOBILE_V2=1 "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}"
+    "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}")
 else
-  PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" -pyry-workdir="${HOME}" \
-    >"${DAEMON_LOG}" 2>&1 &
-  DAEMON_PID=$!
+  DAEMON_COMMAND+=(PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
+    "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" "-pyry-name=${PYRY_NAME}" "-pyry-workdir=${HOME}")
 fi
+FAULT_PORT_FILE="${WORK_DIR}/daemon-fault-port"
+python3 "${REPO_ROOT}/scripts/e2e-daemon-fault.py" --port-file "${FAULT_PORT_FILE}" --log "${DAEMON_LOG}" \
+  --ready-token 'relay: conn established' \
+  -- "${DAEMON_COMMAND[@]}" >"${WORK_DIR}/daemon-fault.log" 2>&1 &
+DAEMON_PID=$!
+FAULT_DEADLINE=$((SECONDS + 10))
+until [ -s "${FAULT_PORT_FILE}" ]; do
+  kill -0 "${DAEMON_PID}" 2>/dev/null || die "test daemon controller exited; see ${WORK_DIR}/daemon-fault.log"
+  [ "${SECONDS}" -lt "${FAULT_DEADLINE}" ] || die "test daemon controller did not start"
+  sleep 0.1
+done
+FAULT_PORT="$(cat "${FAULT_PORT_FILE}")"
 # The second test daemon (#847): same relay, same flags as this mode's first one, its own instance.
 if [ -z "${DETERMINISTIC}" ]; then
   log "starting second pyry daemon (${PYRY_NAME_B}) → ${DAEMON_RELAY_URL}…"
@@ -1134,7 +1146,7 @@ elif [ -n "${LIVE}" ]; then
   # Historical list-size counts in this block predate the temporary exclusions for #1245 and
   # the two already ignored workspace-switching scenarios. #1250 retired the peer workspace-label
   # method, so the active list and gate floor contain 41 methods after #1251.
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_offlineRetry_reconnectsSameHostAndReplies,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
   # #965: the stop method joins the list, so it holds 21 methods and 17 turns while #687 stays out.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain"
   # #1246: the operator-bypass method is selected again; its write and fresh reply decide settlement.
@@ -1245,6 +1257,9 @@ elif [ -n "${ANSWER_PEER_TOKEN:-}" ]; then
   )
 fi
 # Capture the status rather than let set -e exit, so a failure caused by an expired code is named (#993).
+if [ -n "${FAULT_PORT:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.daemonFaultPort="${FAULT_PORT}")
+fi
 TEST_STATUS=0
 "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \
   "${GRADLE_TEST_ARGS[@]}" \
