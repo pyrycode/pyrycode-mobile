@@ -5202,8 +5202,14 @@ class InteractiveStreamE2ETest {
         val title = hasTestTag("question-batch-title")
         try {
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                // Lazy prompt rows can be absent merely offscreen; the status band's label is always composed.
                 composeTestRule.onAllNodes(title).fetchSemanticsNodes().isEmpty() &&
-                    composeTestRule.onAllNodes(hasTestTag("thread-question-row")).fetchSemanticsNodes().isEmpty()
+                    composeTestRule.onAllNodes(hasTestTag("thread-question-row")).fetchSemanticsNodes().isEmpty() &&
+                    composeTestRule.onAllNodes(hasTestTag("question-batch-actions")).fetchSemanticsNodes().isEmpty() &&
+                    composeTestRule
+                        .onAllNodes(hasText(string(R.string.question_waiting_for_answers)))
+                        .fetchSemanticsNodes()
+                        .isEmpty()
             }
         } catch (e: ComposeTimeoutException) {
             throw AssertionError(failure, e)

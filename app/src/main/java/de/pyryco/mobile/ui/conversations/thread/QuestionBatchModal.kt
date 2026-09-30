@@ -2,7 +2,6 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.app.Activity
 import android.content.ContextWrapper
-import android.content.res.Configuration
 import android.view.View
 import android.view.Window
 import android.view.WindowManager
@@ -54,37 +53,21 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.error
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Question
-import de.pyryco.mobile.data.model.QuestionBatch
-import de.pyryco.mobile.data.model.QuestionOption
-import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.modalControl
 import de.pyryco.mobile.ui.theme.modalFieldContainer
 import de.pyryco.mobile.ui.theme.modalFieldText
 import kotlinx.coroutines.launch
-
-/** Inline questionnaire; the thread uses its individual blocks as lazy rows. */
-@Composable
-internal fun QuestionBatchModal(
-    state: QuestionModalState,
-    onEvent: (QuestionModalEvent) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    QuestionPromptProtection()
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        QuestionBatchTitle(state)
-        state.batch.questions.forEachIndexed { index, question ->
-            QuestionBlock(index, question, state.selections[index], !state.locked, onEvent)
-        }
-        QuestionBatchActions(state, onEvent)
-    }
-}
 
 @Composable
 internal fun QuestionBatchTitle(state: QuestionModalState) {
@@ -92,7 +75,7 @@ internal fun QuestionBatchTitle(state: QuestionModalState) {
         stringResource(if (state.agent == ConversationAgent.Claude) R.string.question_modal_title else R.string.question_modal_title_codex),
         style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.onPrimaryContainer,
-        modifier = Modifier.testTag("question-batch-title"),
+        modifier = Modifier.semantics { heading() }.testTag("question-batch-title"),
     )
 }
 
@@ -103,10 +86,17 @@ internal fun QuestionBatchActions(
 ) {
     Column(Modifier.fillMaxWidth().testTag("question-batch-actions"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (state.phase == QuestionSendPhase.Failed) {
+            val failure = stringResource(R.string.question_send_failed)
             Text(
-                stringResource(R.string.question_send_failed),
+                failure,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
+                modifier =
+                    Modifier
+                        .semantics {
+                            liveRegion = LiveRegionMode.Polite
+                            error(failure)
+                        }.testTag("question-send-failed"),
             )
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -218,6 +208,9 @@ private object QuestionProtectionOwners {
     }
 }
 
+/** Bounds each daemon-authored string rendered by a question row. */
+private const val MAX_QUESTION_TEXT = 8192
+
 /** Figma `347:6697`: a tertiary header line above a bordered card holding the question and its rows. */
 @Composable
 internal fun QuestionBlock(
@@ -236,7 +229,7 @@ internal fun QuestionBlock(
                 modifier = Modifier.size(width = 14.dp, height = 16.dp).testTag("question_header_glyph_$index"),
             )
             Text(
-                text = question.header.take(8192).uppercase(),
+                text = question.header.take(MAX_QUESTION_TEXT).uppercase(),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.tertiary,
                 modifier = Modifier.weight(1f),
@@ -253,7 +246,11 @@ internal fun QuestionBlock(
                 modifier = Modifier.padding(16.dp).then(if (question.multiSelect) Modifier else Modifier.selectableGroup()),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Text(text = question.question.take(8192), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(
+                    text = question.question.take(MAX_QUESTION_TEXT),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     question.options.forEachIndexed { optionIndex, option ->
                         ChoiceRow(
@@ -265,11 +262,11 @@ internal fun QuestionBlock(
                         ) {
                             Column(Modifier.padding(top = 2.dp)) {
                                 Text(
-                                    option.label.take(8192),
+                                    option.label.take(MAX_QUESTION_TEXT),
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold,
                                 )
-                                Text(option.description.take(8192), style = MaterialTheme.typography.labelMedium)
+                                Text(option.description.take(MAX_QUESTION_TEXT), style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
@@ -403,32 +400,5 @@ private fun ChoiceRow(
             }
         }
         Column(Modifier.weight(1f)) { label() }
-    }
-}
-
-@Preview(name = "Question modal — Light", widthDp = 412, heightDp = 892, showBackground = true)
-@Preview(name = "Question modal — Dark", widthDp = 412, heightDp = 892, showBackground = true, uiMode = Configuration.UI_MODE_NIGHT_YES)
-@Composable
-private fun QuestionBatchModalPreview() {
-    val options = listOf(QuestionOption("Kotlin", "The JVM language"), QuestionOption("Rust", "A systems language"))
-    val batch =
-        QuestionBatch(
-            conversationId = "preview",
-            questionBatchId = "preview",
-            questions =
-                listOf(
-                    Question("Which language should you learn next?", "Language", options, multiSelect = false),
-                    Question("Which targets matter?", "Targets", options, multiSelect = true),
-                ),
-        )
-    PyrycodeMobileTheme {
-        QuestionBatchModal(
-            state =
-                QuestionModalState(
-                    batch,
-                    listOf(QuestionSelection(setOf(0)), QuestionSelection(otherTicked = true, otherText = "Web")),
-                ),
-            onEvent = {},
-        )
     }
 }

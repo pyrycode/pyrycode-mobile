@@ -110,6 +110,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -596,6 +597,30 @@ fun ThreadScreen(
                                         // which refuses this scroll with a CancellationException. Unlike the
                                         // streaming pin, this effect never relaunches, so the refusal costs this one
                                         // scroll only; a real cancellation of the effect still ends it.
+                                        try {
+                                            listState.scrollToItem(0)
+                                        } catch (e: CancellationException) {
+                                            ensureActive()
+                                        }
+                                    }
+                                }
+                        }
+                        // #1305: prompt rows insert at index 0 below the anchored newest row, so a batch arriving
+                        // while the reader sits at the newest end would land offscreen. Reveal it from its
+                        // actions upward, but only for that reader: userScrolledAway misses a programmatic scroll
+                        // into history, so the newest row must also still be the first visible item. drop(1)
+                        // keeps a recreation from moving a restored position, as in the #981 effect.
+                        val promptGeneration by rememberUpdatedState(questionState?.generation)
+                        LaunchedEffect(listState) {
+                            snapshotFlow { promptGeneration }
+                                .drop(1)
+                                .filterNotNull()
+                                .collect {
+                                    val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+                                    val atNewestEnd =
+                                        listState.firstVisibleItemScrollOffset == 0 &&
+                                            (listState.firstVisibleItemIndex == 0 || first?.key == newestRowKey)
+                                    if (!userScrolledAway && atNewestEnd) {
                                         try {
                                             listState.scrollToItem(0)
                                         } catch (e: CancellationException) {

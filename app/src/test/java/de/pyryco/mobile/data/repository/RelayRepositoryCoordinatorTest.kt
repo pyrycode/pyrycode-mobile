@@ -1131,7 +1131,6 @@ class RelayRepositoryCoordinatorTest {
             hostB.coordinator.close()
         }
 
-    // A reconnect drops the prior connection's batches, so answering one fails before any frame leaves.
     @Test
     fun questionSubmission_rejects_retired_sources_and_requests_before_async_projections_catch_up() =
         runTest {
@@ -1189,6 +1188,7 @@ class RelayRepositoryCoordinatorTest {
             }
         }
 
+    // A reconnect drops the prior connection's batches, so answering one fails before any frame leaves.
     @Test
     fun questionSends_failForABatchDroppedByReconnect() =
         runTest {

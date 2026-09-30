@@ -5,6 +5,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.isDialog
@@ -69,6 +73,57 @@ class ThreadInlineQuestionTest {
             assertEquals(0, demands)
         }
     }
+
+    @Test
+    fun arrival_reveals_the_batch_to_a_reader_at_the_newest_end() {
+        var pending by mutableStateOf<QuestionModalState?>(null)
+        rule.setContent {
+            CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = historyItems()),
+                        {},
+                        {},
+                        ConnectionState.Connected,
+                        {},
+                        questionState = pending,
+                    )
+                }
+            }
+        }
+        rule.onNodeWithText("History 30").assertIsDisplayed()
+        rule.runOnIdle { pending = question }
+        rule.onNodeWithTag("question-batch-actions").assertIsDisplayed()
+        rule.onNodeWithText("Choose a language").assertIsDisplayed()
+    }
+
+    @Test
+    fun failure_feedback_is_announced_and_the_title_is_a_heading() {
+        rule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    ThreadUiState("chat", "Client planning", isPromoted = false),
+                    {},
+                    {},
+                    ConnectionState.Connected,
+                    {},
+                    questionState = question.copy(phase = QuestionSendPhase.Failed),
+                )
+            }
+        }
+        rule.onNodeWithTag("question-batch-title").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))
+        rule
+            .onNodeWithTag("question-send-failed")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Error))
+    }
+
+    private fun historyItems() =
+        (1..30).map { i ->
+            ThreadItem.MessageItem(
+                Message("m$i", "session", Role.Assistant, "History $i", Instant.parse("2026-09-30T00:00:00Z"), isStreaming = false),
+            )
+        }
 
     @Test
     fun arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand() {
