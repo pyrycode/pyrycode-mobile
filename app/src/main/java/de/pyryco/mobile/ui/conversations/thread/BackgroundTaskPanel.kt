@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.BackgroundTask
@@ -71,9 +74,11 @@ private const val RUNNING_CARD_ALPHA = 0.41f
 private const val FINISHED_CARD_ALPHA = 0.22f
 
 private val TaskListGap = 10.dp
-private val TaskRowGap = 8.dp
+
+// Compose's native text boxes are shorter than the Figma CSS boxes; 12 dp preserves the captured row rhythm.
+private val TaskRowGap = 12.dp
 private val TagMaxWidth = 160.dp
-private val ProgressGap = 2.dp
+private val ProgressGap = 6.dp
 
 private const val META_SEPARATOR = " · "
 
@@ -179,7 +184,11 @@ private fun TaskGroups(
 
 @Composable
 private fun GroupLabel(text: String) {
-    Text(text = text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp, lineHeight = 19.sp, letterSpacing = 0.5.sp),
+        color = MaterialTheme.colorScheme.secondary,
+    )
 }
 
 /**
@@ -211,7 +220,7 @@ private fun TaskRow(task: BackgroundTask) {
             Text(
                 text = type.text,
                 modifier = Modifier.weight(1f),
-                style = typography.bodySmall.monospace(),
+                style = typography.bodySmall.monospace().copy(lineHeight = 17.sp, letterSpacing = 0.sp),
                 color = colors.primary,
             )
             TaskTag(task, Modifier.widthIn(max = TagMaxWidth))
@@ -220,7 +229,10 @@ private fun TaskRow(task: BackgroundTask) {
         TaskField(
             raw = task.description,
             cutByDaemon = wasCut(task.truncatedFields, CUT_DESCRIPTION),
-            style = if (task.taskType == TYPE_LOCAL_BASH) typography.bodyMedium.monospace() else typography.bodyMedium,
+            style =
+                typography.bodyMedium.copy(fontSize = 13.sp).let {
+                    if (task.taskType == TYPE_LOCAL_BASH) it.monospace().copy(letterSpacing = 0.sp) else it
+                },
             color = if (task.isFinished) colors.onSurfaceVariant else colors.onSurface,
         )
         task.progress?.takeUnless { task.isFinished }?.let { TaskProgress(it) }
@@ -228,7 +240,7 @@ private fun TaskRow(task: BackgroundTask) {
             TaskField(
                 raw = finish.summary,
                 cutByDaemon = wasCut(finish.truncatedFields, CUT_SUMMARY),
-                style = typography.bodyMedium,
+                style = typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
                 color = colors.onSurfaceVariant,
             )
         }
@@ -256,10 +268,10 @@ private fun TaskProgress(progress: BackgroundTaskProgress) {
         TaskField(
             raw = progress.description,
             cutByDaemon = wasCut(progress.truncatedFields, CUT_DESCRIPTION),
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
             color = colors.onSurfaceVariant,
         )
-        Text(text = meta, style = MaterialTheme.typography.bodySmall, color = colors.outline)
+        Text(text = meta, style = MaterialTheme.typography.bodySmall.copy(lineHeight = 17.sp), color = colors.outline)
         if (wasCut(progress.truncatedFields, CUT_LAST_TOOL_NAME) || tool.cutForDisplay) CutMarker()
     }
 }
@@ -272,7 +284,7 @@ private fun LatestUpdate(update: BackgroundTaskUpdate) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             text = stringResource(R.string.background_tasks_latest_update),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp, lineHeight = 17.sp, letterSpacing = 0.5.sp),
             color = colors.outline,
         )
         Box(
@@ -284,14 +296,17 @@ private fun LatestUpdate(update: BackgroundTaskUpdate) {
             if (update.patch.isEmpty()) {
                 Text(
                     text = stringResource(R.string.background_tasks_no_change),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
                     fontStyle = FontStyle.Italic,
                     color = colors.outline,
                 )
             } else {
                 Text(
                     text = patch.text,
-                    style = MaterialTheme.typography.bodySmall.monospace(),
+                    style =
+                        MaterialTheme.typography.bodySmall
+                            .monospace()
+                            .copy(lineHeight = 17.sp, letterSpacing = 0.sp),
                     color = colors.onSurfaceVariant,
                 )
             }
@@ -357,7 +372,7 @@ private fun CutMarker() {
     ) {
         Text(
             text = stringResource(R.string.background_tasks_truncated),
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.3.sp),
             color = color,
         )
     }
@@ -378,7 +393,7 @@ private fun PartialNotice(count: Int) {
         Box(Modifier.size(8.dp).background(content, CircleShape))
         Text(
             text = stringResource(R.string.background_tasks_partial, count),
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp, lineHeight = 19.sp, letterSpacing = 0.25.sp),
             color = content,
         )
     }
@@ -398,14 +413,21 @@ private fun EmptyReading(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Canvas(Modifier.size(32.dp)) {
-            val width = 1.5.dp.toPx()
-            val dash = if (dashedRing) PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())) else null
-            drawCircle(ringColor, radius = (size.minDimension - width) / 2, style = Stroke(width, pathEffect = dash))
+        if (dashedRing) {
+            Image(
+                painter = painterResource(R.drawable.task_not_yet_reported),
+                contentDescription = null,
+                modifier = Modifier.size(32.dp),
+            )
+        } else {
+            Canvas(Modifier.size(32.dp)) {
+                val width = 2.dp.toPx()
+                drawCircle(ringColor, radius = (size.minDimension - width) / 2, style = Stroke(width))
+            }
         }
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, lineHeight = 23.sp, letterSpacing = 0.25.sp),
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
         )
@@ -460,9 +482,9 @@ private val previewRoster =
                     taskId = "t2",
                     toolCallId = "toolu_2",
                     taskType = "local_agent",
-                    description = "Summarise the open tickets that mention the relay",
+                    description = "Review the relay reconnect diff for data races",
                     truncatedFields = null,
-                    latestUpdate = BackgroundTaskUpdate("", "", "", listOf("patch")),
+                    latestUpdate = null,
                     finish = null,
                     isFinished = false,
                     progress = BackgroundTaskProgress("Reading internal/relay/conn.go", "general-purpose", "Read", 42_000, 7, 65_000, null),
@@ -482,58 +504,43 @@ private val previewRoster =
                     toolCallId = "toolu_4",
                     taskType = "local_bash",
                     description = "docker compose up relay",
-                    truncatedFields = listOf("description"),
+                    truncatedFields = null,
                     latestUpdate = null,
                     finish = BackgroundTaskUpdate("", "failed", "Exited with code 1: port 8443 is already in use.", null),
                     isFinished = true,
                 ),
-                BackgroundTask(
-                    taskId = "t5",
-                    toolCallId = null,
-                    taskType = "remote_agent",
-                    description = "Reconnected mid-run",
-                    truncatedFields = null,
-                    latestUpdate = null,
-                    finish = null,
-                    isFinished = true,
-                ),
-                BackgroundTask(
-                    taskId = "t6",
-                    toolCallId = "toolu_6",
-                    taskType = "local_bash",
-                    description = "sleep 300",
-                    truncatedFields = null,
-                    latestUpdate = null,
-                    finish = BackgroundTaskUpdate("", "cancelled", "", null),
-                    isFinished = true,
-                ),
             ),
-        droppedTasks = 3,
+        droppedTasks = 0,
     )
 
-@Preview(name = "Background tasks — Dark", widthDp = 412, heightDp = 1400, uiMode = Configuration.UI_MODE_NIGHT_YES)
-@Preview(name = "Background tasks — Light", widthDp = 412, heightDp = 1400)
+@Preview(name = "Background tasks — populated", widthDp = 412, heightDp = 892, uiMode = Configuration.UI_MODE_NIGHT_YES)
 @Composable
 private fun BackgroundTaskPanelPreview() {
-    PyrycodeMobileTheme {
+    PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
         BackgroundTaskPanel(roster = previewRoster, onDismiss = {})
     }
 }
 
-@Preview(name = "Background tasks empty — Dark", widthDp = 412, heightDp = 892, uiMode = Configuration.UI_MODE_NIGHT_YES)
-@Preview(name = "Background tasks empty — Light", widthDp = 412, heightDp = 892)
+@Preview(name = "Background tasks — capped", widthDp = 412, heightDp = 892, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Composable
+private fun BackgroundTaskPanelCappedPreview() {
+    PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+        BackgroundTaskPanel(roster = previewRoster.copy(droppedTasks = 3), onDismiss = {})
+    }
+}
+
+@Preview(name = "Background tasks — empty", widthDp = 412, heightDp = 892, uiMode = Configuration.UI_MODE_NIGHT_YES)
 @Composable
 private fun BackgroundTaskPanelEmptyPreview() {
-    PyrycodeMobileTheme {
+    PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
         BackgroundTaskPanel(roster = BackgroundTaskRoster(emptyList(), droppedTasks = 0), onDismiss = {})
     }
 }
 
-@Preview(name = "Background tasks unreported — Dark", widthDp = 412, heightDp = 892, uiMode = Configuration.UI_MODE_NIGHT_YES)
-@Preview(name = "Background tasks unreported — Light", widthDp = 412, heightDp = 892)
+@Preview(name = "Background tasks — unreported", widthDp = 412, heightDp = 892, uiMode = Configuration.UI_MODE_NIGHT_YES)
 @Composable
 private fun BackgroundTaskPanelUnreportedPreview() {
-    PyrycodeMobileTheme {
+    PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
         BackgroundTaskPanel(roster = null, onDismiss = {})
     }
 }

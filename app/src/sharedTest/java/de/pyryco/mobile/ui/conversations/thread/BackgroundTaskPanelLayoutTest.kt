@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ForcedSize
@@ -14,9 +15,12 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -33,6 +37,38 @@ import org.robolectric.annotation.GraphicsMode
 class BackgroundTaskPanelLayoutTest {
     @get:Rule
     val rule = createComposeRule()
+
+    @Test
+    fun populatedContent_usesFigmaTextSizes() {
+        val task = BackgroundTask("t1", "toolu_1", "local_bash", "go test ./...", null, null, null, false)
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                BackgroundTaskPanel(BackgroundTaskRoster(listOf(task), 0), onDismiss = {})
+            }
+        }
+
+        assertTextSize("Running · 1", 13)
+        assertTextSize("local_bash", 12)
+        assertTextSize("Running", 11)
+        assertTextSize("go test ./...", 13)
+    }
+
+    private fun assertTextSize(
+        text: String,
+        sizeSp: Int,
+    ) {
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        rule
+            .onNodeWithText(text, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        assertEquals(
+            "$text font size",
+            sizeSp.sp,
+            layouts
+                .single()
+                .layoutInput.style.fontSize,
+        )
+    }
 
     @Test
     fun emptyAndNeverReported_useTheReferenceContentOffset() {

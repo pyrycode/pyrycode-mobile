@@ -7,13 +7,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.ui.theme.success
 
 /** The four looks of the Figma "Task status tag" component (563-1054). */
@@ -40,7 +43,7 @@ internal fun TaskStatusTag(
     Row(
         modifier =
             modifier
-                .background(container, CircleShape)
+                .background(container, RoundedCornerShape(10.dp))
                 .padding(start = 8.dp, end = 10.dp, top = 2.dp, bottom = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -48,7 +51,13 @@ internal fun TaskStatusTag(
         Box(Modifier.size(6.dp).background(content, CircleShape))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall,
+            style =
+                MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    letterSpacing = 0.5.sp,
+                    fontWeight = FontWeight.Medium,
+                ),
             color = content,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
