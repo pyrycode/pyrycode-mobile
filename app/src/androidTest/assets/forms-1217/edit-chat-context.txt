@@ -1,0 +1,1 @@
+api=35 size=412x892 density=160 staticDark=true capture=uiAutomation.takeScreenshot title=Edit Chat footer=804.0,844.0

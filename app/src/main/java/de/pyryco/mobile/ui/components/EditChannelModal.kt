@@ -16,6 +16,7 @@ import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +36,7 @@ import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.ui.conversations.list.ChannelPromptReading
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 
 // The frame's 8dp gap above the archive action, and the shell's touch floor for it.
 private val ArchiveTopPadding = 8.dp
@@ -162,9 +164,9 @@ private fun ArchiveChannelAction(
         OutlinedButton(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
             onClick = onClick,
-            modifier = Modifier.heightIn(min = ActionMinHeight),
+            modifier = Modifier.minimumInteractiveComponentSize(),
             enabled = enabled,
-            shape = MaterialTheme.shapes.small,
+            shape = MaterialTheme.shapes.modalControl,
             border =
                 BorderStroke(
                     1.dp,

@@ -1,0 +1,1 @@
+api=35 size=412x892 density=160 staticDark=true capture=uiAutomation.takeScreenshot title=Save as channel footer=496.0,536.0

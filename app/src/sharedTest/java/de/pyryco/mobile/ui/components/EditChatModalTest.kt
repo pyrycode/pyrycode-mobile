@@ -1,15 +1,21 @@
 package de.pyryco.mobile.ui.components
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -19,6 +25,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -29,6 +38,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 class EditChatModalTest {
@@ -80,10 +90,54 @@ class EditChatModalTest {
         rule.onNodeWithText(string(R.string.edit_chat_title)).assertIsDisplayed()
         rule.onNodeWithText(string(R.string.edit_chat_name_label)).assertIsDisplayed()
         field().assertIsDisplayed().assertTextContains("Release notes")
+        assertEquals(
+            listOf(string(R.string.edit_chat_name_label)),
+            field().fetchSemanticsNode().config[SemanticsProperties.ContentDescription],
+        )
         archive().assertIsDisplayed().assertIsEnabled()
         rule.onNodeWithContentDescription("Close").assertIsDisplayed()
         rule.onNodeWithText("Cancel").assertIsDisplayed()
         ok().assertIsDisplayed().assertIsEnabled()
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun nameWellMatchesTheFigmaVisibleHeight() {
+        show()
+        val height = field().fetchSemanticsNode().boundsInRoot.height
+        val density =
+            InstrumentationRegistry
+                .getInstrumentation()
+                .targetContext.resources.displayMetrics.density
+        assertEquals(52f * density, height, 1f)
+    }
+
+    @Test
+    fun pointerTapsFocusTheNameAndReachTheArchiveSurface() {
+        show()
+        field().performTouchInput { click(center) }
+        field().assertIsFocused()
+        archive().performTouchInput { click(Offset(center.x, 1f)) }
+        rule.runOnIdle { assertEquals(1, archives) }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun compactWidthAndLargeTextKeepTheNameArchiveAndFooterReachable() {
+        rule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(280.dp, 560.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
+                    PyrycodeMobileTheme {
+                        EditChatModal("chat", "Release notes", {}, {}, { archives++ })
+                    }
+                }
+            }
+        }
+        rule.onNodeWithText(string(R.string.edit_chat_name_label)).assertIsDisplayed()
+        field().assertIsDisplayed()
+        archive().assertIsDisplayed()
+        rule.onNodeWithText("Cancel").assertIsDisplayed()
+        ok().assertIsDisplayed()
     }
 
     @Test

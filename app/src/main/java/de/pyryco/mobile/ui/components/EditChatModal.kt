@@ -3,29 +3,33 @@ package de.pyryco.mobile.ui.components
 import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -35,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 import de.pyryco.mobile.ui.theme.modalFieldContainer
 import de.pyryco.mobile.ui.theme.modalFieldText
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
@@ -45,9 +50,6 @@ internal const val EDIT_CHAT_NAME_FIELD_TAG: String = "edit-chat-name"
 // The frame's 8dp label/field gap and the 8dp gap above the archive action.
 private val FieldLabelGap = 8.dp
 private val ArchiveTopPadding = 8.dp
-
-// The shell's touch floor for its own actions, applied to this component's one action.
-private val ActionMinHeight = 48.dp
 
 /**
  * The Edit chat frame, drawn through [MobileModal] and driven entirely by its caller — desktop's
@@ -119,38 +121,37 @@ private fun ChatNameField(
     onValueChange: (TextFieldValue) -> Unit,
     onDone: () -> Unit,
 ) {
+    val label = stringResource(R.string.edit_chat_name_label)
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(FieldLabelGap),
     ) {
         Text(
-            text = stringResource(R.string.edit_chat_name_label),
+            text = label,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
         )
-        val fill = MaterialTheme.colorScheme.modalFieldContainer
-        TextField(
+        BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth().testTag(EDIT_CHAT_NAME_FIELD_TAG),
-            textStyle = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = label }.testTag(EDIT_CHAT_NAME_FIELD_TAG),
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.modalFieldText),
             singleLine = true,
-            shape = MaterialTheme.shapes.small,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { onDone() }),
-            // The design draws a plain filled well with no underline.
-            colors =
-                TextFieldDefaults.colors(
-                    focusedContainerColor = fill,
-                    unfocusedContainerColor = fill,
-                    disabledContainerColor = fill,
-                    focusedTextColor = MaterialTheme.colorScheme.modalFieldText,
-                    unfocusedTextColor = MaterialTheme.colorScheme.modalFieldText,
-                    cursorColor = MaterialTheme.colorScheme.primary,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent,
-                ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            decorationBox = { innerTextField ->
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp)
+                            .background(MaterialTheme.colorScheme.modalFieldContainer, MaterialTheme.shapes.modalControl)
+                            .padding(start = 16.dp, end = 56.dp, top = 16.dp, bottom = 16.dp),
+                ) {
+                    innerTextField()
+                }
+            },
         )
     }
 }
@@ -165,9 +166,9 @@ private fun ArchiveAction(
         OutlinedButton(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
             onClick = onClick,
-            modifier = Modifier.heightIn(min = ActionMinHeight),
+            modifier = Modifier.minimumInteractiveComponentSize(),
             enabled = enabled,
-            shape = MaterialTheme.shapes.small,
+            shape = MaterialTheme.shapes.modalControl,
             border =
                 BorderStroke(
                     1.dp,
