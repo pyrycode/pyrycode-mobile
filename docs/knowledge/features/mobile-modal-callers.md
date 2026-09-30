@@ -114,6 +114,12 @@ same guard's other half: `live.archive(conversationId)` on the same host-resolve
 repository, no confirmation step (desktop parity — Archive's Restore undoes it), and no read of the
 name field either way, success or failure.
 
+The current Figma Edit Chat content uses the title “Edit Chat” and the existing
+“Channel name:” label. Its name well measures 52 dp: a Material `TextField` kept a
+taller minimum, so this caller uses a plain `BasicTextField` in the shared
+`modalControl` well. The edit chat and edit channel archive actions draw 40 dp
+outlines with separate 48 dp minimum touch areas and the same shape token.
+
 A clamp on attacker-influenceable text must not split a UTF-16 surrogate pair when the clamped
 value can round-trip back into a write unedited. `EditChatModal` seeds its field with
 `initialName.take(MAX_WORKSPACE_LABEL_CHARS)`, then drops a trailing lone high surrogate — a plain
@@ -194,6 +200,19 @@ every folder-name comparison, which cleared labels for names it should not have 
 field's own merged `Text` semantics, so `assertTextEquals(typed)` fails against the byte-count line even
 when the typed value is correct. Use `assertTextContains(typed)` for any field in this shell that pairs a
 value with supporting text.
+
+The [four 412 × 892 emulator captures and labelled Figma comparisons](../../../app/src/androidTest/assets/forms-1217/context.txt)
+cover Create channel, Edit Chat, Edit channel and Save as channel. Figma's shell is
+412 × 892, but each form-content export is 676 px wide; there is no 412 × 892
+form-content reference. Compare field spacing and control dimensions, not full
+form positions. Edit channel and Save as channel captures include the keyboard
+from initial focus, so their vertical positions cannot be compared with the
+keyboard-free exports. The reference has no compact-width, enlarged-text,
+keyboard, disabled, loading, failure or prompt-reading state. Edit channel's
+20 dp mute checkbox sits in a 48 dp toggle row; the extra vertical space is
+the mobile touch target, not a content-frame match. The required API 33 ATD
+gate checks footer geometry because that image can return a black framebuffer;
+the full Pixel 8 captures supply the pixel comparison.
 
 [`SaveAsChannelDialog`](save-as-channel-dialog.md#shape)
 (`ui/conversations/components/SaveAsChannelDialog.kt`, #957) is the shell's sixth direct caller — like
