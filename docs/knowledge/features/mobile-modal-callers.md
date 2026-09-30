@@ -322,6 +322,25 @@ Any partial notice stays before the reading. At short heights, the shell retains
 pinned or compact scrolling, keeping the header, supporting text and both Close
 actions reachable; see [layout modes](mobile-modal.md#layout-and-theme).
 
+The reported-empty ring is drawn with a 2dp outline; the never-reported dashed
+ring uses the supplied 64px image at 32dp. Their copy and meanings stay distinct.
+
+The fixed-dark 412 × 892 reference was inspected on 2026-09-30: [populated
+`568:877`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=568-877),
+[capped `568:932`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=568-932),
+[empty `568:981`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=568-981),
+[never reported `568:997`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=568-997),
+and [task tags `563:1054`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=563-1054).
+The [checked-in comparisons](../../../app/src/androidTest/assets/task-panel-1295/)
+pair each render with a nonblank Pixel 8 API 35 capture; the populated state also
+has an aligned overlay. The capped and empty Figma PNGs omit visible header art
+that their design trees include, the capped frame says eight shown but draws three
+cards, and the never-reported frame alone uses a 20dp close glyph. Keep the
+shared header and 28dp close control, and render every held task in the capped
+roster. The API 33 ATD captured black pixels despite passing geometry checks;
+use the full emulator for visual comparisons, as described in
+[Compose evidence](development-verification.md#compose-evidence).
+
 Each task is a card: the raw `taskType` in monospace beside a
 [`TaskStatusTag`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/TaskStatusTag.kt) pill
 (the Figma "Task status tag" component; Running `primaryContainer`/`onPrimaryContainer`, Completed
@@ -330,8 +349,16 @@ Each task is a card: the raw `taskType` in monospace beside a
 160 dp and one line so a long word cannot widen the row), then the description (monospace when `taskType ==
 "local_bash"`, a shell command line), the finish summary, and, only when the task was updated mid-life, a
 "Latest update" label over a `surface` code block holding the latest patch — italic "No change reported"
-when the patch is empty, no label or block at all when `latestUpdate` is `null`. The tag resolves from
-`finish`: unfinished reads Running; `finish == null` (the reconnect case — a task marked finished with no
+when the patch is empty, no label or block at all when `latestUpdate` is `null`.
+The local dark styling uses 13/19sp group labels, 14dp horizontal and 12dp vertical
+card padding, 12dp row gaps, 13sp description and progress text, and a 12/17sp
+latest-update label. The tag uses a 10dp corner, a 6dp dot and an 11/16sp medium
+label, with its existing 160dp width cap. Matching only nominal font sizes left
+the populated cards 7–16dp shorter in emulator captures than in Figma because
+Compose's text boxes differ; the local row and progress gaps establish the
+visible card rhythm without changing the shared typography or modal shell.
+
+The tag resolves from `finish`: unfinished reads Running; `finish == null` (the reconnect case — a task marked finished with no
 terminal frame ever arriving) reads Finished in the Stopped style; the wire's three known terminal words
 (`completed`/`failed`/`stopped`, exact match) read Completed/Failed/Stopped; any other word is shown as
 itself in the Stopped style — except a blank word, or one that spells "running" in any case once trimmed,
