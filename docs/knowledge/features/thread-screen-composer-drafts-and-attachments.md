@@ -29,7 +29,7 @@ synchronously, `Eagerly`. `addAttachment` refuses an entry over `AttachmentUploa
 that would push the pair past `MessageAttachmentIds.MAX` (32), checked inside the store's own
 `update {}` so two concurrent adds can't both pass at 31.
 
-`sendMessage` snapshots the pair's attachment list at tap time. An entry that already carries an
+`sendMessage` refuses a blank `text` before it reads the pair's attachments at all — [#1328](https://github.com/pyrycode/pyrycode-mobile/issues/1328), matching desktop's `submitMessage`. A pending attachment cannot send on its own: the files and the draft both stay untouched for the next send, and no upload is attempted. (An earlier version of this rule read the attachments first and let them send with blank text; [`ThreadInputBar`](thread-input-bar.md#the-message-input-button--one-control-two-actions) tracked that with a `hasAttachments` parameter, since removed.) Past that guard, `sendMessage` snapshots the pair's attachment list at tap time. An entry that already carries an
 `attachmentId` is skipped; the rest are read through `AttachmentReader` — bytes only at send time, one
 file's at once, the store itself never holds file bytes — and uploaded via
 [`ConversationRepository.uploadAttachment`](attachment-upload.md), in order. Any read or upload failure
