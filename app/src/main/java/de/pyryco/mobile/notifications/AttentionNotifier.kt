@@ -46,7 +46,8 @@ internal const val MAX_LEDGER_ENTRIES = 512
  * posts later. The ledger persists, which
  * is what holds "at most once" across a reconnect's replay, a new wake window and process death.
  *
- * The notification carries fixed app copy only, naming the conversation's agent (#1116). The alert's ids are identities: they pick the
+ * The notification's text is fixed app copy naming the conversation's agent (#1116); its title is the
+ * conversation's cleaned name, or the app name (#1330). The alert's ids are identities: they pick the
  * notification's tag and the tap's target, and are never shown, logged or written in the clear.
  */
 class AttentionNotifier(
@@ -57,6 +58,8 @@ class AttentionNotifier(
     private val isMuted: (serverId: String, conversationId: String) -> Boolean,
     /** The agent host [AttentionAlert.serverId] lists for its conversation (#1116); null when it lists none. */
     private val agentOf: (serverId: String, conversationId: String) -> ConversationAgent?,
+    /** The name host [AttentionAlert.serverId] lists for its conversation (#1330); untrusted, never logged. */
+    private val nameOf: (serverId: String, conversationId: String) -> String?,
     private val isForeground: () -> Boolean,
     ledgerFile: File,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -97,11 +100,12 @@ class AttentionNotifier(
         // One notification per conversation per host: the same id on two hosts gets two tags.
         val tag = digest(alert.serverId, alert.conversationId)
         val text = context.getString(copyFor(alert.kind, agentOf(alert.serverId, alert.conversationId)))
+        val title = notificationTitle(nameOf(alert.serverId, alert.conversationId)) ?: context.getString(R.string.app_name)
         val notification =
             NotificationCompat
                 .Builder(context, ATTENTION_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_pyry_logo)
-                .setContentTitle(context.getString(R.string.app_name))
+                .setContentTitle(title)
                 .setContentText(text)
                 .setAutoCancel(true)
                 .setContentIntent(NotificationTap.pendingIntent(context, tag, alert.serverId, alert.conversationId))
@@ -179,6 +183,38 @@ internal fun List<HostConversationSnapshot>.agentOf(
 ): ConversationAgent? {
     val host = firstOrNull { it.serverId == serverId } ?: return null
     return (host.channels + host.chats).firstOrNull { it.id == conversationId }?.agent
+}
+
+/** The name host [serverId]'s last known rows give [conversationId] (#1330), or null when unnamed or unlisted. */
+internal fun List<HostConversationSnapshot>.nameOf(
+    serverId: String,
+    conversationId: String,
+): String? {
+    val host = firstOrNull { it.serverId == serverId } ?: return null
+    return (host.channels + host.chats).firstOrNull { it.id == conversationId }?.name
+}
+
+/** The most code points of a conversation name an alert title keeps (#1330). */
+internal const val MAX_TITLE_CODE_POINTS = 80
+
+/**
+ * The alert title for an untrusted conversation name, as desktop's `notificationTitle` (#1330): control
+ * characters (`\p{Cc}`) dropped, at most [MAX_TITLE_CODE_POINTS] kept by code point so a surrogate pair is
+ * never split, then trimmed. Null when there is no name or nothing is left; the caller falls back to the app name.
+ */
+internal fun notificationTitle(name: String?): String? {
+    if (name == null) return null
+    val title = StringBuilder()
+    var kept = 0
+    var i = 0
+    while (i < name.length && kept < MAX_TITLE_CODE_POINTS) {
+        val codePoint = name.codePointAt(i)
+        i += Character.charCount(codePoint)
+        if (Character.isISOControl(codePoint)) continue
+        title.appendCodePoint(codePoint)
+        kept++
+    }
+    return title.trim().toString().ifEmpty { null }
 }
 
 /** The alert's text: Claude's reads as it always has, Codex's names Codex, an unlisted conversation's names no one. */

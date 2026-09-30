@@ -53,6 +53,7 @@ class AttentionNotifierTest {
     private var foreground = false
     private val muted = mutableSetOf<Pair<String, String>>()
     private val agents = mutableMapOf(("host-a" to "conv") to ConversationAgent.Claude, ("host-b" to "conv") to ConversationAgent.Claude)
+    private val names = mutableMapOf<Pair<String, String>, String>()
     private lateinit var ledger: File
 
     @Before
@@ -210,6 +211,66 @@ class AttentionNotifierTest {
     }
 
     @Test
+    fun aNamedConversationsAlertIsTitledWithItsOwnHostsNameAndKeepsItsBody() =
+        withNotifier {
+            names["host-a" to "conv"] = "Release\u0007 notes"
+            names["host-b" to "conv"] = "Other host"
+            alerts.emit(TURN)
+            val a = posted().single().extras
+            assertEquals("Release notes", a.getString(Notification.EXTRA_TITLE))
+            assertEquals(app.getString(R.string.notification_turn_completed), a.getString(Notification.EXTRA_TEXT))
+            manager.cancelAll()
+
+            alerts.emit(TURN.copy(serverId = "host-b"))
+            assertEquals("Other host", posted().single().extras.getString(Notification.EXTRA_TITLE))
+        }
+
+    @Test
+    fun anUnnamedOrBlankNamedConversationIsTitledWithTheAppName() =
+        withNotifier {
+            names["host-a" to "conv"] = " \u0000\n\u009f "
+            alerts.emit(TURN)
+            assertEquals(app.getString(R.string.app_name), posted().single().extras.getString(Notification.EXTRA_TITLE))
+            names.clear()
+            alerts.emit(TURN.copy(key = "t2"))
+            assertEquals(app.getString(R.string.app_name), posted().single().extras.getString(Notification.EXTRA_TITLE))
+        }
+
+    @Test
+    fun theTitleDropsControlsCapsAt80CodePointsAndNeverSplitsASurrogatePair() {
+        assertNull(notificationTitle(null))
+        assertNull(notificationTitle(""))
+        assertNull(notificationTitle(" \u0001\u007f\t "))
+        assertEquals("ab c", notificationTitle("  a\u0000b\u001b c\r\n"))
+        assertEquals("x".repeat(80), notificationTitle("x".repeat(81)))
+        // Dropped controls do not count toward the cap.
+        assertEquals("x".repeat(80), notificationTitle("\u0001".repeat(10) + "x".repeat(90)))
+        val emoji = "😀"
+        assertEquals(emoji.repeat(80), notificationTitle(emoji.repeat(81)))
+        assertEquals("x".repeat(79) + emoji, notificationTitle("x".repeat(79) + emoji + "y"))
+    }
+
+    @Test
+    fun theNameLookupReadsOnlyTheAlertsOwnHostAndIsNullWhenMissing() {
+        val hosts =
+            listOf(
+                host(
+                    "host-a",
+                    channels = listOf(row("chan", name = "Channel")),
+                    chats = listOf(row("chat", name = "Chat"), row("unnamed")),
+                ),
+                host("host-b", chats = listOf(row("conv", name = "B"))),
+            )
+
+        assertEquals("Channel", hosts.nameOf("host-a", "chan"))
+        assertEquals("Chat", hosts.nameOf("host-a", "chat"))
+        assertNull(hosts.nameOf("host-a", "unnamed"))
+        assertNull(hosts.nameOf("host-a", "missing"))
+        assertNull(hosts.nameOf("host-b", "chan"))
+        assertNull(hosts.nameOf("host-c", "conv"))
+    }
+
+    @Test
     fun anAlertSuppressedByAGateIsSpentAndNeverPostsLater() =
         withNotifier {
             foreground = true
@@ -296,6 +357,7 @@ class AttentionNotifierTest {
                     enabled,
                     { server, conversation -> (server to conversation) in muted },
                     { server, conversation -> agents[server to conversation] },
+                    { server, conversation -> names[server to conversation] },
                     { foreground },
                     ledger,
                     UnconfinedTestDispatcher(testScheduler),
@@ -314,9 +376,10 @@ class AttentionNotifierTest {
             id: String,
             muted: Boolean = false,
             agent: ConversationAgent = ConversationAgent.Claude,
+            name: String? = null,
         ) = Conversation(
             id,
-            null,
+            name,
             "~",
             "s",
             emptyList(),
