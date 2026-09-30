@@ -159,7 +159,7 @@ private fun QuestionBlock(
                             BasicTextField(
                                 value = selection.otherText,
                                 onValueChange = { onEvent(QuestionModalEvent.OtherTextChanged(index, it)) },
-                                modifier = Modifier.fillMaxWidth().testTag("question_other_$index"),
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("question_other_$index"),
                                 enabled = enabled,
                                 textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.modalFieldText),
                                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -168,18 +168,26 @@ private fun QuestionBlock(
                                         modifier =
                                             Modifier
                                                 .fillMaxWidth()
-                                                .heightIn(min = 32.dp)
-                                                .background(MaterialTheme.colorScheme.modalFieldContainer, RoundedCornerShape(6.dp))
-                                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                .heightIn(min = 48.dp),
+                                        contentAlignment = Alignment.CenterStart,
                                     ) {
-                                        if (selection.otherText.isEmpty()) {
-                                            Text(
-                                                placeholder,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.inversePrimary,
-                                            )
+                                        Box(
+                                            modifier =
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .heightIn(min = 32.dp)
+                                                    .background(MaterialTheme.colorScheme.modalFieldContainer, RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        ) {
+                                            if (selection.otherText.isEmpty()) {
+                                                Text(
+                                                    placeholder,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.inversePrimary,
+                                                )
+                                            }
+                                            field()
                                         }
-                                        field()
                                     }
                                 },
                             )

@@ -9,6 +9,7 @@ import android.view.inspector.WindowInspector
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ComposeTimeoutException
@@ -150,7 +151,8 @@ class QuestionBatchModalTest {
         rule
             .onNodeWithTag("question_other_0")
             .performScrollTo()
-            .performTouchInput { click(center) }
+            .assertHeightIsAtLeast(48.dp)
+            .performTouchInput { click(Offset(center.x, 2f)) }
             .assertIsFocused()
         rule.onNodeWithTag("question_other_0").performTextInput("Go")
         rule.onNodeWithText("Kotlin").assertIsNotSelected()
