@@ -299,6 +299,7 @@ class StableConversationRepository(
         bytes: ByteArray,
         filename: String,
         mimeType: String,
+        onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
     ): AttachmentUploadResult {
         val repository =
             currentRepository.value
@@ -307,7 +308,7 @@ class StableConversationRepository(
                 } else {
                     AttachmentUploadResult.TooLarge
                 }
-        return repository.uploadAttachment(conversationId, bytes, filename, mimeType)
+        return repository.uploadAttachment(conversationId, bytes, filename, mimeType, onProgress)
     }
 
     /** Fetches on the repository live at call entry (#899), like [uploadAttachment]; none live is a retryable failure. */
