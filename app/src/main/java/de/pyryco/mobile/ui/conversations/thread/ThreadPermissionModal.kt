@@ -43,6 +43,7 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.ui.components.MobileGateModal
 import de.pyryco.mobile.ui.settings.label
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
 /**
@@ -251,7 +252,7 @@ private fun ModalOptionButton(
             isDefault -> base.semantics { stateDescription = defaultDesc }
             else -> base
         }
-    val shape = RoundedCornerShape(6.dp)
+    val shape = MaterialTheme.shapes.modalControl
     when {
         isArmed ->
             FilledTonalButton(
