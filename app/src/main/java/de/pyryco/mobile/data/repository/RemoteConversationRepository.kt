@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
@@ -382,16 +383,22 @@ class RemoteConversationRepository(
                 val (conversationId, message) =
                     try {
                         val dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
-                        dto.conversationId to dto.toMessage(envelope, sessionId = "")
+                        val message = dto.toMessage(envelope, sessionId = "")
+                        dto.conversationId to
+                            if (message.role == Role.User) {
+                                message.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
+                            } else {
+                                message
+                            }
                     } catch (e: IllegalArgumentException) {
                         return
                     }
-                // Keep the most-recent by timestamp (the strictly-greater fold below). The live
-                // message is also a thread row (#313): append it to the conversation thread in
-                // arrival order, deduped by message_id. The thread is a distinct projection from
-                // the last-message preview.
+                // Keep the most-recent by timestamp (the strictly-greater fold below). Only a user
+                // message is a thread row (#1351), as on desktop: the v2 path mints `message` for the
+                // operator's delivered turn alone, and assistant output arrives as structured events.
+                // A held id — the phone's own confirmed send among them — is kept, not replaced.
                 conversationListProjection.recordLastMessage(conversationId, message)
-                threadProjection.appendMessages(listOf(conversationId to message))
+                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message)
             }
             TYPE_MESSAGE_CHUNK -> {
                 // The `backfill_since` response (#313): a batch of finished messages, each carrying

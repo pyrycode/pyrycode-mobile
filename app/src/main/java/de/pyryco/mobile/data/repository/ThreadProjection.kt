@@ -156,6 +156,25 @@ internal class ThreadProjection {
     }
 
     /**
+     * Append one live `message` [message] to [conversationId]'s thread (#1351), **keeping a row the thread
+     * already holds** under the same `message_id` rather than replacing it the way [appendMessages] does.
+     * The daemon pushes the operator's delivered message to every conn, the sender's included, and the
+     * sender's confirmed row carries the attachment names and send time that the pushed copy lacks. The
+     * identity is [withMessage]'s, id-only and role-agnostic. A held id returns the map unchanged, so
+     * nothing re-emits.
+     */
+    fun appendLiveMessage(
+        conversationId: String,
+        message: Message,
+    ) {
+        threadByConversation.update { current ->
+            val thread = current[conversationId].orEmpty()
+            val held = thread.any { it is ThreadItem.MessageItem && it.message.id == message.id }
+            if (held) current else current + (conversationId to (thread + ThreadItem.MessageItem(message)))
+        }
+    }
+
+    /**
      * Append [boundary] to [conversationId]'s thread in one atomic [MutableStateFlow.update] (#336): an
      * end-append in arrival order that **skips a boundary the thread already holds** (#775). A
      * `session_transition` carries no row id, so the identity is `(previousSessionId, newSessionId,
