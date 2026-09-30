@@ -4,11 +4,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -16,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -205,7 +209,7 @@ class TaskCountPillTest {
         setThread(initialCount = 1)
         composeTestRule.onNodeWithText("sleep 300").assertDoesNotExist()
 
-        pill("1 task running").performClick()
+        pill("1 task running").performTouchInput { click(center) }
 
         composeTestRule.onNodeWithText("Background tasks").assertIsDisplayed()
         composeTestRule.onNodeWithText("sleep 300").assertIsDisplayed()
@@ -238,8 +242,43 @@ class TaskCountPillTest {
         assertTrue(bounds.right <= composeTestRule.onRoot().getUnclippedBoundsInRoot().right)
         assertTrue(bounds.height >= 24.dp)
 
-        pill("2 tasks running").performClick()
+        pill("2 tasks running").performTouchInput { click(center) }
         composeTestRule.onNodeWithText("Background tasks").assertIsDisplayed()
         composeTestRule.onNodeWithText("sleep 300").assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun taskPill_pointerAndAdjacentComposerTargetsKeepTheirActions() {
+        setThread(initialCount = 2, isThinking = true)
+        val root = composeTestRule.onRoot()
+        val pillBounds = pill("2 tasks running").getUnclippedBoundsInRoot()
+        val editor = composeTestRule.onNode(hasSetTextAction())
+        val editorBounds = editor.getUnclippedBoundsInRoot()
+        val actions = composeTestRule.onNodeWithText(string(R.string.thread_footer_actions))
+        val actionsBounds = actions.getUnclippedBoundsInRoot()
+        val reading = composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_thinking))
+        val readingBounds = reading.getUnclippedBoundsInRoot()
+        assertTrue("reading clears the pill surface", readingBounds.right <= pillBounds.left)
+        assertTrue("editor clears the pill surface", editorBounds.top >= pillBounds.bottom)
+        assertTrue("Actions clears the pill surface", actionsBounds.top >= pillBounds.bottom)
+
+        root.performTouchInput {
+            click(Offset((editorBounds.left + editorBounds.right).toPx() / 2f, (editorBounds.top + editorBounds.bottom).toPx() / 2f))
+        }
+        editor.assertIsFocused()
+        composeTestRule.onNodeWithText("Background tasks").assertDoesNotExist()
+
+        root.performTouchInput {
+            click(Offset((pillBounds.left + pillBounds.right).toPx() / 2f, (pillBounds.top + pillBounds.bottom).toPx() / 2f))
+        }
+        composeTestRule.onNodeWithText("Background tasks").assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.background_tasks_close)).performClick()
+
+        root.performTouchInput {
+            click(Offset((actionsBounds.left + actionsBounds.right).toPx() / 2f, (actionsBounds.top + actionsBounds.bottom).toPx() / 2f))
+        }
+        composeTestRule.onNodeWithText("Background tasks (2)").assertIsDisplayed()
+        pill("2 tasks running").assertIsDisplayed()
     }
 }

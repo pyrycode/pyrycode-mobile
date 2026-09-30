@@ -26,6 +26,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasAnySibling
@@ -3399,8 +3400,8 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A background task real claude starts shows in the Actions menu's count and in the panel, and the count
-     * returns to 0 when the task finishes (#967, #678). The phone asks for one backgrounded `sleep`; a
+     * A background task real claude starts shows in the thread pill and Actions menu count, opens the same
+     * panel from either entry, and returns to 0 when the task finishes (#1296, #967, #678). The phone asks for one backgrounded `sleep`; a
      * permission prompt for it is allowed through the main daemon's privileged peer, the #950 path. The peer's
      * recorded frames supply only timing and the task's identity: the count and the panel are read off the phone.
      *
@@ -3434,7 +3435,26 @@ class InteractiveStreamE2ETest {
             val started = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), startedFrame.payload)
             assertTrue("the started task names no type", started.taskType.isNotBlank())
 
-            // 2. AC-3: the Actions menu counts it, and the panel lists it.
+            // 2. The live thread pill opens the panel while the task is running.
+            val taskPill =
+                SemanticsMatcher("running task pill") { node ->
+                    node.config.getOrNull(SemanticsProperties.ContentDescription)?.any {
+                        Regex("[1-9]\\d* tasks? running").matches(it)
+                    } == true
+                }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(taskPill).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(taskPill).onFirst().performTouchInput { click() }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
+            }
+            closeBackgroundTasks()
+
+            // 3. The Actions menu reports the same count and opens the same panel.
             openActions()
             openBackgroundTasks { it >= 1 }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -3444,7 +3464,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
             closeBackgroundTasks()
 
-            // 3. AC-3: once the task finishes, the count is 0 and the panel no longer lists the task as live. It
+            // 4. Once the task finishes, the count is 0 and the panel no longer lists the task as live. It
             //    labels the task finished until the empty roster claude sends after a finish drops it (#677's
             //    `applyRoster`), then says there are no tasks; the live gate saw the empty roster win.
             allowPromptsUntil(
