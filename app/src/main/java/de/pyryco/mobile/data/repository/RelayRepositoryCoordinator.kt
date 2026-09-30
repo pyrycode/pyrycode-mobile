@@ -465,6 +465,28 @@ class RelayRepositoryCoordinator(
         repo.refuseQuestionBatch(questionBatchId)
     }
 
+    /** A draft belongs to its source/request, never a later connection that rebuilds the same nonce. Null answers refuse. */
+    internal suspend fun submitQuestionBatch(
+        source: RemoteConversationRepository,
+        batch: QuestionBatch,
+        answers: List<QuestionAnswer>?,
+    ) {
+        synchronized(this) {
+            check(liveRepository() === source) { "question source retired" }
+            check(source.questionBatches.value.firstOrNull { it.conversationId == batch.conversationId } === batch) {
+                "question request retired"
+            }
+        }
+        // These fire-and-forget calls do not suspend; retain the validated source rather than selecting another repository.
+        if (answers ==
+            null
+        ) {
+            source.refuseQuestionBatch(batch.questionBatchId)
+        } else {
+            source.answerQuestionBatch(batch.questionBatchId, answers)
+        }
+    }
+
     private class Connection(
         val pump: ManagedSessionPump,
         val scope: CoroutineScope,

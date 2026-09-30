@@ -122,7 +122,9 @@ class AndroidGateTest(unittest.TestCase):
         self.assertTrue(any("#interactiveTurn_toolPrompt_rendersToolStepInThread" in target for target in targets))
         self.assertTrue(any("#interactiveTurn_offlineRetry_reconnectsSameHostAndReplies" in target for target in targets))
         self.assertFalse(any("#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost" in target for target in targets))
-        self.assertEqual(gate.LIVE_MINIMUM, 44)
+        # #1305 excludes the cross-host file method until #1369 repairs the phone after daemon #2699.
+        self.assertFalse(any("#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost" in target for target in targets))
+        self.assertEqual(gate.LIVE_MINIMUM, 43)
         self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))
