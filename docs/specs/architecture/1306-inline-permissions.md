@@ -96,3 +96,9 @@ Pending for the documentation stage: `docs/knowledge/features/permission-modal-o
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-01
+
+## Revisions
+
+- 2026-10-01: `InteractiveStreamE2ETest.awaitReadPrompt` scoped the Read prompt by "an ancestor holding Cancel". Inline, that ancestor is the message list, which would match the phone's own message naming the same file. It now scopes by the request card, as the adapted `promptDialog` / `inPromptDialog` helpers do; the Stop-control wait that looks for no Cancel text needed no change.
+- 2026-10-01: The shared screen test first wrapped content in `DeviceConfigurationOverride.ForcedSize(412×892)`. On Robolectric's 320dp-wide screen that rescales density, so the 20dp checkbox measured 16dp. Robolectric's configured Pixel 2 height already fits the request, so the helper uses the default screen; the compact case keeps `ForcedSize(320×700)`, which does not exceed it.
+- Final size: seven production Kotlin files (one new), three new declarations, five AC, no new send or error branch. About 1,150 written lines including tests, plan and text evidence. Boundaries hold.
