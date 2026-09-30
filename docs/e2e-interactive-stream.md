@@ -911,7 +911,8 @@ The **reconnect-footer**, **reconnect-commands** and **background-task** scenari
 `interactiveTurn_reconnect_slashCommandsAndCompactStillWork`,
 `interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`) prove that the composer's controls and
 command feedback (footer readings and a model change, #545/#946; slash-command suggestions, #885; Compact
-session, #874/#884; the Actions-menu background-task count and panel, #678) still work after the phone's
+session, #874/#884; the Actions-menu background-task count and panel, #678, and the thread's running-task
+pill opening the same panel, #1296) still work after the phone's
 link is cut and restored, and that a background task real claude starts is tracked through its full
 lifecycle. They reuse #545's settings helpers and #850's `setHostLink` / `cycleHostLink`, and #950's
 `SecondClientPeer` approval path, rather than repeating those scenarios.
@@ -943,8 +944,9 @@ contract.
 `interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` asks claude, through the main daemon's
 `--allow-remote-permissions` peer (the #950 path), to run a command in the background
 (`python3 -c "import time; time.sleep(40)"` — a bare `sleep` of 25s+ is refused by claude's Bash tool, the
-same constraint #849's `WAIT_PROMPT` documents). Once the task starts, the Actions menu's `Background
-tasks (N)` count and the panel both show it; once it finishes, the count reads 0. The panel's own end state
+same constraint #849's `WAIT_PROMPT` documents). Once the task starts, the visible thread pill opens the
+panel while work is running; the Actions menu's `Background tasks (N)` count and panel also show it.
+Once it finishes, the count reads 0. The panel's own end state
 is **not** durable: the terminal `background_task_updated` marks the task Finished, but real claude also
 sends an empty `background_task_roster` unprompted after a finish, and `BackgroundTaskProjection`'s
 wholesale-replace rule (see [`backgroundTasks`](knowledge/features/remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677))
@@ -2656,6 +2658,13 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — updated:** [#1296](https://github.com/pyrycode/pyrycode-mobile/issues/1296)
+  extended `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`
+  to open the panel through the visible thread pill while real background work runs. The Actions path
+  still checks the zero count. The 2026-09-30 full live suite executed 43 methods, failed 0 and skipped
+  0, including this passing method; this was not a separate focused live run. The selector and
+  `LIVE_MINIMUM` remain 43.
 
 - **Coverage — shipped:** [#1208](https://github.com/pyrycode/pyrycode-mobile/issues/1208)
   put #481's existing `InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread`
