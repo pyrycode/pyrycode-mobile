@@ -73,6 +73,7 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
+import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -696,7 +697,12 @@ fun ThreadScreen(
                                                     )
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
-                                                is ThreadItem.Banner -> BannerNoticeRow(item = item, agent = state.agent)
+                                                // #1359: an info banner keeps its row and key but draws
+                                                // nothing, as desktop's TimelineRow does.
+                                                is ThreadItem.Banner ->
+                                                    if (item.level != BannerLevel.Info) {
+                                                        BannerNoticeRow(item = item, agent = state.agent)
+                                                    }
                                                 is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
                                                 is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item, agent = state.agent)
                                             }
