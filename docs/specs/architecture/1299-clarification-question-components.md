@@ -69,3 +69,9 @@ Pending documentation stage: update `docs/knowledge/features/question-batch-moda
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-30
+
+## Revisions
+
+- 2026-09-30: The real API 35 emulator returned a blank SurfaceFlinger screenshot because `MobileGateModal` sets `FLAG_SECURE`. The capture test draws that same dialog view directly into a bitmap with static fixture text; the secure window remains unchanged. The retained 412 × 892 render and labelled 1 dp-to-1 px component overlay are the visual evidence.
+- 2026-09-30: The visible 20 dp controls match the Figma components, while `ChoiceRow` retains the existing 48 dp row touch floor. The component example is wider and has no phone-sized question frame, so vertical row rhythm adapts to touch reachability. The exported Figma checkbox selector became a separate vector resource; no stock substitution is used.
+- 2026-09-30: Security review precision: `QuestionShownPayloadDto.toBatch` preserves daemon text verbatim; the existing 131,072-character inbound frame cap in `OkHttpRelayTransport` bounds the aggregate frame before decoding. This visual ticket adds no second parser or text sink.

@@ -2,32 +2,39 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.res.Configuration
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Question
@@ -35,6 +42,8 @@ import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.QuestionOption
 import de.pyryco.mobile.ui.components.MobileGateModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalFieldContainer
+import de.pyryco.mobile.ui.theme.modalFieldText
 
 /**
  * The clarification batch held for the open conversation (#661), drawn in the hardened gate so Back,
@@ -80,7 +89,7 @@ internal fun QuestionBatchModal(
     }
 }
 
-/** Figma `347:6913`: a tertiary header line above a bordered card holding the question and its rows. */
+/** Figma `347:6697`: a tertiary header line above a bordered card holding the question and its rows. */
 @Composable
 private fun QuestionBlock(
     index: Int,
@@ -90,11 +99,20 @@ private fun QuestionBlock(
     onEvent: (QuestionModalEvent) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            text = question.header,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.tertiary,
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            Image(
+                painter = painterResource(R.drawable.ic_question_glyph),
+                contentDescription = null,
+                colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.tertiary),
+                modifier = Modifier.size(width = 14.dp, height = 16.dp).testTag("question_header_glyph_$index"),
+            )
+            Text(
+                text = question.header.uppercase(),
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                color = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.weight(1f),
+            )
+        }
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.small,
@@ -104,43 +122,70 @@ private fun QuestionBlock(
         ) {
             Column(
                 modifier = Modifier.padding(16.dp).then(if (question.multiSelect) Modifier else Modifier.selectableGroup()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Text(text = question.question, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                question.options.forEachIndexed { optionIndex, option ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    question.options.forEachIndexed { optionIndex, option ->
+                        ChoiceRow(
+                            selected = optionIndex in selection.optionIndices,
+                            multiSelect = question.multiSelect,
+                            enabled = enabled,
+                            controlTag = "question_control_${index}_$optionIndex",
+                            onClick = { onEvent(QuestionModalEvent.OptionToggled(index, optionIndex)) },
+                        ) {
+                            Column(Modifier.padding(top = 2.dp)) {
+                                Text(option.label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                Text(option.description, style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
                     ChoiceRow(
-                        selected = optionIndex in selection.optionIndices,
+                        selected = selection.otherTicked,
                         multiSelect = question.multiSelect,
                         enabled = enabled,
-                        onClick = { onEvent(QuestionModalEvent.OptionToggled(index, optionIndex)) },
+                        controlTag = "question_control_${index}_other",
+                        other = true,
+                        onClick = { onEvent(QuestionModalEvent.OtherToggled(index)) },
                     ) {
-                        Column {
-                            Text(option.label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                            Text(option.description, style = MaterialTheme.typography.labelMedium)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                stringResource(R.string.question_other),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            val placeholder = stringResource(R.string.question_other_placeholder)
+                            BasicTextField(
+                                value = selection.otherText,
+                                onValueChange = { onEvent(QuestionModalEvent.OtherTextChanged(index, it)) },
+                                modifier = Modifier.fillMaxWidth().testTag("question_other_$index"),
+                                enabled = enabled,
+                                textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.modalFieldText),
+                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                decorationBox = { field ->
+                                    Box(
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 32.dp)
+                                                .background(MaterialTheme.colorScheme.modalFieldContainer, RoundedCornerShape(6.dp))
+                                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    ) {
+                                        if (selection.otherText.isEmpty()) {
+                                            Text(
+                                                placeholder,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.inversePrimary,
+                                            )
+                                        }
+                                        field()
+                                    }
+                                },
+                            )
                         }
                     }
                 }
-                ChoiceRow(
-                    selected = selection.otherTicked,
-                    multiSelect = question.multiSelect,
-                    enabled = enabled,
-                    onClick = { onEvent(QuestionModalEvent.OtherToggled(index)) },
-                ) {
-                    Text(
-                        stringResource(R.string.question_other),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                OutlinedTextField(
-                    value = selection.otherText,
-                    onValueChange = { onEvent(QuestionModalEvent.OtherTextChanged(index, it)) },
-                    modifier = Modifier.fillMaxWidth().testTag("question_other_$index"),
-                    enabled = enabled,
-                    placeholder = { Text(stringResource(R.string.question_other_placeholder)) },
-                    textStyle = MaterialTheme.typography.bodySmall,
-                    shape = MaterialTheme.shapes.small,
-                )
             }
         }
     }
@@ -152,7 +197,9 @@ private fun ChoiceRow(
     selected: Boolean,
     multiSelect: Boolean,
     enabled: Boolean,
+    controlTag: String,
     onClick: () -> Unit,
+    other: Boolean = false,
     label: @Composable () -> Unit,
 ) {
     val interaction =
@@ -164,23 +211,31 @@ private fun ChoiceRow(
     Row(
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(interaction),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
         val tertiary = MaterialTheme.colorScheme.tertiary
-        if (multiSelect) {
-            Checkbox(
-                checked = selected,
-                onCheckedChange = null,
-                enabled = enabled,
-                colors = CheckboxDefaults.colors(checkedColor = tertiary, uncheckedColor = tertiary),
-            )
-        } else {
-            RadioButton(
-                selected = selected,
-                onClick = null,
-                enabled = enabled,
-                colors = RadioButtonDefaults.colors(selectedColor = tertiary, unselectedColor = tertiary),
-            )
+        val shape = if (multiSelect) RoundedCornerShape(4.dp) else CircleShape
+        Box(
+            modifier =
+                Modifier
+                    .padding(top = if (other) 8.dp else 0.dp)
+                    .size(20.dp)
+                    .border(2.dp, tertiary, shape)
+                    .testTag(controlTag),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                if (multiSelect) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_question_check),
+                        contentDescription = null,
+                        colorFilter = ColorFilter.tint(tertiary),
+                        modifier = Modifier.size(12.dp),
+                    )
+                } else {
+                    Box(Modifier.size(10.dp).background(tertiary, CircleShape))
+                }
+            }
         }
         Column(Modifier.weight(1f)) { label() }
     }
