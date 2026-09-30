@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
@@ -72,20 +74,23 @@ class MessageAttachmentsTest {
         onRetry: (String) -> Unit = {},
         onOpen: (AttachmentTarget) -> Unit = {},
         onSave: (AttachmentTarget) -> Unit = {},
+        fontScale: Float = 1f,
         states: () -> Map<String, AttachmentViewState>,
     ) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                CompositionLocalProvider(LocalAttachmentThumbnailDecoder provides decoder) {
-                    Surface {
-                        MessageBubble(
-                            message = message,
-                            attachmentStates = states(),
-                            onAttachmentShown = onShown,
-                            onRetryAttachment = onRetry,
-                            onOpenAttachment = onOpen,
-                            onSaveAttachment = onSave,
-                        )
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+                PyrycodeMobileTheme {
+                    CompositionLocalProvider(LocalAttachmentThumbnailDecoder provides decoder) {
+                        Surface {
+                            MessageBubble(
+                                message = message,
+                                attachmentStates = states(),
+                                onAttachmentShown = onShown,
+                                onRetryAttachment = onRetry,
+                                onOpenAttachment = onOpen,
+                                onSaveAttachment = onSave,
+                            )
+                        }
                     }
                 }
             }
@@ -162,6 +167,24 @@ class MessageAttachmentsTest {
         val label = composeTestRule.onNodeWithText(name, useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertTrue(label.right <= bubble.right)
         assertTrue("name wraps: ${label.height}", label.height < 20.dp)
+    }
+
+    @Test
+    fun enlargedText_longFileNameAndRetryStayInsideTheCompactBubble() {
+        val name = "Filename of the Best file attachment that the assistant generated.pdf"
+        render(
+            message(MessageAttachment(A1, name, "application/pdf")),
+            fontScale = 1.5f,
+            states = { mapOf(A1 to AttachmentViewState.Failed) },
+        )
+
+        val bubble = composeTestRule.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).getUnclippedBoundsInRoot()
+        val row = composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).getUnclippedBoundsInRoot()
+        val nameBounds = composeTestRule.onNodeWithText(name, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val retry = composeTestRule.onNodeWithText("Retry").getUnclippedBoundsInRoot()
+        assertTrue(row.left >= bubble.left && row.right <= bubble.right)
+        assertTrue(nameBounds.right <= bubble.right)
+        assertTrue(retry.right <= bubble.right && retry.bottom <= bubble.bottom)
     }
 
     @Test

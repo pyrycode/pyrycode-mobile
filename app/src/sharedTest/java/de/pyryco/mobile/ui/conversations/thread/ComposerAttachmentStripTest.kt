@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -24,6 +25,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import androidx.core.app.ActivityOptionsCompat
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -87,6 +91,20 @@ class ComposerAttachmentStripTest {
         composeRule.onNodeWithText("PDF").assertIsDisplayed()
         composeRule.onNodeWithText("JPG").assertIsDisplayed()
         composeRule.onNodeWithText("File").assertIsDisplayed()
+    }
+
+    @Test
+    fun pendingFileTiles_haveTheFigmaSizeGapAndRemoveOverlap() {
+        setScreen(attachments = listOf(entry(1, "one.pdf"), entry(2, "two.pdf")))
+
+        val first = composeRule.onNodeWithContentDescription("one.pdf").getUnclippedBoundsInRoot()
+        val second = composeRule.onNodeWithContentDescription("two.pdf").getUnclippedBoundsInRoot()
+        val remove = composeRule.onNodeWithContentDescription("Remove one.pdf").getUnclippedBoundsInRoot()
+        assertEquals(45.dp.value, first.width.value, 0.5f)
+        assertEquals(60.dp.value, first.height.value, 0.5f)
+        assertEquals(12.dp.value, (second.left - first.right).value, 0.5f)
+        assertEquals((first.right - 15.dp).value, remove.left.value, 0.5f)
+        assertEquals((first.top - 5.dp).value, remove.top.value, 0.5f)
     }
 
     @Test

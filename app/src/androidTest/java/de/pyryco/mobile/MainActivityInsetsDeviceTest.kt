@@ -24,6 +24,7 @@ import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performClick
@@ -46,6 +47,7 @@ import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.components.MobileModalTestIme
+import de.pyryco.mobile.ui.conversations.thread.ATTACHMENT_STRIP_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -209,11 +211,14 @@ class MainActivityInsetsDeviceTest {
 
     @Test fun composerFooterAt360By640() = captureComposerFooter(360, 640)
 
+    @Test fun pendingAttachmentsClearKeyboardAt320By640() = captureComposerFooter(320, 640, withAttachments = true)
+
     private fun captureComposerFooter(
         widthDp: Int,
         heightDp: Int,
+        withAttachments: Boolean = false,
     ) {
-        evidenceFolder = "1258-footer"
+        evidenceFolder = if (withAttachments) "attachment-1290" else "1258-footer"
         width = widthDp
         height = heightDp
         shell("wm density 160")
@@ -230,6 +235,16 @@ class MainActivityInsetsDeviceTest {
                     .id
             }
         keyboardConversationId = conversationId
+        if (withAttachments) {
+            drafts.addAttachment(
+                "demo",
+                conversationId,
+                "content://com.example.docs/document/report.pdf",
+                "report.pdf",
+                "application/pdf",
+                1L,
+            )
+        }
         runBlocking {
             preferences.setThemeMode(ThemeMode.DARK)
             preferences.setUseWallpaperColors(false)
@@ -250,6 +265,10 @@ class MainActivityInsetsDeviceTest {
         val field = rule.onNode(hasSetTextAction())
         openKeyboard(field)
         val imeTop = height - insets().getInsets(WindowInsetsCompat.Type.ime()).bottom
+        if (withAttachments) {
+            val strip = screenBounds(rule.onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG).assertIsDisplayed())
+            assertTrue("pending strip clears keyboard: strip=$strip imeTop=$imeTop", strip.bottom <= imeTop)
+        }
         assertTrue(
             "all footer controls clear keyboard",
             screenBounds(rule.onNodeWithContentDescription("Expand status details")).bottom < imeTop,
