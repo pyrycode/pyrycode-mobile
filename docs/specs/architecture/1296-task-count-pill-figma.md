@@ -30,3 +30,8 @@ Keep `NoticePill`, plural resources, and the existing panel callback. In `Thread
 ## Documentation handoff
 
 Pending documentation stage: update `docs/knowledge/features/thread-screen.md` § What it does and the status-band description to record the corrected task-pill geometry and link the comparison artifact.
+
+## Revisions
+
+- 2026-09-30: `ThreadFrameCaptureTest.referenceFrame_emptyPopulatedTaskAndMenu` already emits the 412 × 892 task and menu states needed for this comparison, so the capture fixture did not need a source edit. Its focused emulator run produced the capture retained under `app/src/androidTest/assets/task-pill-1296/`.
+- 2026-09-30: The focused API 33 device run measured the pill about 2 dp narrower than Figma despite Robolectric passing the x-position assertion. Give only this thread pill a 104 dp minimum width along with the 24 dp minimum height; longer labels and enlarged text may still grow. Allow 1 dp device rounding on the existing right-gutter assertion.

@@ -1,8 +1,10 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
@@ -14,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
@@ -131,9 +134,11 @@ class TaskCountPillTest {
                 }
             }
         }
-        val bounds = pill("2 tasks running").getUnclippedBoundsInRoot()
+        val bounds = composeTestRule.onNodeWithContentDescription("2 tasks running").getUnclippedBoundsInRoot()
+        assertEquals(288f, bounds.left.value, 2f)
         assertEquals(392f, bounds.right.value, 2f)
         assertEquals(696f, bounds.top.value, 2f)
+        assertEquals(720f, bounds.bottom.value, 2f)
         val editor = composeTestRule.onNode(hasSetTextAction()).getUnclippedBoundsInRoot()
         val footerActions = composeTestRule.onNodeWithText(string(R.string.thread_footer_actions)).getUnclippedBoundsInRoot()
         assertTrue("footer actions must clear the editor", editor.bottom <= footerActions.top)
@@ -165,7 +170,7 @@ class TaskCountPillTest {
 
         pill("3 tasks running").assertIsDisplayed()
         val rootRight = composeTestRule.onRoot().getUnclippedBoundsInRoot().right
-        assertEquals(rootRight - ComposerGutter, pill("3 tasks running").getUnclippedBoundsInRoot().right)
+        assertEquals((rootRight - ComposerGutter).value, pill("3 tasks running").getUnclippedBoundsInRoot().right.value, 1f)
     }
 
     @Test
@@ -202,6 +207,38 @@ class TaskCountPillTest {
 
         pill("1 task running").performClick()
 
+        composeTestRule.onNodeWithText("Background tasks").assertIsDisplayed()
+        composeTestRule.onNodeWithText("sleep 300").assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun compactWidthAndLargeText_keepPillClearOfReadingAndOpeningPanel() {
+        val roster = BackgroundTaskRoster(listOf(BackgroundTask("t1", "toolu_t1", "local_bash", "sleep 300", null, null, null, false)), 0)
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, 1.5f)) {
+                    PyrycodeMobileTheme(darkTheme = true) {
+                        ThreadScreen(
+                            state = ThreadUiState("c1", "Compact thread", backgroundTasks = roster, backgroundTaskCount = 2),
+                            onBack = {},
+                            onSendMessage = {},
+                            connectionState = ConnectionState.Connected,
+                            onRetry = {},
+                            isThinking = true,
+                        )
+                    }
+                }
+            }
+        }
+        val bounds = composeTestRule.onNodeWithContentDescription("2 tasks running").getUnclippedBoundsInRoot()
+        val reading = composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_thinking)).getUnclippedBoundsInRoot()
+        assertTrue(bounds.left >= reading.right)
+        assertTrue(bounds.right <= composeTestRule.onRoot().getUnclippedBoundsInRoot().right)
+        assertTrue(bounds.height >= 24.dp)
+
+        pill("2 tasks running").performClick()
         composeTestRule.onNodeWithText("Background tasks").assertIsDisplayed()
         composeTestRule.onNodeWithText("sleep 300").assertIsDisplayed()
     }

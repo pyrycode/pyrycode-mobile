@@ -11,11 +11,11 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -921,25 +921,8 @@ private fun ThreadStatusArea(
     }
     // The reading's own 16dp padding lands its content on the 20dp gutter; the pill ends on it. A reading
     // that emits nothing takes its weight with it, and Arrangement.End keeps the pill at the right end.
-    val hasReading =
-        when (connectionState) {
-            ConnectionState.Connecting, is ConnectionState.Reconnecting -> true
-            ConnectionState.Offline -> false
-            ConnectionState.Connected ->
-                apiRetry != ApiRetryStatus.NotRetrying ||
-                    resetting != null ||
-                    isCompacting ||
-                    turnOutcome != null ||
-                    isThinking ||
-                    runningTool != null
-        }
-    // The 24dp reading stays centered in a 28dp combined band. That height also keeps the task
-    // pill at its Figma anchor when a reading and task count appear together.
-    val bandModifier =
-        Modifier
-            .fillMaxWidth()
-            .padding(start = ComposerStatusGutter, end = ComposerGutter)
-            .then(if (hasReading) Modifier.heightIn(min = 28.dp) else Modifier)
+    // The reading and pill share Figma's 24dp band at normal text scale, and can grow with text scale.
+    val bandModifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter)
     Row(
         modifier = bandModifier,
         horizontalArrangement = Arrangement.End,
@@ -953,6 +936,7 @@ private fun ThreadStatusArea(
                 text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount),
                 isError = false,
                 onClick = onTasksClick,
+                modifier = Modifier.sizeIn(minWidth = 104.dp, minHeight = 24.dp),
                 // Figma 568:3162 sits in the band, not over the messages, so it has no overlay shadow.
                 shadowElevation = 0.dp,
             )
