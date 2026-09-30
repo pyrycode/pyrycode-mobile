@@ -158,6 +158,12 @@
     <string name="cd_thread_tool_running_elapsed">Claude is running %1$s, %2$s elapsed</string>
     <string name="cd_thread_tool_running_codex">Codex is running %1$s</string>
     <string name="cd_thread_tool_running_elapsed_codex">Codex is running %1$s, %2$s elapsed</string>
+    <!-- #1311: the responding phase of a running turn, and a stalled turn. Client-owned; no daemon text. -->
+    <string name="thread_working_label">Working…</string>
+    <string name="cd_thread_working">Claude is working</string>
+    <string name="cd_thread_working_codex">Codex is working</string>
+    <string name="thread_stalled_label">The turn seems to have stalled…</string>
+    <string name="cd_thread_stalled">The turn seems to have stalled</string>
     <string name="thread_api_retry_label">Retrying — attempt %1$d/%2$d</string>
     <string name="thread_api_retry_label_unknown">Retrying…</string>
     <string name="cd_thread_api_retry">Claude is retrying, attempt %1$d of %2$d</string>
