@@ -71,3 +71,10 @@ Pending documentation stage: update `docs/knowledge/features/mobile-modal-caller
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-30
+
+## Revisions
+
+- 2026-09-30: The solid empty ring's Figma SVG is a 32 dp circle with a 2 dp outline, so `EmptyReading` can draw it exactly. The never-reported ring is supplied as a 64 px PNG displayed at 32 dp; use that asset directly. This resolves the icon question without changing the state contract.
+- 2026-09-30: The API 33 ATD executed both capture-class tests but returned one-color black PNGs. The full Pixel 8 API 35 emulator yielded nonblank 412 × 892 captures and executed both tests without failure or skip. Use its checked-in captures for the comparison; retain the ATD run only as behavior/reachability proof.
+- 2026-09-30: On the full emulator, Compose's native text boxes made populated rows 7–16 dp shorter than the Figma render despite matching nominal type sizes. Increase local row and progress gaps to match the visible card rhythm; the shared shell and shared type ramp remain unchanged.
+- 2026-09-30: The capped and empty PNG exports omit visible header text/close artwork although their design-context trees include them. The capped export says `Running · 8 shown` but draws only three rows. Keep the shared header and honest live roster, and identify these reference inconsistencies beside the capture evidence.
