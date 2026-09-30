@@ -1,0 +1,10 @@
+Figma node: 553:2574 (Markdown Reader Screen)
+Inspected: 2026-09-30; source frame: 412 x 892
+Device: Pixel 8 API 35, static dark, density 1, 412 x 892 dp.
+Reference fixture: the frame’s heading, linked paragraph, list, plain code fence and quote.
+
+Observed: visible header vectors, rule, body left inset and block top positions align. The Figma render wraps the first paragraph after “since”; Android’s shared Roboto/M3 bodyLarge metrics keep “2026-09-01.” on that first line. Both use three 24dp lines and following blocks align. The rounded outer Figma device-frame corners are outside the app window.
+
+Figma has no overflow-open, compact or enlarged-text state. Current Material dropdown and all six actions remain. Captures show the menu at 412 x 892 and at 320 x 700 with 1.5x text; the long filename ellipsizes between the back and menu controls, and the body scrolls to Paragraph 30.
+
+Focused device commands: pixel2Api33AtdDebugAndroidTest and pixel8Api35DebugAndroidTest, selecting MarkdownReaderCaptureTest. Both executed 2 tests, 0 failures, 0 skips. The headless ATD framebuffer is blank; Pixel 8 supplies these nonblank screenshots. Results: app/build/outputs/androidTest-results/managedDevice/debug/{pixel2Api33Atd,pixel8Api35}/TEST-*-_app-.xml.

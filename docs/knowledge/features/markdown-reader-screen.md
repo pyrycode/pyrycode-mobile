@@ -1,32 +1,35 @@
 # Markdown reader screen
 
-In-app reader for a markdown attachment, at the `markdown_reader/{serverId}/{conversationId}/{attachmentId}`
-route (#1027). Tapping a ready file row whose name ends in `.md` or `.markdown` (any case) opens this screen
-instead of handing the file to another app; every other attachment type still goes through
-[`openAttachment`](message-bubble-attachment-slot.md#open-and-save-since-985). Figma: `Markdown Reader Screen`
-(`553:2574`). Package: `de.pyryco.mobile.ui.conversations.thread`, new file `MarkdownReaderScreen.kt`.
-
-Since #1050, the same screen also opens on a **tapped workspace-note link in an assistant reply**, fetched live
-rather than from a stored attachment — see [Linked note, live (since #1050)](#linked-note-live-since-1050).
-Since #1067, the top bar also carries a three-dot menu — copy the note in three formats, and refresh it in
-place — see [Copy and refresh menu (since #1067)](#copy-and-refresh-menu-since-1067). Since #1068 the menu's
-fifth item hands the note on to another app, as `text/markdown` — see
-[Open in another app (since #1068)](#open-in-another-app-since-1068), inside that same section. Since #1069 the
-menu's last item writes the note's text into a document the operator picks — see
-[Save to device (since #1069)](#save-to-device-since-1069), also inside that section.
+In-app reader for ready `.md`/`.markdown` attachments (#1027) and live workspace-note links
+from assistant replies (#1050). Other attachments use
+[`openAttachment`](message-bubble-attachment-slot.md#open-and-save-since-985).
+The `markdown_reader/{serverId}/{conversationId}/{attachmentId}` route, copy/refresh
+[menu](#copy-and-refresh-menu-since-1067), [open](#open-in-another-app-since-1068) and
+[save](#save-to-device-since-1069) actions live in
+`de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreen.kt`.
 
 ## What it does
 
-The fixed top bar has a 24dp back arrow, a single-line ellipsised file name in `titleLarge` /
-`onPrimaryContainer`, a three-dot overflow menu and a 60%-alpha rule; the title is not tappable.
+The fixed top bar uses the Figma-matching `ic_thread_back` and `ic_thread_overflow` vectors in
+48dp touch areas, a single-line ellipsised file name in `titleLarge` / `onPrimaryContainer`,
+and a 60%-alpha inset rule. Its reader-only top gap puts the scrolling body at y=97dp in
+the 412 × 892 dark reference; the title is not tappable.
 The body uses [`MarkdownText`](markdown-text.md#public-surface) in a `weight(1f)` `verticalScroll` column.
-Both attachment and linked-note readers explicitly select M3 `bodyLarge` (16sp/24sp), 12dp block gaps
-and 6dp sibling-list-item gaps. Paragraphs, ordered/unordered/task-list text, ordinary markers and
-quote paragraphs share that size, including nested content; quote paragraphs retain italics.
-The reader explicitly keeps `bodyMedium` code. Thread markdown uses `bodyMedium` prose,
-12dp/4dp gaps and `bodySmall` code with a 20sp line height.
-Headings and tables keep their existing typography, formatting, highlighting, copy controls and
-horizontal scrolling; reader menu copies and link routing are unchanged.
+Both attachment and linked-note readers select M3 `bodyLarge` (16sp/24sp), 12dp block gaps
+and 6dp sibling-list-item gaps. Reader headings and prose use untrimmed line-height boxes; the
+thread keeps its existing metrics. Unlabelled and indented code uses a plain, tappable,
+horizontally scrolling panel; labelled fences keep syntax highlighting and visible per-block copy.
+Reader quotes use regular `bodyLarge` text and a subdued 3dp rule. See
+[MarkdownText block dispatch](markdown-text.md#block-dispatch). Reader menu copies and link routing
+are unchanged.
+
+The [side-by-side](../../../app/src/androidTest/assets/markdown-reader-1291/side-by-side.png) and
+[labelled overlay/difference](../../../app/src/androidTest/assets/markdown-reader-1291/overlay-difference.png)
+compare matching Markdown with Figma node `553:2574`, inspected 2026-09-30, at 412 × 892.
+Shared Roboto metrics wrap one date differently but keep the same three-line paragraph height and
+following block positions. Figma has no menu, compact or enlarged-text state;
+[comparison notes](../../../app/src/androidTest/assets/markdown-reader-1291/comparison-notes.txt)
+record Pixel 8 checks at 320 × 700 with 1.5× text, including menu and scroll reachability.
 
 The back arrow and system back return to the same thread. An unreadable or invalid UTF-8 file leaves
 the operator on the thread with `AttachmentNotice.OPEN_FAILED` (see [Load and navigate from the

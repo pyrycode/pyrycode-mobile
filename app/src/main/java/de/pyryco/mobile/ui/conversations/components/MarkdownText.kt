@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,6 +37,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.platform.testTag
@@ -52,6 +55,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,6 +81,7 @@ import org.intellij.markdown.parser.MarkdownParser
 private val ListItemIndent = 8.dp
 private val BlockquoteBarWidth = 4.dp
 private val BlockquoteContentIndent = 12.dp
+private val ReaderQuoteBarWidth = 3.dp
 
 // The code area's treatment from Figma `134:4809` (`Code` › `Header` / `Content`), read off the node
 // rather than carried over from #130's tile: its width is a 741dp desktop measure and does not
@@ -139,12 +144,18 @@ internal const val MAX_TABLE_ROWS = 256
  */
 internal val MarkdownFlavour = GFMFlavourDescriptor()
 
-/** Body presentation; headings, tables and code keep their own element-specific styles. */
+/** Reader blocks follow the dedicated reader reference; thread blocks retain their interactive chrome. */
+enum class MarkdownPresentation { Thread, Reader }
+
+private val ReaderLineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Proportional, LineHeightStyle.Trim.None)
+
+/** Body presentation; headings and tables keep their own element-specific styles. */
 data class MarkdownTextStyle(
     val body: TextStyle,
     val blockSpacing: Dp = 12.dp,
     val listItemSpacing: Dp = 4.dp,
     val code: TextStyle? = null,
+    val presentation: MarkdownPresentation = MarkdownPresentation.Thread,
 )
 
 /**
@@ -172,12 +183,14 @@ fun MarkdownText(
         remember(markdown) {
             MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(markdown)
         }
+    val blockStyle =
+        if (style.presentation == MarkdownPresentation.Reader) style.copy(body = style.body.readerLineHeight(style.presentation)) else style
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(style.blockSpacing),
+        verticalArrangement = Arrangement.spacedBy(blockStyle.blockSpacing),
     ) {
         root.children.forEach { child ->
-            MarkdownBlock(child, markdown, uriHandler, style)
+            MarkdownBlock(child, markdown, uriHandler, blockStyle)
         }
     }
 }
@@ -191,11 +204,11 @@ private fun MarkdownBlock(
 ) {
     when (node.type) {
         MarkdownElementTypes.ATX_1 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.headlineSmall)
+            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.headlineSmall.readerLineHeight(style.presentation))
         MarkdownElementTypes.ATX_2 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleLarge)
+            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleLarge.readerLineHeight(style.presentation))
         MarkdownElementTypes.ATX_3 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleMedium)
+            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleMedium.readerLineHeight(style.presentation))
         MarkdownElementTypes.PARAGRAPH ->
             Text(
                 text = buildInline(node, source, uriHandler),
@@ -218,20 +231,28 @@ private fun MarkdownBlock(
                     ?.toString()
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
-            CodeBlock(
-                code,
-                language,
-                copyable = true,
-                textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
-            )
+            if (style.presentation == MarkdownPresentation.Reader && language == null) {
+                ReaderCodeBlock(code, style.code ?: MaterialTheme.typography.bodySmall)
+            } else {
+                CodeBlock(
+                    code,
+                    language,
+                    copyable = true,
+                    textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
+                )
+            }
         }
         MarkdownElementTypes.CODE_BLOCK ->
-            CodeBlock(
-                indentedCodeText(node, source),
-                language = null,
-                copyable = true,
-                textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
-            )
+            if (style.presentation == MarkdownPresentation.Reader) {
+                ReaderCodeBlock(indentedCodeText(node, source), style.code ?: MaterialTheme.typography.bodySmall)
+            } else {
+                CodeBlock(
+                    indentedCodeText(node, source),
+                    language = null,
+                    copyable = true,
+                    textStyle = style.code ?: MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
+                )
+            }
         else -> {
             val text = node.getTextInNode(source).toString().trim()
             if (text.isNotEmpty()) {
@@ -240,6 +261,9 @@ private fun MarkdownBlock(
         }
     }
 }
+
+private fun TextStyle.readerLineHeight(presentation: MarkdownPresentation): TextStyle =
+    if (presentation == MarkdownPresentation.Reader) copy(lineHeightStyle = ReaderLineHeightStyle) else this
 
 /**
  * The heading's content is nested ONE LEVEL DOWN, and that is the whole subtlety (#768). `# Title`
@@ -376,20 +400,15 @@ private fun BlockQuoteBlock(
     uriHandler: UriHandler,
     style: MarkdownTextStyle,
 ) {
-    // The bar is the only thing marking a quote as quoted — this block adds no treatment beyond
-    // the paragraph italic — so it conveys structure and has to clear WCAG 1.4.11's 3:1 against the
-    // bubble it renders on: always `secondaryContainer`, since `MessageBubble` is the only caller.
-    // `outlineVariant` shipped here from #129 and does not survive that ground — 1.00:1 dark,
-    // 1.32:1 light, so the bar was invisible rather than merely faint. `onSurfaceVariant` measures
-    // 7.27:1 light and 5.51:1 dark against the same bubble, and is already this file's token for
-    // the table grid, the task mark and struck text. Measure against the bubble before replacing
-    // it; the bar has no assertion behind it.
-    val barColor = MaterialTheme.colorScheme.onSurfaceVariant
+    // The reader follows its dedicated Figma frame's subdued rule and regular text. Thread quotes
+    // keep the higher-contrast bar and italics: outlineVariant disappears against their bubble.
+    val reader = style.presentation == MarkdownPresentation.Reader
+    val barColor = if (reader) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.onSurfaceVariant
     Row(modifier = Modifier.height(IntrinsicSize.Min)) {
         Box(
             modifier =
                 Modifier
-                    .width(BlockquoteBarWidth)
+                    .width(if (reader) ReaderQuoteBarWidth else BlockquoteBarWidth)
                     .fillMaxHeight()
                     .background(barColor),
         )
@@ -406,7 +425,8 @@ private fun BlockQuoteBlock(
                             text = buildInline(child, source, uriHandler),
                             style =
                                 style.body.copy(
-                                    fontStyle = FontStyle.Italic,
+                                    color = if (reader) MaterialTheme.colorScheme.onSurfaceVariant else style.body.color,
+                                    fontStyle = if (reader) FontStyle.Normal else FontStyle.Italic,
                                 ),
                         )
                     } else {
@@ -414,6 +434,37 @@ private fun BlockQuoteBlock(
                     }
                 }
         }
+    }
+}
+
+/** The reader's unlabelled code panel from Figma 553:2574; a tap still copies this block's bounded source. */
+@Composable
+private fun ReaderCodeBlock(
+    content: String,
+    textStyle: TextStyle,
+) {
+    // Match the one- and two-line reference boxes; longer content grows naturally without a huge min constraint.
+    val minimumLines = if ('\n' in content) 2 else 1
+    val minimumHeight = 24.dp + with(LocalDensity.current) { textStyle.lineHeight.toDp() } * minimumLines
+    val clipboard = LocalClipboardManager.current
+    val copyDescription = stringResource(R.string.cd_thread_copy_code)
+    Surface(
+        onClick = { clipboard.setText(AnnotatedString(content.take(MAX_CLIPBOARD_CHARS))) },
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = minimumHeight)
+                .testTag("reader-code-panel")
+                .semantics { contentDescription = copyDescription },
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Text(
+            text = content,
+            modifier = Modifier.horizontalScroll(rememberScrollState()).padding(12.dp),
+            style = textStyle.copy(fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant),
+            softWrap = false,
+        )
     }
 }
 

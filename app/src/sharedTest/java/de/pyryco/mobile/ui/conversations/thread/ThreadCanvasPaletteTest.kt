@@ -147,7 +147,7 @@ class ThreadCanvasPaletteTest {
                 assertEquals("$location blue", expected.blue, actual.blue, 1f / 255f)
             }
             val canvas = if (reader) surface else background
-            val ruleY = if (reader) 64.5f else 68.5f
+            val ruleY = 68.5f
             if (dark && !wallpaper && !reader) {
                 val glow = Color(bitmap.getPixel((bounds.left + 2 * density).toInt(), (bounds.top + 200 * density).toInt()))
                 val rule = Color(bitmap.getPixel((bounds.left + 160 * density).toInt(), (bounds.top + 68.5f * density).toInt()))

@@ -39,8 +39,8 @@ class MarkdownTypographyTest {
                 MarkdownReaderScreen(MarkdownDocument("Typography.md", fixture), onBack = {})
             }
         }
-        assertBody(16, 24, 12f, 6f)
-        assertSpecialStyles()
+        assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal)
+        assertSpecialStyles(codeSize = 13)
     }
 
     @Test
@@ -54,7 +54,7 @@ class MarkdownTypographyTest {
                 )
             }
         }
-        assertBody(16, 24, 12f, 6f)
+        assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal)
     }
 
     @Test
@@ -99,6 +99,7 @@ class MarkdownTypographyTest {
         blockGap: Float,
         itemGap: Float,
         taskGap: Float = itemGap,
+        quoteStyle: FontStyle = FontStyle.Italic,
     ) {
         val bodyTexts =
             listOf(
@@ -139,7 +140,7 @@ class MarkdownTypographyTest {
         }
         for (quote in listOf("Quote one", "Quote two", "Inner quote one", "Inner quote two")) {
             assertEquals(
-                FontStyle.Italic,
+                quoteStyle,
                 rule
                     .onNodeWithText(quote, useUnmergedTree = true)
                     .layout()

@@ -6,13 +6,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -37,10 +35,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.attachmentDisplayName
@@ -48,6 +49,7 @@ import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.ui.conversations.components.MAX_CLIPBOARD_CHARS
+import de.pyryco.mobile.ui.conversations.components.MarkdownPresentation
 import de.pyryco.mobile.ui.conversations.components.MarkdownText
 import de.pyryco.mobile.ui.conversations.components.MarkdownTextStyle
 import de.pyryco.mobile.ui.conversations.components.boundClipHtml
@@ -79,6 +81,7 @@ internal const val MAX_MARKDOWN_READER_BYTES = 262_144
 // and keeps the bar's 20dp gutter.
 private val ReaderBodyTopGap = 12.dp
 private val ReaderBodyBottomGap = 16.dp
+private val ReaderBarTopGap = BarTopGap + 4.dp
 
 /** A markdown attachment ready to read (#1027). [toString] prints lengths only, never the name or text. */
 class MarkdownDocument(
@@ -382,7 +385,8 @@ fun MarkdownReaderScreen(
                                 body = MaterialTheme.typography.bodyLarge,
                                 blockSpacing = 12.dp,
                                 listItemSpacing = 6.dp,
-                                code = MaterialTheme.typography.bodyMedium,
+                                code = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
+                                presentation = MarkdownPresentation.Reader,
                             ),
                         modifier =
                             Modifier.padding(
@@ -415,19 +419,20 @@ private fun MarkdownReaderTopBar(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = BarGutter - BarTouchSlack, end = BarGutter - BarTouchSlack, top = BarTopGap),
+                    .padding(start = BarGutter - BarTouchSlack, end = BarGutter - BarTouchSlack, top = ReaderBarTopGap),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack, modifier = Modifier.size(BarTouchSize)) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    painter = painterResource(R.drawable.ic_thread_back),
                     contentDescription = stringResource(R.string.cd_back),
                     modifier = Modifier.size(BarGlyphSize),
+                    tint = MaterialTheme.colorScheme.onSurface,
                 )
             }
             Text(
                 text = name,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).offset(y = (-4).dp),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 maxLines = 1,
@@ -436,9 +441,10 @@ private fun MarkdownReaderTopBar(
             Box {
                 IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(BarTouchSize)) {
                     Icon(
-                        imageVector = Icons.Filled.MoreVert,
+                        painter = painterResource(R.drawable.ic_thread_overflow),
                         contentDescription = stringResource(R.string.cd_more_actions),
-                        modifier = Modifier.size(BarGlyphSize),
+                        modifier = Modifier.size(width = 6.dp, height = BarGlyphSize).offset(y = (-4).dp),
+                        tint = MaterialTheme.colorScheme.primary,
                     )
                 }
                 MarkdownReaderMenu(
@@ -473,7 +479,7 @@ private fun MarkdownReaderMenu(
     onOpenInApp: () -> Unit,
     onSaveToDevice: () -> Unit,
 ) {
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, modifier = Modifier.testTag("markdown-reader-menu")) {
         listOf(
             MarkdownCopyFormat.MARKDOWN to R.string.markdown_reader_copy_markdown,
             MarkdownCopyFormat.PLAIN_TEXT to R.string.markdown_reader_copy_plain_text,
