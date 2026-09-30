@@ -456,7 +456,7 @@ private fun ReaderCodeBlock(
                 .heightIn(min = minimumHeight)
                 .testTag("reader-code-panel")
                 .semantics { contentDescription = copyDescription },
-        shape = RoundedCornerShape(8.dp),
+        shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         Text(
