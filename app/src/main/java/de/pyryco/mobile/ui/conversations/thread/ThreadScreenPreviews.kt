@@ -113,7 +113,7 @@ private fun ThreadScreenHistoryDeadEndPreview() {
     HistoryTailPreview(ThreadHistoryTail.DeadEnd)
 }
 
-/** #815: the permission prompt in the shared mobile modal container, with a non-default option armed. */
+/** #1306: the permission request inline at the newest end of its thread, grant ticked and a non-default armed. */
 @Preview(name = "Permission prompt — light", showBackground = true, widthDp = 412, heightDp = 892)
 @Preview(
     name = "Permission prompt — dark",
@@ -123,10 +123,15 @@ private fun ThreadScreenHistoryDeadEndPreview() {
     uiMode = Configuration.UI_MODE_NIGHT_YES,
 )
 @Composable
-private fun PermissionModalOverlayPreview() {
+private fun PermissionRequestInlinePreview() {
     PyrycodeMobileTheme {
-        PermissionModalOverlay(
-            open =
+        ThreadScreen(
+            state = ThreadUiState("preview", "Client planning", isPromoted = false),
+            onBack = {},
+            onSendMessage = {},
+            connectionState = ConnectionState.Connected,
+            onRetry = {},
+            modalState =
                 ModalUiState.Open(
                     modalId = "preview",
                     modalClass = "permission",
@@ -150,8 +155,6 @@ private fun PermissionModalOverlayPreview() {
                     alwaysAllowRules = listOf("Bash(ls:*)", "Read(/home/pyry/project/**)"),
                 ),
             armedOptionId = "allow_once",
-            onOption = {},
-            onCancel = {},
             alwaysAllowAccepted = true,
         )
     }

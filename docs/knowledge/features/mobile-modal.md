@@ -66,8 +66,10 @@ internal fun MobileGateModal(
 )
 ```
 
-Added in #815 for the [permission-modal overlay](permission-modal-overlay.md#the-overlay-open), the shell's
-first caller whose actions are not a fixed Cancel/OK pair but a server-supplied option list. `MobileModal`
+Added in #815 for the [permission-modal overlay](permission-modal-overlay.md#the-inline-request-open), the
+shell's first caller whose actions are not a fixed Cancel/OK pair but a server-supplied option list.
+[#1306](permission-modal-overlay.md#what-1306-moved) later moved that overlay off this gate entirely, into
+`ThreadScreen`'s own message list — `CreateChatModal` is this gate's current caller. `MobileModal`
 and `MobileGateModal` both delegate to one private `MobileModalShell(title, onDismissRequest, gate: Boolean,
 modifier, error, footer: @Composable RowScope.(dismiss: () -> Unit) -> Unit, content)` — `gate` is the only
 switch between them, so the editing shell's behaviour cannot drift by editing the gate path and vice versa.

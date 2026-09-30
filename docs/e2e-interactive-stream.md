@@ -895,15 +895,19 @@ fails the rest of the run.
 
 The permission-answer scenario opens two conversations (A, B) on the answer daemon. A prompt raised in A
 (`ANSWER_PERMISSION_PROMPT`, a `python3` command whose output token the prompt text never contains) shows
-in A's dialog with every decision-context field the frame carries and `always_allow.offered = true`;
-leaving A for B shows no dialog, and returning to A shows it again. Allowing it with don't-ask-again
-ticked closes the dialog, and claude's reply — read from the peer's recorded `assistant_delta` frames, not
-the phone's own bubble (see #981's diagnosis above) — carries the token. `assertBashRan` additionally
-requires a `Bash` `tool_use` and a non-error `tool_result` for it in the frames the peer recorded for that
-turn, so a reply claude could compute or recall (`966 * 7`) cannot pass in place of the command actually
-running. The same prompt sent again in A shows no second `modal_shown` and still passes `assertBashRan`,
-proving the grant held; the same prompt sent in B (whose session holds no grant) shows the dialog again,
-and the peer allowing it closes the dialog with no phone tap. Three real claude turns. The question-answer
+in A's stream with every decision-context field the frame carries and `always_allow.offered = true`.
+[#1306](knowledge/features/permission-modal-overlay.md) moved the request out of its own dialog and into
+`ThreadScreen`'s message stream (following #1305's question batch below); the scenario now also ticks the
+session-grant checkbox and arms Allow before leaving A for B — B shows no card and no A prompt text, and
+returning to A restores the checked grant but clears the arm, so allowing needs two fresh taps rather than
+one. Allowing it with don't-ask-again ticked removes the card, and claude's reply — read from the peer's
+recorded `assistant_delta` frames, not the phone's own bubble (see #981's diagnosis above) — carries the
+token. `assertBashRan` additionally requires a `Bash` `tool_use` and a non-error `tool_result` for it in the
+frames the peer recorded for that turn, so a reply claude could compute or recall (`966 * 7`) cannot pass in
+place of the command actually running. The same prompt sent again in A shows no second `modal_shown` and
+still passes `assertBashRan`, proving the grant held; the same prompt sent in B (whose session holds no
+grant) shows the card again, and the peer allowing it removes it with no phone tap. Three real claude turns.
+The question-answer
 scenario opens one conversation and sends a prompt asking claude to call `AskUserQuestion` with two labels
 and then echo the chosen one back (`QUESTION_PROMPT`); the phone answers one label from the batch and
 claude's reply names it and not the other, then the peer answers the batch shown for a repeat of the same
@@ -2717,6 +2721,20 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — updated:** [#1306](https://github.com/pyrycode/pyrycode-mobile/issues/1306) adapted
+  `InteractiveStreamE2ETest.interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` to the inline
+  permission surface (see [Permission-modal overlay](knowledge/features/permission-modal-overlay.md), which
+  moved the request out of its dialog into `ThreadScreen`'s own message stream). `promptDialog` /
+  `inPromptDialog` / `awaitPromptDialog` / `awaitNoPromptDialog` now key on the request card instead of the
+  dialog's Cancel; `awaitReadPrompt` was rescoped mid-build to the card specifically, because scoping by "an
+  ancestor holding Cancel" would also match the phone's own message naming the same file once the request is
+  inline. The scenario now additionally ticks the session-grant checkbox and arms Allow in conversation A
+  before leaving for B (no card, no A prompt text there), returns to A (the grant checkbox restored, the arm
+  cleared), and confirms allowing needs two fresh taps — proving the phone's answer, A's session grant and
+  B's peer resolution all survive the inline move. The selector and `LIVE_MINIMUM` are unchanged at 43 — this
+  is an adaptation of an existing method, not a new one. The 2026-09-30 full live suite executed 43 methods,
+  failed 0 and skipped 0, including this passing method; this was not a separate focused live run.
 
 - **Coverage — added:** [#1286](https://github.com/pyrycode/pyrycode-mobile/issues/1286)
   adds `InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
