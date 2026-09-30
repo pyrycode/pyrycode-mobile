@@ -17,7 +17,8 @@ private val TOOL_PATH_FIELDS: Set<String> = setOf("file_path", "path", "notebook
 
 /** The one tool whose input reads better description-first. Compared exactly, so `BashOutput` is not it. */
 private const val BASH_TOOL_NAME = "Bash"
-private val BASH_SUBJECT_FIELDS: List<String> = listOf("description", "command")
+private const val BASH_DESCRIPTION_FIELD = "description"
+private val BASH_SUBJECT_FIELDS: List<String> = listOf(BASH_DESCRIPTION_FIELD, "command")
 
 /** How many trailing path segments survive shortening: three folders plus the file name. */
 private const val KEPT_PATH_SEGMENTS = 4
@@ -38,6 +39,41 @@ internal fun formatToolElapsed(seconds: Int): String {
         val remainder = (absolute % SECONDS_PER_MINUTE).toString().padStart(2, '0')
         "$sign${minutes}m ${remainder}s"
     }
+}
+
+/** Which collapsed header a tool row draws, and its text. */
+internal sealed interface ToolHeadline {
+    /** The description alone, beside the chevron. */
+    data class Described(
+        val description: String,
+    ) : ToolHeadline
+
+    /** [lead] in monospace, then [subject] when it is non-empty. */
+    data class Simple(
+        val lead: String,
+        val subject: String,
+    ) : ToolHeadline
+}
+
+/**
+ * The collapsed header, as desktop's `toolHeadlineRuns` (#1315). The tool is tested before the key: only
+ * [BASH_TOOL_NAME] with a description is [ToolHeadline.Described], and `Bash` with only a command leads
+ * with the command and no subject. Every other call, including an `Agent` or `Task` carrying a
+ * description and a `Bash` call with neither field, keeps its name and [toolRowSubject].
+ */
+internal fun toolHeadline(
+    toolName: String,
+    inputFields: Map<String, String>,
+    input: String,
+): ToolHeadline {
+    if (toolName == BASH_TOOL_NAME) {
+        val shellField = firstNonEmpty(inputFields, BASH_SUBJECT_FIELDS)
+        if (shellField != null) {
+            val (key, value) = shellField
+            return if (key == BASH_DESCRIPTION_FIELD) ToolHeadline.Described(value) else ToolHeadline.Simple(value, "")
+        }
+    }
+    return ToolHeadline.Simple(toolName, toolRowSubject(toolName, inputFields, input))
 }
 
 /**
