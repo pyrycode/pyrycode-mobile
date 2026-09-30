@@ -323,6 +323,9 @@ internal fun PyryNavHost(
             LaunchedEffect(vm) {
                 vm.hostNavigationEvents.collect { navController.openThread(it) }
             }
+            LaunchedEffect(vm) {
+                vm.lastHostUnpaired.collect { navController.returnToWelcome() }
+            }
             ChannelListScreen(
                 hostState = hostState,
                 onEvent = { event ->
@@ -590,6 +593,9 @@ internal fun PyryNavHost(
         ) {
             val vm = koinViewModel<SettingsViewModel>()
             val pushNotifications by vm.pushNotifications.collectAsStateWithLifecycle()
+            LaunchedEffect(vm) {
+                vm.lastHostUnpaired.collect { navController.returnToWelcome() }
+            }
             val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
             SettingsScreen(
                 pushNotifications = pushNotifications,
@@ -809,6 +815,17 @@ private fun HostWorkspaceRepository(
 ) {
     val repository = remember(factory, serverId) { serverId?.let { factory.repository(it) } }
     CompositionLocalProvider(LocalWorkspacePickerRepository provides repository, content = content)
+}
+
+/**
+ * Welcome as the only entry, after an unpair left no saved host (#1323): nothing paired stays behind it,
+ * so Back leaves the app, as a launch with no host starts there.
+ */
+private fun NavHostController.returnToWelcome() {
+    navigate(Routes.WELCOME) {
+        popUpTo(graph.id) { inclusive = true }
+        launchSingleTop = true
+    }
 }
 
 private fun NavHostController.openThread(target: HostConversationTarget) {
