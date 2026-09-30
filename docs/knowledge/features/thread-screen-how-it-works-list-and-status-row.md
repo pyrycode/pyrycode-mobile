@@ -139,6 +139,73 @@ arriving at the newest end is composed and visible; a reader who dragged away wi
 arrival; and a scroll refused under a resting finger costs only that one row — the next arrival after the
 finger lifts is still followed.
 
+### Inline question rows and the newest-end reveal (#1305)
+
+[`AskUserQuestion`'s held batch](question-batch-modal.md) moved from its own `Dialog` into this
+`LazyColumn` in #1305. `questionState?.let { pending -> ... }` emits, immediately before the message-row
+`itemsIndexed(...)` block (so, under `reverseLayout = true`, drawn **below** every message row — the
+newest content on screen), an actions item, one item per question in original order, then a title item;
+see [Question batch modal § Rendering](question-batch-modal.md#rendering) for what each renders and the
+`"question-actions:$generation"` / `"question:$generation:$it"` / `"question-title:$generation"` key
+scheme. The empty-thread branch (`!state.hasMessages && state.queuedMessages.isEmpty()`, § *Empty-state
+branch* below) also gates on `questionState == null`, so a thread whose only content is a pending batch
+renders the `LazyColumn` with the prompt rows, not `EmptyThreadState`.
+
+**Prompt rows count as a fixed prefix in the oldest-end history predicate (§ below), never as loaded
+history.** `val promptRowCount = questionState?.let { it.batch.questions.size + 2 } ?: 0` (`+2` for the
+actions and title items) is added to `rows.size` for `historyRowCount`, and a new `hasHistoryRows =
+rows.isNotEmpty()` — **not** `historyRowCount > 0` — gates the demand instead. Without `hasHistoryRows`, a
+thread with a pending batch and zero loaded message rows would have `historyRowCount > 0` true from the
+prompt rows alone and could fire `onDemandOlderHistory()` against a thread that has no history to page.
+
+**Prompt arrival and edits are excluded from the streaming auto-pin.** The streaming size-driven
+`LaunchedEffect(hasStreamingMessage, listState)` (§ *Streaming auto-scroll* above) gained
+`questionState != null` to its key and its early-return guard — while a batch is mounted, the streaming pin
+does not re-anchor on item 0's size, because item 0 while a batch is held is the prompt actions row, not a
+streaming message bubble, and its field sizing (the Other `BringIntoViewRequester`, the IME) must not drag a
+history reader back to the bottom.
+
+**A second, dedicated effect reveals a newly arrived batch to a reader already at the newest end** — the
+\#981 newest-row pin (above) only follows a new *message* row, and prompt rows insert below the anchored
+first visible row the same way a new message row would, landing off-screen until something scrolls back to
+index 0. A verifier pass on #1305 found this gap live: an operator watching the newest end saw only the
+composer's "Waiting for answers" status reading (below) until they thought to scroll further. The fix
+mirrors #981's shape: `val promptGeneration by rememberUpdatedState(questionState?.generation)`, then
+`LaunchedEffect(listState) { snapshotFlow { promptGeneration }.drop(1).filterNotNull().collect { ... } }`.
+`drop(1)` skips the effect's own first collected value, for the same reason #981's does — a configuration
+change must not pull a reader who scrolled away back to the newest end on recreation — and a `null`
+generation (dismissal) is filtered out rather than driving a scroll. On a genuine new generation, the
+effect scrolls to index 0 **only** when the reader has not scrolled away **and** is still at the newest
+end: `firstVisibleItemScrollOffset == 0 && (firstVisibleItemIndex == 0 || first?.key == newestRowKey)`. The
+key half of that check — not just `userScrolledAway == false` — covers a reader moved into history
+programmatically (`userScrolledAway` only flips on real `NestedScrollSource.UserInput`, so it alone cannot
+see that move); the existing history-anchor regression test is exactly that case and stays unchanged.
+`scrollToItem(0)` reveals the actions row and the latest question, not the title first: under reverse
+layout, scrolling to the title of a batch taller than the viewport would need a second post-measure scroll,
+and a batch that already fits the viewport already shows its title at `scrollToItem(0)`. The same
+`try { scrollToItem(0) } catch (e: CancellationException) { ensureActive() }` pattern #981 uses tolerates a
+resting-finger mutation refusal without the effect silently dying for the rest of the composition (§ *The
+newest-row pin* above explains why the catch is required, not defensive). Covered by
+`ThreadInlineQuestionTest.arrival_reveals_the_batch_to_a_reader_at_the_newest_end`
+(`app/src/sharedTest/.../thread/`); `arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand`
+in the same file covers the complementary case — a reader scrolled into history is not pulled forward by
+batch arrival or edits, and prompt rows do not move the oldest-end predicate.
+
+**The composer status band gets a fourth, static reading.** `ThreadStatusArea` takes a new
+`waitingForAnswers: Boolean` parameter (`questionState != null && connectionState ==
+ConnectionState.Connected`) that, when true, renders a fixed "Waiting for answers" row (`R.string.question_waiting_for_answers`,
+the question glyph tinted `primary`) in place of the usual `StatusReading` dispatch — this is what the
+verifier's Rework 3 absence check additionally waits to disappear (`awaitNoInlineQuestion`, see
+[Real-claude e2e coverage](../../e2e-interactive-stream.md)), since it is always composed and not subject to
+the lazy list's offscreen-vs-absent ambiguity the title and row tags have.
+
+**`QuestionPromptProtection`** (the `FLAG_SECURE` / obscured-touch guard the old dialog window used to own)
+is mounted directly by `ThreadScreen` — `if (questionState != null) QuestionPromptProtection()` — right
+after the screen's `rememberSaveable` block, so it is active for the composition's whole life while any
+batch is held, independent of which prompt rows happen to be visible. See [Question batch modal §
+Rendering](question-batch-modal.md#rendering) for the shared-ownership mechanism this guards against
+overlapping navigation transitions.
+
 ### The oldest-end history demand (#777)
 
 `requestHistory` ([remote repository § the walk that finally calls
@@ -166,7 +233,9 @@ visible index is `rowCount` with the indicator mounted and `rowCount - 1` withou
 either way, so `distinctUntilChanged` sees no edge and issues no second demand. #782 moved this from
 `state.items.size` to `rows.size` for the identical reason it moved the alpha cutoff's chronological
 index: an unmatched queued row can sit at the newest end of `rows` without a corresponding entry in
-`items`, and the oldest-end predicate must count what the list actually renders.
+`items`, and the oldest-end predicate must count what the list actually renders. **#1305** added a further
+`promptRowCount` on top of `rows.size` and replaced the `historyRowCount > 0` gate with a dedicated
+`hasHistoryRows` — see § *Inline question rows and the newest-end reveal* above.
 
 **This needed a 30-row regression test to catch, not a 3-row one.** The first version of the demand-loop
 test used three short rows and passed even against the deliberately-broken `totalItemsCount` predicate —
