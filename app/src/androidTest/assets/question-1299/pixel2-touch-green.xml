@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="2.729" timestamp="2026-09-30T06:20:24" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" tests="1" failures="0" errors="0" skipped="0" time="2.521" timestamp="2026-09-30T06:20:24" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="question_components_use_figma_control_geometry_and_keep_other_editable" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="2.521" />
+  </testsuite>
+</testsuites>

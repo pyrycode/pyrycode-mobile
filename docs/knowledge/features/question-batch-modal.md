@@ -120,19 +120,30 @@ placement irrelevant, drawing it beside the screen instead of through it can be 
 
 `QuestionBatchModal` is stateless — `(state: QuestionModalState, onEvent: (QuestionModalEvent) -> Unit,
 modifier: Modifier = Modifier)` — and keeps no selection state of its own; every edit round-trips through
-`onEvent` back into the VM. Each question renders as a tertiary `labelMedium` header line above a
-`background`-filled, `primaryContainer`-bordered card (Figma `347:6913`): the question text, then its
-options, then an Other row and its `OutlinedTextField` (test tag `question_other_<index>`, built from the
-index only — never from claude-authored text). A single-choice question's rows sit in one
-`selectableGroup()` with `Role.RadioButton`; a multiple-choice question's rows use `Role.Checkbox`
-independently. All claude-authored text (header, question, option label, option description) renders
-through plain `Text` with no `maxLines` — the shell's scrolling column already handles overflow by height,
-so wrapping is free and no clamp is needed the way [`DebugBundleModal`](mobile-modal-callers.md#callers) needed one
-for a fixed-height row.
+`onEvent` back into the VM. The question content follows the dark Figma questionnaire `347:6697`,
+question labels `347:6861`, radio rows `347:6476`, and checkbox rows `347:6771` (inspected
+2026-09-30). A tertiary exported glyph sits in a 14 × 16 dp slot beside the uppercase `labelSmall`
+header. The `background` card uses a 1 dp `primaryContainer` border and the 6 dp `modalControl`
+shape. Question text uses `bodyMedium`; choice labels and descriptions use `labelMedium`.
 
-Known deviation from Figma `347:6913` (verifier finding, non-blocking, unowned): the reference draws a
-small tertiary glyph before each question's header line; the shipped `QuestionBlock` renders the header
-text alone. No ticket currently owns adding it.
+Whole single-choice rows sit in one `selectableGroup()` with `Role.RadioButton`; multiple-choice
+rows use `Role.Checkbox` independently. The visible tertiary selectors are 20 dp, with a dot for a
+selected radio and the exported check vector for a selected checkbox. Rows retain a 48 dp touch
+floor even though the wider Figma component example has a tighter vertical rhythm. Other is part
+of its choice row: its `BasicTextField` has the index-only `question_other_<index>` tag and an
+independent 48 dp focus region around the inset 6 dp `modalFieldContainer` well. The focus region
+matters because a row's selection target does not enlarge a separately focusable field.
+
+All daemon-authored text (header, question, option label, option description) renders through plain
+`Text` with no `maxLines` or link interpretation; the shared scrolling shell lets long text wrap.
+The [shared mobile shell](mobile-modal.md) (`533:2369`) retains its secure window and Cancel/Continue
+footer. The questionnaire is a 699 dp component example with Previous, not a full-screen mobile
+question reference: **no full-screen 412 × 892 question reference exists**. The 412 × 892 emulator
+[render](../../../app/src/androidTest/assets/question-1299/emulator-question-batch-412x892.png)
+and [labelled 1 dp-to-1 px overlay](../../../app/src/androidTest/assets/question-1299/component-overlay-1dp-1px.png)
+compare component geometry rather than claim a frame match. The secure window blanks system
+screenshots, so the capture test draws that same dialog view with static fixture text into a
+bitmap while preserving `FLAG_SECURE`.
 
 ## Testing
 
@@ -158,6 +169,11 @@ text alone. No ticket currently owns adding it.
   view for inset measurements. A timeout reports the process windows' focus states. The managed API 33
   full UI run for #1235 executed all 78 tests, including this case, with no failures or skips; the
   intermittent external-dialog recovery path did not occur in that run.
+  The #1299 device cases also assert selector and glyph bounds, a near-edge tap in the Other field's
+  own focus region, retained draft after choice changes, inert long text at 1.5× font scale, and
+  last-field/footer reachability with a visible IME at compact width. The retained focused report
+  records six executed tests, zero failures and zero skips; the API 35 capture report records one
+  executed test, zero failures and zero skips.
 
 ## Related
 
