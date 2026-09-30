@@ -462,6 +462,66 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * The status band keeps a reading for the whole running turn (#1311, rung 3). [TOOL_THEN_TEXT_PROMPT]
+     * makes real claude run a read-only `echo` and then answer in text, so one turn walks thinking, a tool
+     * call and the `responding` text that used to leave the band dark. From the tap on Send the band is
+     * sampled inside `waitUntil` until the turn has been seen busy and then idle. "Busy" is the stop control,
+     * which shows exactly while `isBusy` holds and the composer is empty. A reading is the status glyph
+     * (thinking, working, running tool, stalled) or a compaction or api-retry reading. Any busy sample
+     * without one is recorded, and the list must be empty.
+     *
+     * Always-on: it asserts an absence over the whole turn rather than catching a transient label, so no
+     * timing decides the outcome. Non-vacuity: at least one busy sample must have been taken.
+     *
+     * **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val stopControl = hasContentDescription(context.getString(R.string.cd_thread_interrupt))
+        val compactingReading = context.getString(R.string.cd_thread_compacting)
+        // Every api-retry description, counted or not, opens with this agent-named phrase.
+        val retryPrefix = context.getString(R.string.cd_thread_api_retry_unknown).substringBefore(",")
+        val otherReading =
+            SemanticsMatcher("a compaction or api-retry reading") { node ->
+                node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().any {
+                    it == compactingReading || it.startsWith(retryPrefix)
+                }
+            }
+        awaitChannelList()
+        awaitConnected()
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(TOOL_THEN_TEXT_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+
+        var busySamples = 0
+        var seenBusy = false
+        val darkSamples = mutableListOf<Int>()
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            val busy = composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+            if (busy) {
+                seenBusy = true
+                busySamples++
+                val glyph =
+                    composeTestRule
+                        .onAllNodes(hasTestTag(STATUS_GLYPH_TEST_TAG), useUnmergedTree = true)
+                        .fetchSemanticsNodes()
+                        .isNotEmpty()
+                val other = composeTestRule.onAllNodes(otherReading).fetchSemanticsNodes().isNotEmpty()
+                if (!glyph && !other) darkSamples += busySamples
+            }
+            seenBusy && !busy
+        }
+
+        assertTrue("the turn was never seen busy, so nothing was sampled", busySamples > 0)
+        assertTrue("busy samples with no status reading: $darkSamples of $busySamples", darkSamples.isEmpty())
+    }
+
+    /**
      * Thinking-spinner twin of the ping happy path (#482, Layer 3): a **pure-reasoning** prompt makes
      * **real claude think for a beat**, and we assert the thinking spinner is displayed while the turn is
      * active. The render path (`turn_state(thinking)` →
@@ -6329,6 +6389,15 @@ class InteractiveStreamE2ETest {
 
         // Claude's verbatim shell-tool name; renders in the tool-row header (#388) in all three states.
         const val TOOL_NAME = "Bash"
+
+        // #1311: a tool call and then a text answer in one turn, so the band is sampled across thinking, a
+        // running tool and the responding text. `echo` is read-only and auto-allowed, as in TOOL_PROMPT.
+        const val TOOL_THEN_TEXT_PROMPT =
+            "Run this exact shell command with your tools: echo pyry1311. Then reply with one short sentence " +
+                "saying what it printed."
+
+        // The status glyph ThinkingIndicator draws for thinking, working, a running tool and a stall.
+        const val STATUS_GLYPH_TEST_TAG = "thinking_glyph"
 
         // Negative control: a real, distinct tool name the read-only echo prompt never asks claude to
         // use, so the matcher's selectivity is what is proven (not a nonsense string).

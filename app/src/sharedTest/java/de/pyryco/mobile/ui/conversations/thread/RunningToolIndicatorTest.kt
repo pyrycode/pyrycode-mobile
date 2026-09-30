@@ -130,8 +130,9 @@ class RunningToolIndicatorTest {
         composeTestRule.onNodeWithContentDescription(thinkingDescription).assertIsDisplayed()
     }
 
+    // #1311: a busy turn in the responding phase keeps "Working…" up after a denial; it used to go empty.
     @Test
-    fun denial_removesTheLabel_andARespondingBandGoesEmpty() {
+    fun denial_removesTheLabel_andARespondingBandReadsWorking() {
         state = stateOf(toolRow("t1", "Write", ToolCallStatus.Running, elapsedSeconds = 40))
         setThreadScreen()
         composeTestRule.onNodeWithText("Running Write… 40s").assertIsDisplayed()
@@ -141,6 +142,7 @@ class RunningToolIndicatorTest {
         composeTestRule.onNodeWithText("Running Write… 40s").assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription(runningDescription("Write")).assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
+        composeTestRule.onNodeWithText(context.getString(R.string.thread_working_label)).assertIsDisplayed()
     }
 
     @Test

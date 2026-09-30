@@ -118,6 +118,9 @@ class ScriptedThreadHarness(
                     // #459: subscribe isBusy in the same composition pass as state/isThinking so its
                     // `replay = 0` upstream is live before any push* (awaitReady's top-bar proof covers it).
                     isBusy = vm.isBusy.collectAsState().value,
+                    // #1311: the stall arm and the local-send window.
+                    isStalled = vm.isStalled.collectAsState().value,
+                    localSendPending = vm.localSendPending.collectAsState().value,
                     onInterrupt = vm::onInterrupt,
                 )
             }
@@ -262,6 +265,26 @@ class ScriptedThreadHarness(
         isError: Boolean,
         resultSummary: String,
     ) = pump.push(toolResultEnvelope(conversationId, turnId, toolUseId, isError, resultSummary))
+
+    /** Script one `tool_progress` — claude's elapsed reading for the open call [toolUseId] (#812). */
+    fun pushToolProgress(
+        turnId: String,
+        toolUseId: String,
+        elapsedSeconds: Int,
+    ) = pump.push(toolProgressEnvelope(conversationId, turnId, toolUseId, elapsedSeconds))
+
+    /** Script one `tool_denied` — claude refused the call [toolUseId], which leaves the open set (#811). */
+    fun pushToolDenied(
+        turnId: String,
+        toolUseId: String,
+        toolName: String,
+    ) = pump.push(toolDeniedEnvelope(conversationId, turnId, toolUseId, toolName))
+
+    /**
+     * Script one `stall` onset (#395). The wire has no clearing edge: the next live-session event clears it
+     * through `StallProjection`. Projects a retained `MutableStateFlow`, like [pushCompacting].
+     */
+    fun pushStall() = pump.push(stallEnvelope(conversationId))
 
     /**
      * Script one `session_transition` — folds a `ThreadItem.SessionBoundary` into the thread in arrival
@@ -575,6 +598,58 @@ private fun toolResultEnvelope(
             MobileJson.parseToJsonElement(
                 """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","is_error":$isError,"result_summary":"$resultSummary"}""",
             ),
+    )
+
+/** A `tool_progress` envelope `{conversation_id, turn_id, tool_use_id, elapsed_seconds}` (#812). */
+private fun toolProgressEnvelope(
+    conversationId: String,
+    turnId: String,
+    toolUseId: String,
+    elapsedSeconds: Int,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "tool_progress",
+        ts = TS,
+        payload =
+            buildJsonObject {
+                put("conversation_id", conversationId)
+                put("turn_id", turnId)
+                put("tool_use_id", toolUseId)
+                put("elapsed_seconds", elapsedSeconds)
+            },
+    )
+
+/** A `tool_denied` envelope (#811) with a fixed harness reason. */
+private fun toolDeniedEnvelope(
+    conversationId: String,
+    turnId: String,
+    toolUseId: String,
+    toolName: String,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "tool_denied",
+        ts = TS,
+        payload =
+            buildJsonObject {
+                put("conversation_id", conversationId)
+                put("turn_id", turnId)
+                put("tool_use_id", toolUseId)
+                put("tool_name", toolName)
+                put("decision_reason_type", "other")
+                put("decision_reason", "denied by the harness")
+                put("message", "The user denied this call.")
+            },
+    )
+
+/** A `stall` envelope `{conversation_id}` (#395): onset only. */
+private fun stallEnvelope(conversationId: String): Envelope =
+    Envelope(
+        id = 1L,
+        type = "stall",
+        ts = TS,
+        payload = buildJsonObject { put("conversation_id", conversationId) },
     )
 
 /**

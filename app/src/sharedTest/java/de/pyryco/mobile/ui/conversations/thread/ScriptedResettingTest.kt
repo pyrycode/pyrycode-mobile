@@ -112,16 +112,20 @@ class ScriptedResettingTest {
         composeRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
     }
 
-    // AC #1 ladder: api-retry, a "something may be wrong" signal, is never hidden by a reset.
+    // #1311 reordered the ladder to desktop's: the reset the user started outranks a retry inside it.
     @Test
-    fun apiRetry_winsOverResetting() {
+    fun resetting_winsOverApiRetry() {
         harness.pushResetting(active = true, phase = "wrapping_up", handoff = "pending")
         awaitDisplayed(wrappingUp)
 
         harness.pushApiRetry(active = true, current = 3, total = 10)
+        composeRule.waitForIdle()
 
+        awaitDisplayed(wrappingUp)
+        composeRule.onNodeWithContentDescription(string(R.string.cd_thread_api_retry, 3, 10)).assertDoesNotExist()
+
+        harness.pushResetting(active = false)
         awaitDisplayed(string(R.string.cd_thread_api_retry, 3, 10))
-        composeRule.onNodeWithContentDescription(wrappingUp).assertDoesNotExist()
     }
 
     private fun string(
