@@ -26,6 +26,7 @@ class HostEditorController(
     appPreferences: AppPreferences,
 ) {
     val state: StateFlow<HostEditorState?>
+    val lastHostUnpaired: Flow<Unit>
     fun open(serverId: String)
     fun submitName(name: String)
     fun requestUnpair()
@@ -103,7 +104,17 @@ is a KDoc obligation on the caller rather than a compiler-checked one (flagged a
   failure is not surfaced — the pairing is already gone, so reporting a failure there would claim the
   host is still paired when it is not. No connection-close call: `pairedServers` resolves to
   [`ObservablePairedServerStore`](paired-server-store.md#wiring--usage), whose revision bump
-  `RelayConnectionRegistry` reconciles by closing exactly the removed id's bundle.
+  `RelayConnectionRegistry` reconciles by closing exactly the removed id's bundle. Last, after every
+  cleanup above, it re-reads `pairedServers.list()`; an empty result sends once on `lastHostUnpaired`
+  (#1323, matching desktop's `runUnpairServer` re-read + `onLastServerUnpaired`), which the owning
+  destination collects in [`PyryNavHost`](navigation.md#returning-to-welcome-after-the-last-host-1323)
+  to return to Welcome with the back stack cleared. A thrown read is logged
+  (`event=host_last_check_failed`) and treated as hosts remaining — staying on the current screen is
+  the safe default, since navigating on a spurious signal would be worse than not navigating on a real
+  one. The read runs only after `onHostRemoved`'s registry reconciliation and the workspace clear
+  finish, deliberately: an observer on `hostConnections`/`revision` going non-empty → empty would fire
+  while those are still running, and popping the owning destination then would cancel its
+  `viewModelScope` mid-cleanup.
 - `dismiss()` is the only unguarded transition — Cancel, Close and Back all land here, publish `null`,
   and write nothing. Unlike the other five it needs no guard: `null` is the state a completing write
   lands on anyway, so there is no pending transition for it to strand.
@@ -132,11 +143,15 @@ a relay address to reach the shell's live region from either caller.
   `HostEditorController(viewModelScope, pairedServers, appPreferences)` and keeps its six public
   methods (`openHostEditor`, `submitHostName`, `requestHostUnpair`, `declineHostUnpair`,
   `confirmHostUnpair`, `dismissHostEditor`) as one-line delegations, so the screen's event dispatch and
-  `HostChannelListViewModelTest`'s existing proofs are untouched by the move.
+  `HostChannelListViewModelTest`'s existing proofs are untouched by the move. Also exposes
+  `lastHostUnpaired` (#1323) as a one-line delegation, collected by the `channel_list` destination.
 - [`SettingsViewModel`](settings-viewmodel.md) — the second owner (#751). Constructs its own
   `HostEditorController` the same way and delegates the same five modal-driving methods, plus its own
   `openOwnerHostEditor()` — the one caller-specific transition, gating on the destination's captured
-  owner rather than a row id (see that document for the gate).
+  owner rather than a row id (see that document for the gate). Also delegates `lastHostUnpaired`
+  (#1323), collected by the `settings` destination, though since #1239 the Settings modal draws no host
+  editor and so has no control that can currently reach `confirmUnpair` — the delegation exists for the
+  day the Settings host editor returns, or is removed with it.
 - `ChannelListScreen` and `SettingsScreen` both call `HostEditorModal(state = …, onSubmit = …, …)`
   directly, replacing what was, before #751, an inline `EditHostModal` call in `ChannelListScreen` with
   its own copy of the failure-string resolution — see [Shared mobile modal § Callers](mobile-modal-callers.md#callers).
@@ -171,6 +186,10 @@ No new test file — the machine is proven by its two callers' own suites:
   the selected host's — the security review's "never on selection" claim, proven end to end. Landed a
   cycle late (`2d53a1d`) alongside restating `assertBadgedRowIs`, which had asserted the owner's row was
   the *inert* one — the property #751 deliberately reverses.
+- `UnpairNavigationTest` (#1323) — see
+  [Navigation § Returning to Welcome after the last host](navigation.md#returning-to-welcome-after-the-last-host-1323)
+  for the full case list; it proves `lastHostUnpaired` end to end through the production graph from both
+  owners, which neither this controller's unit coverage nor either owner's `*ViewModelTest` can reach.
 
 ## Related
 
