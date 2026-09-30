@@ -65,7 +65,7 @@ interface RelayConnectionController {
  * [ConnectionState]) — no strings beyond `secondsRemaining`, `DaemonAbsent` / `PairingRejected`
  * are static objects carrying no relay-supplied text, and `UpdateRequired`'s minimum comes only from the
  * sealed daemon error, validated in [recordClientMinimum]. `PairedServer`, the relay URL, the transport,
- * the minimum, and `Down`'s code/reason/cause are never logged; the 4404 / 4401 / 4426 / 4412 branches
+ * the minimum, and `Down`'s code/reason/cause are never logged; the 4404 / 4401 / 4426 / 4412 / 4421 branches
  * read `Down.code` only to compare it, never to log it, and no branch reads the close reason.
  */
 class RelayConnectionSupervisor(
@@ -157,6 +157,7 @@ class RelayConnectionSupervisor(
             var daemonAbsent = false
             var pairingRejected = false
             var updateRequired = false
+            var protocolMismatch = false
             val stableReached = AtomicBoolean(false)
             var stabilityTimer: Job? = null
             try {
@@ -177,7 +178,8 @@ class RelayConnectionSupervisor(
                             // #308 seam: a 4404 "no server" close (relay reachable, no daemon
                             // registered) branches to DaemonAbsent; a 4401 invalid-token or 4426
                             // handshake-failed close is a rejected pairing that halts the redial
-                            // (#841), and a 4412 app-too-old close halts it too (#1008); every other
+                            // (#841), a 4412 app-too-old close halts it too (#1008), and so does a 4421
+                            // protocol-mismatch close, at Offline as desktop does (#1324); every other
                             // code and a null dial failure stay on the uniform retry path. Read-only:
                             // the code is compared against the constants, never logged (no-log contract).
                             daemonAbsent = event.code == RELAY_NO_DAEMON_CLOSE
@@ -185,6 +187,7 @@ class RelayConnectionSupervisor(
                                 event.code == RELAY_TOKEN_REJECTED_CLOSE ||
                                 event.code == HANDSHAKE_FAILED_CLOSE
                             updateRequired = event.code == CLIENT_UPDATE_REQUIRED_CLOSE
+                            protocolMismatch = event.code == PROTOCOL_MISMATCH_CLOSE
                         }
                     }
                     // events completes after the single terminal Down (#306), ending collect.
@@ -204,6 +207,7 @@ class RelayConnectionSupervisor(
             when {
                 pairingRejected -> haltUntilRetry { RelayLinkStatus.PairingRejected }
                 updateRequired -> haltUntilRetry { RelayLinkStatus.UpdateRequired(dialMinimum) }
+                protocolMismatch -> haltUntilRetry { RelayLinkStatus.Offline }
                 else -> backoff(attempt, daemonAbsent)
             }
         }
@@ -295,6 +299,9 @@ class RelayConnectionSupervisor(
 
         /** The daemon's close for an app build below its configured minimum (pyrycode#2576). */
         const val CLIENT_UPDATE_REQUIRED_CLOSE = 4412
+
+        /** The daemon's close for a protocol mismatch: unknown `type`, bad `v`, or a malformed envelope. */
+        const val PROTOCOL_MISMATCH_CLOSE = 4421
     }
 }
 
