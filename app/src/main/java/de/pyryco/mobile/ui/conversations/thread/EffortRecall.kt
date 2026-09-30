@@ -37,10 +37,10 @@ fun AppPreferences.asRememberedEffortStore(): RememberedEffortStore =
 
 /**
  * The once-per-opening recall of the remembered effort (#686, desktop #1549 / #1554), one per
- * [ThreadViewModel]. It decides once, when the first usable settings reading and the model menu are
- * both present, and a decision to recall hands [start] the write, which is the thread's normal effort
- * write path. A tap on effort before that point cancels it. Nothing here retries: only a new opening,
- * meaning a new instance, tries again.
+ * [ThreadViewModel]. It waits for usable settings, an addressable session and a model menu offering the
+ * remembered level. A saved effort or an effort tap ends the recall; otherwise it hands [start] one
+ * write through the thread's normal effort write path. A started write is never retried: only a new
+ * opening, meaning a new instance, tries again.
  *
  * Main-thread only, like the rest of the view model: [offer] runs in the `state` collector and every
  * other entry point on `viewModelScope`.
@@ -111,7 +111,7 @@ internal class EffortRecall(
         // same rule `forLiveSession` applies to what is shown. An empty live id is the summary's
         // placeholder and proves nothing.
         if (config.writable && liveSessionId.isNotEmpty() && liveSessionId != config.sessionId) return
-        decided = true
+        decided = remembered == null || config.savedEffort.isNotEmpty()
         // Nothing remembered is the fresh-install case and every inert (demo, test) opening: silent.
         val level = remembered ?: return
         val skipped =
@@ -125,6 +125,7 @@ internal class EffortRecall(
             RelayLog.d { "event=effort_recall outcome=$skipped" }
             return
         }
+        decided = true
         RelayLog.d { "event=effort_recall outcome=started" }
         write = start(config.sessionId, level)
     }
