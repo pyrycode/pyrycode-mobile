@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -176,7 +175,7 @@ private fun AlwaysAllowOffer(
                 modifier =
                     Modifier
                         .size(20.dp)
-                        .border(2.dp, MaterialTheme.colorScheme.tertiary, RoundedCornerShape(4.dp))
+                        .border(2.dp, MaterialTheme.colorScheme.tertiary, MaterialTheme.shapes.extraSmall)
                         .testTag("always_allow_box"),
                 contentAlignment = Alignment.Center,
             ) {

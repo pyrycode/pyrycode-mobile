@@ -71,6 +71,7 @@ Pending for the documentation stage: update `docs/knowledge/features/permission-
 
 ## Revisions
 
+- 2026-09-30: Verifier review found `AlwaysAllowOffer` using a literal 4 dp checkbox corner. Its border now uses `MaterialTheme.shapes.extraSmall`, preserving the Figma geometry and the existing checkbox target.
 - 2026-09-30: Verifier review found `ModalOptionButton` using a literal 6 dp action shape despite the existing `MaterialTheme.shapes.modalControl` token. All three option states now use that shared token; the geometry and decision behavior remain the same.
 - 2026-09-30: The device capture uses Compose's rendered `paneTitle` surface because the gate's `SecureOn` policy intentionally masks ordinary system screenshots. On the managed API 33 device it produced nonblank 412 × 892 pixels for unchecked, checked and armed states. The compact 320 dp Robolectric test passed at 1.5× text scale; the existing shell's compact overflow and real IME device tests passed without a layout change.
 - 2026-09-30: A stronger compact-width test with long decision labels found `ModalOptionButton` clipping text within Material's button row. The option label now takes the available row width, wraps and stays centered. The initial short-label test did not expose this failure.
