@@ -41,17 +41,14 @@ private fun ThreadStatusArea(
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
         return
     }
-    val hasReading = apiRetry != ApiRetryStatus.NotRetrying || resetting != null || isCompacting ||
-        turnOutcome != null || isThinking || runningTool != null
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter)
-            .then(if (hasReading) Modifier.heightIn(min = 28.dp) else Modifier),
+        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         reading(Modifier.weight(1f))
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            NoticePill(text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount), isError = false, onClick = onTasksClick, shadowElevation = 0.dp)
+            NoticePill(text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount), isError = false, onClick = onTasksClick, modifier = Modifier.sizeIn(minWidth = 104.dp, minHeight = 24.dp), shadowElevation = 0.dp)
         }
     }
 }
@@ -117,9 +114,15 @@ moves that edge) at zero tasks, again once the pill raises it by exactly 32dp (t
 column's 8dp gap), and again after it returns to zero, asserting the second zero-count measurement equals
 the first.
 
-When a reading and task pill coexist, the reading stays 24dp high and is centered in a 28dp minimum band;
-that extra height preserves the task pill's 412 × 892 top-right anchor. With only the pill, the row keeps
-its intrinsic height. The fixed 16dp arc for retry, compaction and Reset came from device capture: a
+When a reading and task pill coexist, their content sets the band's height: both occupy 24dp at normal
+text scale, placing the pill at (288, 696)–(392, 720) in the 412 × 892 dark frame. Only this caller
+sets a 104 × 24dp minimum pill size; larger labels and text scales can grow. The former 28dp combined-band
+minimum raised the pill and composer by 4dp. A Robolectric label-width measurement was about 2dp wider
+than the managed device's, so a tolerant screen assertion missed the narrower device pill; the local
+minimum width closes that observed gap. The [labelled emulator comparison](../../../app/src/androidTest/assets/task-pill-1296/comparison-412x892.png)
+shows the result against Figma. With only the pill, the row keeps its intrinsic height. Physical pointer
+checks cover the pill, adjacent reading and composer targets; a device check covers the real keyboard and
+Actions menu with a visible pill. The fixed 16dp arc for retry, compaction and Reset came from device capture: a
 Material indeterminate arc could shrink to a barely visible stroke at one animation frame while a bounds
 assertion still passed. Native-graphics tests sample visible pixels over multiple frames, and the compact
 device capture checks the two-line outcome label beside the task pill. See [capture evidence](../../../app/src/androidTest/assets/thread-activity-1209/comparison.txt).
