@@ -551,6 +551,10 @@ interface ConversationRepository {
      * over [AttachmentUploadLimit.MAX_BYTES] are refused before anything is sent. Uploads on one
      * connection run one at a time. Never throws except on cancellation.
      *
+     * [onProgress] receives the count of chunks handed to the socket and the total (#1326), 1..N in order,
+     * once per chunk and never after the upload has settled; a failed chunk is not reported. It runs on
+     * the upload's coroutine and must not throw.
+     *
      * Default throws, like [requestSystemPrompt].
      */
     suspend fun uploadAttachment(
@@ -558,6 +562,7 @@ interface ConversationRepository {
         bytes: ByteArray,
         filename: String,
         mimeType: String,
+        onProgress: (sentChunks: Int, totalChunks: Int) -> Unit = { _, _ -> },
     ): AttachmentUploadResult = error("uploadAttachment is not implemented for this ConversationRepository")
 
     /**

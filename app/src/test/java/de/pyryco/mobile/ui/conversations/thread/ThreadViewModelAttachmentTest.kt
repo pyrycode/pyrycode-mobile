@@ -70,6 +70,7 @@ class ThreadViewModelAttachmentTest {
             bytes: ByteArray,
             filename: String,
             mimeType: String,
+            onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
         ): AttachmentUploadResult {
             beforeUpload()
             uploads += filename to bytes.decodeToString()

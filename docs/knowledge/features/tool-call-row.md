@@ -2,9 +2,10 @@
 
 Row primitive rendering a single `ToolCall` payload in the conversation thread surface.
 Two states — **collapsed** (default) and **expanded** — toggled by tapping anywhere on the row.
-The dark mobile variants use a bordered outline card: a supplied description selects the described
-header and chevron; otherwise the row shows the verbatim tool name and a subject picked from its
-input fields. Both variants retain a status slot distinguishable without colour. Expanded, the row
+The dark mobile variants use a bordered outline card: only `Bash` with a description selects the
+described header and chevron; every other row, including `Bash` with just a command, draws the
+simple header (see [Collapsed](#collapsed) below). Both variants retain a status slot
+distinguishable without colour. Expanded, the row
 shows supplied input, resolved output and, for a denied call, claude's reason. It is routed from
 [`MessageBubble`](./message-bubble.md)'s `Role.Tool` arm via a null-safe `?.let`.
 
@@ -21,12 +22,20 @@ Consumes a [`ToolCall`](./data-model.md) instance — the payload unwrapped from
 `MessageBubble`'s `Role.Tool` arm — and renders it as a full-width, 6dp-rounded outline card with a
 single `M3` click target spanning the whole tile.
 
-**Collapsed (default).** A nonempty `inputFields["description"]` appears verbatim as a body-medium
-description with a small right chevron. Without it, the simple header shows `toolName` in tertiary
-monospace (capped at 160dp) and the [subject](#subject-and-elapsed-text), if nonempty, in body-medium
-text; it has no chevron. Both variants keep the [trailing status](#trailing-status). The text
-ellipsizes within compact width while status stays visible. The whole row remains the accessible
-expand/collapse target, including the simple variant without a visible chevron.
+**Collapsed (default).** `toolHeadline` (`ToolRowFormat.kt`, #1315) picks the header, testing the
+tool name before any field: only `Bash` (exact match — `BashOutput` does not qualify) with a
+nonempty `inputFields["description"]` takes the described header — the description verbatim as a
+body-medium string with a small right chevron. `Bash` with a nonempty `command` and no description
+instead takes the simple header with the command as its monospace lead and no subject, so a shell
+command occupies the whole row. Every other case — a non-`Bash` call (including `Agent`/`Task` with
+a description), `BashOutput`, or a `Bash` call with neither field — takes the simple header with
+`toolName` as the lead and the [subject](#subject-and-elapsed-text), if nonempty, in body-medium
+text; it has no chevron. **The 160dp lead cap (`ToolNameMaxWidth`) applies only when a subject
+follows the lead** — it exists to leave room for the subject, so a lone command or tool name with no
+subject ellipsizes at the row's own available width instead. Both variants keep the
+[trailing status](#trailing-status). The text ellipsizes within compact width while status stays
+visible. The whole row remains the accessible expand/collapse target, including the simple variant
+without a visible chevron.
 
 **Expanded.** The described chevron points down. Below the header, a height-bounded
 (`heightIn(max = 320.dp)`), internally scrolling `Column` shows only nonempty supplied sections — see
@@ -100,6 +109,10 @@ did not guarantee the designed row height. The status is unweighted; the headlin
 width and ellipsizes. In the described variant, the chevron sits beside the description within that
 weighted group. The simple variant omits it. Consecutive cards retain 12dp bottom spacing.
 
+`HeaderRow` itself no longer inspects `inputFields["description"]` (#1315) — it calls `toolHeadline`
+once and switches on the returned `ToolHeadline` sealed type (`Described` vs. `Simple`), mirroring
+desktop's `toolHeadlineRuns` in `toolHeadline.ts`.
+
 ### Subagent step description (since #896)
 
 When `subagentDepth > 0`, the clickable `Column` above gains a `Modifier.semantics { contentDescription =
@@ -123,16 +136,25 @@ user gets the level number, and neither depends on colour (the AC's requirement)
 
 ### Subject and elapsed text
 
-Both rules live in `ToolRowFormat.kt`, mirrored from desktop's `toolHeadline.ts` / `shortenPath.ts` /
+These rules live in `ToolRowFormat.kt`, mirrored from desktop's `toolHeadline.ts` / `shortenPath.ts` /
 `ConversationScreen.tsx`'s `formatToolElapsed`, and are pure functions with no Compose import so the
 composer's status area ([`ThinkingIndicator`](thinking-indicator.md#the-running-tool-897), #897) can call
 `formatToolElapsed` directly:
 
 ```kotlin
+internal fun toolHeadline(toolName: String, inputFields: Map<String, String>, input: String): ToolHeadline
 internal fun toolRowSubject(toolName: String, inputFields: Map<String, String>, input: String): String
 internal fun shortenToolPath(path: String): String
 internal fun formatToolElapsed(seconds: Int): String
 ```
+
+**`toolHeadline`** (#1315) is `HeaderRow`'s single entry point, mirroring desktop's
+`toolHeadlineRuns`: it tests `toolName == "Bash"` (exact — `BashOutput` does not qualify) before
+looking at any field. When `Bash` and `description` is nonempty it returns
+`ToolHeadline.Described(description)`. When `Bash` and `command` is nonempty with no description it
+returns `ToolHeadline.Simple(lead = command, subject = "")`. Every other case, including a `Bash`
+call with neither field, falls through to `ToolHeadline.Simple(lead = toolName, subject =
+toolRowSubject(...))`.
 
 **`toolRowSubject`.** For `toolName == "Bash"` (exact match — `BashOutput` does not qualify), the first
 non-empty of `description`, `command`; otherwise the first non-empty of `TOOL_SUBJECT_FIELDS =
@@ -144,6 +166,11 @@ picked from `TOOL_PATH_FIELDS = file_path, path, notebook_path` is shortened thr
 (that field is not persisted) and always falls back to the `input` précis — this is the fallback path's
 production trigger, not just a defensive default. Desktop's third rule (fall back to any single-line
 field before the précis) is **not** ported; this ticket's contract stops at the four listed above.
+**Since #1315, `toolHeadline` only reaches this function's `Bash` branch when both `description` and
+`command` are empty** — `toolHeadline` itself already handles the two `Bash`-with-a-field cases, so
+in production this function's own `Bash`-specific lookup is effectively dead code, reachable only
+through the précis fallback. It is left as-is (the plan scoped this ticket to `toolHeadline`, not a
+`toolRowSubject` rewrite).
 
 **`shortenToolPath`.** Splits on `/`, drops empty segments (so a leading `/` does not count as one);
 `≤ 4` segments left unchanged, otherwise `.../` + the last four joined by `/`. The shortened string is
@@ -282,14 +309,22 @@ rendering doesn't ripple into the data-layer fake.
   `formatToolElapsed` at `0, 12, 59, 60, 65, -65` (plus `-5`, `3600`); `toolRowSubject`'s preferred
   order, the `Bash` override and its own fallback to `command`, empty-value skipping, path shortening
   scoped to path fields only, and précis fallback for an empty/unknown-keys map; `shortenToolPath` at
-  the 4-segment boundary and with a leading slash.
+  the 4-segment boundary and with a leading slash. `toolHeadline` (#1315) is pinned separately: `Bash`
+  with a description (`Described`), `Bash` with a command and no description (`Simple`, empty
+  subject), a non-`Bash` call with a description (`Simple`, name + subject), `BashOutput` with both
+  fields (not treated as `Bash`), and `Bash` with neither field (falls back to `toolRowSubject`'s
+  précis).
 - **`ToolCallRowTest`** lives in `app/src/sharedTest`, not `app/src/androidTest` — see
   [development-verification § where a screen test goes](./development-verification.md#where-a-screen-test-goes).
   Covers each status's own content description (and that `Denied` does *not* also show
   `cd_tool_failed`), the elapsed text at a running reading vs. no reading vs. a stale reading on a
   resolved row, simple/described selection, chevron presence, supplied-only sections, inert
   noncopyable content, the Denied section's message, compact enlarged-text reachability and the
-  expanded-stays-expanded-through-an-in-place-update case.
+  expanded-stays-expanded-through-an-in-place-update case. Since #1315 the simple/described coverage
+  is: a `Bash` command alone leads with the command and shows no `Bash` text and no chevron; a
+  non-`Bash` call (`Agent`) with a description keeps its name and subject with no chevron;
+  `BashOutput` with both `command` and `description` is not treated as `Bash`; and a call with
+  neither field keeps the name and précis.
 - **Compose testing gotcha (#895 lesson):** `onNodeWithTag(TOOL_ELAPSED_TAG)` *finds* the elapsed
   `Text` node fine even though it sits inside the row's `clickable` `Column` (a merge-descendants
   semantics node), but `.assertIsDisplayed()` on that lookup fails with "not displayed" although the
@@ -305,6 +340,13 @@ rendering doesn't ripple into the data-layer fake.
   this named method as a passing testcase; no separate focused live run was needed.
   The scripted `tool` / `tool-failed` scenarios still use the kept running/failed descriptions.
   The elapsed reading depends on transient heartbeats and remains under component coverage.
+  A tool-row header rule change can break this coverage in the other direction too: #1315's rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_toolStepRunsThenCompletes`
+  found its resolved row by matching the text `Bash`, and the `tool` fixture's `Bash` call carries
+  only a `command` field with no `description` — so under the new `toolHeadline` rule the row stopped
+  showing `Bash` at all. The assertion now matches on the fixture's command (`echo hello`, the
+  `TOOL_COMMAND` constant) instead, which stays visible whether the daemon sends input fields (the
+  command lead) or not (the `Bash`-name-plus-précis fallback).
 - **Visual evidence:** [`tool-row-1208` captures](../../../app/src/androidTest/assets/tool-row-1208/capture-context.txt)
   pair actual 412 × 892 API 33 emulator frames with the inspected Figma nodes and a labelled
   comparison/difference image. The 320dp, 1.5× font-scale capture includes a scrolled result.
