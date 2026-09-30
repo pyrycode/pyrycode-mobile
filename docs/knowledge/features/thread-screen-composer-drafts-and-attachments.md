@@ -95,6 +95,8 @@ notice. `ComposerAttachmentStrip` renders the list as a `LazyRow` between the st
 when non-empty, thumbnailing an image or falling back to the file tile. `attachmentsSending` blocks a
 second `sendMessage` and hides remove controls while `sendWithAttachments` runs.
 
+The pending tiles follow Figma's [Input attachment (390:7181)](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=390-7181) and [Image preview (390:7159)](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=390-7159), inspected 2026-09-30: 45 × 60dp image crops or outlined file pages, 6dp image corners, 12dp between visible tiles, and a 20dp remove disc overlapping each top-right corner by 5dp with a 2dp shadow. The file page and close paths already match the Figma vectors. The file page and short type label use theme primary on the fixed dark canvas; Figma's inverse-primary tint made the 12sp label too faint. The [412 × 892 side-by-side](../../../app/src/androidTest/assets/attachment-1290/side-by-side-412x892.png) and [labelled overlay and difference](../../../app/src/androidTest/assets/attachment-1290/attachment-detail-overlay-difference.png) show the geometry and the intentional brighter tint. A screenshot taken as soon as Compose is idle may still show a file fallback while the provider loads an image thumbnail on IO; wait for the thumbnail pixels before judging the crop.
+
 **A paste joins the same path ([#934](https://github.com/pyrycode/pyrycode-mobile/issues/934)).** Pasting an
 image into the composer, or a keyboard's image insert, hands the field image content URIs through
 [`Modifier.contentReceiver`](thread-input-bar.md#image-paste-into-the-field-934) instead of the picker's

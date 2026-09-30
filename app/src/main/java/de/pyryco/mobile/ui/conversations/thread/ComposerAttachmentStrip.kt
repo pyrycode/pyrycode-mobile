@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -155,6 +156,7 @@ private fun RemoveControl(
         modifier =
             Modifier
                 .size(RemoveSize)
+                .shadow(2.dp, CircleShape)
                 .clickable(role = Role.Button, onClick = onRemove),
         contentAlignment = Alignment.Center,
     ) {
@@ -180,17 +182,19 @@ private fun FileTile(
     displayName: String,
     modifier: Modifier = Modifier,
 ) {
+    // The Figma inverse-primary page and 12sp type label fall below text contrast on the dark thread.
+    val tint = MaterialTheme.colorScheme.primary
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Icon(
             painter = painterResource(R.drawable.ic_attachment_file),
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.inversePrimary,
+            tint = tint,
             modifier = Modifier.size(TileWidth, TileHeight),
         )
         Text(
             text = attachmentTypeLabel(displayName) ?: stringResource(R.string.thread_attachment_file),
             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.inversePrimary,
+            color = tint,
             textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Clip,

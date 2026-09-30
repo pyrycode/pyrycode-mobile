@@ -82,9 +82,7 @@ private val TypeLabelFoldOffset = 14.dp
 private val LoadingIndicatorSize = 24.dp
 private val LoadingIndicatorStroke = 2.dp
 
-// The design paints the file field in `Schemes/inverse-primary`. Same value and reasoning as
-// `MessageMetaRow`'s META_CONTENT_ALPHA (#644): M3 has no de-emphasis role inside a filled container, so
-// the bubble's own content colour at this alpha stands in for it in both bubbles and both schemes.
+// The same bubble-relative tint keeps file text, loading and errors readable on both message roles.
 private const val ATTACHMENT_CONTENT_ALPHA = 0.80f
 private const val IMAGE_PLACEHOLDER_ALPHA = 0.12f
 
@@ -349,6 +347,7 @@ private fun AttachmentFileRow(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Figma's inverse-primary is too dim for 12sp text on either fixed dark bubble.
     val tint = LocalContentColor.current.copy(alpha = ATTACHMENT_CONTENT_ALPHA)
     Row(
         modifier = Modifier.testTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).then(modifier),
