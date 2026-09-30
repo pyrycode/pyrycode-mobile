@@ -21,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -463,6 +464,9 @@ internal fun PyryNavHost(
                 // #1050: composed again means the operator is back on the thread, so a linked note's reader has
                 // closed. Its reader remembered the note, so dropping it here cannot empty that reader.
                 LaunchedEffect(vm) { vm.releaseLinkedMarkdown() }
+                // #1306: leaving this screen, by Back or by opening another thread on top, drops a half-made
+                // allow; the ViewModel keeps the session-grant draft for the same request.
+                DisposableEffect(vm) { onDispose { vm.onConversationLeft() } }
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
                         when (event) {
@@ -498,8 +502,8 @@ internal fun PyryNavHost(
                     archiveErrors = vm.archiveErrors,
                     changeWorkspaceErrors = vm.changeWorkspaceErrors,
                     sessionSettingsErrors = vm.sessionSettingsErrors,
-                    onModalOption = vm::onModalOption,
-                    onModalCancel = vm::onModalCancel,
+                    onModalOption = { modalId, optionId -> vm.onModalOption(optionId, modalId) },
+                    onModalCancel = { modalId -> vm.onModalCancel(modalId) },
                     alwaysAllowAccepted = alwaysAllowAccepted,
                     onAlwaysAllowChanged = vm::onAlwaysAllowChanged,
                     onDropQueued = vm::onDropQueued,

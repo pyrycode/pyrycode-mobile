@@ -26,6 +26,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
@@ -3060,8 +3061,10 @@ class InteractiveStreamE2ETest {
      * the stdio prompt surface on, the one path that offers don't-ask-again. The phone pairs with it by code
      * `--allow-remote-permissions`; it is the only host where the phone may answer. A peer paired the same way
      * records every frame and allows the last prompt.
-     *  * **Only the asking thread shows it.** Chat A's command raises a prompt the phone draws in A with its
-     *    decision context, and not in chat B.
+     *  * **Only the asking thread shows it.** Chat A's command raises a prompt the phone draws inline in A with
+     *    its decision context, and not in chat B.
+     *  * **Leaving keeps the grant, not the arm (#1306).** Ticking don't-ask-again and arming Allow in A, then
+     *    leaving for B and back, restores the tick and clears the arm, so allowing takes two new taps.
      *  * **The phone's allow reaches A's claude.** Ticking don't-ask-again and allowing on the phone ends A's
      *    turn, and claude's reply carries the command's output, which no prompt contains.
      *  * **Don't-ask-again holds.** The same command in A runs again with no second prompt.
@@ -3102,29 +3105,38 @@ class InteractiveStreamE2ETest {
                 (shown.alwaysAllow as? JsonObject)?.get("offered")?.jsonPrimitive?.contentOrNull,
             )
 
-            // 2. AC-1: the prompt belongs to A. B's thread draws none; A's draws it again.
+            // 2. #1306 AC-2: in A, tick don't-ask-again and arm Allow (a non-default option arms first), inline.
+            val offer = hasText(string(R.string.modal_always_allow_label)) and hasClickAction() and inPromptDialog()
+            tapInPrompt(offer)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(offer and isOn()).fetchSemanticsNodes().isNotEmpty()
+            }
+            val allow = hasText(shown.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
+            val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
+            tapInPrompt(allow)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
+            }
+
+            // 3. AC-1: the prompt belongs to A. Leaving A for B shows no A prompt there; returning to A restores
+            //    the ticked grant but not the arm, so allowing takes two new taps.
             leaveThread()
             openChatRow(nameB)
             composeTestRule.waitForIdle()
             SystemClock.sleep(SCOPE_SETTLE_MS)
             composeTestRule.onAllNodes(promptDialog()).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasText(shown.prompt, substring = true)).assertCountEquals(0)
             leaveThread()
             openChatRow(nameA)
             awaitPromptDialog()
-
-            // 3. AC-1 / AC-2: tick don't-ask-again, then allow on the phone (a non-default option arms first).
-            val offer = hasText(string(R.string.modal_always_allow_label)) and hasClickAction()
-            composeTestRule.onNode(offer).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(offer and isOn()).fetchSemanticsNodes().isNotEmpty()
-            }
-            val allow = hasText(shown.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
-            composeTestRule.onNode(allow).performClick()
-            val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
+            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(offer)
+            composeTestRule.onNode(offer).assertIsOn()
+            composeTestRule.onAllNodes(armed).assertCountEquals(0)
+            tapInPrompt(allow)
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
             }
-            composeTestRule.onNode(allow).performClick()
+            tapInPrompt(allow)
 
             // 4. AC-1: the daemon took the phone's answer for this prompt, A's turn ends, and claude's reply
             //    carries the command's output. The dialog leaves the thread.
@@ -5176,22 +5188,36 @@ class InteractiveStreamE2ETest {
             "missing instrumentation arg '$key' — scripts/e2e-emulator.sh passes it once the answer daemon (#966) is up"
         }
 
-    /** A modal's Cancel, which every open prompt dialog draws. */
-    private fun promptDialog(): SemanticsMatcher = hasText(modalCancel) and hasClickAction()
+    /** The inline permission request's card (#1306), which holds its prompt, context, grant offer and options. */
+    private fun promptDialog(): SemanticsMatcher = hasTestTag(PERMISSION_CARD_TEST_TAG)
 
-    /** A node inside the open prompt dialog, the window holding its Cancel. */
-    private fun inPromptDialog(): SemanticsMatcher = hasAnyAncestor(hasAnyDescendant(promptDialog()))
+    /** A node inside the open request's card. */
+    private fun inPromptDialog(): SemanticsMatcher = hasAnyAncestor(promptDialog())
 
+    /** The request's lazy rows can be merely offscreen, so bring the card into view before judging it present. */
     private fun awaitPromptDialog() {
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            runCatching { composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(promptDialog()) }.isSuccess &&
+                composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private fun awaitNoPromptDialog(failure: String) {
         try {
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isEmpty() }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                listOf(PERMISSION_CARD_TEST_TAG, "permission-request-title", "permission-request-cancel").all { tag ->
+                    composeTestRule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isEmpty()
+                }
+            }
         } catch (e: ComposeTimeoutException) {
             throw AssertionError(failure, e)
         }
+    }
+
+    /** Scroll the thread to [matcher] inside the open request, then tap it with a real pointer. */
+    private fun tapInPrompt(matcher: SemanticsMatcher) {
+        composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(matcher)
+        composeTestRule.onNode(matcher).performTouchInput { click(center) }
     }
 
     private fun awaitInlineQuestion() {
@@ -5324,12 +5350,13 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Wait until the open thread shows a permission prompt that names this Read: a node in the prompt's
-     * dialog, the one holding its Cancel, whose text carries the file's [baseName] or the tool name `Read`.
-     * The phone's own message names both, so the dialog scope is what makes the match the prompt's.
+     * Wait until the open thread shows a permission prompt that names this Read: a node in the inline request's
+     * card (#1306) whose text carries the file's [baseName] or the tool name `Read`. The phone's own message
+     * names both, so the card scope is what makes the match the prompt's.
      */
     private fun awaitReadPrompt(baseName: String) {
-        val inPrompt = hasAnyAncestor(hasAnyDescendant(hasText(modalCancel) and hasClickAction()))
+        awaitPromptDialog()
+        val inPrompt = inPromptDialog()
         val namesRead =
             SemanticsMatcher("names the Read of $baseName") { node ->
                 val text =
@@ -5344,8 +5371,8 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(namesRead and inPrompt).fetchSemanticsNodes().isNotEmpty()
             }
         } catch (e: ComposeTimeoutException) {
-            val shown = composeTestRule.onAllNodes(hasText(modalCancel) and hasClickAction()).fetchSemanticsNodes().size
-            throw AssertionError("no permission prompt naming the Read appeared on the phone (prompts with Cancel: $shown)", e)
+            val shown = composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().size
+            throw AssertionError("no permission prompt naming the Read appeared on the phone (request cards: $shown)", e)
         }
     }
 
@@ -6290,6 +6317,9 @@ class InteractiveStreamE2ETest {
     }
 
     private companion object {
+        /** The inline permission request's card (#1306), from `permissionRequestItems`. */
+        const val PERMISSION_CARD_TEST_TAG = "permission-request-card"
+
         // Tool-use determinism lever (#481): a direct imperative to RUN a shell command reliably makes
         // real claude use its shell tool (claude names it "Bash"), where "what does X output?" might be
         // answered inline. `echo <fixed string>` is read-only, side-effect-free, and harmless on the
