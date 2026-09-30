@@ -99,7 +99,11 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    ([#861](https://github.com/pyrycode/pyrycode-mobile/issues/861) — the re-ask now waits for the
    repository to be published rather than firing on socket-up), with no reopen in between — each of the
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
-   peer's offline turn.
+   peer's offline turn. The **Offline Retry** scenario (#1286 —
+   `InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`)
+   instead fails the harness-owned daemon, observes the actual Offline pill in the open thread,
+   restores the same host and taps Retry before passive reconnect can run, then renders a new
+   real-Claude reply. One Claude turn; see [Offline Retry proof](#offline-retry-proof).
    Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981 / #966 / #967 / #955 / #1016 / #1020 / #1050 / #1021 / #1017)**
    historically ran a **curated set of thirty-seven scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
@@ -194,6 +198,9 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    claude is swapped for #642's scripted `fakeclaude` backend replaying raw stream-json fixture bytes.
    No real claude, **zero claude turns**; re-running back-to-back uses the same stream contract. Run it with
    `DETERMINISTIC=1` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4).
+   The `offline-retry` twin (#1286),
+   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`,
+   drives the same actual Offline state and pill tap, then renders a scripted reply in the seeded thread.
 5. **Broaden** — multi-delta stream render + thinking indicator **shipped (#454)**, tool-use steps
    (running → done, and failed) **shipped (#455, Layer 2c)**, reconnect continuity (reply survives a
    mid-turn drop) **shipped (#476, Layer 2b)**, and reconnect **ordering** (events buffered while
@@ -745,8 +752,9 @@ permission case had a settle-window assertion failure now diagnosed by
 remain ignored and excluded. #1249 restored two of the five Settings-dependent methods through the
 list toolbar; #1251 restored the channel method and #1252 replaced the Log data method with a
 host-backed archive proof. The remaining two Settings methods and two older workspace-switching
-methods stay excluded. With #1208's tool-use method, `scripts/e2e-emulator.sh` now lists 43
-runnable methods and `android-test-gate.py` requires 43 executed tests. Script tests check the floor and the
+methods stay excluded. With #1208's tool-use method and #1286's Offline Retry proof,
+`scripts/e2e-emulator.sh` now lists 44 runnable methods and `android-test-gate.py` requires
+44 executed tests. Script tests check the floor and the
 restored methods' explicit presence, as well as excluding ignored methods.
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
@@ -1246,6 +1254,31 @@ operator un-ignores to attempt the run and may promote it to always-on if a pure
 catchable window; otherwise it stays manual. See the
   [Assumptions](#assumptions-to-confirm-on-first-live-run) entry on the screen-sourced thinking window.
 
+### Offline Retry proof
+
+`InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
+(#1286, one real-Claude turn) keeps a fresh thread open while the harness stops its
+owned daemon. It observes the actual `offline_retry_target`, restores the same
+host identity, taps the displayed pill, requires that host's repository to recover
+and the pill to clear, then sends a new phone prompt and awaits its rendered reply.
+An intentional supervisor `close()` projects hidden Idle and cannot prove this
+path; the older offline-read scenario remains a separate cache/reconciliation proof.
+
+Recovery must precede passive reconnect. Both this method and its rung-4 twin keep
+the repository null and the pill visible immediately before the tap, and require
+repository recovery within 20 seconds of the sixth failed dial. Daemon restart,
+relay registration and the tap consume that same window; the capped backoff's
+24-second minimum lies beyond it. A timeout starting after restart or the tap can
+otherwise pass on an automatic dial even with a broken Retry callback.
+
+The fault can initially produce ordinary reconnect failures before `4404` daemon
+absence. `DaemonAbsent` still derives to UI Offline at the cap; requiring only
+`RelayLinkStatus.Offline` would miss it. Restart must wait for relay registration
+before Retry, or the requested dial can encounter daemon absence again. These
+scenarios exercise the existing lifecycle-checked exact-host action with a real
+failure, without injected UI connection state. Only the harness-owned daemon is
+stopped; pairing material remains in its private host storage.
+
 ### The render gap fixed first (#337)
 
 The test asserts streamed assistant *text* renders. Before this change there was nothing to assert:
@@ -1361,7 +1394,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 43 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 44 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1474,7 +1507,8 @@ when #1249 restored the two Archive methods. #1250 retired the peer workspace-la
 transient 41-method branch failed the live gate, leaving 40. #1251 restored the channel
 create-edit-archive method through reachable controls, bringing the selector and floor to 41.
 #1252 restored the host-backed diagnostic archive method, bringing both to 42. #1208 included the
-existing #481 tool-use method, bringing both to 43. `LIVE_MINIMUM` is
+existing #481 tool-use method, bringing both to 43. #1286 adds the Offline Retry
+method, bringing both to 44. `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -1529,7 +1563,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 43 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 44 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1553,7 +1587,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** The current curated selector passes 43 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 44 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The #481
 `InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread` now rides this full
@@ -1846,7 +1880,16 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
 | `tool-progress` (#950) | the status area's running-tool label adds claude's elapsed reading after a `tool_progress` heartbeat, then clears once the call's `tool_result` lands while the turn stays busy | `tool-progress-open.jsonl` + `tool-progress-result.jsonl` | **two** |
 | `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
+| `offline-retry` (#1286) | actual Offline pill retries the same host and a new reply renders | `ping.jsonl` | one |
 | `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
+
+`offline-retry` selects
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`
+and belongs to `python3 scripts/android-test-gate.py scripted-all`. The daemon and
+connection state stay real; only the recovered reply comes from `ping.jsonl`.
+It shares the [Offline Retry proof boundary](#offline-retry-proof) with rung 3.
+The [recorded full live result](#verification-status) establishes real-Claude
+recovery; it does not claim a full scripted-suite pass.
 
 ```bash
 DETERMINISTIC=1 PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh                      # ping
@@ -2009,7 +2052,15 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-09-30 (#1208).** The dispatcher ran the full
+**Current live verification — 2026-09-30 (#1286).** The dispatcher ran the full
+`python3 scripts/android-test-gate.py live` suite against `feature/1286` at
+`a6fec3f720`, merged with `origin/main` at `1119eb051d`: **44 executed, 44 passed,
+0 failed, 0 skipped**, exit 0. The fresh XML contains a passing, unskipped
+`InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
+testcase. This is full-suite evidence; no separate focused live run is claimed.
+See the [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1286#issuecomment-5914205992).
+
+**Earlier live verification — 2026-09-30 (#1208).** The dispatcher ran the full
 `python3 scripts/android-test-gate.py live` suite against `feature/1208` at `5c7283e264`,
 merged with `origin/main` at `ad946824a3`: **43 executed, 43 passed, 0 failed, 0 skipped**.
 The fresh XML includes a passing
@@ -2658,6 +2709,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — added:** [#1286](https://github.com/pyrycode/pyrycode-mobile/issues/1286)
+  adds `InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
+  to the full live selector, raising it and `LIVE_MINIMUM` to 44. The full live XML
+  passed this method with 44 executed, 0 failed and 0 skipped. Its runnable rung-4
+  twin is `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`,
+  selected by `offline-retry` and included in `scripted-all`. Run the twin with
+  `python3 scripts/android-test-gate.py scripted offline-retry`; it proves the real
+  outage and Retry path with `ping.jsonl`, using zero real-Claude turns. See
+  [Offline Retry proof](#offline-retry-proof) for the boundary that excludes passive recovery.
 
 - **Coverage — updated:** [#1296](https://github.com/pyrycode/pyrycode-mobile/issues/1296)
   extended `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`
