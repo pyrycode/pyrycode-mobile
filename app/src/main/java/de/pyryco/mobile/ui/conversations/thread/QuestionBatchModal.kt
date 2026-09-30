@@ -17,7 +17,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -42,6 +41,7 @@ import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.QuestionOption
 import de.pyryco.mobile.ui.components.MobileGateModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 import de.pyryco.mobile.ui.theme.modalFieldContainer
 import de.pyryco.mobile.ui.theme.modalFieldText
 
@@ -115,7 +115,7 @@ private fun QuestionBlock(
         }
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.small,
+            shape = MaterialTheme.shapes.modalControl,
             color = MaterialTheme.colorScheme.background,
             contentColor = MaterialTheme.colorScheme.onBackground,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.primaryContainer),
@@ -176,8 +176,10 @@ private fun QuestionBlock(
                                                 Modifier
                                                     .fillMaxWidth()
                                                     .heightIn(min = 32.dp)
-                                                    .background(MaterialTheme.colorScheme.modalFieldContainer, RoundedCornerShape(6.dp))
-                                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                    .background(
+                                                        MaterialTheme.colorScheme.modalFieldContainer,
+                                                        MaterialTheme.shapes.modalControl,
+                                                    ).padding(horizontal = 12.dp, vertical = 8.dp),
                                         ) {
                                             if (selection.otherText.isEmpty()) {
                                                 Text(
@@ -222,7 +224,7 @@ private fun ChoiceRow(
         verticalAlignment = Alignment.Top,
     ) {
         val tertiary = MaterialTheme.colorScheme.tertiary
-        val shape = if (multiSelect) RoundedCornerShape(4.dp) else CircleShape
+        val shape = if (multiSelect) MaterialTheme.shapes.extraSmall else CircleShape
         Box(
             modifier =
                 Modifier

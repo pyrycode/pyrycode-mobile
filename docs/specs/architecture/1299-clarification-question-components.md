@@ -72,6 +72,7 @@ Pending documentation stage: update `docs/knowledge/features/question-batch-moda
 
 ## Revisions
 
+- 2026-09-30 (verifier rework): Use the existing `Shapes.modalControl` 6 dp token for the question card and Other well, and M3 `Shapes.extraSmall` for the checkbox's 4 dp corners. This resolves PR #1301's shape-system finding without changing geometry or adding a theme slot.
 - 2026-09-30 (verifier rework): The Other `BasicTextField` itself needs a 48 dp minimum touch region; `ChoiceRow`'s 48 dp selection target does not enlarge the independently focusable field. Center the unchanged 32 dp minimum visible well inside the field's own 48 dp minimum layout, and prove field bounds plus a near-edge pointer tap on the device. This responds to the PR #1301 MUST FIX finding.
 - 2026-09-30: The real API 35 emulator returned a blank SurfaceFlinger screenshot because `MobileGateModal` sets `FLAG_SECURE`. The capture test draws that same dialog view directly into a bitmap with static fixture text; the secure window remains unchanged. The retained 412 × 892 render and labelled 1 dp-to-1 px component overlay are the visual evidence.
 - 2026-09-30: The visible 20 dp controls match the Figma components, while `ChoiceRow` retains the existing 48 dp row touch floor. The component example is wider and has no phone-sized question frame, so vertical row rhythm adapts to touch reachability. The exported Figma checkbox selector became a separate vector resource; no stock substitution is used.
