@@ -74,7 +74,9 @@ class ThreadViewModelRunningModelTest {
             val config = vm.state.value.runConfig
             assertEquals("claude-opus-4-7", config.running.model?.text)
             assertEquals("", config.selectedModel)
-            assertEquals(UNAVAILABLE_MODEL_LABEL, config.modelLabel)
+            // #1308: no menu row to mark, so the label names the announced family, never "Default".
+            assertEquals("claude-opus-4-7", config.announcedModel)
+            assertEquals("Opus", config.modelLabel)
         }
 
     @Test
@@ -106,6 +108,17 @@ class ThreadViewModelRunningModelTest {
             repo.facts.update { it - CONV }
 
             assertEquals(ThreadRunningModel(), vm.state.value.runConfig.running)
+            assertEquals("", vm.state.value.runConfig.announcedModel)
+        }
+
+    @Test
+    fun aCutAnnouncement_isNotAComparisonKey() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.announce(CONV, AnnouncedModel("claude-opus-4", truncated = true))
+            val vm = collectedVm(repo)
+
+            assertEquals("", vm.state.value.runConfig.announcedModel)
         }
 
     @Test

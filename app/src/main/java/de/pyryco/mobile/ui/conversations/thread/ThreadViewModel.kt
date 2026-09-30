@@ -295,8 +295,10 @@ class ThreadViewModel(
      * What claude says it runs (#891): the announced model and its build, each made inert here. Both #890
      * readings are per conversation and cleared by the repository on a session transition, so nothing
      * here tracks staleness. `SessionFacts.permissionMode` is claude's claim and is deliberately not read.
+     * The second value is the raw announced model (#1308), the inherited mark's comparison key; a cut value
+     * is incomplete and is left out, as [toChoice] leaves out a cut `resolvedModel`.
      */
-    private val runningModel: Flow<ThreadRunningModel> =
+    private val runningModel: Flow<Pair<ThreadRunningModel, String>> =
         combine(
             repository.observeAnnouncedModel(conversationId),
             repository.observeSessionFacts(conversationId),
@@ -307,7 +309,7 @@ class ThreadViewModel(
                     facts?.let {
                         reportedText(it.claudeCodeVersion, CLAUDE_CODE_VERSION_FIELD in it.truncatedFields.orEmpty())
                     },
-            )
+            ) to announced?.takeUnless { it.truncated }?.model.orEmpty()
         }
 
     /**
@@ -344,7 +346,7 @@ class ThreadViewModel(
             pendingPermission,
         ) { settings, menuAndAgent, model, effort, permission ->
             runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission)
-        }.combine(runningModel) { config, running -> config.copy(running = running) }
+        }.combine(runningModel) { config, (running, announced) -> config.copy(running = running, announcedModel = announced) }
             .combine(repository.observeContextUsage(conversationId)) { config, usage ->
                 config.copy(contextPercent = usage?.percentage)
             }
@@ -2246,6 +2248,7 @@ private fun runConfig(
         appliedEffort = settings?.effectiveEffort ?: EffectiveEffort.Unavailable,
         capabilities = settings?.capabilities,
         memorySearch = settings?.memorySearch ?: MemorySearchReport.Unknown,
+        agent = agent,
     )
 }
 
@@ -2299,8 +2302,8 @@ private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
 internal fun ModelMenuRow.dropdownLabel(agent: ConversationAgent): String =
     if (agent == ConversationAgent.Claude) value.modelFamily().ifEmpty { displayName.inert() } else displayName.inert()
 
-/** Desktop's dropdown family rule over the raw published value; used only for display. */
-private fun String.modelFamily(): String {
+/** Desktop's dropdown family rule over a raw identifier; used for display and the inherited mark (#1308). */
+internal fun String.modelFamily(): String {
     val bare = removePrefix("claude-")
     val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
     return head.replaceFirstChar { it.uppercaseChar() }.inert()

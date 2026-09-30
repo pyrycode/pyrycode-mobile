@@ -89,7 +89,8 @@ class ThreadViewModelAgentModelMenuTest {
 
             assertEquals(1, config.hiddenChoices)
             assertEquals(null, config.selectedChoice)
-            assertEquals(UNAVAILABLE_MODEL_LABEL, config.modelLabel)
+            // #1308: nothing marked, so the label names the default resolution's family.
+            assertEquals("Same", config.modelLabel)
         }
 
     @Test

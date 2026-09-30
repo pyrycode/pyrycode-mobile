@@ -2604,15 +2604,18 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A model change made on the phone reaches only its own conversation and survives a reopen (#545).
-     * Two chats are prepared through the host's own repository: `create_conversation` binds a session, so
-     * a chat nobody has messaged can take a write. X gets a model with effort levels, Y another model and a
-     * different effort. Every model comes from the menu the host publishes for X at run time, and none is
-     * named here. Neither chat has run claude, so no model change restarts one.
+     * A model change made on the phone reaches only its own conversation and survives a reopen (#545), and
+     * an inherited chat marks the model claude announced rather than the `default` row's resolution
+     * (#1308). Two chats are prepared through the host's own repository: `create_conversation` binds a
+     * session, so a chat nobody has messaged can take a write. X stays inherited and runs one real turn;
+     * the row its announcement maps to is computed here from the fresh published menu, by value, then
+     * `resolved_model`, then family, and no model radio may read "Default". A picked row then stays
+     * marked after leaving and reopening. Y gets its own model and effort, which X's pick must not touch.
+     * Every model comes from the menu the host publishes at run time, and none is named here.
      *
      * The "fresh reply" is a new `request_session_settings`, sent by [freshSettings] on every call.
      *
-     * **Zero real-claude turns.**
+     * **One real-claude turn.**
      */
     @Test
     fun interactiveTurn_modelChange_roundTripsAndStaysPerConversation() {
@@ -2625,26 +2628,38 @@ class InteractiveStreamE2ETest {
             val nameX = MODEL_X_NAME_PREFIX + stamp
             val chatX = prepareChat(nameX, originals)
             val chatY = prepareChat(MODEL_Y_NAME_PREFIX + stamp, originals)
+            assertTrue("X starts with a saved model", freshSettings(chatX.id).model in setOf("", INHERITED_MODEL_VALUE))
             val rows = usableRows(publishedMenu(chatX.id)).filter { it.value != INHERITED_MODEL_VALUE }
-            val rowA = checkNotNull(rows.firstOrNull { it.effortLevels.isNotEmpty() }) { "no published model offers effort levels" }
-            val rowB = checkNotNull(rows.firstOrNull { it.value != rowA.value }) { "the menu publishes fewer than two usable models" }
-            val target =
-                checkNotNull(rows.firstOrNull { it.value != rowA.value && it.value != rowB.value }) {
-                    "the menu publishes fewer than three usable models"
-                }
-            val effortX = rowA.effortLevels.first()
-            val effortY = rowB.effortLevels.firstOrNull { it != effortX }.orEmpty()
-            writeSettings(chatX.id, model = rowA.value, effort = effortX)
+            val rowB = checkNotNull(rows.firstOrNull()) { "the menu publishes no usable model" }
+            val effortY = rowB.effortLevels.firstOrNull().orEmpty()
             writeSettings(chatY.id, model = rowB.value, effort = effortY)
-            assertSaved(chatX.id, rowA.value, effortX)
             assertSaved(chatY.id, rowB.value, effortY)
 
-            // Open Run configuration from the footer and pick a published row. A fresh reading settles it.
+            // X inherits: after a real turn the mark follows what claude announced, not the default row.
             openChatRow(nameX)
-            awaitFooter(changeModelLabel, rowA.dropdownLabel(ConversationAgent.Claude))
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            val announced = announcedModel(chatX.id)
+            check(announced.isNotEmpty()) { "claude's announced model was cut" }
+            val marked = announcedRow(publishedMenu(chatX.id), announced)
+            if (marked != null) {
+                awaitFooter(changeModelLabel, marked.dropdownLabel(ConversationAgent.Claude))
+            } else {
+                val labels = rows.map { it.dropdownLabel(ConversationAgent.Claude) }.toSet()
+                awaitNoModelMarked(claudeFamily(announced).ifEmpty { UNAVAILABLE_MODEL_LABEL }, labels)
+            }
+            assertNoDefaultModelRadio()
+
+            // A pick is exact-value and is never moved by the announcement.
+            val target =
+                checkNotNull(
+                    rows.firstOrNull { it.value != marked?.value && it.value != rowB.value }
+                        ?: rows.firstOrNull { it.value != marked?.value },
+                ) {
+                    "the menu publishes no usable model other than the announced one"
+                }
             pickFooterOption(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
-
             assertEquals("X's saved model after the change", target.value, freshSettings(chatX.id).model)
             assertSaved(chatY.id, rowB.value, effortY)
 
@@ -5538,6 +5553,84 @@ class InteractiveStreamE2ETest {
                         } == 1
                 )
         }
+
+    /** The raw model claude announced for [conversationId]'s latest turn, as the phone's host repository holds it. */
+    private fun announcedModel(conversationId: String): String {
+        val repository = hostRepository()
+        val announced =
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeAnnouncedModel(conversationId).filterNotNull().first() } }
+        return announced.model.takeUnless { announced.truncated }.orEmpty()
+    }
+
+    /** Desktop's family rule, restated here so the scenario does not share the code it checks. */
+    private fun claudeFamily(identifier: String): String =
+        identifier
+            .removePrefix("claude-")
+            .takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
+            .replaceFirstChar { it.uppercaseChar() }
+
+    /**
+     * The Claude row an inherited conversation marks for [announced] (#1308): exact value, else
+     * `resolved_model`, else family. The first tier with any candidate decides; more than one marks nothing.
+     */
+    private fun announcedRow(
+        menu: ModelMenu,
+        announced: String,
+    ): ModelMenuRow? {
+        if (announced.isEmpty()) return null
+        val rows = menu.rows.filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
+        val family = claudeFamily(announced)
+        val tiers =
+            listOf<(ModelMenuRow) -> Boolean>(
+                { it.value == announced },
+                { it.resolvedModel == announced && "resolved_model" !in it.truncatedFields.orEmpty() },
+                { family.isNotEmpty() && claudeFamily(it.value) == family },
+            )
+        for (matches in tiers) {
+            val candidates = rows.filter(matches)
+            if (candidates.isNotEmpty()) return candidates.singleOrNull()
+        }
+        return null
+    }
+
+    /** Run configuration marks none of the model radios labelled [labels] and names [note] instead (#1308). */
+    private fun awaitNoModelMarked(
+        note: String,
+        labels: Set<String>,
+    ) {
+        openRunConfiguration()
+        val markedRadio =
+            SemanticsMatcher("a marked model radio") { node ->
+                node.config.getOrNull(SemanticsProperties.Role) == SemanticsRole.RadioButton &&
+                    node.config.getOrNull(SemanticsProperties.Selected) == true &&
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .any { it.text in labels }
+            }
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(note).fetchSemanticsNodes().isNotEmpty() }
+            assertTrue(
+                "a model radio is marked for an ambiguous or unmatched announcement",
+                composeTestRule.onAllNodes(markedRadio).fetchSemanticsNodes().isEmpty(),
+            )
+        } finally {
+            composeTestRule.onNodeWithContentDescription("Close").performClick()
+        }
+    }
+
+    /** No radio in Run configuration reads "Default" (#1308). */
+    private fun assertNoDefaultModelRadio() {
+        openRunConfiguration()
+        try {
+            val defaultRadio =
+                SemanticsMatcher.expectValue(SemanticsProperties.Role, SemanticsRole.RadioButton) and
+                    hasText("Default", substring = true)
+            assertTrue("a radio reads Default", composeTestRule.onAllNodes(defaultRadio).fetchSemanticsNodes().isEmpty())
+        } finally {
+            composeTestRule.onNodeWithContentDescription("Close").performClick()
+        }
+    }
 
     /** Expected inherited label from the host's fresh published list, independent of a running turn. */
     private fun inheritedModelLabel(menu: ModelMenu): String {
