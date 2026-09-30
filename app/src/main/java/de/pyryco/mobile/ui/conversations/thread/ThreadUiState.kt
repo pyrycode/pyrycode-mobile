@@ -37,6 +37,9 @@ sealed interface ThreadEvent {
 
     data object ChannelInfoDismiss : ThreadEvent
 
+    /** The Run configuration sheet opened (#1309); the thread re-reads its settings. */
+    data object RunConfigOpen : ThreadEvent
+
     data object SaveAsChannel : ThreadEvent
 
     /**

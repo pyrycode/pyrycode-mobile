@@ -2728,9 +2728,9 @@ class InteractiveStreamE2ETest {
      * `effective_effort`, and an omitted key fails. The expectation is built from that reply, so no default
      * level is assumed.
      *
-     * The open thread re-reads its settings only on subscription, a session transition or a settled write,
-     * not at the end of a turn. The settled footer is therefore read after leaving and reopening the
-     * thread, which subscribes again.
+     * The thread stays open throughout (#1309): it re-reads its settings when the turn ends and when Run
+     * configuration opens, so the applied effort and claude's reported permission mode both appear without
+     * leaving and reopening it.
      *
      * **One real-claude turn.**
      */
@@ -2749,11 +2749,13 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            val (label, note) = appliedEffortFooter(freshSettings(chat.id).effectiveEffort)
+            val fresh = freshSettings(chat.id)
+            val (label, note) = appliedEffortFooter(fresh.effectiveEffort)
+            val mode = fresh.permissionMode
+            assertTrue("the fresh reading after a real turn confirms no permission mode", mode.isNotEmpty())
 
-            leaveThread()
-            openChatRow(name)
             awaitFooter(changeEffortLabel, label) { it == note }
+            awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
         } finally {
             restoreSettings(originals)
         }

@@ -80,3 +80,7 @@ Live (rung 3): rewrite `interactiveTurn_inheritedEffort_footerShowsAppliedValueA
 ## Open questions
 
 - None blocking.
+
+## Revisions
+
+- **Build, 2026-10-01.** Added a Robolectric screen test beside the footer tests: `openingRunConfiguration_sendsOneOpenEvent_andClosingSendsNone` in `ThreadComposerFooterTest` proves the tap sends `ThreadEvent.RunConfigOpen` once and Close sends nothing, which the ViewModel test alone cannot show. The turn-end and reset-end merge sits in a private `runSettingsRereadEdges`, because `flatMapLatest` needs an opt-in that an `init` block cannot carry. The ViewModel test captures `RelayLog` output and asserts the log line carries only the static reason.

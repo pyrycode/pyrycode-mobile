@@ -469,7 +469,10 @@ fun ThreadScreen(
                     ThreadComposerFooter(
                         runConfig = state.runConfig,
                         onOpen = { openControl = it },
-                        onStatusClick = { sheetVisible = true },
+                        onStatusClick = {
+                            sheetVisible = true
+                            onOverflowEvent(ThreadEvent.RunConfigOpen)
+                        },
                         onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
                         modifier =
                             Modifier
