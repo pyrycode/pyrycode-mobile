@@ -47,13 +47,12 @@ two signals **verbatim — no UI-side re-derivation**:
 
 ## Where it lives
 
-`PermissionModalOverlay`, `ModalOptionButton`, `AlwaysAllowOffer` (#818) and `dismissReasonText` are private
-composables in `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt`, inline per the
-`DeleteConfirmationDialog` precedent — **not** a new file. Since #815, the overlay's
+`PermissionModalOverlay`, `ModalOptionButton`, `AlwaysAllowOffer` (#818) and `dismissReasonText` live in
+`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadPermissionModal.kt`. Since #815, the overlay's
 dialog chrome and window hardening are no longer its own: `PermissionModalOverlay` draws its content inside
 [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal), the hardened entry point
 [Shared mobile modal](mobile-modal.md) exposes on its shell. `ModalOptionButton` and `dismissReasonText`
-stay in `ThreadScreen.kt`. The state type is [`ModalUiState`](current-modal-state.md)
+stay in `ThreadPermissionModal.kt`. The state type is [`ModalUiState`](current-modal-state.md)
 (`data/model/ModalUiState.kt`, from #445 — moved from `ui/conversations/thread/` to `data/model` in
 [#492](../codebase/492.md) when the fold hoisted to the coordinator, so `ThreadScreen` now imports it).
 Collected in the route host at
@@ -149,8 +148,10 @@ extended from #446's 2-way by [#452](../codebase/452.md):
 | `isDefault` — the fail-safe-deny default | high-emphasis filled `Button` | `stateDescription = modal_default_option_desc` ("Default") |
 | neither — a resting non-default | `OutlinedButton`, with primary text and a primary 1 dp border, matching [the shared action palette](mobile-modal.md#layout-and-theme) and footer Cancel | none (a first tap arms it via the VM) |
 
-All three states have shared the shell's `MaterialTheme.shapes.small` and 48 dp minimum action height since
-[#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), when the overlay moved into `MobileGateModal`.
+The dark button reference gives the default and resting options 6 dp corners, body-large medium labels,
+and a 40 dp visible action inside a 48 dp touch region. Full-width option labels take the available row
+width and wrap. Exact text-layout checks use Robolectric native graphics: its default graphics mode
+reported a clipped long label as one line. The armed tonal treatment stays below the filled default.
 That move also changed the surface the armed button sits on, from `surfaceContainerHigh` to
 `primaryContainer`: in the static light scheme the armed `FilledTonalButton`'s `secondaryContainer` fill
 (`#D6E4F7`) now sits close to the container colour (`#CFE4FF`), so on screen the armed option reads closer
@@ -210,8 +211,8 @@ field already carries.
 `open.offersAlwaysAllow` (`ModalUiState.Open`, [Current-modal state](current-modal-state.md)) gates a private
 `AlwaysAllowOffer(rules, accepted, onChanged)`, drawn between `PermissionContext` and the option `Column` —
 `permission` only, and only when the daemon's `modal_shown.always_allow` offer decoded to a non-empty rule
-list. Figma `533-2369` has no frame of its own for it; it reuses the container's "Input large" stacking (a
-label above body-medium values, 8 dp apart) the same way `ModalContextRow` does:
+list. The offer retains the container's 8 dp stacked spacing above its body-medium rule lines. Its dark
+checkbox row follows the component's 20 dp tertiary box, 12 dp label gap and label-medium text:
 
 ```kotlin
 Row(
@@ -219,14 +220,16 @@ Row(
         .toggleable(value = accepted, role = Role.Checkbox, onValueChange = onChanged),
     verticalAlignment = Alignment.CenterVertically,
 ) {
-    Checkbox(checked = accepted, onCheckedChange = null)           // the Row, not the box, is the tap target
-    Text(stringResource(R.string.modal_always_allow_label), style = labelLarge, fontWeight = SemiBold)
+    Box(Modifier.size(20.dp).border(2.dp, colorScheme.tertiary, MaterialTheme.shapes.extraSmall)) {
+        if (accepted) Icon(ic_permission_checkbox_check, tint = colorScheme.tertiary)
+    }
+    Text(stringResource(R.string.modal_always_allow_label), style = labelMedium, fontWeight = SemiBold)
 }
 rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyMedium) }   // one per line, wire order
 ```
 
 - **The whole row toggles**, via `Modifier.toggleable(role = Role.Checkbox)` on the `Row`, not just the
-  `Checkbox` — `Checkbox(onCheckedChange = null)` keeps the box a pure indicator so there is exactly one tap
+  visible box — the box and check are pure indicators, so there is exactly one tap
   target and one accessibility node.
 - **`onChanged` carries `open.modalId`**, forwarded to [`ThreadViewModel.onAlwaysAllowChanged`](modal-answer-flow.md#the-always-allow-session-grant-818)
   — the render never decides acceptance itself, it only reports which prompt the tap landed on. This is the
@@ -356,8 +359,8 @@ deferred to **#440** + the connection signal.
 
 ## Testing
 
-Instrumented screen test `app/src/androidTest/.../thread/ThreadScreenModalTest.kt` (`./gradlew
-connectedAndroidTest`, device required), mirroring `ThreadScreenOverflowTest`'s idiom — the #446 set
+Shared screen test `app/src/sharedTest/.../thread/ThreadScreenModalTest.kt`, available to both unit and
+device suites, mirrors `ThreadScreenOverflowTest`'s idiom — the #446 set
 (render array-order, exactly-one-default-highlight, dismissed × {remote, local, timeout}, forward-compat
 fallback, hidden) **extended by [#452](../codebase/452.md)** with the AC#4 interaction tests:
 
@@ -384,10 +387,10 @@ fallback, hidden) **extended by [#452](../codebase/452.md)** with the AC#4 inter
   the offer; tapping the row calls `onAlwaysAllowChanged("m1", true)` and **not** `onModalOption`; with
   `alwaysAllowAccepted = true` the checkbox renders checked.
 
-No unit test (pure UI; the fold logic is unit-tested in #445, the decision logic in #451/#818, the decode in
-[Modal events](modal-events.md#the-four-decision-context-fields-817)).
-`connectedAndroidTest` was **not** run in the build environment (no device — the project norm); the test
-compiles under the green `assembleDebug` / `check` / `compileDebugAndroidTestKotlin` gates ([[androidtest-not-compiled-by-mandatory-gates]]).
+The compact-width case scrolls to every decision at 1.5× text and checks long labels for wrapping,
+overflow and ellipsis. The device-only `ThreadPermissionCaptureTest` saves unchecked, checked and armed
+412 × 892 surfaces for visual comparison. The fold logic remains unit-tested in #445, the decision logic
+in #451/#818, and decode in [Modal events](modal-events.md#the-four-decision-context-fields-817).
 
 Since [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), `FLAG_SECURE` and `filterTouchesWhenObscured`
 are **runtime-asserted**, not only code-review-verified: a window flag has no Compose-test semantics node,
@@ -397,9 +400,10 @@ but content composed inside a Compose `Dialog` can capture `LocalView.current`, 
 `gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses` and
 `plain_shell_window_is_not_hardened` assert both flags in both directions (present on the gate, absent on
 the plain shell) using this seam, and `ThreadScreenModalTest.back_press_neither_answers_nor_cancels_and_no_close_glyph_is_offered`
-covers the same guarantee at the screen layer. Focused run: `MobileModalTest` (9), `ThreadScreenModalTest`
-(26 as of #818, up from 16 at #452 — includes the 5 new offer cases), `EditHostModalTest` (6), 0 failures, on
-the managed `pixel2Api33Atd` device.
+covers the same guarantee at the screen layer. In the #1300 dispatcher full device report,
+`MobileModalTest` ran 12 cases with 0 failures and 0 skips, including the gate-window, compact-scroll
+and IME cases; `ThreadPermissionCaptureTest` ran its viewport case with 0 failures and 0 skips. The
+full report contains 133 cases, 0 failures, 0 errors and 1 unrelated skip.
 
 > **Known test-strength NIT (code review, optional):** the send-error confidentiality test drives the error
 > over a `Hidden` modal, so the `prompt` (`rm -rf …`) is never composed and the `assertDoesNotExist("rm -rf")`
@@ -421,6 +425,16 @@ over an `inversePrimary` divider, centred scrolling content, centred footer). Th
 draws is deliberately left out here, since Cancel must stay the only dismissal control. The prompt copy
 itself (title / prompt / option `label`s) is still server-authored placeholder text, not a designed string,
 and the snackbar-vs-inline dismiss affordance remains design-owed.
+
+The dark component comparison inspected [checkbox `347:6771`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6771),
+its label child `347:6215`, [button states `489:1876`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=489-1876)
+and [mobile modal `533:2369`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-2369)
+on **2026-09-30**. The committed 412 × 892 emulator captures and
+[labelled comparison](../../../app/src/androidTest/assets/permission-1300/comparison-labelled-412x892.png)
+use 1 px per dp. They verify the tertiary checkbox outline/check, label spacing, primary filled safe
+default, primary outlined resting choices and shared navy shell against those components. Figma still
+has **no full-screen permission frame** and **no armed non-default state**; the tonal armed treatment is a
+design gap, not an exact component match.
 
 ## Related
 

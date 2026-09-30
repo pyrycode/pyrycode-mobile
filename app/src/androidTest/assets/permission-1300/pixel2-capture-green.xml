@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="11.096" timestamp="2026-09-30T09:40:08" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadPermissionCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="10.587" timestamp="2026-09-30T09:40:08" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="permissionGateAtFigmaViewport" classname="de.pyryco.mobile.ui.conversations.thread.ThreadPermissionCaptureTest" time="10.587" />
+  </testsuite>
+</testsuites>

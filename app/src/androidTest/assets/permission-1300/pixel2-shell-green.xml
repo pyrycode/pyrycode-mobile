@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="12" failures="0" errors="0" skipped="0" time="21.041" timestamp="2026-09-30T09:51:11" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.components.MobileModalTest" tests="12" failures="0" errors="0" skipped="0" time="20.814" timestamp="2026-09-30T09:51:11" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="rename_compact_width_keeps_field_and_actions_above_keyboard" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="2.187" />
+    <testcase name="short_content_and_accessible_actions_are_visible" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.087" />
+    <testcase name="gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.399" />
+    <testcase name="landscape_ime_keeps_focused_field_following_content_and_actions_reachable" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="2.162" />
+    <testcase name="plain_shell_window_is_not_hardened" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.253" />
+    <testcase name="editHostFieldAndUnpairRemainReachableWithKeyboard" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="2.133" />
+    <testcase name="small_window_overflow_scrolls_with_header_and_footer_fixed" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.435" />
+    <testcase name="close_cancel_and_back_only_request_dismissal_once_each" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.405" />
+    <testcase name="keyboard_navigation_stays_in_dialog_and_restores_launcher_focus" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="2.423" />
+    <testcase name="error_and_loading_recomposition_preserve_entered_value_and_focus" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.551" />
+    <testcase name="disabled_and_loading_block_submission_but_keep_dismissal_available" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="1.622" />
+    <testcase name="ime_keeps_focused_field_final_item_and_actions_reachable" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="2.157" />
+  </testsuite>
+</testsuites>
