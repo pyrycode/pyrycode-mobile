@@ -151,7 +151,7 @@ boolean `true` (the quoted string `"true"` is rejected) and whose `rules` is a `
 non-empty JSON strings each at most 1024 UTF-8 bytes — the daemon's own bounds, applied here and not
 widened. Any violation rejects the **whole** list, matching the daemon's own no-truncation rule. `toEvent()`
 copies the result into `ModalEvent.Shown.alwaysAllowRules`. The design, the accept/grant state and the
-render live in [Modal answer flow § The always-allow session grant](modal-answer-flow.md#the-always-allow-session-grant-818)
+render live in [Modal answer flow § The session-grant draft](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)
 and [Permission-modal overlay § The always-allow offer](permission-modal-overlay.md#the-always-allow-offer-818);
 this subsection covers only the decode.
 

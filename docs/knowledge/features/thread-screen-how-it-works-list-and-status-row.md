@@ -149,7 +149,9 @@ see [Question batch modal § Rendering](question-batch-modal.md#rendering) for w
 `"question-actions:$generation"` / `"question:$generation:$it"` / `"question-title:$generation"` key
 scheme. The empty-thread branch (`!state.hasMessages && state.queuedMessages.isEmpty()`, § *Empty-state
 branch* below) also gates on `questionState == null`, so a thread whose only content is a pending batch
-renders the `LazyColumn` with the prompt rows, not `EmptyThreadState`.
+renders the `LazyColumn` with the prompt rows, not `EmptyThreadState`. [#1306](permission-modal-overlay.md)
+adds the same `openRequest == null` gate beside it for a pending permission or trust request — see §
+*Inline permission rows and the shared reveal* below, which reuses every mechanism this section describes.
 
 **Prompt rows count as a fixed prefix in the oldest-end history predicate (§ below), never as loaded
 history.** `val promptRowCount = questionState?.let { it.batch.questions.size + 2 } ?: 0` (`+2` for the
@@ -200,11 +202,42 @@ verifier's Rework 3 absence check additionally waits to disappear (`awaitNoInlin
 the lazy list's offscreen-vs-absent ambiguity the title and row tags have.
 
 **`QuestionPromptProtection`** (the `FLAG_SECURE` / obscured-touch guard the old dialog window used to own)
-is mounted directly by `ThreadScreen` — `if (questionState != null) QuestionPromptProtection()` — right
-after the screen's `rememberSaveable` block, so it is active for the composition's whole life while any
-batch is held, independent of which prompt rows happen to be visible. See [Question batch modal §
-Rendering](question-batch-modal.md#rendering) for the shared-ownership mechanism this guards against
-overlapping navigation transitions.
+is mounted directly by `ThreadScreen` — right after the screen's `rememberSaveable` block, so it is active
+for the composition's whole life while any batch is held, independent of which prompt rows happen to be
+visible. Since [#1306](permission-modal-overlay.md) the guard's condition is `questionState != null ||
+openRequest != null` from **one call site**, so a question batch handing off to a permission request (or
+the reverse) keeps the same owner throughout — see § *Inline permission rows and the shared reveal* below.
+See [Question batch modal § Rendering](question-batch-modal.md#rendering) for the shared-ownership
+mechanism this guards against overlapping navigation transitions.
+
+### Inline permission rows and the shared reveal (#1306)
+
+[The pending permission or trust request](permission-modal-overlay.md) moved out of its own dialog window
+into this same `LazyColumn` in #1306, following the #1305 question batch above almost row for row.
+`openRequest?.let { open -> permissionRequestItems(...) }` emits, immediately before the question items (so,
+under `reverseLayout = true`, drawn **below** the question rows and **above** every message row — the
+newest content on screen): Cancel, the card (prompt, decision context, the session-grant offer and the
+options), then the title — see [Permission-modal overlay](permission-modal-overlay.md) for what each
+renders and its `permission-cancel:$modalId` / `permission-card:$modalId` / `permission-title:$modalId` key
+scheme. The empty-thread branch and `promptRowCount` both gained a matching `openRequest` term (§ above and
+§ *The oldest-end history demand* below); `promptRowCount` adds a fixed `PERMISSION_ROW_COUNT = 3` rather
+than deriving a size from the request, since a permission/trust request always renders exactly three rows.
+
+**The streaming pin and the newest-end reveal generalize to either prompt kind rather than duplicating.**
+The streaming auto-pin's guard became `questionState != null || openRequest != null` (a local
+`promptPresent` val) in place of the #1305 `questionState != null` alone. The reveal effect's key widened
+from `questionState?.generation` alone to a `Pair`, `questionState?.generation to openRequest?.modalId`, so
+either a new question generation or a new permission `modalId` — never both signals doing the same
+job twice — re-triggers the scroll to index 0 under the same `drop(1)` / `filter` / anchored-reader guard
+the #1305 effect established; see § *Inline question rows and the newest-end reveal* above for the full
+mechanism, which this reuses verbatim.
+
+**Leaving the request open does not cancel it.** Back, opening another conversation, and switching to a
+different chat all leave the request rendered (subject to the usual scroll-position rules above) rather
+than dismissing it — only an explicit Cancel tap or a daemon resolution removes it. `MainActivity`'s
+`DisposableEffect(vm) { onDispose { vm.onConversationLeft() } }` clears an armed non-default option on the
+way out so a returning reader needs two fresh taps, but never touches the request itself or the
+session-grant draft; see [Modal answer flow § Leaving the conversation](modal-answer-flow.md#leaving-the-conversation-clears-the-arm-not-the-grant-1306).
 
 ### The oldest-end history demand (#777)
 
@@ -235,7 +268,9 @@ either way, so `distinctUntilChanged` sees no edge and issues no second demand. 
 index: an unmatched queued row can sit at the newest end of `rows` without a corresponding entry in
 `items`, and the oldest-end predicate must count what the list actually renders. **#1305** added a further
 `promptRowCount` on top of `rows.size` and replaced the `historyRowCount > 0` gate with a dedicated
-`hasHistoryRows` — see § *Inline question rows and the newest-end reveal* above.
+`hasHistoryRows` — see § *Inline question rows and the newest-end reveal* above. **#1306** added
+`PERMISSION_ROW_COUNT` to the same `promptRowCount` sum for an open permission/trust request — see §
+*Inline permission rows and the shared reveal* above.
 
 **This needed a 30-row regression test to catch, not a 3-row one.** The first version of the demand-loop
 test used three short rows and passed even against the deliberately-broken `totalItemsCount` predicate —

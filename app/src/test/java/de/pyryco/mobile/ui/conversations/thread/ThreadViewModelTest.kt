@@ -1011,6 +1011,94 @@ class ThreadViewModelTest {
             errorCollector.cancel()
         }
 
+    // ---- #1306: the grant draft outlives the destination; the arm and stale taps do not ------------
+
+    @Test
+    fun grantDraft_survivesLeavingAndReopening_andRidesTheNewDestinationsAllow() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val store = PermissionDraftStore(Dispatchers.Unconfined)
+            store.bind("host", owner = "coordinator", modals = modal)
+            val first = vmWithModalSendPath(modal, ModalSendRecorder(), store)
+            advanceUntilIdle()
+            first.onAlwaysAllowChanged("m1", true)
+            first.onModalOption("allow_once", "m1") // armed, then Back destroys this destination
+
+            val recorder = ModalSendRecorder()
+            val reopened = vmWithModalSendPath(modal, recorder, store)
+            advanceUntilIdle()
+            assertTrue("the checkbox draft returns", reopened.alwaysAllowAccepted.value)
+            assertNull("the arm does not", reopened.armedOptionId.value)
+
+            reopened.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertTrue("one tap on the reopened thread only arms", recorder.answers.isEmpty())
+            reopened.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertEquals(listOf("m1" to "allow_once"), recorder.answers)
+            assertEquals(listOf(true), recorder.grants)
+        }
+
+    @Test
+    fun leavingTheConversation_clearsTheArm_soAllowingNeedsTwoFreshTaps() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertEquals("allow_once", vm.armedOptionId.value)
+            vm.onConversationLeft()
+            advanceUntilIdle()
+            assertNull(vm.armedOptionId.value)
+
+            vm.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertTrue("the first tap after returning only re-arms", recorder.answers.isEmpty())
+            vm.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertEquals(listOf("m1" to "allow_once"), recorder.answers)
+        }
+
+    @Test
+    fun tapsRenderedForAReplacedRequest_neitherAnswerNorCancelTheReplacement() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m2"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onModalOption("reject_once", "m1") // the default: one tap would answer m2
+            vm.onModalOption("allow_once", "m1")
+            vm.onModalOption("allow_once", "m1")
+            vm.onModalCancel("m1")
+            advanceUntilIdle()
+
+            assertTrue(recorder.answers.isEmpty())
+            assertTrue(recorder.cancels.isEmpty())
+            assertNull(vm.armedOptionId.value)
+        }
+
+    @Test
+    fun grantDraftForAReplacedRequest_isNotCarriedByTheReplacementsAllow() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1", defaultOptionId = "allow_once"))
+            val store = PermissionDraftStore(Dispatchers.Unconfined)
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder, store)
+            advanceUntilIdle()
+            vm.onAlwaysAllowChanged("m1", true)
+
+            modal.value = offeringModal("m2", defaultOptionId = "allow_once")
+            advanceUntilIdle()
+            assertFalse(vm.alwaysAllowAccepted.value)
+            vm.onModalOption("allow_once", "m2")
+            advanceUntilIdle()
+            assertEquals(listOf(false), recorder.grants)
+        }
+
     // ---- #816: the host's modal is scoped to the conversation that raised it ---------------------
 
     @Test
@@ -4706,6 +4794,7 @@ class ThreadViewModelTest {
         // the demo path's fake is.
         repositoryAvailable: Flow<Boolean> = flowOf(true),
         rememberModel: suspend (String) -> Unit = {},
+        permissionDraftStore: PermissionDraftStore? = null,
     ): ThreadViewModel =
         ThreadViewModel(
             handle,
@@ -4719,6 +4808,7 @@ class ThreadViewModelTest {
             interrupt,
             repositoryAvailable = repositoryAvailable,
             rememberModel = rememberModel,
+            permissionDraftStore = permissionDraftStore,
         )
 
     /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */
@@ -4742,13 +4832,15 @@ class ThreadViewModelTest {
     private fun TestScope.vmWithModalSendPath(
         currentModal: StateFlow<ModalUiState>,
         recorder: ModalSendRecorder,
+        permissionDraftStore: PermissionDraftStore? = null,
     ): ThreadViewModel =
         makeVm(
-            SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
+            SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV, "serverId" to "host")),
             FakeConversationRepository(),
             currentModal = currentModal,
             answerModal = recorder.answer,
             cancelModal = recorder.cancel,
+            permissionDraftStore = permissionDraftStore,
         )
 
     /** Records the outbound interrupt calls (#458), optionally throwing [failWith] after recording to

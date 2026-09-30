@@ -51,6 +51,7 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
+import de.pyryco.mobile.ui.conversations.thread.PermissionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.QuestionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
@@ -191,6 +192,8 @@ val appModule =
         // the lifecycle driver's background close.
         single { ComposerDraftStore() }
         single { QuestionDraftStore() } onClose { it?.dispose() }
+        // #1306: session-grant checkbox drafts, heap only, retired per host when its request changes.
+        single { PermissionDraftStore() } onClose { it?.dispose() }
         // #1002: the usage readings hidden from the thread's Top overlay, one set for the app process so a
         // reading hidden in one thread stays hidden in every thread. Heap only; a restart shows it again.
         single { UsageLimitDismissals() }
@@ -210,7 +213,7 @@ val appModule =
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
         viewModel {
             val handle = get<SavedStateHandle>()
-            get<ThreadDestinationFactory>().thread(handle, get(), get(), get()).also { thread ->
+            get<ThreadDestinationFactory>().thread(handle, get(), get(), get(), get()).also { thread ->
                 // #877: the thread is what knows its conversation is being viewed. The view opens the
                 // conversation on its own host and holds it read until this view model is cleared.
                 val viewing =
@@ -359,6 +362,7 @@ internal class ThreadDestinationFactory(
         // recalls. It never touches `defaultEffort`. The demo host stays inert.
         preferences: AppPreferences,
         questionDrafts: QuestionDraftStore? = null,
+        permissionDrafts: PermissionDraftStore? = null,
     ): ThreadViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
         val bundle = if (useRelay) registry.connectionFor(serverId) else null
@@ -371,6 +375,7 @@ internal class ThreadDestinationFactory(
                 liveRepository = bundle.coordinator::liveRepository,
                 submit = bundle.coordinator::submitQuestionBatch,
             )
+            permissionDrafts?.bind(serverId, bundle.coordinator, bundle.coordinator.currentModal)
         }
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
@@ -397,6 +402,7 @@ internal class ThreadDestinationFactory(
             cancelModal = { modal -> checkNotNull(bundle).coordinator.cancelModal(modal) },
             interrupt = { id -> checkNotNull(bundle).coordinator.interrupt(id) },
             questionDraftStore = questionDrafts,
+            permissionDraftStore = permissionDrafts,
             questionBatch = { id -> bundle?.coordinator?.observeQuestionBatch(id) ?: flowOf(null) },
             answerQuestionBatch = { batch, answers -> checkNotNull(bundle).coordinator.answerQuestionBatch(batch, answers) },
             refuseQuestionBatch = { batch -> checkNotNull(bundle).coordinator.refuseQuestionBatch(batch) },

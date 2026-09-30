@@ -119,6 +119,9 @@ class ThreadViewModel(
     private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
     private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
     questionDraftStore: QuestionDraftStore? = null,
+    // #1306: the app-scoped session-grant drafts, so Back keeps the checkbox for the same request. Absent in
+    // tests and the demo host, where a private store stands in.
+    permissionDraftStore: PermissionDraftStore? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
     // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
     backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
@@ -723,11 +726,12 @@ class ThreadViewModel(
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
-     * The "don't ask again this session" offer the user accepted (#818), keyed on the prompt that showed it:
-     * its [AcceptedAlwaysAllow.modalId] and the exact rules it offered. Like [armedModalOption] it is
-     * transient and never persisted, and a stale key is simply invisible (see [alwaysAllowAccepted]).
+     * The "don't ask again this session" offers the user accepted (#818), keyed on the prompt that showed
+     * each: its [PermissionGrantDraft.modalId] and the exact rules it offered. Since #1306 they live in an
+     * app-scoped store, heap only, so leaving through Back keeps this conversation's draft; a stale key is
+     * simply invisible (see [alwaysAllowAccepted]) and a bound store retires it when the request changes.
      */
-    private val acceptedAlwaysAllow = MutableStateFlow<AcceptedAlwaysAllow?>(null)
+    private val grantDrafts = permissionDraftStore ?: PermissionDraftStore()
 
     /**
      * Whether the *currently-open* prompt's offer is accepted (#818): `true` only while the scoped modal is
@@ -736,7 +740,7 @@ class ThreadViewModel(
      * construction. A sibling of [armedOptionId], started eagerly for the same reason.
      */
     val alwaysAllowAccepted: StateFlow<Boolean> =
-        combine(currentModal, acceptedAlwaysAllow) { modal, accepted ->
+        combine(currentModal, grantDrafts.observe(serverId, conversationId)) { modal, accepted ->
             modal is ModalUiState.Open && modal.offersAlwaysAllow && accepted == modal.alwaysAllowKey()
         }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -1473,8 +1477,13 @@ class ThreadViewModel(
      * and requires an explicit **second** confirm of the *same* armed option before it sends; a tap of a
      * different option re-arms. No-op if no modal is open.
      */
-    fun onModalOption(optionId: String) {
+    fun onModalOption(
+        optionId: String,
+        modalId: String? = null,
+    ) {
         val open = scopedModal() as? ModalUiState.Open ?: return
+        // #1306: a tap composed for a request that has since been replaced carries the old id.
+        if (modalId != null && modalId != open.modalId) return
         when {
             optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId, grantsAlwaysAllow(open, optionId))
             armedModalOption.value == ArmedModalOption(open.modalId, optionId) ->
@@ -1484,12 +1493,22 @@ class ThreadViewModel(
     }
 
     /** Cancel the currently-open modal (#451): clear any arm and send `modal_cancel`. No-op if no modal is
-     *  open. A cancel never carries the session grant, and it drops any acceptance (#818). */
-    fun onModalCancel() {
+     *  open, or if [modalId] names a request that has been replaced (#1306). A cancel never carries the
+     *  session grant, and it drops any acceptance (#818). */
+    fun onModalCancel(modalId: String? = null) {
         val open = scopedModal() as? ModalUiState.Open ?: return
+        if (modalId != null && modalId != open.modalId) return
         armedModalOption.value = null
-        acceptedAlwaysAllow.value = null
+        grantDrafts.set(serverId, conversationId, null)
         sendCancel(open.modalId)
+    }
+
+    /**
+     * The reader left this conversation's screen (#1306): drop any armed non-default option, so coming back
+     * takes two fresh taps. The session-grant draft is kept; it belongs to the request, not the visit.
+     */
+    fun onConversationLeft() {
+        armedModalOption.value = null
     }
 
     /**
@@ -1505,7 +1524,7 @@ class ThreadViewModel(
     ) {
         val open = scopedModal() as? ModalUiState.Open ?: return
         if (open.modalId != modalId || !open.offersAlwaysAllow) return
-        acceptedAlwaysAllow.value = if (accepted) open.alwaysAllowKey() else null
+        grantDrafts.set(serverId, conversationId, if (accepted) open.alwaysAllowKey() else null)
     }
 
     /**
@@ -1519,7 +1538,7 @@ class ThreadViewModel(
     ): Boolean =
         optionId in ALWAYS_ALLOW_OPTION_IDS &&
             open.offersAlwaysAllow &&
-            acceptedAlwaysAllow.value == open.alwaysAllowKey()
+            grantDrafts.current(serverId, conversationId) == open.alwaysAllowKey()
 
     /**
      * The input guard's read of this thread's modal (#816). It reads the host flow synchronously instead of
@@ -2066,13 +2085,7 @@ class ThreadViewModel(
         val optionId: String,
     )
 
-    /** An accepted always-allow offer (#818), keyed on the prompt and the exact rules it offered. */
-    private data class AcceptedAlwaysAllow(
-        val modalId: String,
-        val rules: List<String>,
-    )
-
-    private fun ModalUiState.Open.alwaysAllowKey() = AcceptedAlwaysAllow(modalId, alwaysAllowRules)
+    private fun ModalUiState.Open.alwaysAllowKey() = PermissionGrantDraft(modalId, alwaysAllowRules)
 
     /** The outstanding permission write (#650): the session it addressed, and the job that sends and
      *  settles it. */
