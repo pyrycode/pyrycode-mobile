@@ -1143,6 +1143,7 @@ class StableConversationRepositoryTest {
             bytes: ByteArray,
             filename: String,
             mimeType: String,
+            onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
         ): AttachmentUploadResult {
             uploadCalls += conversationId
             return uploadResult.await()
