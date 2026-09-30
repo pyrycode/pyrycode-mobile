@@ -11,7 +11,7 @@ owning `serverId` and the host-local `conversationId`.
 - **`welcome`** (start destination when no paired-server record exists) — renders `WelcomeScreen` (#7).
 - **`scanner`** — renders [ScannerScreen](scanner-screen.md) with its destination-scoped ViewModel, camera permission launcher and live preview. A decoded QR is parsed into an immutable fingerprint/record confirmation state without writing. Confirm saves, starts the controller and navigates to `channel_list`, popping the scanner inclusively; this camera path does not await encrypted readiness. Decline/Back from confirmation re-arms scanning. Paste actions navigate to `pair_code`; ordinary Back pops to the caller.
 - **`pair_code`** — renders [PairCodeScreen](paste-code-dialog.md) with a destination-scoped `PairCodeViewModel`. Its optional-name form, fingerprint confirmation and saved-target connection wait stay within one route. Cancel returns to the caller; success clears the previous graph entries and opens `channel_list` only after both target connection legs are ready. Since #842 the destination pattern (`Routes.PAIR_CODE_ROUTE`) takes an optional `serverId` query argument, shaped like Settings' own below; when present, the flow is scoped to re-pair exactly that host instead of naming a new one — see [manual pairing entry and return](#manual-pairing-entry-and-return).
-- **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md), fed entirely by host-qualified state since #738 retired the flat compatibility model and its `selectedServerId()` adapter for this screen. Its single top-right toolbar control, “Pair another host”, opens `scanner` (`ChannelListEvent.PairHostTapped → navController.navigate(Routes.SCANNER)`). Both empty and populated lists expose this entry. Camera confirmation and successful manual pairing via `pair_code` land back on the list; see [manual pairing entry and return](#manual-pairing-entry-and-return).
+- **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md), fed entirely by host-qualified state since #738 retired the flat compatibility model and its `selectedServerId()` adapter for this screen. Its single top-right toolbar control, “Pair another host”, opens `scanner` (`ChannelListEvent.PairHostTapped → navController.navigate(Routes.SCANNER)`). Both empty and populated lists expose this entry. Camera confirmation and successful manual pairing via `pair_code` land back on the list; see [manual pairing entry and return](#manual-pairing-entry-and-return). Unpairing the list's last saved host leaves `welcome` instead — see [Returning to Welcome after the last host](#returning-to-welcome-after-the-last-host-1323).
 - **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md). Unreachable since #731 retired the channel list's "see all" link that was its only entry point; the route, screen and its adapter (captures host-qualified row and promotion targets, consumes only `hostNavigationEvents`) stay in the graph regardless — removing them is out of scope for both #731 and #738.
 - **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack. Also reachable from outside the graph entirely since [#685](../../specs/architecture/685-mobile-attention-alerts.md): a notification tap parses to the same `HostConversationTarget` and `PyryNavHost` pushes it on top of `channel_list` via its `openTarget` param, gated by `ThreadDestinationFactory.isSavedHost` — see [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685).
 - **`markdown_reader/{serverId}/{conversationId}/{attachmentId}`** — renders the [Markdown reader screen](markdown-reader-screen.md) (#1027), reached only from the thread destination above: tapping a ready file row whose name ends in `.md`/`.markdown` reads and strictly decodes it first, then routes `ThreadNavigation.OpenMarkdown(attachmentId)` to `navController.navigate(Routes.markdownReader(target, event.attachmentId))`. Wrapped in `HostDestination` like the thread route; the back arrow and system back both pop back to the same thread entry.
@@ -144,6 +144,33 @@ one. Saved back-stack restoration preserves the same host/conversation pair.
 `Routes.SETTINGS` remains `"settings?serverId={serverId}"` with an optional query argument and a blank default. `Routes.settings(serverId)` encodes a non-empty id; the bare route also opens on an unpaired phone. The existing gear still captures the selected server id at tap time, but the modal contains no host-specific controls. Keeping the route shape preserves existing entry points and lets Back return to the prior destination.
 
 The destination is not wrapped in `HostDestination`: opening it with no host or an old owner remains valid. It collects only `SettingsViewModel.pushNotifications`. `SettingsScreen` sends switch changes to the ViewModel, requests Android notification permission only when enabling, and sends Close, Done and dialog Back through `onDismissRequest` to `navController.popBackStack()`. This preserves the optional route without retaining the removed Connection section's host-to-host navigation. [Settings modal](settings-screen.md#what-it-does) describes its two notification rows.
+
+The destination also collects `SettingsViewModel.lastHostUnpaired` — see [Returning to Welcome after the last host](#returning-to-welcome-after-the-last-host-1323). Since #1239 the modal draws no host editor and so has no control that can reach `confirmHostUnpair`; the collector exists for the day a Settings unpair entry returns, or is removed with `SettingsViewModel`'s otherwise-unreachable `HostEditorController`.
+
+### Returning to Welcome after the last host (#1323)
+
+`ChannelListViewModel.lastHostUnpaired` and `SettingsViewModel.lastHostUnpaired` (both one-line
+delegations to their own [`HostEditorController`](host-editor.md#the-controller)) fire once when a
+confirmed unpair leaves no saved host. The `channel_list` and `settings` destinations each collect it in
+their own `LaunchedEffect(vm)`, alongside their existing collectors, and call a private
+`NavHostController.returnToWelcome()`:
+
+```kotlin
+private fun NavHostController.returnToWelcome() {
+    navigate(Routes.WELCOME) {
+        popUpTo(graph.id) { inclusive = true }
+        launchSingleTop = true
+    }
+}
+```
+
+The same `popUpTo(graph.id) { inclusive = true }` idiom the `pair_code` Complete branch uses: Welcome
+becomes the only back-stack entry, so Back leaves the app rather than returning to the now-empty list —
+matching desktop's `runUnpairServer` re-reading its servers and calling `onLastServerUnpaired`. Unpairing
+one of several hosts sends nothing and both destinations stay put. The signal itself, including why it is
+read from the controller after cleanup rather than from a store-level observer, is
+[`HostEditorController.confirmUnpair()`'s concern](host-editor.md#the-controller); this section only
+covers where the two destinations collect it and how the stack is cleared.
 
 ### Archive: a required-owner destination, two doors (#715)
 
@@ -290,6 +317,15 @@ test (host B now restores the thread itself instead) and the `Routes.literal`
 navigation in the invalid-host test — and left the rest of the harness unchanged.
 
 `SettingsNavigationTest` mounts the production `PyryNavHost` and checks the gear-to-modal path, dismissal to the previous view, persisted push state after reopening, and opening without a paired host. `SettingsDensityDeviceTest` sends a real Back key to the focused dialog. Espresso Back aimed at the unfocused Activity root in the graph harness and could miss the dialog window; a real focused-window key tests that dismissal route.
+
+`UnpairNavigationTest` (#1323) reuses `SettingsNavigationTest`'s fixture shape (in-memory
+`PairedServerCollectionStore`, real `RelayConnectionRegistry`, in-memory `AppPreferences`) and mounts
+`PyryNavHost` from `channel_list`. It drives a single-host unpair to confirmation from the channel list
+and asserts the final route is `welcome` with `previousBackStackEntry == null`, so Back cannot reach the
+list; drives the same single-host unpair through `SettingsViewModel` reached via its back-stack entry
+(no control opens it, since #1239 — see [Settings: an optionally-owned destination](#settings-an-optionally-owned-destination)) to the same `welcome` assertion; and unpairs one of two hosts from the
+channel list to confirm the route stays `channel_list`. See
+[Returning to Welcome after the last host](#returning-to-welcome-after-the-last-host-1323).
 
 `ArchiveNavigationTest` (#715) copies that same harness for the Archive destination: both hosts hold
 an archived conversation under the **same** id, proving the colliding-id case means giving two hosts
