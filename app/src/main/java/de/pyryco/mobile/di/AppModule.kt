@@ -29,6 +29,7 @@ import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransportFactory
+import de.pyryco.mobile.data.network.toConnectionState
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.ConnectionStateSource
@@ -365,7 +366,9 @@ internal class ThreadDestinationFactory(
         }
         val connection =
             object : ConnectionStateSource {
-                override fun observe() = bundle?.supervisor?.observe() ?: flowOf(ConnectionState.Offline)
+                // #1318: both legs, so the thread reads Connecting until the handshake answers, not at socket-up.
+                override fun observe() =
+                    bundle?.coordinator?.connectionStatus?.map { it.toConnectionState() } ?: flowOf(ConnectionState.Offline)
 
                 override suspend fun retry() {
                     if (bundle != null) registry.retryHost(serverId, bundle)
