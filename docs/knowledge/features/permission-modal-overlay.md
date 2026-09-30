@@ -220,7 +220,7 @@ Row(
         .toggleable(value = accepted, role = Role.Checkbox, onValueChange = onChanged),
     verticalAlignment = Alignment.CenterVertically,
 ) {
-    Box(Modifier.size(20.dp).border(2.dp, colorScheme.tertiary, RoundedCornerShape(4.dp))) {
+    Box(Modifier.size(20.dp).border(2.dp, colorScheme.tertiary, MaterialTheme.shapes.extraSmall)) {
         if (accepted) Icon(ic_permission_checkbox_check, tint = colorScheme.tertiary)
     }
     Text(stringResource(R.string.modal_always_allow_label), style = labelMedium, fontWeight = SemiBold)
