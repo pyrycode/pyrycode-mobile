@@ -4,9 +4,11 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -22,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -144,6 +147,44 @@ class DeterministicInteractiveStreamE2ETest {
             .onAllNodesWithText(PING, substring = true, ignoreCase = true)
             .onFirst()
             .assertIsDisplayed()
+    }
+
+    /** The real daemon-absent state keeps Retry visible until the pill restores this seeded thread (#1286). */
+    @Test
+    fun interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply() {
+        arriveInSeededThread()
+        val supervisor = GlobalContext.get().get<RelayConnectionSupervisor>()
+        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
+        val fault = DaemonFaultControl()
+        try {
+            val retryDeadline =
+                fault.stopUntilRetryWindow(supervisor) {
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
+                }
+            assertNull(coordinator.currentRepository.value)
+            fault.start()
+            composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
+            assertNull(coordinator.currentRepository.value)
+            composeTestRule.onNodeWithTag("offline_retry_target").performClick()
+            runBlocking {
+                withTimeout(fault.recoveryTimeRemaining(retryDeadline)) {
+                    coordinator.currentRepository.first { it != null }
+                }
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isEmpty()
+            }
+            typeAndSend(SEND_PROMPT)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(PING, substring = true, ignoreCase = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(PING, substring = true, ignoreCase = true).onFirst().assertIsDisplayed()
+        } finally {
+            runCatching { fault.start() }
+        }
     }
 
     /**

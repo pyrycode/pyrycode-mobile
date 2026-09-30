@@ -33,6 +33,16 @@ The current session's `state.runConfig.memorySearch` feeds [Channel info](channe
 
 Connection readings from the [Connecting](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-1740) and [Reconnecting](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4657) dark frames share the composer band. [Offline](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4910) uses an overlay Retry pill; rejected pairing shows Re-pair there instead.
 
+The overlay's exact-host Retry has live coverage in
+`InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
+([#1286](https://github.com/pyrycode/pyrycode-mobile/issues/1286)). A harness-owned
+daemon failure produces the actual Offline pill while the thread stays open;
+restarting the same host and tapping Retry clears it and permits a new rendered
+real-Claude reply without re-pairing. The 2026-09-30 full live XML includes this
+passing, unskipped method: 44 executed, 0 failed, 0 skipped. See the
+[coverage and evidence boundary](../../e2e-interactive-stream.md#offline-retry-proof)
+and [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1286#issuecomment-5914205992).
+
 The five transient readings in the composer's [status band](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643) follow the [input status component `533:1957`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957), inspected with the [pill variants `347:6618`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6618) and thread `16:8` on 2026-09-29. Thinking has the supplied snowflake glyph; retry, compaction and Reset use a fixed-length rotating arc; outcomes use the shared error pill. Figma specifies no dedicated frame for the latter four readings or their combination with a task pill, so their component treatment is the reference, not a full-screen pixel match.
 
 The running-task pill shares the reading's 24 dp band at normal text scale, or sits at its right end alone. Only this thread caller gives the shared primary-container `NoticePill` a 104 × 24 dp minimum; its 6 dp corners, `bodySmall` label and 8/4 dp padding follow the inspected Figma task-pill node `568:3162`. The band and pill can grow for larger text. A zero count removes the pill; a live count uses the client-owned singular or plural label. Tapping it opens the same background-task panel as Actions. The [status-band layout](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643) covers its interaction with readings and nearby controls.

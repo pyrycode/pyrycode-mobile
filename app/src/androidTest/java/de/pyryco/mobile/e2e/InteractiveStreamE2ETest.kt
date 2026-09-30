@@ -2556,6 +2556,53 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** The foreground thread's real Offline pill retries its owning daemon after six failed dials (#1286). */
+    @Test
+    fun interactiveTurn_offlineRetry_reconnectsSameHostAndReplies() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId))
+        val fault = DaemonFaultControl()
+        awaitChannelList()
+        awaitConnected()
+        val before = hostConversationIds(serverId)
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val conversationId = newHostConversationId(serverId, before)
+        try {
+            val retryDeadline =
+                fault.stopUntilRetryWindow(bundle.supervisor) {
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
+                }
+            assertNull("the old host repository survived the daemon failure", bundle.coordinator.currentRepository.value)
+
+            // The deadline began at the sixth failed dial, before daemon startup and the tap.
+            // Recovery must beat the earliest passive dial, even if startup consumes most of the wait.
+            fault.start()
+            composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
+            assertNull(bundle.coordinator.currentRepository.value)
+            composeTestRule.onNodeWithTag("offline_retry_target").performClick()
+            runBlocking {
+                withTimeout(fault.recoveryTimeRemaining(retryDeadline)) {
+                    bundle.coordinator.currentRepository.first { it != null }
+                }
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isEmpty()
+            }
+            assertTrue("the thread's conversation moved off its original host", conversationId in hostConversationIds(serverId))
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).assertIsDisplayed()
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        } finally {
+            runCatching { fault.start() }
+        }
+    }
+
     /**
      * A model change made on the phone reaches only its own conversation and survives a reopen (#545).
      * Two chats are prepared through the host's own repository: `create_conversation` binds a session, so
