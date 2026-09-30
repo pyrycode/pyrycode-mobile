@@ -20,17 +20,16 @@ fun MarkdownText(
 )
 ```
 
-`MarkdownTextStyle(body: TextStyle, blockSpacing: Dp = 12.dp, listItemSpacing: Dp = 4.dp, code: TextStyle? = null)`
-is the presentation value. Finished and streaming [`MessageBubble`](message-bubble.md)
-use M3 `bodyMedium` (14sp/20sp), 12dp block gaps and 4dp sibling-item gaps.
-The [attachment and linked-note reader](markdown-reader-screen.md#what-it-does) explicitly supplies
-`bodyLarge` (16sp/24sp), 12dp block gaps, 6dp sibling-item gaps and `bodyMedium` code.
+`MarkdownTextStyle` carries `body`, `blockSpacing`, `listItemSpacing`, optional `code`, and
+`presentation` (default `MarkdownPresentation.Thread`). Finished and streaming
+[`MessageBubble`](message-bubble.md) use M3 `bodyMedium` (14sp/20sp), 12dp block gaps and
+4dp sibling-item gaps. The [reader](markdown-reader-screen.md#what-it-does) selects
+`MarkdownPresentation.Reader`, `bodyLarge` (16sp/24sp), 12dp/6dp gaps and 13sp/20sp code.
 
-The style reaches paragraphs, ordered/unordered/task-list text, ordinary list markers and fallback
-prose, recursively through lists and quotes. Quote paragraphs add italics to the selected body style.
-Headings and tables retain their element-specific typography; code uses `style.code` or the thread
-default `bodySmall` (12sp) with a 20sp line height. Inline formatting, highlighting,
-link routing, code copying and horizontal scrolling are independent of this body style.
+The reader uses untrimmed line-height boxes for headings and prose, including nested list and quote
+text; Android's default trimmed boxes otherwise shorten the Figma paragraph and list. Thread line
+boxes stay as before. Headings and tables keep their element-specific typography. The presentation
+choice changes code and quote appearance, while parser, inline links and routing stay shared.
 
 **No `color` parameter** — text inherits `LocalContentColor.current`; assistant bubbles and the reader
 supply `onSurface`.
@@ -64,10 +63,10 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 | `PARAGRAPH` | `Text(buildInline(...), style = style.body)` |
 | `UNORDERED_LIST` | `Column { … Row { Text("•"); Spacer; Column { recurse } } … }` — an item carrying a `GFMTokenTypes.CHECK_BOX` child renders `TaskMark(checked)` instead of the bullet; see [Task lists](#task-lists) |
 | `ORDERED_LIST` | same but marker is `"${index + 1}."` (1-based); both list kinds dispatch through the same `ListBlock`, so a `CHECK_BOX` child replaces the marker here too — untested directly, but true by the shared code path |
-| `BLOCK_QUOTE` | `Row { Box(width = 4dp, fillMaxHeight, background = onSurfaceVariant); Spacer(12dp); Column { italic paragraphs } }` |
+| `BLOCK_QUOTE` | Thread: 4dp `onSurfaceVariant` bar and italic paragraphs. Reader: 3dp `outlineVariant` bar, 12dp gap and regular `bodyLarge` / `onSurfaceVariant` text. |
 | `GFMElementTypes.TABLE` | `TableBlock(...)` — see [Tables](#tables) |
-| `CODE_FENCE` | `CodeBlock(fencedCodeText(node, source), language = first FENCE_LANG child or null, copyable = true)` — see [Code blocks](#code-blocks) |
-| `CODE_BLOCK` | `CodeBlock(indentedCodeText(node, source), language = null, copyable = true)` — indented 4-space blocks have no info string |
+| `CODE_FENCE` | Reader unlabelled fence: `ReaderCodeBlock`; labelled fence and thread: `CodeBlock` with copy control — see [Code blocks](#code-blocks). |
+| `CODE_BLOCK` | Reader indented block: `ReaderCodeBlock`; thread: `CodeBlock`. Both use extracted source text. |
 | _else_ | `Text(node.getTextInNode(source).trim(), style = style.body)` — fallback |
 
 `Column` arrangements use `style.blockSpacing` between top-level blocks and recursively inside list items and quotes; sibling list items use `style.listItemSpacing`. Gaps come from the columns, not per-element padding.
@@ -131,7 +130,18 @@ Two source forms, because the parser only recognises one of them as a node. `~~d
 
 ### Code blocks
 
-Both `CODE_FENCE` and `CODE_BLOCK` dispatch to `internal fun CodeBlock(content: String, language: String?, copyable: Boolean = false, textStyle: TextStyle = MaterialTheme.typography.bodyMedium)`. [`ToolCallRow`](./tool-call-row.md) reuses it for code-like tool output with its own `bodySmall` argument and copy behavior. The two markdown arms pass `copyable = true` and `style.code ?: bodySmall.copy(lineHeight = 20.sp)`: thread code follows the 12sp / 20sp Figma treatment while the reader explicitly retains `bodyMedium`. Changing `CodeBlock`'s shared default would silently change the reader and tool output. Source extraction, syntax color, scrolling and per-block copy keep the same path. [The code and boundary comparison](https://github.com/pyrycode/pyrycode-mobile/blob/44ac0889/app/src/androidTest/assets/thread-message-1207/code-boundary-side-by-side.png) uses a native-size crop of the 741dp-wide message-area node `132:3959`, inspected 2026-09-29; Figma last-modified date was unavailable.
+`CodeBlock` remains the thread, labelled-fence and [`ToolCallRow`](./tool-call-row.md)
+renderer, with its header, syntax treatment and visible copy control. The reader routes only
+unlabelled fences and indented blocks to `ReaderCodeBlock`: a full-width `surfaceContainer` panel
+using `MaterialTheme.shapes.small` (8dp here), 12dp inset, 13sp/20sp monospace
+`onSurfaceVariant` text and horizontal scrolling. Its panel tap copies that block's extracted
+source, bounded by `MAX_CLIPBOARD_CHARS`; the minimum height is capped at two text lines.
+Labelled reader fences retain `CodeBlock` and its visible copy action. Keep this dispatch by
+language presence: the [reader reference](markdown-reader-screen.md#what-it-does) depicts an
+unlabelled fence, while existing labelled-fence copy behavior remains part of the product.
+[The thread code comparison](https://github.com/pyrycode/pyrycode-mobile/blob/44ac0889/app/src/androidTest/assets/thread-message-1207/code-boundary-side-by-side.png)
+uses node `132:3959` (inspected 2026-09-29). [The reader comparison](../../../app/src/androidTest/assets/markdown-reader-1291/overlay-difference.png)
+uses node `553:2574` (inspected 2026-09-30) and shows the plain panel and quote rule.
 
 Visual structure since #657 (Figma `134:4809`, the assistant container's `Code` instance — header/divider/body, read off the node rather than #130's flat tile):
 
@@ -270,7 +280,7 @@ Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TAB
 
 - **Library dependencies:** `implementation(libs.jetbrains.markdown)` (parser; catalog pin `jetbrainsMarkdown = "0.7.3"`) and `implementation(libs.snipme.highlights)` (code-block tokeniser since #130; catalog pin `snipmeHighlights = "1.1.0"`) in `app/build.gradle.kts`. No KSP, no kapt, no proguard rules for either.
 - **Two strings since #681, plus one since #657:** `markdown_task_mark_checked` / `markdown_task_mark_unchecked` — static TalkBack labels for the task-mark, chosen by a boolean, carrying no format argument and no daemon-authored text. `cd_thread_copy_code` ("Copy this code block") is the accessible name for each code block's copy control, in the same `cd_thread_*` family as `MessageMetaRow`'s `cd_thread_copy_message`. Otherwise renders the input markdown verbatim; no other resource lookup.
-- **No renderer-local theme overrides.** Reads `colorScheme.surfaceContainer`, `colorScheme.background`, `colorScheme.primaryContainer`, `colorScheme.onPrimaryContainer`, `colorScheme.primary`, `colorScheme.secondary`, `colorScheme.tertiary`, `colorScheme.onSurfaceVariant` and element typography from `MaterialTheme.typography`, with prose supplied by `MarkdownTextStyle.body`. Shared text roles come from the [app type ramp](shared-typography.md); this renderer adds no custom slots or `CompositionLocal` overrides beyond consumer-supplied `LocalContentColor` (and the code block's own local re-provide of it at `CODE_COPY_ALPHA` for its copy glyph). `colorScheme.outlineVariant` was read here through #129; #770 moved the last reader (`BlockQuoteBlock`'s bar) to `onSurfaceVariant`, so nothing in this file reads that slot any more.
+- **No renderer-local theme overrides.** Block colours and typography come from `MaterialTheme`; prose comes from `MarkdownTextStyle.body`. The reader quote rule uses `outlineVariant`; thread quotes use `onSurfaceVariant` for contrast against their bubble. Shared text roles come from the [app type ramp](shared-typography.md). The code copy glyph uses `LocalContentColor` at `CODE_COPY_ALPHA`.
 - **No DI.** Pure leaf composable; no Koin module touched.
 
 ## Previews
@@ -281,12 +291,12 @@ Plus two `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 32`, `MAX_TAB
 
 - **Inline-code background paints at glyph-rect bounds, not at a padded rectangle.** `SpanStyle(background = …)` on an `AnnotatedString` span has no horizontal padding option in Compose's text API — the background tints exactly the glyph rect. Short identifiers (`getUserId()`) read fine; longer code spans look tight. **Acceptable for #129.** If the tightness becomes a complaint, the replacement shape is `InlineTextContent` per code span — don't pre-build that now.
 - **Soft line breaks collapse to a single space.** `EOL` tokens inside a paragraph map to `append(" ")` rather than `append("\n")`. Matches CommonMark's "soft-break = space" rendering rule. Hard breaks (two trailing spaces or a backslash before the newline) are not yet specially handled — they fall through to the same single-space behaviour. Not in AC.
-- **Fenced code blocks render with syntax highlighting since #130, with the design's bordered header/body chrome since #657** — `Surface(background fill, primaryContainer border, 6dp corners)`, a header bar with a divider above the body when the fence carries a language, monospace text with token colours bound to `MaterialTheme.colorScheme`, horizontal scroll for long lines (no wrap), and a per-block copy control. See [Code blocks](#code-blocks) for the full mapping; library choice in [ADR 0003](../decisions/0003-syntax-highlighter-library.md).
+- **Thread and labelled reader fences use syntax highlighting and bordered header/body chrome** — `Surface(background fill, primaryContainer border, 6dp corners)`, a header bar with a divider above the body when the fence carries a language, monospace text with token colours bound to `MaterialTheme.colorScheme`, horizontal scroll for long lines (no wrap), and a per-block copy control. See [Code blocks](#code-blocks) for the full mapping; library choice in [ADR 0003](../decisions/0003-syntax-highlighter-library.md).
 - **Highlighter language coverage is bounded.** Kotlin / Bash / JSON (via the JavaScript lexer — JSON's grammar is a subset) tokenise; Markdown and any other language fall through to plain monospace but still show the language label. Adding a language is a one-line addition to `resolveSyntaxLanguage` if the library exposes it.
-- **Indented code blocks render identically to fenced (same header/body chrome) but never carry a header, since they have no info string.** `CODE_BLOCK` passes `language = null` to `CodeBlock`; CommonMark indented blocks have no info-string syntax, and a `null`/blank language suppresses the header and its divider both, not just the label text.
+- **Thread indented blocks use `CodeBlock` without a header; reader indented blocks use the plain panel.** CommonMark indented blocks have no info string, so thread `CodeBlock` suppresses the header and divider.
 - **Lists are flat-bulleted.** Unordered lists use `"•"`; ordered lists use `"${index + 1}."` from the 1-based item position within the list. Nested-list indentation depth comes from the recursive `MarkdownBlock` call inside the list item's `Column` — no per-level indent multiplier.
-- **Blockquote paragraphs render italic.** Non-paragraph children inside a blockquote (e.g. a nested list) recurse through `MarkdownBlock` without the italic override. The blockquote bar is `onSurfaceVariant` (since #770; see [Tables](#tables)) and spans the intrinsic height of the content column.
-- **No free-text selection; code blocks are the one construct with a copy affordance.** The composable uses bare `Text(...)`, not `SelectionContainer { Text(...) }`, everywhere else. Since #657, each fenced or indented code block carries its own [`CopyTextControl`](./message-bubble.md) that copies the block's exact source; nothing else in the renderer (prose, tables, list items, blockquotes) is copyable. If long-press-to-copy for the rest of the message lands later, the right place is a screen-level wrap of the thread `LazyColumn` body, not per-renderer.
+- **Blockquote appearance is presentation-specific.** Thread paragraphs remain italic with an `onSurfaceVariant` bar; reader paragraphs are regular with an `outlineVariant` bar. Nested non-paragraph blocks recurse through `MarkdownBlock`.
+- **No free-text selection.** Prose, tables, lists and quotes use bare `Text`, while code blocks expose block-only copying: thread and labelled reader fences show `CopyTextControl`; plain reader panels copy on tap. The reader menu separately copies the whole note.
 - **Streaming is not specially handled.** `MarkdownText` treats `markdown` as a complete, final string each composition; partial markdown (an unclosed `**bold` mid-stream) still parses (the JetBrains parser is total) and renders as best it can. #184 owns streaming-aware behaviour at the `MessageBubble` layer — `StreamingAssistantBody` appends a `▎` caret glyph to the revealed prefix and passes the result through this renderer unchanged. Streaming uses the default body style.
 - **Renderer is total.** The JetBrains parser produces an AST for any input string — there is no exception path. Unsupported element kinds hit the `else` fallback (raw text using the selected body style), so the message is never blank. #681 leaned on exactly this property to switch parser flavours without suppressing anything — see the next two points.
 - **Parser flavour is GFM since #681, and that changes more than the three constructs it was switched on for.** `org.jetbrains:markdown` has no per-construct registration — `GFMFlavourDescriptor` is the only off-the-shelf way to reach tables, task lists and strikethrough, and it necessarily also brings bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) into every message this renderer sees, whether or not that message uses any of the three wanted constructs.
