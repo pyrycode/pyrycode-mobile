@@ -75,6 +75,7 @@ class ThreadViewModelAttachmentRetrievalTest {
             bytes: ByteArray,
             filename: String,
             mimeType: String,
+            onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
         ): AttachmentUploadResult = AttachmentUploadResult.Stored("id-$filename")
 
         override suspend fun sendMessage(

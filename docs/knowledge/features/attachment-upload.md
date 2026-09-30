@@ -90,12 +90,20 @@ the upload lock, and its result says not to retry.
 
 ### `ConversationRepository` (interface)
 
-`uploadAttachment(conversationId, bytes, filename, mimeType): AttachmentUploadResult` default-throws,
-the same idiom as `requestSystemPrompt` / `setSessionSettings`: `error("uploadAttachment is not
-implemented for this ConversationRepository")`. `FakeConversationRepository` does not override it — demo
-support is explicitly out of this ticket's scope. `CachingConversationRepository` passes it through
+`uploadAttachment(conversationId, bytes, filename, mimeType, onProgress): AttachmentUploadResult`
+default-throws, the same idiom as `requestSystemPrompt` / `setSessionSettings`: `error("uploadAttachment
+is not implemented for this ConversationRepository")`. `FakeConversationRepository` does not override it —
+demo support is explicitly out of this ticket's scope. `CachingConversationRepository` passes it through
 unchanged via `by delegate`. This keeps the ~20 existing test doubles that override only `sendMessage`
 unaffected.
+
+`onProgress: (sentChunks: Int, totalChunks: Int) -> Unit = { _, _ -> }` (#1326) defaults to no-op, so
+every pre-existing caller's behaviour and result are unchanged. `RemoteConversationRepository` and
+`StableConversationRepository` forward it unchanged; `StableConversationRepository` does not call it on
+its own no-repository refusals (`TooLarge` / `ReconnectRequired` with no live repository), since no chunk
+ever sent. It runs synchronously on the upload's coroutine and must not throw — documented on the
+interface, since `MessageCommands` is its only caller. No `ThreadViewModel` wiring yet: the composer will
+consume it in a later ticket.
 
 ### `MessageCommands`
 
@@ -114,8 +122,14 @@ the first has settled, so the socket's send queue never carries two uploads' chu
 `ReconnectRequired`) if the inbound collector has already ended, closing the race between a teardown and
 a start. For each chunk: stop if already settled; record the envelope id with `expectReplyTo` **before**
 sending; a `false` return or a thrown exception from the pump's `send` fails the transfer
-`ReconnectRequired` and stops the loop (no further chunks); `yield()` after each successful send lets the
-inbound collector settle a refusal between chunks and makes the loop cooperatively cancellable. The
+`ReconnectRequired` and stops the loop (no further chunks) — that chunk is never reported. After a
+successful send, and before the `yield()`, the loop calls `onProgress(index + 1, plan.totalChunks)`
+unless `transfer.isSettled` (#1326) — the same flag the loop itself re-reads, so a chunk's report and the
+chunk stop for the same reason, mirroring desktop's `reportProgress` in `attachmentTransfer.ts`. A
+refusal that settles the transfer while a chunk's send is still in flight (an unconfined inbound
+collector) skips that chunk's report; one that settles between chunks, at the following `yield`, still
+reports the chunk that did reach the wire before the loop stops. `yield()` after each successful send
+lets the inbound collector settle a refusal between chunks and makes the loop cooperatively cancellable. The
 repository's `onInbound` routes `messageCommands.routeAttachmentUpload` right after
 `messageCommands.routeDebugBundle`, both ahead of the general demux `when`.
 The inbound collector's `finally` calls `messageCommands.endAttachmentUploads()`, which sets
@@ -180,7 +194,13 @@ a stored reply for another id settling nothing before the right one settles it; 
 (a different host) receiving the first's `attachment_stored` never settling the first's upload; two
 uploads with the same filename minting distinct ids and each settling only on its own reply; a refusal
 mid-upload stopping further chunks; send failure/throw and pump close each giving `ReconnectRequired`
-with no further chunks; an oversized file giving `TooLarge` with zero frames sent.
+with no further chunks; an oversized file giving `TooLarge` with zero frames sent. Progress cases
+(\#1326): an N-chunk upload reports `1..N` of `N` in order, each seen after that chunk was recorded by
+the fake pump; a refusal pushed during a chunk's send and settled inside `send`
+(`UnconfinedTestDispatcher`) skips that chunk's report; a refusal settled at the following `yield` still
+reports the chunk that reached the wire; a refused (`sendResult = false`) or throwing send reports
+nothing for the failed chunk. The existing tests, which pass no callback, prove the default no-op path is
+unchanged.
 
 Under the `testDebugUnitTest` build, `RelayLog.enabled` is `true` and the default sink calls
 `android.util.Log`, which throws `"not mocked"` on plain JVM (there is no Robolectric in this module —
