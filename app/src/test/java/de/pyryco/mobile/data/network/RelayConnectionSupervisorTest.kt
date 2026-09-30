@@ -726,6 +726,60 @@ class RelayConnectionSupervisorTest {
             other.close()
         }
 
+    // ---- #1324: a 4421 protocol-mismatch close halts the redial at Offline ------------------------
+
+    @Test
+    fun protocolMismatchClose_4421_haltsRedialAtOffline() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitUp()
+            runCurrent()
+            // A retry issued while connected is stale by the time of the drop; it must not skip the halt.
+            supervisor.retry()
+            runCurrent()
+            factory.created[0].emitDown(code = 4421)
+            runCurrent()
+
+            assertEquals(RelayLinkStatus.Offline, supervisor.relayStatus.value)
+            assertNull(supervisor.currentConnection.value)
+
+            advanceTimeBy(10 * 60_000L) // far past the 30 s cap
+            runCurrent()
+            assertEquals(1, factory.created.size)
+            assertEquals(RelayLinkStatus.Offline, supervisor.relayStatus.value)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun protocolMismatch_explicitRetryDialsOnce_andARepeatedMismatchHaltsAgain() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitDown(code = 4421)
+            runCurrent()
+            assertEquals(RelayLinkStatus.Offline, supervisor.relayStatus.value)
+
+            supervisor.retry()
+            runCurrent()
+            assertEquals(RelayLinkStatus.Connecting, supervisor.relayStatus.value)
+            assertEquals(2, factory.created.size)
+
+            factory.created[1].emitDown(code = 4421)
+            runCurrent()
+            advanceTimeBy(10 * 60_000L)
+            runCurrent()
+            assertEquals(RelayLinkStatus.Offline, supervisor.relayStatus.value)
+            assertEquals(2, factory.created.size)
+
+            supervisor.close()
+        }
+
     // ---- #1008: a 4412 close is the app-too-old rejection and halts the redial --------------------
 
     @Test
