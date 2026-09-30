@@ -65,3 +65,10 @@ Pending documentation stage: update `docs/knowledge/features/markdown-reader-scr
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-30
+
+## Revisions
+
+- 2026-09-30: Focused existing tests showed that `CodeBlock` exposes a per-block copy action and syntax-highlighted, language-labelled fences in the reader. Preserve that current behavior for labelled fences. Only unlabelled fences and indented blocks take the Figma plain-panel treatment; tapping the panel copies that block's bounded source, so the existing copy action remains reachable without adding visible chrome absent from node `553:2574`. `MarkdownTextStyle` still selects the reader variant, and the whole-note menu is unchanged.
+- 2026-09-30: Android's default trimmed line boxes made the reference paragraph and list shorter than the Figma frame despite matching text roles. Apply untrimmed line-height boxes only to reader blocks and headings; keep the thread ramp untouched.
+- 2026-09-30: Bound the reader code panel's explicit minimum height to two lines. The content itself may grow naturally, but a hostile newline count cannot multiply a large minimum layout constraint. The panel's tap uses the same `MAX_CLIPBOARD_CHARS` bound as the existing copy control.
+- 2026-09-30: Resolved the open reference-state questions: the node has no menu, compact or enlarged-text child, so the current Material menu is retained and checked on the full Pixel 8 emulator at 412 × 892 and 320 × 700 / 1.5× text. The supplied back and overflow SVG path data exactly match `ic_thread_back` and `ic_thread_overflow`; no new asset is needed. Pixel comparisons are stored under `app/src/androidTest/assets/markdown-reader-1291/`.
