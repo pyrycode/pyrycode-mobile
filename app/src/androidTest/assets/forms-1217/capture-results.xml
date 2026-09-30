@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="4" failures="0" errors="0" skipped="0" time="36.674" timestamp="2026-09-30T02:31:00" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.components.FormCallerCaptureTest" tests="4" failures="0" errors="0" skipped="0" time="35.078" timestamp="2026-09-30T02:31:00" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="editChannel" classname="de.pyryco.mobile.ui.components.FormCallerCaptureTest" time="9.261" />
+    <testcase name="createChannel" classname="de.pyryco.mobile.ui.components.FormCallerCaptureTest" time="8.104" />
+    <testcase name="saveAsChannel" classname="de.pyryco.mobile.ui.components.FormCallerCaptureTest" time="8.772" />
+    <testcase name="editChat" classname="de.pyryco.mobile.ui.components.FormCallerCaptureTest" time="8.941" />
+  </testsuite>
+</testsuites>

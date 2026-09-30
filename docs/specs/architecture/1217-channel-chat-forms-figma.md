@@ -51,3 +51,9 @@ No documentation-only acceptance criterion or explicit path was supplied. Docume
 
 - Which differences are present in actual device renders rather than inferred from the 676 px exported content?
 - Does the Edit chat field label/capitalization reflect an intended text change, or a conflicting reference state? Record the answer and any design departure in Revisions and the PR.
+
+## Revisions
+
+- The real device comparison found the Edit chat `TextField` taller than the shared channel name well. `ChatNameField` now uses a plain 52 dp well while retaining its Done callback. Both edit-form archive buttons had a 48 dp visible surface; their visible surface is now 40 dp with a separate minimum interactive area and 6 dp corners.
+- The design uses “Edit Chat” and “Channel name:” together. The title adopts the reference casing; the label was already identical and remains so. Create and Save as channel needed no caller-code change because their shared fields and shell already supply the relevant geometry and guards.
+- The 20 dp visible mute checkbox stays inside a 48 dp mobile touch row. Its extra vertical spacing against the 676 px content export is an accessibility adaptation. The Figma file has no 412 × 892 form content frame or keyboard, loading, failure, prompt-reading, disabled or large-text state; the side-by-side evidence labels these limits rather than asserting a pixel match.

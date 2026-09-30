@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="7.923" timestamp="2026-09-30T02:38:07" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.components.MobileModalTest" tests="1" failures="0" errors="0" skipped="0" time="7.515" timestamp="2026-09-30T02:38:07" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="ime_keeps_focused_field_final_item_and_actions_reachable" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="7.515" />
+  </testsuite>
+</testsuites>

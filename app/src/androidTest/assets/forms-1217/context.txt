@@ -1,0 +1,30 @@
+Ticket #1217 visual evidence, inspected 2026-09-30.
+
+Figma file g2HIq2UyPhslEoHRokQmHG:
+  shell.png    533:2369  412 x 892
+  create.png   487:2435  676 x 441
+  chat.png     487:2320  676 x 349
+  channel.png  500:2120  676 x 533
+  save.png     487:2355  676 x 441
+
+Each *-412x892.png is a full Pixel 8 API 35 emulator capture of the actual
+caller form in the fixed dark theme. FormCallerCaptureTest wrote the PNGs and
+context files; capture-results.xml records 4 executed tests, 0 failures and
+0 skips. ime-results.xml records the focused keyboard reachability test on
+Pixel 8 API 35: 1 executed, 0 failures and 0 skips. The API 33 ATD attempt
+stopped at its window-focus precondition because a Bluetooth system crash
+dialog took focus; no form interaction ran in that attempt. The
+comparison-*.png panels put those captures beside the Figma
+content exports. Yellow outlines mark 52 px name wells; cyan outlines mark
+112 px prompt wells. The Figma exports are 676 px wide; these guides compare
+content dimensions, not whole-screen pixel positions or form widths. Pink
+outlines mark the 40 px archive actions on the two edit forms.
+
+The design file has no 412 x 892 form-content frame. It also has no keyboard,
+compact-width, enlarged-text, disabled, loading, failure or prompt-reading
+state. Edit channel and Save as channel captures include the IME because the
+name field takes focus; their vertical positions are not compared with the
+keyboard-free Figma examples. The Figma sample prompt is lorem ipsum, whereas
+the live forms use empty or saved prompt text. The Edit chat Figma field is
+labelled "Channel name:" and the implementation keeps that literal label.
+The mute checkbox uses a larger mobile touch row than the 676 px example.

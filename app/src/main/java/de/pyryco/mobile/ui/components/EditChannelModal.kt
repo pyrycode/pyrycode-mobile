@@ -10,12 +10,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -162,9 +164,9 @@ private fun ArchiveChannelAction(
         OutlinedButton(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
             onClick = onClick,
-            modifier = Modifier.heightIn(min = ActionMinHeight),
+            modifier = Modifier.minimumInteractiveComponentSize(),
             enabled = enabled,
-            shape = MaterialTheme.shapes.small,
+            shape = RoundedCornerShape(6.dp),
             border =
                 BorderStroke(
                     1.dp,
