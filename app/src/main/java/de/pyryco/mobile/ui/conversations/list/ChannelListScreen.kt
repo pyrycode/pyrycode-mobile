@@ -707,11 +707,11 @@ private fun LazyListScope.treeHost(
             key = { _, conversation -> treeItemKey("conversation", section.name, host.serverId, conversation.id) },
         ) { rowIndex, conversation ->
             val target = HostConversationTarget(host.serverId, conversation.id)
+            // Inset on the start only: rows end on the host row's edge, so every pen lines up with the host's.
             Box(
                 modifier =
                     Modifier.padding(
                         start = TreeConversationInset,
-                        end = TreeConversationInset,
                         top = if (rowIndex == 0) 0.dp else TreeConversationGap,
                     ),
             ) {
