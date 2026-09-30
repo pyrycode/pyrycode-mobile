@@ -68,3 +68,9 @@ Pending for the documentation stage: update `docs/knowledge/features/permission-
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-30
+
+## Revisions
+
+- 2026-09-30: The device capture uses Compose's rendered `paneTitle` surface because the gate's `SecureOn` policy intentionally masks ordinary system screenshots. On the managed API 33 device it produced nonblank 412 × 892 pixels for unchecked, checked and armed states. The compact 320 dp Robolectric test passed at 1.5× text scale; the existing shell's compact overflow and real IME device tests passed without a layout change.
+- 2026-09-30: A stronger compact-width test with long decision labels found `ModalOptionButton` clipping text within Material's button row. The option label now takes the available row width, wraps and stays centered. The initial short-label test did not expose this failure.
+- 2026-09-30: The exact multi-line text assertion uses Robolectric native graphics for its test method. The default graphics mode returned a misleading one-line layout for the same 51-character label, so it could not verify wrapping.

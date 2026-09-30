@@ -1,35 +1,48 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ModalContext
+import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.ui.components.MobileGateModal
 import de.pyryco.mobile.ui.settings.label
+import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
 /**
@@ -135,9 +148,8 @@ private fun PermissionContext(context: ModalContext) {
 
 /**
  * The "don't ask again this session" offer (#818): a checkbox row with a local label, then the offered rules.
- * The Figma container (`533-2369`) has no frame for it, so it takes the context rows' "Input large" stacking:
- * the label style over body-medium values, 8 dp apart. The whole row toggles, so the target is the row and
- * not only the box. The rules are claude-authored and render through plain [Text] only, one per line in wire
+ * The checkbox with label in Figma `347:6215` supplies the visible box and label geometry. The whole row
+ * toggles at the shell's touch floor. The rules are claude-authored and render through plain [Text] only, one per line in wire
  * order (no markdown, no link handling, no `SelectionContainer`, no saved state, never logged).
  */
 @Composable
@@ -157,13 +169,30 @@ private fun AlwaysAllowOffer(
                     .heightIn(min = 48.dp)
                     .toggleable(value = accepted, role = SemanticsRole.Checkbox, onValueChange = onChanged),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Checkbox(checked = accepted, onCheckedChange = null)
+            Box(
+                modifier =
+                    Modifier
+                        .size(20.dp)
+                        .border(2.dp, MaterialTheme.colorScheme.tertiary, RoundedCornerShape(4.dp))
+                        .testTag("always_allow_box"),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (accepted) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_permission_checkbox_check),
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+            }
             Text(
                 text = stringResource(R.string.modal_always_allow_label),
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground,
             )
         }
         rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyMedium) }
@@ -214,26 +243,99 @@ private fun ModalOptionButton(
 ) {
     val defaultDesc = stringResource(R.string.modal_default_option_desc)
     val armedDesc = stringResource(R.string.modal_armed_option_desc)
-    // The shell's action geometry (#815): small shape and a 48 dp minimum target.
-    val base = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+    // Figma `489:1876` draws a 40 dp surface; Material supplies the surrounding 48 dp touch floor.
+    val base = Modifier.fillMaxWidth().minimumInteractiveComponentSize()
     val modifier =
         when {
             isArmed -> base.semantics { stateDescription = armedDesc }
             isDefault -> base.semantics { stateDescription = defaultDesc }
             else -> base
         }
-    val shape = MaterialTheme.shapes.small
+    val shape = RoundedCornerShape(6.dp)
     when {
-        isArmed -> FilledTonalButton(onClick = onClick, modifier = modifier, shape = shape) { Text(label) }
-        isDefault -> Button(onClick = onClick, modifier = modifier, shape = shape) { Text(label) }
+        isArmed ->
+            FilledTonalButton(
+                onClick = onClick,
+                modifier = modifier,
+                shape = shape,
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    label,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        isDefault ->
+            Button(
+                onClick = onClick,
+                modifier = modifier,
+                shape = shape,
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    label,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                )
+            }
         else ->
             OutlinedButton(
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+                colors =
+                    ButtonDefaults.outlinedButtonColors(
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                    ),
                 onClick = onClick,
                 modifier = modifier,
                 shape = shape,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-            ) { Text(label) }
+                contentPadding = PaddingValues(horizontal = 19.dp, vertical = 7.dp),
+            ) {
+                Text(
+                    label,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                )
+            }
+    }
+}
+
+@Preview(name = "Permission choices — dark", widthDp = 412, heightDp = 892, showBackground = true)
+@Composable
+private fun PermissionModalPreview() {
+    PyrycodeMobileTheme(darkTheme = true) {
+        PermissionModalOverlay(
+            open =
+                ModalUiState.Open(
+                    modalId = "preview",
+                    modalClass = "permission",
+                    title = "Permission required",
+                    prompt = "Allow this action?",
+                    options =
+                        listOf(
+                            ModalOption("allow_once", "Allow once"),
+                            ModalOption("reject_once", "Reject once"),
+                        ),
+                    defaultOptionId = "reject_once",
+                    alwaysAllowRules = listOf("Applies to this session"),
+                ),
+            armedOptionId = null,
+            onOption = {},
+            onCancel = {},
+            alwaysAllowAccepted = true,
+        )
     }
 }
 

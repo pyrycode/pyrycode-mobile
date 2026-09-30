@@ -4,7 +4,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -13,8 +16,12 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -29,10 +36,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 class ThreadScreenModalTest {
@@ -316,6 +325,61 @@ class ThreadScreenModalTest {
             .onNode(
                 hasText(string(R.string.modal_always_allow_label)).and(SemanticsMatcher.keyIsDefined(SemanticsProperties.ToggleableState)),
             ).assertIsOn()
+    }
+
+    @Test
+    fun offered_checkbox_uses_figma_box_size_and_label_gap() {
+        setContent(openModal().copy(alwaysAllowRules = offeredRules))
+
+        val box = composeTestRule.onNodeWithTag("always_allow_box", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val label =
+            composeTestRule
+                .onNodeWithText(string(R.string.modal_always_allow_label), useUnmergedTree = true)
+                .fetchSemanticsNode()
+                .boundsInRoot
+        val density = composeTestRule.density.density
+        assertEquals(20f, box.width / density, 0.5f)
+        assertEquals(20f, box.height / density, 0.5f)
+        assertEquals(12f, (label.left - box.right) / density, 0.5f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun enlarged_text_keeps_all_permission_decisions_reachable_in_compact_dialog() {
+        val longOptions =
+            permissionOptions.map { option -> option.copy(label = "${option.label} for the current session with these rules") }
+        val modal =
+            openModal().copy(
+                prompt = "A long permission request describing a command and its arguments without making the text interactive.",
+                context = ModalContext(reason = "Review the requested action before choosing an option."),
+                alwaysAllowRules = listOf("Applies to this session only; review each matching rule before allowing."),
+                options = longOptions,
+            )
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    PermissionModalOverlay(modal, armedOptionId = null, onOption = {}, onCancel = {})
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText(modal.prompt).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.modal_always_allow_label)).performScrollTo().assertIsDisplayed()
+        longOptions.forEach { option ->
+            composeTestRule.onNodeWithText(option.label).performScrollTo().assertIsDisplayed()
+            val layouts = mutableListOf<TextLayoutResult>()
+            composeTestRule
+                .onNodeWithText(option.label, useUnmergedTree = true)
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val layout = layouts.single()
+            assertTrue("${option.id} wraps at enlarged text", layout.lineCount > 1)
+            assertFalse("${option.id} clips horizontally", layout.didOverflowWidth)
+            assertFalse("${option.id} clips vertically", layout.didOverflowHeight)
+            for (line in 0 until layout.lineCount) {
+                assertFalse("${option.id} ellipsizes", layout.isLineEllipsized(line))
+            }
+        }
+        composeTestRule.onNodeWithText(string(R.string.modal_cancel)).assertIsDisplayed()
     }
 
     @Test
