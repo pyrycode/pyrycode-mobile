@@ -1,4 +1,16 @@
 <?xml version='1.0' encoding='utf-8'?>
 <testsuites tests="11" failures="0" errors="0" skipped="0">
-  <testsuite tests="11" skipped="0" failures="0" errors="0" timestamp="2026-09-30T19:38:05" time="20.157" />
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" tests="11" failures="0" errors="0" skipped="0" time="19.927" timestamp="2026-09-30T19:38:05">
+    <testcase name="overlapping_prompts_restore_an_originally_protected_window" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="2.238" />
+    <testcase name="overlapping_prompts_keep_protection_when_the_incoming_owner_exits_first" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.268" />
+    <testcase name="failed_refusal_shows_an_error_and_keeps_selections" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.757" />
+    <testcase name="overlapping_prompts_keep_protection_when_the_outgoing_owner_exits_first" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.153" />
+    <testcase name="multiple_choice_uses_checkboxes_and_continue_sends_one_answer" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="2.046" />
+    <testcase name="ime_keeps_the_last_other_field_and_actions_reachable_at_320_by_700" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="3.335" />
+    <testcase name="question_components_use_figma_control_geometry_and_keep_other_editable" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.667" />
+    <testcase name="large_text_actions_stack_and_pointer_edges_submit_only_this_batch" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.317" />
+    <testcase name="single_choice_uses_radio_semantics_and_other_clears_the_pick" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.948" />
+    <testcase name="inline_prompt_protects_capture_rejects_obscured_touches_and_restores_window_policy" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.066" />
+    <testcase name="long_daemon_text_wraps_and_other_draft_survives_a_choice_change_at_large_text" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="2.132" />
+  </testsuite>
 </testsuites>
