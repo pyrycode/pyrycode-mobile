@@ -100,13 +100,23 @@ class ThreadViewModelEffortRecallTest {
         }
 
     @Test
-    fun aRememberedLevelTheSelectedRowDoesNotPublish_isNotSent() =
+    fun aRememberedLevelTheSelectedRowDoesNotPublish_waitsUntilAnOfferingModelIsSelected() =
         runTest {
             val repo = ScriptedRepo()
-            val vm = collectedVm(repo, MemoryStore("xhigh"), reading(effort = ""))
+            val vm = collectedVm(repo, MemoryStore("max"), reading(effort = "", model = "sonnet"))
 
             assertTrue(repo.calls.isEmpty())
             assertEquals(EFFORT_PLACEHOLDER_LABEL, vm.state.value.runConfig.effortLabel)
+
+            repo.readings.emit(reading(effort = "", model = "opus"))
+            runCurrent()
+            assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, effort = "max")), repo.calls)
+
+            repo.readings.emit(reading(effort = "max"))
+            runCurrent()
+            repo.readings.emit(reading(effort = ""))
+            runCurrent()
+            assertEquals(1, repo.calls.size)
         }
 
     @Test
@@ -156,13 +166,60 @@ class ThreadViewModelEffortRecallTest {
         }
 
     @Test
-    fun aReadingWithNoSessionToAddress_isNotWritten() =
+    fun aReadingWithNoSessionToAddress_waitsUntilASessionArrives() =
         runTest {
             val repo = ScriptedRepo()
             repo.liveSession.value = ""
             collectedVm(repo, MemoryStore("high"), reading(effort = "", sessionId = ""))
 
             assertTrue(repo.calls.isEmpty())
+
+            repo.liveSession.value = SESSION
+            repo.readings.emit(reading(effort = ""))
+            runCurrent()
+            assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, effort = "high")), repo.calls)
+
+            repo.readings.emit(reading(effort = "high"))
+            runCurrent()
+            repo.readings.emit(reading(effort = ""))
+            runCurrent()
+            assertEquals(1, repo.calls.size)
+        }
+
+    @Test
+    fun aSavedChoiceWhileWaiting_endsRecallEvenIfALaterReadingIsEmpty() =
+        runTest {
+            val repo = ScriptedRepo()
+            val store = MemoryStore("max")
+            collectedVm(repo, store, reading(effort = "", model = "sonnet"))
+            assertTrue(repo.calls.isEmpty())
+
+            repo.readings.emit(reading(effort = "low", model = "sonnet"))
+            runCurrent()
+            repo.readings.emit(reading(effort = "", model = "opus"))
+            runCurrent()
+
+            assertTrue(repo.calls.isEmpty())
+            assertTrue(store.writes.isEmpty())
+        }
+
+    @Test
+    fun anEffortTapWhileWaiting_endsRecallEvenIfALaterModelOffersTheRememberedLevel() =
+        runTest {
+            val repo = ScriptedRepo()
+            val store = MemoryStore("max")
+            val vm = collectedVm(repo, store, reading(effort = "", model = "sonnet"))
+            assertTrue(repo.calls.isEmpty())
+
+            vm.onEffortSelected("low")
+            runCurrent()
+            repo.readings.emit(reading(effort = "low", model = "sonnet"))
+            runCurrent()
+            repo.readings.emit(reading(effort = "", model = "opus"))
+            runCurrent()
+
+            assertEquals(listOf(SetSessionSettingsPayloadDto(SESSION, effort = "low")), repo.calls)
+            assertEquals(listOf("low"), store.writes)
         }
 
     // ---- recall ---------------------------------------------------------------------------------

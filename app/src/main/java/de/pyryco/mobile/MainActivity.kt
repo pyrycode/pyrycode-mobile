@@ -65,7 +65,6 @@ import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
-import de.pyryco.mobile.ui.conversations.thread.QuestionBatchModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -474,7 +473,10 @@ internal fun PyryNavHost(
                         }
                     }
                 }
+                val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 ThreadScreen(
+                    questionState = questionModal,
+                    onQuestionEvent = { event, generation -> vm.onQuestionEvent(event, generation) },
                     state = state,
                     onBack = { navController.popBackStack() },
                     onSendMessage = vm::sendMessage,
@@ -536,9 +538,6 @@ internal fun PyryNavHost(
                     // #1050: a markdown link in an assistant reply, read live from the workspace.
                     onOpenMarkdownLink = vm::onOpenMarkdownLink,
                 )
-                // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
-                val questionModal by vm.questionModal.collectAsStateWithLifecycle()
-                questionModal?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent) }
             }
         }
         // #1027: one markdown attachment of a thread, read in-app. The route carries ids only; the file is

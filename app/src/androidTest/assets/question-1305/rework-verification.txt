@@ -1,0 +1,19 @@
+Ticket #1305 / PR #1307: verifier rework, 2026-09-30.
+Static fixture content only. The existing normal, compact and keyboard PNGs remain representative: this repair changes protection ownership, request lifetime and agent observation, not layout.
+
+RED: ThreadViewModelQuestionTest executed 15, failed 2, skipped 0. The new queued-collector and edit-subscription cases failed for the reported behaviors.
+RED: QuestionBatchModalTest#overlapping_prompts_keep_protection_when_the_outgoing_owner_exits_first executed 1, failed 1, skipped 0: FLAG_SECURE was cleared while the incoming owner remained mounted.
+
+GREEN command (exit 0):
+./gradlew spotlessApply testDebugUnitTest --tests de.pyryco.mobile.di.RelayConnectionFactoryTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest --tests de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest --tests de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest lint assembleDebug compileDebugAndroidTestKotlin --console=plain
+Executed 105, failed 0, errors 0, skipped 0. Sanitized fresh XML: rework-jvm-focused.xml; original path app/build/test-results/testDebugUnitTest/TEST-*.xml.
+Proves queued equal-request reconnect rejection before observation, rejection after the synchronous send lock, captured-source answer/refusal routing, authoritative transport-edge rejection, production Koin host routing, stale completion guards, navigation retention, stable agent subscription, existing validation/retry and history anchoring/demand.
+
+Device command (exit 0):
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Executed 11, failed 0, errors 0, skipped 0. Sanitized fresh XML: rework-api33-focused.xml; original path app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml.
+Runtime: managed pixel2Api33Atd / Android 13 ATD. Overlap regressions release owners in both orders, assert FLAG_SECURE and both touch filters, reject obscured pointer dispatch, positively route unobscured taps to the same target, and restore original unprotected/protected policies. All existing question radio/checkbox, real IME, Other retention, compact action and pointer cases ran and passed.
+
+Toolchain: ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk; existing Android Studio JDK 21. A first concurrent Gradle invocation collided on outputs; checks thereafter ran sequentially and Kotlin outputs were rebuilt with -Pkotlin.incremental=false. This transient setup failure is not a passing proof or a product baseline failure.
+Lint, assembleDebug and compileDebugAndroidTestKotlin passed. Forced Spotless result is recorded in the PR handoff.
+Dispatcher full UI/scripted gates and the named full-suite rung-3 live result remain pending. No focused live-Claude run was performed. Keep needs-real-claude; record executed/failed/skipped counts and the named question-answer method's pass after that gate. Documentation handoff remains as specified in the plan and PR. #1220 remains in Inbox.

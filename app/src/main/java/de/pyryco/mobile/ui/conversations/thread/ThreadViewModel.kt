@@ -118,6 +118,7 @@ class ThreadViewModel(
     questionBatch: (conversationId: String) -> Flow<QuestionBatch?> = { flowOf(null) },
     private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
     private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
+    questionDraftStore: QuestionDraftStore? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
     // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
     backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
@@ -748,47 +749,37 @@ class ThreadViewModel(
      */
     val modalSendErrors: Flow<Unit> = modalSendErrorChannel.receiveAsFlow()
 
+    private val questions = questionDraftStore ?: QuestionDraftStore()
     private val mutableQuestionModal = MutableStateFlow<QuestionModalState?>(null)
-
-    /**
-     * The clarification batch held for this conversation with the operator's picks (#661), or null. The
-     * picks belong to one batch: a dismissal (null) discards them, and any batch other than the one held
-     * — a replacement, or the same id re-sent after a reconnect's empty reconcile — starts fresh.
-     * It names the conversation's agent (#1116), read from the list only while a batch is held.
-     */
     val questionModal: StateFlow<QuestionModalState?> = mutableQuestionModal
 
     init {
-        viewModelScope.launch {
-            heldQuestionBatch(questionBatch(conversationId)).collect { held ->
-                mutableQuestionModal.update { current ->
-                    val (own, agent) = held ?: return@update null
-                    if (current?.batch == own) current.copy(agent = agent) else QuestionModalState(own, agent = agent)
+        if (questionDraftStore == null) {
+            viewModelScope.launch {
+                questionBatch(conversationId).collect { batch ->
+                    questions.reconcileHost(serverId, listOfNotNull(batch?.takeIf { it.conversationId == conversationId }))
                 }
             }
+            addCloseable { questions.dispose() }
+        }
+        viewModelScope.launch {
+            questions
+                .observe(serverId, conversationId)
+                .combine(conversationAgent.onStart { emit(ConversationAgent.Claude) }) { held, agent ->
+                    held?.copy(agent = agent)
+                }.collect { mutableQuestionModal.value = it }
         }
     }
 
-    /** This conversation's held batch with its agent; the list is subscribed only while a batch is held. */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun heldQuestionBatch(batches: Flow<QuestionBatch?>): Flow<Pair<QuestionBatch, ConversationAgent>?> =
-        batches
-            .map { batch -> batch?.takeIf { it.conversationId == conversationId } }
-            .flatMapLatest { own -> if (own == null) flowOf(null) else conversationAgent().map { own to it } }
-
-    /** This conversation's agent, Claude until the list names it: a cold list must not hold the modal back. */
-    private fun conversationAgent(): Flow<ConversationAgent> =
-        repository
-            .observeConversations(ConversationFilter.All)
-            .map { rows -> rows.firstOrNull { it.id == conversationId }?.agent ?: ConversationAgent.Claude }
-            .onStart { emit(ConversationAgent.Claude) }
-            .distinctUntilChanged()
-
-    fun onQuestionEvent(event: QuestionModalEvent) {
-        val held = mutableQuestionModal.value ?: return
+    fun onQuestionEvent(
+        event: QuestionModalEvent,
+        generation: Long = questionModal.value?.generation ?: -1,
+    ) {
+        val held = questions.current(serverId, conversationId) ?: return
+        if (held.generation != generation) return
         when (event) {
             is QuestionModalEvent.OptionToggled ->
-                editSelection(event.questionIndex) { selection, question ->
+                editSelection(generation, event.questionIndex) { selection, question ->
                     if (event.optionIndex in
                         question.options.indices
                     ) {
@@ -798,30 +789,31 @@ class ThreadViewModel(
                     }
                 }
             is QuestionModalEvent.OtherToggled ->
-                editSelection(event.questionIndex) { selection, question ->
+                editSelection(generation, event.questionIndex) { selection, question ->
                     selection.withOtherTicked(!selection.otherTicked, question.multiSelect)
                 }
             is QuestionModalEvent.OtherTextChanged ->
-                editSelection(event.questionIndex) { selection, question ->
+                editSelection(generation, event.questionIndex) { selection, question ->
                     selection.copy(otherText = event.text).withOtherTicked(true, question.multiSelect)
                 }
             QuestionModalEvent.Continue -> {
                 val answers = held.answers()
                 if (!held.locked && answers != null) {
-                    sendQuestion(held.batch.questionBatchId, "answer") { answerQuestionBatch(it, answers) }
+                    sendQuestion(held, "answer", answers) { answerQuestionBatch(it, answers) }
                 }
             }
             QuestionModalEvent.Cancel ->
-                if (!held.locked) sendQuestion(held.batch.questionBatchId, "refuse") { refuseQuestionBatch(it) }
+                if (!held.locked) sendQuestion(held, "refuse", null) { refuseQuestionBatch(it) }
         }
     }
 
     private fun editSelection(
+        generation: Long,
         questionIndex: Int,
         edit: (QuestionSelection, Question) -> QuestionSelection,
     ) {
-        mutableQuestionModal.update { held ->
-            if (held == null || held.locked || questionIndex !in held.selections.indices) return@update held
+        questions.update(serverId, conversationId, generation) { held ->
+            if (held.locked || questionIndex !in held.selections.indices) return@update held
             val question = held.batch.questions[questionIndex]
             held.copy(selections = held.selections.toMutableList().also { it[questionIndex] = edit(it[questionIndex], question) })
         }
@@ -829,41 +821,50 @@ class ThreadViewModel(
 
     /**
      * The single question send (#661): locks the modal before launching, so a second Continue or Cancel
-     * is a no-op, and applies the outcome only while [questionBatchId] is still the held batch. Catches
+     * is a no-op, and applies the outcome only while the captured generation is still held. Catches
      * only the documented throws; logs static codes only, never an id, label or value.
      */
     private fun sendQuestion(
-        questionBatchId: String,
+        held: QuestionModalState,
         kind: String,
+        answers: List<QuestionAnswer>?,
         send: suspend (questionBatchId: String) -> Unit,
     ) {
-        setQuestionPhase(questionBatchId, QuestionSendPhase.Sending)
-        viewModelScope.launch {
-            val outcome =
-                try {
-                    send(questionBatchId)
-                    QuestionSendPhase.Sent
-                } catch (e: CancellationException) {
-                    throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
-                } catch (e: RelayErrorException) {
-                    QuestionSendPhase.Failed
-                } catch (e: IllegalStateException) {
-                    QuestionSendPhase.Failed
-                } catch (e: IllegalArgumentException) {
-                    QuestionSendPhase.Failed
+        val generation = held.generation
+        setQuestionPhase(generation, QuestionSendPhase.Sending)
+        viewModelScope
+            .launch {
+                if (questions.current(serverId, conversationId)?.generation != generation) return@launch
+                val outcome =
+                    try {
+                        if (!questions.submit(serverId, conversationId, generation, answers, send)) return@launch
+                        QuestionSendPhase.Sent
+                    } catch (e: CancellationException) {
+                        setQuestionPhase(generation, QuestionSendPhase.Failed)
+                        throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+                    } catch (e: RelayErrorException) {
+                        QuestionSendPhase.Failed
+                    } catch (e: IllegalStateException) {
+                        QuestionSendPhase.Failed
+                    } catch (e: IllegalArgumentException) {
+                        QuestionSendPhase.Failed
+                    }
+                RelayLog.d { "event=question_send kind=$kind outcome=${if (outcome == QuestionSendPhase.Sent) "sent" else "failed"}" }
+                setQuestionPhase(generation, outcome)
+            }.invokeOnCompletion { cause ->
+                if (cause is CancellationException) {
+                    questions.update(serverId, conversationId, generation) {
+                        if (it.phase == QuestionSendPhase.Sending) it.copy(phase = QuestionSendPhase.Failed) else it
+                    }
                 }
-            RelayLog.d { "event=question_send kind=$kind outcome=${if (outcome == QuestionSendPhase.Sent) "sent" else "failed"}" }
-            setQuestionPhase(questionBatchId, outcome)
-        }
+            }
     }
 
     private fun setQuestionPhase(
-        questionBatchId: String,
+        generation: Long,
         phase: QuestionSendPhase,
     ) {
-        mutableQuestionModal.update { held ->
-            if (held?.batch?.questionBatchId == questionBatchId) held.copy(phase = phase) else held
-        }
+        questions.update(serverId, conversationId, generation) { it.copy(phase = phase) }
     }
 
     private val newSessionErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
