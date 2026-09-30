@@ -10,6 +10,9 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.Question
+import de.pyryco.mobile.data.model.QuestionBatch
+import de.pyryco.mobile.data.model.QuestionOption
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.BoundaryReason
@@ -150,6 +153,51 @@ private fun PermissionModalOverlayPreview() {
             onOption = {},
             onCancel = {},
             alwaysAllowAccepted = true,
+        )
+    }
+}
+
+/** #1305: a pending batch inline at the newest end of its thread, one question answered and one with Other text. */
+@Preview(name = "Thread — inline questions, light", showBackground = true, widthDp = 412, heightDp = 892)
+@Preview(
+    name = "Thread — inline questions, dark",
+    showBackground = true,
+    widthDp = 412,
+    heightDp = 892,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun ThreadScreenInlineQuestionsPreview() {
+    val options = listOf(QuestionOption("Kotlin", "The JVM language"), QuestionOption("Rust", "A systems language"))
+    val batch =
+        QuestionBatch(
+            conversationId = "seed-channel-personal",
+            questionBatchId = "preview",
+            questions =
+                listOf(
+                    Question("Which language should you learn next?", "Language", options, multiSelect = false),
+                    Question("Which targets matter?", "Targets", options, multiSelect = true),
+                ),
+        )
+    PyrycodeMobileTheme {
+        ThreadScreen(
+            state =
+                ThreadUiState(
+                    conversationId = "seed-channel-personal",
+                    displayName = "kitchenclaw refactor",
+                    isPromoted = true,
+                    hasMessages = true,
+                    items = previewItems(),
+                ),
+            onBack = {},
+            onSendMessage = {},
+            connectionState = ConnectionState.Connected,
+            onRetry = {},
+            questionState =
+                QuestionModalState(
+                    batch,
+                    listOf(QuestionSelection(setOf(0)), QuestionSelection(otherTicked = true, otherText = "Web")),
+                ),
         )
     }
 }

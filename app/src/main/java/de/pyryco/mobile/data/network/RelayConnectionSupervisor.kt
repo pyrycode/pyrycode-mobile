@@ -2,6 +2,8 @@ package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import kotlinx.coroutines.CoroutineDispatcher
@@ -322,6 +324,20 @@ internal fun RelayLinkStatus.toConnectionState(): ConnectionState =
         RelayLinkStatus.PairingRejected -> ConnectionState.Offline
         is RelayLinkStatus.UpdateRequired -> ConnectionState.Offline
         RelayLinkStatus.Offline -> ConnectionState.Offline
+    }
+
+/**
+ * The thread's single-signal [ConnectionState] from both legs (#1318): [ConnectionState.Connected] only
+ * once the socket is up **and** the Noise handshake has finished, matching desktop's `handshake-complete`.
+ * A relay leg up with the pyrycode leg not yet connected reads [ConnectionState.Connecting]; every other
+ * relay value keeps [RelayLinkStatus.toConnectionState], so Idle stays Connected and the Reconnecting
+ * countdown survives.
+ */
+internal fun ConnectionStatus.toConnectionState(): ConnectionState =
+    when {
+        relay != RelayLinkStatus.Connected -> relay.toConnectionState()
+        pyrycode == PyrycodeLinkStatus.Connected -> ConnectionState.Connected
+        else -> ConnectionState.Connecting
     }
 
 /** Backoff base seconds for [attempt] (1-based): 1, 2, 4, 8, 16, then 30 (cap) from attempt 6. */

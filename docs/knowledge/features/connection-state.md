@@ -96,7 +96,18 @@ No other call site changed; `ThreadViewModel` consumes the unchanged interface. 
 
 ## Now derived from the relay leg (landed in [#391](../codebase/391.md))
 
-`ConnectionState` is no longer the supervisor's source of truth — it's **derived**. [#391](../codebase/391.md) introduced the relay-leg model [`RelayLinkStatus`](relay-link-status.md) (these four cases **plus** `DaemonAbsent`, for the relay's `4404 "no server"` close) as the [`RelayConnectionSupervisor`](relay-reconnect-supervisor.md)'s single hot state, and made `observe()` derive `ConnectionState` from it per-collector via `state.map { it.toConnectionState() }` (`DaemonAbsent → Offline`, the nearest legacy banner meaning). This `ConnectionState` model and the `ConnectionStateSource` interface are **unchanged** — the four cases, the product copy, and every consumer (the [`ConnectionBanner`](./connection-banner.md)'s exhaustive `when`, `ThreadViewModel`) stay exactly as before. It's a Strangler-Fig step: a richer leg model alongside the legacy single signal, the legacy one derived, until #392's combined `{relay, pyrycode}` model becomes the real banner source. See [Relay link status](relay-link-status.md) for the rationale and why `DaemonAbsent` was **not** added as a fifth `ConnectionState` case (it would have broken the banner's exhaustive `when` at compile time).
+`ConnectionState` is no longer the supervisor's source of truth — it's **derived**. [#391](../codebase/391.md) introduced the relay-leg model [`RelayLinkStatus`](relay-link-status.md) (these four cases **plus** `DaemonAbsent`, for the relay's `4404 "no server"` close) as the [`RelayConnectionSupervisor`](relay-reconnect-supervisor.md)'s single hot state, and made `observe()` derive `ConnectionState` from it per-collector via `state.map { it.toConnectionState() }` (`DaemonAbsent → Offline`, the nearest legacy banner meaning). This `ConnectionState` model and the `ConnectionStateSource` interface are **unchanged** — the four cases and the product copy stay exactly as before, and the [`ConnectionBanner`](./connection-banner.md)'s exhaustive `when` still reads this relay-only derivation. It's a Strangler-Fig step: a richer leg model alongside the legacy single signal, the legacy one derived. See [Relay link status](relay-link-status.md) for the rationale and why `DaemonAbsent` was **not** added as a fifth `ConnectionState` case (it would have broken the banner's exhaustive `when` at compile time).
+
+**#1318 moved `ThreadViewModel` off this relay-only derivation.** The thread's `ConnectionStateSource`
+(`ThreadDestinationFactory.thread` in `AppModule.kt`) now reads
+[`ConnectionStatus`](connection-status.md)`.toConnectionState()` — relay `Connected` maps to
+`ConnectionState.Connected` only once the pyrycode leg has also finished its Noise handshake, and to
+`Connecting` while the socket is up but the handshake is not — instead of `RelayLinkStatus.toConnectionState()`
+alone. Every other `RelayLinkStatus` case still falls back to the relay-only mapping documented above, so
+`Idle`, `Reconnecting(n)` and the halted states behave identically for the thread. The
+[`ConnectionBanner`](./connection-banner.md)'s own source (`RelayConnectionRegistry`) is untouched and
+stays on the relay-only mapping; #392's combined model has two independent consumers now (Settings,
+Thread), not a banner takeover.
 
 ## Related
 

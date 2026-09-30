@@ -129,4 +129,43 @@ class ToolRowFormatTest {
         assertEquals(".../b/c/d/e.kt", shortenToolPath("/a/b/c/d/e.kt"))
         assertEquals(".../c/d/e/f", shortenToolPath("a/b//c/d/e/f/"))
     }
+
+    // ---- toolHeadline (#1315): the tool test first, the key test only inside it ------------------
+
+    @Test
+    fun `Bash with a description takes the described header`() {
+        assertEquals(
+            ToolHeadline.Described("Show working tree status"),
+            toolHeadline("Bash", mapOf("command" to "git status", "description" to "Show working tree status"), "git status"),
+        )
+    }
+
+    @Test
+    fun `Bash with a command and no description leads with the command and no subject`() {
+        assertEquals(
+            ToolHeadline.Simple(lead = "git status", subject = ""),
+            toolHeadline("Bash", mapOf("command" to "git status", "description" to ""), "git status"),
+        )
+    }
+
+    @Test
+    fun `a non-Bash call with a description keeps its name and picked subject`() {
+        assertEquals(
+            ToolHeadline.Simple(lead = "Agent", subject = "Review the diff"),
+            toolHeadline("Agent", mapOf("description" to "Review the diff", "prompt" to "Look at\nthe diff"), "précis"),
+        )
+    }
+
+    @Test
+    fun `BashOutput is not Bash`() {
+        assertEquals(
+            ToolHeadline.Simple(lead = "BashOutput", subject = "tail -f log"),
+            toolHeadline("BashOutput", mapOf("command" to "tail -f log", "description" to "Follow the log"), "précis"),
+        )
+    }
+
+    @Test
+    fun `Bash with neither field keeps its name and the precis`() {
+        assertEquals(ToolHeadline.Simple(lead = "Bash", subject = "ls -la"), toolHeadline("Bash", emptyMap(), "ls -la"))
+    }
 }

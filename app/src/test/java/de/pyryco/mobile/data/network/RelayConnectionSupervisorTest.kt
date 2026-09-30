@@ -3,6 +3,8 @@ package de.pyryco.mobile.data.network
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -999,6 +1001,46 @@ class RelayConnectionSupervisorTest {
         assertEquals(ConnectionState.Offline, RelayLinkStatus.UpdateRequired(null).toConnectionState())
         // #499 AC#3: idle derives to Connected so the banner stays hidden while unpaired/idle.
         assertEquals(ConnectionState.Connected, RelayLinkStatus.Idle.toConnectionState())
+    }
+
+    // ---- #1318: the thread's two-leg mapping — Connected only once the handshake has finished --------
+
+    @Test
+    fun connectionStatusToConnectionState_isConnectedOnlyWhenBothLegsAreUp() {
+        val pyrycodeLegs = listOf(PyrycodeLinkStatus.Handshaking, PyrycodeLinkStatus.Connected, PyrycodeLinkStatus.Down)
+        val relayLegs =
+            listOf(
+                RelayLinkStatus.Idle,
+                RelayLinkStatus.Connecting,
+                RelayLinkStatus.Connected,
+                RelayLinkStatus.Reconnecting(7),
+                RelayLinkStatus.DaemonAbsent,
+                RelayLinkStatus.PairingRejected,
+                RelayLinkStatus.UpdateRequired("1.4.0"),
+                RelayLinkStatus.Offline,
+            )
+        for (relay in relayLegs) {
+            for (pyrycode in pyrycodeLegs) {
+                val expected =
+                    when {
+                        relay == RelayLinkStatus.Connected && pyrycode == PyrycodeLinkStatus.Connected -> ConnectionState.Connected
+                        relay == RelayLinkStatus.Connected -> ConnectionState.Connecting
+                        else -> relay.toConnectionState()
+                    }
+                assertEquals("$relay + $pyrycode", expected, ConnectionStatus(relay, pyrycode).toConnectionState())
+            }
+        }
+        // The socket is up but the handshake is not finished: never Connected.
+        assertEquals(
+            ConnectionState.Connecting,
+            ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking).toConnectionState(),
+        )
+        // Idle stays Connected and the Reconnecting countdown survives, whatever the pyrycode leg says.
+        assertEquals(ConnectionState.Connected, ConnectionStatus(RelayLinkStatus.Idle, PyrycodeLinkStatus.Down).toConnectionState())
+        assertEquals(
+            ConnectionState.Reconnecting(7),
+            ConnectionStatus(RelayLinkStatus.Reconnecting(7), PyrycodeLinkStatus.Down).toConnectionState(),
+        )
     }
 
     // ---- #499 AC 2: the pre-connect() seed reads Idle on the relay leg (never a live-socket Connected)
