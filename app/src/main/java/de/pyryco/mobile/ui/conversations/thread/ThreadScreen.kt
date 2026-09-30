@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +50,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -59,6 +61,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
@@ -166,6 +169,8 @@ fun ThreadScreen(
     connectionState: ConnectionState,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    questionState: QuestionModalState? = null,
+    onQuestionEvent: (QuestionModalEvent, Long) -> Unit = { _, _ -> },
     isThinking: Boolean = false,
     apiRetry: ApiRetryStatus = ApiRetryStatus.NotRetrying, // #594: claude's API-retry status, replaces the spinner
     usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report; #1002 draws it in the Top overlay
@@ -250,6 +255,7 @@ fun ThreadScreen(
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
+    if (questionState != null) QuestionPromptProtection()
     val snackbarHostState = remember { SnackbarHostState() }
     // #452: surface a failed modal send as a transient snackbar. The event is payload-free (Unit, #451) and
     // the message is a fixed local string, so nothing modal-derived (command / path) can reach the
@@ -414,6 +420,7 @@ fun ThreadScreen(
                         isThinking = isThinking,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
+                        waitingForAnswers = questionState != null && connectionState == ConnectionState.Connected,
                         connectionState = connectionState,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
@@ -490,7 +497,7 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
-                    if (!state.hasMessages && state.queuedMessages.isEmpty()) {
+                    if (!state.hasMessages && state.queuedMessages.isEmpty() && questionState == null) {
                         EmptyThreadState(
                             modifier =
                                 Modifier
@@ -546,7 +553,9 @@ fun ThreadScreen(
                         // the indicator's presence unable to move the predicate: at the oldest end the last
                         // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
                         // so distinctUntilChanged sees no edge and no second demand is issued.
-                        val historyRowCount by rememberUpdatedState(rows.size)
+                        val promptRowCount = questionState?.let { it.batch.questions.size + 2 } ?: 0
+                        val historyRowCount by rememberUpdatedState(rows.size + promptRowCount)
+                        val hasHistoryRows by rememberUpdatedState(rows.isNotEmpty())
                         val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
                         LaunchedEffect(listState) {
                             snapshotFlow {
@@ -554,12 +563,12 @@ fun ThreadScreen(
                                     listState.layoutInfo.visibleItemsInfo
                                         .lastOrNull()
                                         ?.index ?: -1
-                                historyRowCount > 0 && oldestVisible >= historyRowCount - 1
+                                hasHistoryRows && oldestVisible >= historyRowCount - 1
                             }.distinctUntilChanged()
                                 .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
                         }
-                        LaunchedEffect(hasStreamingMessage, listState) {
-                            if (!hasStreamingMessage) return@LaunchedEffect
+                        LaunchedEffect(hasStreamingMessage, questionState != null, listState) {
+                            if (!hasStreamingMessage || questionState != null) return@LaunchedEffect
                             snapshotFlow {
                                 listState.layoutInfo.visibleItemsInfo
                                     .firstOrNull { it.index == 0 }
@@ -603,6 +612,28 @@ fun ThreadScreen(
                                     .nestedScroll(autoScrollNestedScroll),
                             reverseLayout = true,
                         ) {
+                            questionState?.let { pending ->
+                                val dispatch: (QuestionModalEvent) -> Unit = { onQuestionEvent(it, pending.generation) }
+                                val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp)
+                                item(key = "question-actions:${pending.generation}") {
+                                    Box(gutter) { QuestionBatchActions(pending, dispatch) }
+                                }
+                                items(pending.batch.questions.size, key = { "question:${pending.generation}:$it" }) { reversedIndex ->
+                                    val index = pending.batch.questions.lastIndex - reversedIndex
+                                    Box(gutter.testTag("thread-question-row")) {
+                                        QuestionBlock(
+                                            index,
+                                            pending.batch.questions[index],
+                                            pending.selections[index],
+                                            !pending.locked,
+                                            dispatch,
+                                        )
+                                    }
+                                }
+                                item(key = "question-title:${pending.generation}") {
+                                    Box(gutter) { QuestionBatchTitle(pending) }
+                                }
+                            }
                             itemsIndexed(
                                 items = reversedRows,
                                 // The key derivation and its uniqueness argument live beside the fold, in
@@ -896,24 +927,45 @@ private fun ThreadStatusArea(
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
+    waitingForAnswers: Boolean,
     connectionState: ConnectionState,
     taskCount: Int,
     onTasksClick: () -> Unit,
     agent: ConversationAgent,
 ) {
     val reading: @Composable (Modifier) -> Unit = { modifier ->
-        StatusReading(
-            apiRetry,
-            resetting,
-            isCompacting,
-            turnOutcome,
-            isThinking,
-            thinkingProgress,
-            runningTool,
-            connectionState,
-            agent,
-            modifier,
-        )
+        if (waitingForAnswers) {
+            Row(
+                modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Image(
+                    painterResource(R.drawable.ic_question_glyph),
+                    contentDescription = null,
+                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.size(14.dp, 16.dp),
+                )
+                Text(
+                    stringResource(R.string.question_waiting_for_answers),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        } else {
+            StatusReading(
+                apiRetry,
+                resetting,
+                isCompacting,
+                turnOutcome,
+                isThinking,
+                thinkingProgress,
+                runningTool,
+                connectionState,
+                agent,
+                modifier,
+            )
+        }
     }
     if (taskCount <= 0) {
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))

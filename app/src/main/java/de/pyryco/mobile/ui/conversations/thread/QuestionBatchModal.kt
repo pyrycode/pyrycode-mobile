@@ -1,31 +1,54 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.app.Activity
+import android.content.ContextWrapper
 import android.content.res.Configuration
+import android.view.WindowManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -38,59 +61,130 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.QuestionOption
-import de.pyryco.mobile.ui.components.MobileGateModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.modalControl
 import de.pyryco.mobile.ui.theme.modalFieldContainer
 import de.pyryco.mobile.ui.theme.modalFieldText
+import kotlinx.coroutines.launch
 
-/**
- * The clarification batch held for the open conversation (#661), drawn in the hardened gate so Back,
- * outside taps and the missing close glyph never answer or refuse. Every question shows in batch order
- * in the shell's one scrolling column (desktop's tabs and Previous/Next are not used on the phone).
- *
- * Stateless: [state] carries the picks and [onEvent] reports every edit and action to the ViewModel.
- * Headers, question text, labels and descriptions are claude-authored and render only as plain,
- * wrapping [Text]. Rows are addressed by index; no claude text becomes a key or a tag.
- */
+/** Inline questionnaire; the thread uses its individual blocks as lazy rows. */
 @Composable
 internal fun QuestionBatchModal(
     state: QuestionModalState,
     onEvent: (QuestionModalEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    MobileGateModal(
-        title =
-            stringResource(
-                when (state.agent) {
-                    ConversationAgent.Claude -> R.string.question_modal_title
-                    ConversationAgent.Codex -> R.string.question_modal_title_codex
-                },
-            ),
-        modifier = modifier,
-        cancelLabel = stringResource(R.string.modal_cancel),
-        onCancel = { onEvent(QuestionModalEvent.Cancel) },
-        submitLabel = stringResource(R.string.question_continue),
-        onSubmit = { onEvent(QuestionModalEvent.Continue) },
-        submissionEnabled = state.canContinue,
-        sending = state.locked,
-        error = if (state.phase == QuestionSendPhase.Failed) stringResource(R.string.question_send_failed) else null,
-    ) {
+    QuestionPromptProtection()
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        QuestionBatchTitle(state)
         state.batch.questions.forEachIndexed { index, question ->
-            QuestionBlock(
-                index = index,
-                question = question,
-                selection = state.selections[index],
-                enabled = !state.locked,
-                onEvent = onEvent,
+            QuestionBlock(index, question, state.selections[index], !state.locked, onEvent)
+        }
+        QuestionBatchActions(state, onEvent)
+    }
+}
+
+@Composable
+internal fun QuestionBatchTitle(state: QuestionModalState) {
+    Text(
+        stringResource(if (state.agent == ConversationAgent.Claude) R.string.question_modal_title else R.string.question_modal_title_codex),
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onPrimaryContainer,
+        modifier = Modifier.testTag("question-batch-title"),
+    )
+}
+
+@Composable
+internal fun QuestionBatchActions(
+    state: QuestionModalState,
+    onEvent: (QuestionModalEvent) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().testTag("question-batch-actions"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (state.phase == QuestionSendPhase.Failed) {
+            Text(
+                stringResource(R.string.question_send_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
             )
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val stacked = maxWidth < 221.dp * LocalDensity.current.fontScale
+            val cancel: @Composable () -> Unit = {
+                OutlinedButton(
+                    onClick = { onEvent(QuestionModalEvent.Cancel) },
+                    enabled = !state.locked,
+                    shape = MaterialTheme.shapes.modalControl,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.modal_cancel),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+            val submit: @Composable () -> Unit = {
+                Button(
+                    onClick = { onEvent(QuestionModalEvent.Continue) },
+                    enabled = state.canContinue,
+                    shape = MaterialTheme.shapes.modalControl,
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.question_continue),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+            if (stacked) {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    cancel()
+                    submit()
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally)) {
+                    cancel()
+                    submit()
+                }
+            }
+        }
+    }
+}
+
+/** Protect the activity surface for the full lifetime of a mounted batch, including offscreen rows. */
+@Composable
+internal fun QuestionPromptProtection() {
+    val view = LocalView.current
+    val context = LocalContext.current
+    val activity = generateSequence(context) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<Activity>().firstOrNull()
+    DisposableEffect(view, activity) {
+        val window = activity?.window
+        val wasSecure = (window?.attributes?.flags ?: 0) and WindowManager.LayoutParams.FLAG_SECURE != 0
+        val decor = window?.decorView
+        val wasDecorFiltered = decor?.filterTouchesWhenObscured ?: false
+        val wasFiltered = view.filterTouchesWhenObscured
+        window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // AndroidComposeView overrides touch dispatch; the window's decor is the load-bearing overlay guard.
+        decor?.filterTouchesWhenObscured = true
+        view.filterTouchesWhenObscured = true
+        onDispose {
+            if (!wasSecure) window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            decor?.filterTouchesWhenObscured = wasDecorFiltered
+            view.filterTouchesWhenObscured = wasFiltered
         }
     }
 }
 
 /** Figma `347:6697`: a tertiary header line above a bordered card holding the question and its rows. */
 @Composable
-private fun QuestionBlock(
+internal fun QuestionBlock(
     index: Int,
     question: Question,
     selection: QuestionSelection,
@@ -106,7 +200,7 @@ private fun QuestionBlock(
                 modifier = Modifier.size(width = 14.dp, height = 16.dp).testTag("question_header_glyph_$index"),
             )
             Text(
-                text = question.header.uppercase(),
+                text = question.header.take(8192).uppercase(),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.tertiary,
                 modifier = Modifier.weight(1f),
@@ -123,7 +217,7 @@ private fun QuestionBlock(
                 modifier = Modifier.padding(16.dp).then(if (question.multiSelect) Modifier else Modifier.selectableGroup()),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Text(text = question.question, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(text = question.question.take(8192), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     question.options.forEachIndexed { optionIndex, option ->
                         ChoiceRow(
@@ -134,8 +228,12 @@ private fun QuestionBlock(
                             onClick = { onEvent(QuestionModalEvent.OptionToggled(index, optionIndex)) },
                         ) {
                             Column(Modifier.padding(top = 2.dp)) {
-                                Text(option.label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                                Text(option.description, style = MaterialTheme.typography.labelMedium)
+                                Text(
+                                    option.label.take(8192),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(option.description.take(8192), style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
@@ -154,11 +252,28 @@ private fun QuestionBlock(
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
+                            val requester = remember { BringIntoViewRequester() }
+                            val scope = rememberCoroutineScope()
+                            var focused by remember { mutableStateOf(false) }
+                            val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+                            LaunchedEffect(focused, imeBottom) {
+                                if (focused) requester.bringIntoView()
+                            }
                             val placeholder = stringResource(R.string.question_other_placeholder)
+                            // Keep the existing 48dp focus region around the reference's 32dp visible well.
+                            // This makes the cards slightly taller than the static Figma while retaining reachable touch targets.
                             BasicTextField(
                                 value = selection.otherText,
                                 onValueChange = { onEvent(QuestionModalEvent.OtherTextChanged(index, it)) },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("question_other_$index"),
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .bringIntoViewRequester(requester)
+                                        .onFocusChanged { focus ->
+                                            focused = focus.isFocused
+                                            if (focused) scope.launch { requester.bringIntoView() }
+                                        }.testTag("question_other_$index"),
                                 enabled = enabled,
                                 textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.modalFieldText),
                                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -218,7 +333,12 @@ private fun ChoiceRow(
             Modifier.selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
         }
     Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(interaction),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .then(interaction)
+                .testTag("${controlTag}_row"),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top,
     ) {

@@ -3186,18 +3186,25 @@ class InteractiveStreamE2ETest {
             // 1. AC-3: claude asks in this chat, and the phone draws the question.
             sendFromPhone(QUESTION_PROMPT)
             val batchId = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS) }
-            awaitQuestionModal()
+            awaitInlineQuestion()
 
             // 2. AC-3: the phone picks one option and continues; the daemon takes it as this batch's answer.
             val mark = peer.recorded(chat).size
+            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(
+                hasText(QUESTION_PICK, substring = true) and hasClickAction(),
+            )
             composeTestRule
-                .onAllNodes(hasText(QUESTION_PICK, substring = true) and hasClickAction() and inPromptDialog())
-                .onFirst()
+                .onAllNodes(
+                    hasText(QUESTION_PICK, substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("thread-question-row")),
+                ).onFirst()
                 .performClick()
-            val continueButton = hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled()
+            val continueButton =
+                hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled() and
+                    hasAnyAncestor(hasTestTag("question-batch-actions"))
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
             }
+            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(continueButton)
             composeTestRule.onNode(continueButton).performClick()
             val dismissed = runBlocking { peer.awaitQuestionDismissed(batchId, THREAD_TIMEOUT_MS) }
             assertEquals("who resolved the question", REMOTE_SOURCE, peer.field(dismissed, "source"))
@@ -3208,14 +3215,14 @@ class InteractiveStreamE2ETest {
             val reply = assistantText(peer, chat, mark)
             assertTrue("the reply does not name the chosen option", QUESTION_PICK in reply)
             assertTrue("the reply names the option the phone did not choose", QUESTION_OTHER !in reply)
-            awaitNoQuestionModal("the question stayed after the phone answered it")
+            awaitNoInlineQuestion("the question stayed after the phone answered it")
 
-            // 4. AC-4: asked again, the peer answers, and the phone's modal closes with no tap.
+            // 4. AC-4: asked again, the peer answers, and the phone's inline batch disappears with no tap.
             sendFromPhone(QUESTION_PROMPT)
             val second = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS, occurrence = 2) }
-            awaitQuestionModal()
+            awaitInlineQuestion()
             runBlocking { peer.answerQuestion(second, 0, QUESTION_OTHER, THREAD_TIMEOUT_MS) }
-            awaitNoQuestionModal("the question stayed after the peer answered it")
+            awaitNoInlineQuestion("the question stayed after the peer answered it")
             awaitTurnEnd(peer, chat, 2, "the peer-answered turn")
         } finally {
             peer.close()
@@ -5183,15 +5190,21 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    private fun awaitQuestionModal() {
-        val title = hasText(string(R.string.question_modal_title))
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(title).fetchSemanticsNodes().isNotEmpty() }
+    private fun awaitInlineQuestion() {
+        val title = hasTestTag("question-batch-title")
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            runCatching { composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(title) }.isSuccess &&
+                composeTestRule.onAllNodes(title).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
-    private fun awaitNoQuestionModal(failure: String) {
-        val title = hasText(string(R.string.question_modal_title))
+    private fun awaitNoInlineQuestion(failure: String) {
+        val title = hasTestTag("question-batch-title")
         try {
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(title).fetchSemanticsNodes().isEmpty() }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(title).fetchSemanticsNodes().isEmpty() &&
+                    composeTestRule.onAllNodes(hasTestTag("thread-question-row")).fetchSemanticsNodes().isEmpty()
+            }
         } catch (e: ComposeTimeoutException) {
             throw AssertionError(failure, e)
         }

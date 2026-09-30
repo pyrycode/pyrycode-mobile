@@ -59,12 +59,16 @@ class ThreadViewModelQuestionTest {
         RelayLog.enabled = oldEnabled
     }
 
-    private fun vm(repository: ConversationRepository = FakeConversationRepository()): ThreadViewModel =
+    private fun vm(
+        repository: ConversationRepository = FakeConversationRepository(),
+        questions: QuestionDraftStore? = null,
+    ): ThreadViewModel =
         ThreadViewModel(
             SavedStateHandle(mapOf("conversationId" to CONV)),
             repository,
             FakeConnectionStateSource(),
             ComposerDraftStore(),
+            questionDraftStore = questions,
             answerModal = { _, option, _ -> modalAnswers += option },
             questionBatch = { id -> if (id == CONV) batches else MutableStateFlow(null) },
             answerQuestionBatch = { id, values ->
@@ -272,6 +276,63 @@ class ThreadViewModelQuestionTest {
     ) : ConversationRepository by FakeConversationRepository() {
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = rows
     }
+
+    @Test
+    fun popping_and_reopening_retains_only_the_current_process_draft() =
+        runTest {
+            val questions = QuestionDraftStore()
+            questions.reconcileHost("", listOf(batch()))
+            val first = vm(questions = questions)
+            first.onQuestionEvent(QuestionModalEvent.OtherTextChanged(0, " untouched "))
+            val owner = androidx.lifecycle.ViewModelStore()
+            owner.put("thread", first)
+            owner.clear()
+            val reopened = vm(questions = questions)
+            assertEquals(" untouched ", reopened.state().selections[0].otherText)
+            questions.reconcileHost("", emptyList())
+            questions.reconcileHost("", listOf(batch()))
+            assertEquals("", reopened.state().selections[0].otherText)
+            questions.dispose()
+        }
+
+    @Test
+    fun stale_edits_submissions_and_completions_cannot_touch_a_rebuilt_same_id_request() =
+        runTest {
+            val vm = vm()
+            batches.value = batch()
+            vm.answerBoth()
+            val old = vm.state().generation
+            gate = CompletableDeferred()
+            vm.onQuestionEvent(QuestionModalEvent.Continue, old)
+            batches.value = null
+            batches.value = batch()
+            vm.onQuestionEvent(QuestionModalEvent.OtherTextChanged(0, "stale"), old)
+            vm.onQuestionEvent(QuestionModalEvent.Continue, old)
+            vm.onQuestionEvent(QuestionModalEvent.Cancel, old)
+            checkNotNull(gate).complete(Unit)
+            assertEquals(QuestionSendPhase.Idle, vm.state().phase)
+            assertEquals(QuestionSelection(), vm.state().selections[0])
+            assertEquals(1, answers.size)
+            assertTrue(refusals.isEmpty())
+        }
+
+    @Test
+    fun navigation_cancels_a_send_without_stranding_the_retained_draft_locked() =
+        runTest {
+            val questions = QuestionDraftStore()
+            questions.reconcileHost("", listOf(batch()))
+            val first = vm(questions = questions)
+            first.answerBoth()
+            gate = CompletableDeferred()
+            first.onQuestionEvent(QuestionModalEvent.Continue)
+            val owner = androidx.lifecycle.ViewModelStore()
+            owner.put("thread", first)
+            owner.clear()
+            val reopened = vm(questions = questions)
+            assertEquals(QuestionSendPhase.Failed, reopened.state().phase)
+            assertTrue(reopened.state().canContinue)
+            questions.dispose()
+        }
 
     private companion object {
         const val CONV = "conv-1"
