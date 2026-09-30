@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
@@ -23,40 +24,49 @@ internal class DaemonFaultControl {
 
     fun start() = request("start")
 
-    /** Six real failed dials put the supervisor in its 24–36 second capped wait. */
+    /** Returns a deadline safely before the earliest passive dial after the sixth failure. */
     fun stopUntilRetryWindow(
         supervisor: RelayConnectionSupervisor,
         assertOfflinePill: () -> Unit,
-    ) = runBlocking {
-        val failures =
-            async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
-                withTimeout(90_000) {
-                    var previous: RelayLinkStatus = supervisor.relayStatus.value
-                    var count = 0
-                    supervisor.relayStatus.first { current ->
-                        if (
-                            (previous is RelayLinkStatus.Connected || previous is RelayLinkStatus.Connecting) &&
-                            (
-                                current is RelayLinkStatus.Reconnecting ||
-                                    current is RelayLinkStatus.DaemonAbsent ||
-                                    current is RelayLinkStatus.Offline
-                            )
-                        ) {
-                            count++
+    ): Long =
+        runBlocking {
+            val failures =
+                async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                    withTimeout(90_000) {
+                        var previous: RelayLinkStatus = supervisor.relayStatus.value
+                        var count = 0
+                        var cappedWaitObservedAt = 0L
+                        supervisor.relayStatus.first { current ->
+                            if (
+                                (previous is RelayLinkStatus.Connected || previous is RelayLinkStatus.Connecting) &&
+                                (
+                                    current is RelayLinkStatus.Reconnecting ||
+                                        current is RelayLinkStatus.DaemonAbsent ||
+                                        current is RelayLinkStatus.Offline
+                                )
+                            ) {
+                                count++
+                            }
+                            previous = current
+                            (count >= 6).also { if (it) cappedWaitObservedAt = SystemClock.elapsedRealtime() }
                         }
-                        previous = current
-                        count >= 6
+                        // The capped wait lasts at least 24 s. Leave 4 s for observer scheduling jitter.
+                        cappedWaitObservedAt + 20_000L
                     }
                 }
+            try {
+                stop()
+                assertOfflinePill()
+                failures.await()
+            } finally {
+                failures.cancel()
             }
-        try {
-            stop()
-            assertOfflinePill()
-            failures.await()
-        } finally {
-            failures.cancel()
         }
-    }
+
+    fun recoveryTimeRemaining(deadline: Long): Long =
+        (deadline - SystemClock.elapsedRealtime()).also {
+            check(it > 0) { "the passive reconnect window elapsed before Retry recovery" }
+        }
 
     private fun request(action: String) {
         Socket().use { socket ->

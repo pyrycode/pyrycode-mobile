@@ -2571,22 +2571,23 @@ class InteractiveStreamE2ETest {
         }
         val conversationId = newHostConversationId(serverId, before)
         try {
-            fault.stopUntilRetryWindow(bundle.supervisor) {
-                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                    composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isNotEmpty()
+            val retryDeadline =
+                fault.stopUntilRetryWindow(bundle.supervisor) {
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
                 }
-                composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
-            }
             assertNull("the old host repository survived the daemon failure", bundle.coordinator.currentRepository.value)
 
-            // A sixth failed dial begins a 24–36 s wait. Recovery within 12 s after this tap
-            // cannot be the next passive dial; the pill and absent repository are checked immediately before it.
+            // The deadline began at the sixth failed dial, before daemon startup and the tap.
+            // Recovery must beat the earliest passive dial, even if startup consumes most of the wait.
             fault.start()
             composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
             assertNull(bundle.coordinator.currentRepository.value)
             composeTestRule.onNodeWithTag("offline_retry_target").performClick()
             runBlocking {
-                withTimeout(RETRY_TAP_TIMEOUT_MS) {
+                withTimeout(fault.recoveryTimeRemaining(retryDeadline)) {
                     bundle.coordinator.currentRepository.first { it != null }
                 }
             }
@@ -6751,7 +6752,6 @@ class InteractiveStreamE2ETest {
 
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
-        const val RETRY_TAP_TIMEOUT_MS = 12_000L
         const val THREAD_TIMEOUT_MS = 30_000L
 
         // How long a failed one-shot waits for the host's redial (#1029): the supervisor's first three

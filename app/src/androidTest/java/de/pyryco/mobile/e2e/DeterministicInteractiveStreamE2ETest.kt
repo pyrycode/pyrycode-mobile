@@ -157,19 +157,20 @@ class DeterministicInteractiveStreamE2ETest {
         val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
         val fault = DaemonFaultControl()
         try {
-            fault.stopUntilRetryWindow(supervisor) {
-                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                    composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isNotEmpty()
+            val retryDeadline =
+                fault.stopUntilRetryWindow(supervisor) {
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(hasTestTag("offline_retry_target")).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
                 }
-                composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
-            }
             assertNull(coordinator.currentRepository.value)
             fault.start()
             composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
             assertNull(coordinator.currentRepository.value)
             composeTestRule.onNodeWithTag("offline_retry_target").performClick()
             runBlocking {
-                withTimeout(RETRY_TAP_TIMEOUT_MS) {
+                withTimeout(fault.recoveryTimeRemaining(retryDeadline)) {
                     coordinator.currentRepository.first { it != null }
                 }
             }
@@ -607,7 +608,6 @@ class DeterministicInteractiveStreamE2ETest {
 
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
-        const val RETRY_TAP_TIMEOUT_MS = 12_000L
         const val THREAD_TIMEOUT_MS = 30_000L
 
         // The two currentRepository awaits in severLink/restoreLink (drop-to-null, then reconnect-to-non-null);
