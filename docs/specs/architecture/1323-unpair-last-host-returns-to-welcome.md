@@ -61,3 +61,7 @@ Existing `HostChannelListViewModelTest` and `SettingsViewModelTest` unpair cases
 ## Documentation handoff
 
 None named by the ticket. Pending for the documentation stage: the host-editor / pairing overview should record that a last-host unpair returns to Welcome, and the Settings entry's current unreachability.
+
+## Revisions
+
+- Open question resolved, no design change: the unpair confirmation is decided by the shell's `OK` (`EditHostModal` routes `onSubmit` to `onUnpairConfirmed` while confirming), so the channel-list test taps `Unpair host`, sees `Unpair host?`, then `OK`.
