@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="7" failures="0" errors="0" skipped="0" time="10.409" timestamp="2026-09-30T04:32:22" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" tests="7" failures="0" errors="0" skipped="0" time="10.202" timestamp="2026-09-30T04:32:22" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="figmaVariant_anchorsTaskPillAtTheInputAreasTopRight" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="1.835" />
+    <testcase name="compactWidthAndLargeText_keepPillClearOfReadingAndOpeningPanel" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="1.615" />
+    <testcase name="oneTask_readsSingular" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="1.285" />
+    <testcase name="pill_showsBesideALiveReading_atTheRightOfIt" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="1.318" />
+    <testcase name="zeroCount_showsNoPill_andTheBandCollapsesAsBefore" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="1.517" />
+    <testcase name="pill_showsAlone_atTheBandsRightEnd" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="1.286" />
+    <testcase name="tappingThePill_opensTheBackgroundTaskPanel" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="1.346" />
+  </testsuite>
+</testsuites>
