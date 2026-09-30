@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -40,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 import de.pyryco.mobile.ui.theme.modalFieldContainer
 import de.pyryco.mobile.ui.theme.modalFieldText
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
@@ -146,7 +146,7 @@ private fun ChatNameField(
                         Modifier
                             .fillMaxWidth()
                             .heightIn(min = 52.dp)
-                            .background(MaterialTheme.colorScheme.modalFieldContainer, RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.modalFieldContainer, MaterialTheme.shapes.modalControl)
                             .padding(start = 16.dp, end = 56.dp, top = 16.dp, bottom = 16.dp),
                 ) {
                     innerTextField()
@@ -168,7 +168,7 @@ private fun ArchiveAction(
             onClick = onClick,
             modifier = Modifier.minimumInteractiveComponentSize(),
             enabled = enabled,
-            shape = RoundedCornerShape(6.dp),
+            shape = MaterialTheme.shapes.modalControl,
             border =
                 BorderStroke(
                     1.dp,

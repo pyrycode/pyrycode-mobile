@@ -103,6 +103,17 @@ class FormCallerCaptureTest {
     ) {
         rule.onNodeWithText(title).assertIsDisplayed()
         rule.waitForIdle()
+        val footer =
+            rule
+                .onNodeWithText("OK")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        rule.onNodeWithText("Cancel").assertIsDisplayed()
+        assertTrue("$name footer must fit the 412 dp viewport", footer.left >= 0 && footer.right <= 412 && footer.bottom <= 892)
+        // The API 33 ATD image can return a black framebuffer even when the form is rendered.
+        // Strict pixel proof and the checked-in comparisons use the full Pixel 8 image.
+        if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") != "true") return
         rule.runOnIdle {
             WindowCompat
                 .getInsetsController(rule.activity.window, rule.activity.window.decorView)
@@ -121,12 +132,6 @@ class FormCallerCaptureTest {
         }
         // Dialog and IME window animations can outlive Compose idleness.
         SystemClock.sleep(2_000)
-        val footer =
-            rule
-                .onNodeWithText("OK")
-                .assertIsDisplayed()
-                .fetchSemanticsNode()
-                .boundsInRoot
         val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
         assertEquals(412, bitmap.width)
         assertEquals(892, bitmap.height)

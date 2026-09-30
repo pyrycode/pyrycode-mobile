@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -37,6 +36,7 @@ import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.ui.conversations.list.ChannelPromptReading
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 
 // The frame's 8dp gap above the archive action, and the shell's touch floor for it.
 private val ArchiveTopPadding = 8.dp
@@ -166,7 +166,7 @@ private fun ArchiveChannelAction(
             onClick = onClick,
             modifier = Modifier.minimumInteractiveComponentSize(),
             enabled = enabled,
-            shape = RoundedCornerShape(6.dp),
+            shape = MaterialTheme.shapes.modalControl,
             border =
                 BorderStroke(
                     1.dp,
