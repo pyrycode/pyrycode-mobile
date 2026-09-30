@@ -280,9 +280,9 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(toolRunningDescription)).fetchSemanticsNodes().isEmpty()
         }
-        // Resolved to done, not failed (no failed glyph), and the row is still present (tool name shown).
+        // Resolved to done, not failed (no failed glyph), and the row is still present (its command shown).
         composeTestRule.onNode(hasContentDescription(toolFailedDescription)).assertDoesNotExist()
-        composeTestRule.onAllNodesWithText(TOOL_NAME, substring = true).onFirst().assertIsDisplayed()
+        composeTestRule.onAllNodesWithText(TOOL_COMMAND, substring = true).onFirst().assertIsDisplayed()
         composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertDoesNotExist()
     }
 
@@ -585,6 +585,10 @@ class DeterministicInteractiveStreamE2ETest {
         // the row resolved in place rather than vanishing. Does not collide with the seeded channel name
         // "e2e-seed" rendered in the top bar.
         const val TOOL_NAME = "Bash"
+
+        // The `tool` fixture's Bash command, which carries no description. The collapsed row leads with it
+        // instead of the tool name (#1315); an older daemon without input fields shows it as the précis.
+        const val TOOL_COMMAND = "echo hello"
 
         // The `tool-progress` heartbeat's `elapsed_time_seconds: 30`, as the label formats it (#950).
         const val HEARTBEAT_ELAPSED = "30s"

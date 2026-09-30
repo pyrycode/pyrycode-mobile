@@ -183,8 +183,45 @@ class ToolCallRowTest {
     }
 
     @Test
-    fun a_call_without_a_description_uses_the_simple_name_and_subject() {
+    fun a_bash_command_without_a_description_leads_with_the_command_alone() {
         setContent(doneToolCall().copy(inputFields = mapOf("command" to "git status")))
+
+        composeTestRule.onNodeWithText("git status").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Bash").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("tool-description-chevron", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun a_non_bash_call_with_a_description_keeps_its_name_and_subject() {
+        setContent(
+            doneToolCall().copy(
+                toolName = "Agent",
+                inputFields = mapOf("description" to "Review the diff", "subagent_type" to "general-purpose"),
+            ),
+        )
+
+        composeTestRule.onNodeWithText("Agent").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Review the diff").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tool-description-chevron", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun bash_output_with_a_description_is_not_treated_as_bash() {
+        setContent(
+            doneToolCall().copy(
+                toolName = "BashOutput",
+                inputFields = mapOf("command" to "tail -f build.log", "description" to "Follow the build log"),
+            ),
+        )
+
+        composeTestRule.onNodeWithText("BashOutput").assertIsDisplayed()
+        composeTestRule.onNodeWithText("tail -f build.log").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tool-description-chevron", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun a_call_with_neither_field_uses_the_simple_name_and_precis() {
+        setContent(doneToolCall())
 
         composeTestRule.onNodeWithText("Bash").assertIsDisplayed()
         composeTestRule.onNodeWithText("git status").assertIsDisplayed()
