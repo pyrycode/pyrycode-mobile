@@ -3,6 +3,8 @@ package de.pyryco.mobile.ui.conversations.thread
 import android.app.Activity
 import android.content.ContextWrapper
 import android.content.res.Configuration
+import android.view.View
+import android.view.Window
 import android.view.WindowManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -165,19 +167,53 @@ internal fun QuestionPromptProtection() {
     val context = LocalContext.current
     val activity = generateSequence(context) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<Activity>().firstOrNull()
     DisposableEffect(view, activity) {
-        val window = activity?.window
-        val wasSecure = (window?.attributes?.flags ?: 0) and WindowManager.LayoutParams.FLAG_SECURE != 0
-        val decor = window?.decorView
-        val wasDecorFiltered = decor?.filterTouchesWhenObscured ?: false
-        val wasFiltered = view.filterTouchesWhenObscured
-        window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        val releaseWindow = activity?.window?.let { QuestionProtectionOwners.secure(it) }
         // AndroidComposeView overrides touch dispatch; the window's decor is the load-bearing overlay guard.
-        decor?.filterTouchesWhenObscured = true
-        view.filterTouchesWhenObscured = true
+        val releaseDecor = activity?.window?.decorView?.let { QuestionProtectionOwners.filter(it) }
+        val releaseView = QuestionProtectionOwners.filter(view)
         onDispose {
-            if (!wasSecure) window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            decor?.filterTouchesWhenObscured = wasDecorFiltered
-            view.filterTouchesWhenObscured = wasFiltered
+            releaseView()
+            releaseDecor?.invoke()
+            releaseWindow?.invoke()
+        }
+    }
+}
+
+/** Composition effects run on Main. Navigation transitions may mount several owners of the same surface. */
+private object QuestionProtectionOwners {
+    private class Policy(
+        val restore: () -> Unit,
+        var count: Int = 1,
+    )
+
+    private val policies = mutableMapOf<Any, Policy>()
+
+    fun secure(window: Window): () -> Unit =
+        retain(window) {
+            val wasSecure = window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            val restore = { if (!wasSecure) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+            restore
+        }
+
+    fun filter(view: View): () -> Unit =
+        retain(view) {
+            val wasFiltered = view.filterTouchesWhenObscured
+            view.filterTouchesWhenObscured = true
+            val restore = { view.filterTouchesWhenObscured = wasFiltered }
+            restore
+        }
+
+    private fun retain(
+        key: Any,
+        protect: () -> (() -> Unit),
+    ): () -> Unit {
+        val policy = policies[key]?.also { it.count++ } ?: Policy(protect()).also { policies[key] = it }
+        return {
+            if (--policy.count == 0) {
+                policies.remove(key)
+                policy.restore()
+            }
         }
     }
 }

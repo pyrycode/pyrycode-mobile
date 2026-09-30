@@ -1133,6 +1133,63 @@ class RelayRepositoryCoordinatorTest {
 
     // A reconnect drops the prior connection's batches, so answering one fails before any frame leaves.
     @Test
+    fun questionSubmission_rejects_retired_sources_and_requests_before_async_projections_catch_up() =
+        runTest {
+            val env = newEnv()
+            try {
+                val first = openInteractiveConnection(env)
+                first.push(questionShownEnvelope("conv-1", "qb-1"))
+                runCurrent()
+                val source = env.coordinator.currentRepository.value as RemoteConversationRepository
+                val batch = source.questionBatches.value.single()
+                val answers = listOf(QuestionAnswer(0, listOf("A")))
+                val sentBefore = first.sent.size
+                env.connections.value = StubRelayTransport()
+                // The derived repository still says A, but the authoritative transport has already changed.
+                assertSame(source, env.coordinator.currentRepository.value)
+                assertTrue(
+                    runCatching { env.coordinator.submitQuestionBatch(source, batch, answers) }.exceptionOrNull() is IllegalStateException,
+                )
+                assertTrue(
+                    runCatching { env.coordinator.submitQuestionBatch(source, batch, null) }.exceptionOrNull() is IllegalStateException,
+                )
+                assertEquals(sentBefore, first.sent.size)
+                runCurrent()
+                val second = env.pumps.last()
+                second.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+                second.push(questionShownEnvelope("conv-1", "qb-1"))
+                runCurrent()
+                val replacement = env.coordinator.currentRepository.value as RemoteConversationRepository
+                val rebuilt = replacement.questionBatches.value.single()
+                assertEquals(batch, rebuilt)
+                assertTrue(
+                    runCatching { env.coordinator.submitQuestionBatch(source, batch, answers) }.exceptionOrNull() is IllegalStateException,
+                )
+                assertTrue(
+                    runCatching { env.coordinator.submitQuestionBatch(source, batch, null) }.exceptionOrNull() is IllegalStateException,
+                )
+                assertTrue(
+                    runCatching {
+                        env.coordinator.submitQuestionBatch(
+                            replacement,
+                            batch,
+                            answers,
+                        )
+                    }.exceptionOrNull() is IllegalStateException,
+                )
+                assertTrue(second.sent.none { it.type.startsWith("question_") })
+                env.coordinator.submitQuestionBatch(replacement, rebuilt, answers)
+                env.coordinator.submitQuestionBatch(replacement, rebuilt, null)
+                assertEquals(
+                    listOf("question_answer", "question_refused"),
+                    second.sent.map { it.type }.filter { it.startsWith("question_") },
+                )
+            } finally {
+                env.coordinator.close()
+            }
+        }
+
+    @Test
     fun questionSends_failForABatchDroppedByReconnect() =
         runTest {
             val env = newEnv()

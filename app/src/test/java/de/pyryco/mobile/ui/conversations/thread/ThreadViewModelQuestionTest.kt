@@ -7,19 +7,28 @@ import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.QuestionOption
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
+import de.pyryco.mobile.data.repository.SessionPump
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.plus
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
@@ -27,6 +36,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -269,6 +279,112 @@ class ThreadViewModelQuestionTest {
             assertEquals(ConversationAgent.Claude, vm.state().agent)
             rows.value = listOf(conversation(CONV, ConversationAgent.Claude))
             assertEquals(ConversationAgent.Claude, vm.state().agent)
+        }
+
+    @Test
+    fun edits_share_the_agent_subscription_without_reseeding_codex() =
+        runTest {
+            var subscriptions = 0
+            val rows = MutableStateFlow(listOf(conversation(CONV, ConversationAgent.Codex)))
+            val vm = vm(ListedRepository(rows.onStart { subscriptions++ }))
+            batches.value = batch()
+            val initialSubscriptions = subscriptions
+            vm.onQuestionEvent(QuestionModalEvent.OtherTextChanged(0, "draft"))
+            vm.answerBoth()
+            vm.onQuestionEvent(QuestionModalEvent.Continue)
+            assertEquals(initialSubscriptions, subscriptions)
+            assertEquals(ConversationAgent.Codex, vm.state().agent)
+        }
+
+    @Test
+    fun queued_collector_cannot_send_or_edit_a_rebuilt_equal_request() =
+        runTest {
+            val outbound = mutableListOf<Envelope>()
+
+            fun source(): RemoteConversationRepository {
+                val shown =
+                    Envelope(
+                        1,
+                        "question_shown",
+                        "2026-09-30T00:00:00Z",
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"conv-1","question_batch_id":"request","questions":[{"question":"Q","header":"H","options":[{"label":"A","description":"B"}],"multi_select":false}]}""",
+                        ),
+                    )
+                val pump =
+                    object : SessionPump {
+                        override val inbound = flowOf(shown)
+
+                        override fun send(envelope: Envelope): Boolean {
+                            outbound += envelope
+                            return true
+                        }
+                    }
+                return RemoteConversationRepository(
+                    pump,
+                    backgroundScope +
+                        UnconfinedTestDispatcher(
+                            testScheduler,
+                        ),
+                    negotiatedCapabilities = {
+                        setOf("interactive")
+                    },
+                )
+            }
+            val first = source()
+            val second = source()
+            val repositories = MutableStateFlow<ConversationRepository?>(first)
+            val questions = QuestionDraftStore(StandardTestDispatcher(testScheduler))
+            questions.bind("", Any(), repositories, submit = { origin, request, values ->
+                assertSame(repositories.value, origin)
+                if (values ==
+                    null
+                ) {
+                    origin.refuseQuestionBatch(request.questionBatchId)
+                } else {
+                    origin.answerQuestionBatch(request.questionBatchId, values)
+                }
+            })
+            val vm = vm(questions = questions)
+            runCurrent()
+            vm.onQuestionEvent(QuestionModalEvent.OptionToggled(0, 0))
+            val old = vm.state()
+            repositories.value = second
+            // The observer has not run: this is the vulnerable interval, not the settled reconnect.
+            assertEquals(old, vm.state())
+            vm.onQuestionEvent(QuestionModalEvent.OtherTextChanged(0, "stale"), old.generation)
+            vm.onQuestionEvent(QuestionModalEvent.Continue, old.generation)
+            vm.onQuestionEvent(QuestionModalEvent.Cancel, old.generation)
+            assertTrue(answers.isEmpty())
+            assertTrue(refusals.isEmpty())
+            assertTrue(outbound.isEmpty())
+            runCurrent()
+            assertEquals(QuestionSelection(), vm.state().selections.single())
+            assertTrue(old.generation != vm.state().generation)
+            // A send can also be queued after its synchronous lock, while observation is up to date.
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val queued = vm(questions = questions)
+            runCurrent()
+            queued.onQuestionEvent(QuestionModalEvent.OptionToggled(0, 0))
+            queued.onQuestionEvent(QuestionModalEvent.Continue)
+            assertEquals(QuestionSendPhase.Sending, questions.current("", CONV)?.phase)
+            repositories.value = source()
+            runCurrent()
+            assertTrue(answers.isEmpty())
+            assertTrue(refusals.isEmpty())
+            assertTrue(outbound.isEmpty())
+            assertEquals(QuestionSendPhase.Idle, queued.state().phase)
+            queued.onQuestionEvent(QuestionModalEvent.OptionToggled(0, 0))
+            queued.onQuestionEvent(QuestionModalEvent.Continue)
+            runCurrent()
+            assertEquals(listOf("question_answer"), outbound.map { it.type })
+            repositories.value = source()
+            runCurrent()
+            queued.onQuestionEvent(QuestionModalEvent.Cancel)
+            runCurrent()
+            assertEquals(listOf("question_answer", "question_refused"), outbound.map { it.type })
+            assertTrue("bound sends must not use the destination's redirecting fallback", answers.isEmpty() && refusals.isEmpty())
+            questions.dispose()
         }
 
     private class ListedRepository(

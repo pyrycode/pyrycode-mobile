@@ -765,19 +765,11 @@ class ThreadViewModel(
         viewModelScope.launch {
             questions
                 .observe(serverId, conversationId)
-                .flatMapLatest { held ->
-                    if (held == null) flowOf(null) else conversationAgent().map { held.copy(agent = it) }
+                .combine(conversationAgent.onStart { emit(ConversationAgent.Claude) }) { held, agent ->
+                    held?.copy(agent = agent)
                 }.collect { mutableQuestionModal.value = it }
         }
     }
-
-    /** This conversation's agent, Claude until the list names it: a cold list must not hold the modal back. */
-    private fun conversationAgent(): Flow<ConversationAgent> =
-        repository
-            .observeConversations(ConversationFilter.All)
-            .map { rows -> rows.firstOrNull { it.id == conversationId }?.agent ?: ConversationAgent.Claude }
-            .onStart { emit(ConversationAgent.Claude) }
-            .distinctUntilChanged()
 
     fun onQuestionEvent(
         event: QuestionModalEvent,
@@ -807,11 +799,11 @@ class ThreadViewModel(
             QuestionModalEvent.Continue -> {
                 val answers = held.answers()
                 if (!held.locked && answers != null) {
-                    sendQuestion(held, "answer") { answerQuestionBatch(it, answers) }
+                    sendQuestion(held, "answer", answers) { answerQuestionBatch(it, answers) }
                 }
             }
             QuestionModalEvent.Cancel ->
-                if (!held.locked) sendQuestion(held, "refuse") { refuseQuestionBatch(it) }
+                if (!held.locked) sendQuestion(held, "refuse", null) { refuseQuestionBatch(it) }
         }
     }
 
@@ -835,9 +827,9 @@ class ThreadViewModel(
     private fun sendQuestion(
         held: QuestionModalState,
         kind: String,
+        answers: List<QuestionAnswer>?,
         send: suspend (questionBatchId: String) -> Unit,
     ) {
-        val questionBatchId = held.batch.questionBatchId
         val generation = held.generation
         setQuestionPhase(generation, QuestionSendPhase.Sending)
         viewModelScope
@@ -845,7 +837,7 @@ class ThreadViewModel(
                 if (questions.current(serverId, conversationId)?.generation != generation) return@launch
                 val outcome =
                     try {
-                        send(questionBatchId)
+                        if (!questions.submit(serverId, conversationId, generation, answers, send)) return@launch
                         QuestionSendPhase.Sent
                     } catch (e: CancellationException) {
                         setQuestionPhase(generation, QuestionSendPhase.Failed)

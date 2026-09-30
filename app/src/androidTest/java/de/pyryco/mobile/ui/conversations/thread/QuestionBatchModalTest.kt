@@ -11,14 +11,20 @@ import android.view.inputmethod.InputMethodManager
 import android.view.inspector.WindowInspector
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ComposeTimeoutException
@@ -450,6 +456,96 @@ class QuestionBatchModalTest {
             assertTrue(!checkNotNull(promptView).filterTouchesWhenObscured)
             assertTrue(!rule.activity.window.decorView.filterTouchesWhenObscured)
             assertEquals(0, rule.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    @Test
+    fun overlapping_prompts_keep_protection_when_the_outgoing_owner_exits_first() = overlapProtection(true, false)
+
+    @Test
+    fun overlapping_prompts_keep_protection_when_the_incoming_owner_exits_first() = overlapProtection(false, false)
+
+    @Test
+    fun overlapping_prompts_restore_an_originally_protected_window() = overlapProtection(true, true)
+
+    private fun overlapProtection(
+        releaseFirst: Boolean,
+        protectedOriginally: Boolean,
+    ) {
+        var first by mutableStateOf(true)
+        var second by mutableStateOf(false)
+        var clicks = 0
+        rule.runOnUiThread {
+            if (protectedOriginally) rule.activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            rule.activity.window.decorView.filterTouchesWhenObscured = protectedOriginally
+        }
+        rule.setContent {
+            val view = LocalView.current
+            SideEffect { promptView = view }
+            Box(Modifier.fillMaxSize().testTag("overlap-touch-target").clickable { clicks++ }) {
+                if (first) key("outgoing") { QuestionPromptProtection() }
+                if (second) key("incoming") { QuestionPromptProtection() }
+            }
+        }
+        rule.runOnIdle { second = true }
+        rule.waitForIdle()
+        rule.runOnIdle { if (releaseFirst) first = false else second = false }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            val window = rule.activity.window
+            assertTrue(window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+            assertTrue(window.decorView.filterTouchesWhenObscured)
+            assertTrue(checkNotNull(promptView).filterTouchesWhenObscured)
+            val now = android.os.SystemClock.uptimeMillis()
+            val event = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, 100f, 100f, 0)
+            try {
+                // onFilterTouchEventForSecurity is the decor's actual dispatch gate.
+                val obscured =
+                    MotionEvent.obtain(
+                        now,
+                        now,
+                        MotionEvent.ACTION_DOWN,
+                        1,
+                        arrayOf(MotionEvent.PointerProperties().apply { id = 0 }),
+                        arrayOf(
+                            MotionEvent.PointerCoords().apply {
+                                x = 100f
+                                y = 100f
+                            },
+                        ),
+                        0,
+                        0,
+                        1f,
+                        1f,
+                        0,
+                        0,
+                        InputDevice.SOURCE_TOUCHSCREEN,
+                        MotionEvent.FLAG_WINDOW_IS_OBSCURED,
+                    )
+                try {
+                    assertTrue(!window.decorView.dispatchTouchEvent(obscured))
+                } finally {
+                    obscured.recycle()
+                }
+                assertTrue(window.decorView.onFilterTouchEventForSecurity(event))
+                assertTrue("unobscured input must reach the same target", window.decorView.dispatchTouchEvent(event))
+                event.action = MotionEvent.ACTION_UP
+                assertTrue(window.decorView.dispatchTouchEvent(event))
+            } finally {
+                event.recycle()
+            }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals("only the unobscured input activates the target", 1, clicks)
+            first = false
+            second = false
+        }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals(protectedOriginally, rule.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+            assertEquals(protectedOriginally, rule.activity.window.decorView.filterTouchesWhenObscured)
+            assertTrue(!checkNotNull(promptView).filterTouchesWhenObscured)
         }
     }
 

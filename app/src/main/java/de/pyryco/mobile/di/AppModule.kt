@@ -362,7 +362,15 @@ internal class ThreadDestinationFactory(
         val serverId = handle.get<String>("serverId").orEmpty()
         val bundle = if (useRelay) registry.connectionFor(serverId) else null
         val repository = repository(serverId, bundle)
-        if (bundle != null) questionDrafts?.bind(serverId, bundle.coordinator, bundle.coordinator.currentRepository)
+        if (bundle != null) {
+            questionDrafts?.bind(
+                serverId,
+                bundle.coordinator,
+                bundle.coordinator.currentRepository,
+                liveRepository = bundle.coordinator::liveRepository,
+                submit = bundle.coordinator::submitQuestionBatch,
+            )
+        }
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
             return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore, attachmentReader = attachmentReader.value)
