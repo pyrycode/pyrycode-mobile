@@ -1192,9 +1192,10 @@ class ThreadViewModel(
      */
     fun sendMessage(text: String) {
         if (_attachmentsSending.value) return
+        // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
+        if (text.isBlank()) return
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
         if (attachments.isNotEmpty()) return sendWithAttachments(text, attachments)
-        if (text.isBlank()) return
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
@@ -1205,7 +1206,7 @@ class ThreadViewModel(
 
     /**
      * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
-     * (#932). Blank text is allowed here: a message may carry attachments alone.
+     * (#932). [text] is never blank: [sendMessage] refuses that before reading the attachments (#1328).
      *
      * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
      * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that
