@@ -82,3 +82,10 @@ Not an operator-facing new flow (it removes an action), so no rung-3 scenario.
 ## Documentation handoff
 
 Pending for the documentation stage: fold the "prompt answers require a connected host; tap-time gate reads an eager, null-seeded copy of the connection source" rule into `docs/knowledge/features/modal-answer-flow.md` (§ "The fail-safe-deny belt" or a new subsection beside "Stale taps") and `docs/knowledge/features/question-batch-modal.md` (§ "Batch ownership" and § "Rendering"). The ticket names no specific doc section.
+
+## Revisions
+
+**2026-10-01 (implementation).**
+- The gate helper is `promptSendAllowed(kind)` rather than `hostConnectedNow()`: it does the same `hostConnection.value == Connected` read and also emits the planned `prompt_send_blocked` log, so each call site is one condition.
+- The permission race cases live in `ThreadViewModelTest`, beside the existing #451 `onModalOption` cases, not in `ThreadViewModelPermissionTest`, which covers the composer's permission *mode*. `vmWithModalSendPath` gained a `source` parameter.
+- Open question resolved: the affected classes (`ThreadViewModel*`, the thread package's screen tests, `RelayConnectionFactoryTest`) all pass. The one `StandardTestDispatcher` question case already calls `runCurrent()` after construction, so its eager collector reports `Connected` before any send.

@@ -780,6 +780,93 @@ class ThreadViewModelTest {
             assertNull(vm.armedOptionId.value)
         }
 
+    // ---- #1321: a permission tap that races a disconnect sends nothing ---------------------------------
+    // Each case switches the source just before the call and never collects vm.connectionState, whose
+    // optimistic Connected seed must not open the gate.
+
+    @Test
+    fun onModalOption_whileNotConnected_neitherSendsNorArms_untilConnectedReturns() =
+        runTest {
+            val source = FakeConnectionStateSource()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(MutableStateFlow(openModal(modalId = "m1")), recorder, source = source)
+
+            source.emit(ConnectionState.Offline)
+            vm.onModalOption("reject_once") // the default
+            source.emit(ConnectionState.Reconnecting(secondsRemaining = 3))
+            vm.onModalOption("allow_once") // a first tap that would arm
+            advanceUntilIdle()
+            assertTrue("no decision may be sent while not connected", recorder.answers.isEmpty())
+            assertNull("a disabled option must not arm", vm.armedOptionId.value)
+
+            source.emit(ConnectionState.Connected)
+            vm.onModalOption("reject_once")
+            advanceUntilIdle()
+            assertEquals(listOf("m1" to "reject_once"), recorder.answers)
+        }
+
+    @Test
+    fun armedSecondTap_whileNotConnected_sendsNothing_andAnswersAfterReconnect() =
+        runTest {
+            val source = FakeConnectionStateSource()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(MutableStateFlow(openModal(modalId = "m1")), recorder, source = source)
+            vm.onModalOption("allow_once") // armed while connected
+
+            source.emit(ConnectionState.Connecting)
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertTrue(recorder.answers.isEmpty())
+            assertEquals("the arm survives the outage", "allow_once", vm.armedOptionId.value)
+
+            source.emit(ConnectionState.Connected)
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertEquals(listOf("m1" to "allow_once"), recorder.answers)
+            assertNull(vm.armedOptionId.value)
+        }
+
+    @Test
+    fun onModalCancel_whileNotConnected_sendsNothing_andKeepsArmAndGrant() =
+        runTest {
+            val source = FakeConnectionStateSource()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(MutableStateFlow(offeringModal("m1")), recorder, source = source)
+            vm.onAlwaysAllowChanged("m1", true)
+            vm.onModalOption("allow_always")
+
+            source.emit(ConnectionState.Offline)
+            vm.onModalCancel("m1")
+            advanceUntilIdle()
+            assertTrue(recorder.cancels.isEmpty())
+            assertEquals("allow_always", vm.armedOptionId.value)
+            assertTrue("the grant draft is not cleared by a blocked cancel", vm.alwaysAllowAccepted.value)
+
+            source.emit(ConnectionState.Connected)
+            vm.onModalCancel("m1")
+            advanceUntilIdle()
+            assertEquals(listOf("m1"), recorder.cancels)
+        }
+
+    @Test
+    fun aConnectionSourceThatHasNotReported_gatesLikeOffline() =
+        runTest {
+            val silent =
+                object : ConnectionStateSource {
+                    override fun observe(): Flow<ConnectionState> = emptyFlow()
+
+                    override suspend fun retry() = Unit
+                }
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(MutableStateFlow(openModal(modalId = "m1")), recorder, source = silent)
+
+            vm.onModalOption("reject_once")
+            vm.onModalCancel("m1")
+            advanceUntilIdle()
+            assertTrue(recorder.answers.isEmpty())
+            assertTrue(recorder.cancels.isEmpty())
+        }
+
     // ---- #818: the don't-ask-again offer is scoped to the prompt that showed it --------------------
 
     private fun offeringModal(
@@ -4833,10 +4920,12 @@ class ThreadViewModelTest {
         currentModal: StateFlow<ModalUiState>,
         recorder: ModalSendRecorder,
         permissionDraftStore: PermissionDraftStore? = null,
+        source: ConnectionStateSource = FakeConnectionStateSource(),
     ): ThreadViewModel =
         makeVm(
             SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV, "serverId" to "host")),
             FakeConversationRepository(),
+            source = source,
             currentModal = currentModal,
             answerModal = recorder.answer,
             cancelModal = recorder.cancel,

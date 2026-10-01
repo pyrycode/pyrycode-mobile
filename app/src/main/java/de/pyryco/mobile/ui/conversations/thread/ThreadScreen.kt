@@ -650,10 +650,13 @@ fun ThreadScreen(
                                     .nestedScroll(autoScrollNestedScroll),
                             reverseLayout = true,
                         ) {
+                            // #1321: a prompt answer needs the host; Connecting and Reconnecting do not count.
+                            val connected = connectionState == ConnectionState.Connected
                             openRequest?.let { open ->
                                 permissionRequestItems(
                                     open = open,
                                     armedOptionId = armedOptionId,
+                                    connected = connected,
                                     onOption = onModalOption,
                                     onCancel = onModalCancel,
                                     alwaysAllowAccepted = alwaysAllowAccepted,
@@ -665,7 +668,7 @@ fun ThreadScreen(
                                 val dispatch: (QuestionModalEvent) -> Unit = { onQuestionEvent(it, pending.generation) }
                                 val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp)
                                 item(key = "question-actions:${pending.generation}") {
-                                    Box(gutter) { QuestionBatchActions(pending, dispatch) }
+                                    Box(gutter) { QuestionBatchActions(pending, connected, dispatch) }
                                 }
                                 items(pending.batch.questions.size, key = { "question:${pending.generation}:$it" }) { reversedIndex ->
                                     val index = pending.batch.questions.lastIndex - reversedIndex
