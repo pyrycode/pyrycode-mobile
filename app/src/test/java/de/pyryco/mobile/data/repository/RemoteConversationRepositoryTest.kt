@@ -7973,9 +7973,10 @@ class RemoteConversationRepositoryTest {
             assertEquals(Instant.parse(TS), row.occurredAt)
         }
 
-    // AC #1: warning reads as a warning; every other level, including empty and unknown, as a notice.
+    // AC #1: warning reads as a warning; info as Info (#1359); every other level, including empty and
+    // unknown, as a notice.
     @Test
-    fun banner_everyLevelButWarning_mapsToNotice() =
+    fun banner_everyLevelButWarningAndInfo_mapsToNotice() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
@@ -7988,7 +7989,7 @@ class RemoteConversationRepositoryTest {
             runCurrent()
 
             assertEquals(
-                listOf(BannerLevel.Warning) + List(5) { BannerLevel.Notice },
+                listOf(BannerLevel.Warning, BannerLevel.Info) + List(4) { BannerLevel.Notice },
                 bannerRowsOf(emissions.last()).map { it.level },
             )
         }
