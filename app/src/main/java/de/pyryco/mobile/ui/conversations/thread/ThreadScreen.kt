@@ -268,6 +268,9 @@ fun ThreadScreen(
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val openRequest = modalState as? ModalUiState.Open
+    // #1341: an open permission request goes first, as desktop's ComposerSlot hides QuestionPanelSlot. The
+    // question's picks live in the hoisted state (#1305's draft store), so it returns intact on resolution.
+    val shownQuestion = questionState.takeIf { openRequest == null }
     // #1306: one call site for both prompt kinds, so a question → permission hand-over keeps one owner.
     if (questionState != null || openRequest != null) QuestionPromptProtection()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -444,7 +447,7 @@ fun ThreadScreen(
                         localSendPending = localSendPending,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
-                        waitingForAnswers = questionState != null && connectionState == ConnectionState.Connected,
+                        waitingForAnswers = shownQuestion != null && connectionState == ConnectionState.Connected,
                         connectionState = connectionState,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
@@ -526,7 +529,7 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
-                    if (!state.hasMessages && state.queuedMessages.isEmpty() && questionState == null && openRequest == null) {
+                    if (!state.hasMessages && state.queuedMessages.isEmpty() && shownQuestion == null && openRequest == null) {
                         EmptyThreadState(
                             modifier =
                                 Modifier
@@ -583,7 +586,7 @@ fun ThreadScreen(
                         // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
                         // so distinctUntilChanged sees no edge and no second demand is issued.
                         val promptRowCount =
-                            (questionState?.let { it.batch.questions.size + 2 } ?: 0) +
+                            (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0)
                         val historyRowCount by rememberUpdatedState(rows.size + promptRowCount)
                         val hasHistoryRows by rememberUpdatedState(rows.isNotEmpty())
@@ -642,7 +645,7 @@ fun ThreadScreen(
                         // into history, so the newest row must also still be the first visible item. drop(1)
                         // keeps a recreation from moving a restored position, as in the #981 effect. #1306: a
                         // permission request inserts at the same end, so either prompt's new identity reveals.
-                        val promptIdentity by rememberUpdatedState(questionState?.generation to openRequest?.modalId)
+                        val promptIdentity by rememberUpdatedState(shownQuestion?.generation to openRequest?.modalId)
                         LaunchedEffect(listState) {
                             snapshotFlow { promptIdentity }
                                 .drop(1)
@@ -681,7 +684,7 @@ fun ThreadScreen(
                                     gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp),
                                 )
                             }
-                            questionState?.let { pending ->
+                            shownQuestion?.let { pending ->
                                 val dispatch: (QuestionModalEvent) -> Unit = { onQuestionEvent(it, pending.generation) }
                                 val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp)
                                 item(key = "question-actions:${pending.generation}") {
