@@ -266,6 +266,70 @@ strictly increasing `seqs`, non-negative `lengths` summing to the row's `content
 `null` otherwise, which costs that row its join (it falls back to counting as a pre-change whole-turn row) but
 never rejects the document.
 
+### A `turn_end` that settles rows which have not arrived yet (#1419)
+
+`withFinalizedTurn` (above, in the per-segment settle) only ever flips rows already sitting in the thread. Two
+orderings bring a turn's rows in *after* its `turn_end` has already been seen: the newest history page can
+hold only the `turn_end` while an older page still holds the turn's deltas, or a live `turn_end` can land
+before the newest page carrying those deltas is merged. Either way, the late rows used to enter the thread
+`isStreaming = true` and stay that way — the newest one forever, since nothing followed it to trip
+`withOnlyLastRowStreaming`, and `CachingConversationRepository.cacheableThreadRows` drops streaming rows, so
+they never reached the cache either.
+
+`ThreadProjection` now keeps a second map beside `threadByConversation`: `endedTurns`,
+`conversationId -> the turn ids whose turn_end this conversation has seen`, on either lane. It is
+connection-scoped and in-memory like `mintedMessageIds`, grow-only (an ended turn never streams again), and
+`remove(conversationId)` drops it with the thread. `finalizeAssistantTurn` and `mergeHistoryPage` both record
+into it *before* touching the thread, and `withFinalizedTurn` is now `withSettledTurns(setOf(turnId))`, a
+small generalization (`internal fun List<ThreadItem>.withSettledTurns(turnIds: Set<String>)`) that settles
+every row of several turns at once — a merge settles every turn `endedTurns` names, not just the one the
+current page mentions. `endedTurnIds(entries, interactive)` reads a page's `turn_end` entries for this
+independently of `reduceHistoryPage`: **a page holding only a `turn_end` reduces to zero rows**, so the
+memory of having seen it has to come from the page's own entries, gated by the same `interactive` check
+`withHistoryEntry` applies, not from the reduction's output.
+
+**The cross-lane race, and why one settle pass inside the merge isn't enough.** `mergeHistoryPage` runs on
+the caller's coroutine (`ThreadViewModel`'s scope, Main); a live `turn_end` runs on the inbound collector
+(`Dispatchers.Default`). The two can interleave inside a single `MutableStateFlow.update {}`'s read step.
+`MutableStateFlow.update` compares old and new by `equals` and writes nothing when they're equal — so a
+`finalizeAssistantTurn` whose thread flip finds none of the turn's rows yet (because the merge hasn't landed
+them) writes nothing, and critically **does not make the racing merge's compare-and-set fail**. A first
+version of this fix settled the merge's own incoming rows against `endedTurns` inside the merge's `update`
+lambda and reasoned that the finalize's own flip would "catch" any row the merge missed — but that argument
+assumed the finalize's update always changes something, which a no-op update doesn't. The verifier's rework
+(PR #1442) found the resulting window: the merge reads `endedTurns` before the live `turn_end` records,
+the live `turn_end`'s own flip then finds nothing to settle and writes nothing, and the merge's
+compare-and-set against the stale snapshot still succeeds and commits the turn's newest row streaming.
+
+The fix is a second, independent settle pass: after `mergeHistoryPage`'s own thread `update` commits, a
+private `settleEndedTurns(conversationId)` runs one more `update` that re-reads `endedTurns.value` fresh and
+settles against it, writing nothing when nothing changes. Either the live `turn_end` recorded before that
+re-read (the pass settles the rows), or its own thread update starts only after the merge committed (it finds
+the rows and settles them itself). A live `assistant_delta` needs no equivalent pass: unlike `turn_end`'s
+flip, a delta's update always changes the thread, so a racing merge's compare-and-set either fails and
+re-reads `endedTurns`, or the merge is the one that lands first and the delta's own update then sees the
+settled state. One known-incomplete edge of that argument: a live delta that reads `endedTurns` just before a
+concurrent merge records the same turn from a page that changes nothing in the thread (for example, a page
+holding only that `turn_end`) can still commit a streaming row, because both the merge's update and its
+settle pass write nothing in that case. This is harmless here only because the live lane is strictly ordered
+on one collector — that same turn's own `turn_end` is still to come on the same lane and settles the row when
+it arrives — and because `endedTurns` is connection-scoped, so nothing carries a stray streaming row across a
+reconnect.
+
+**Durable lesson for any future `StateFlow`-pair coordinated by write order:** "the other writer's update
+will follow and catch what I missed" only holds when that writer's update is guaranteed to change its state.
+An update that compares equal under `equals` is a no-op and cannot make a concurrent compare-and-set retry.
+Closing a window like this needs a pass that re-reads the *other* flow's value after the first flow's own
+update has committed, not an in-line read racing the other writer.
+
+Covered by `AssistantSegmentTest`: `turnEndOnANewerPageThanItsRows_settlesThem` (history walk, newest page
+holding only the `turn_end`), `liveTurnEndBeforeTheNewestPage_settlesItsRows` (live `turn_end` ahead of the
+page), `turnWithNoTurnEnd_stillStreamsAfterAMerge_andALaterTurnEndSettlesIt` (a turn with no `turn_end` yet is
+unaffected), plus guards for another turn, another conversation, a non-interactive page, a live delta after
+its own `turn_end`, and `remove_forgetsTheConversationsEndedTurns`. No deterministic interleaving harness
+exists for the two-coroutine race above; the argument for it lives in `endedTurns`' KDoc and here, not in a
+test.
+
 ## The walk that finally calls `requestHistory` (#777)
 
 [#645](../codebase/645.md) shipped the fold and left `requestHistory` with no caller. [#777](../codebase/777.md)
