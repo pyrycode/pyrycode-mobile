@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.list
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
+import java.text.Normalizer
 
 /**
  * One conversation qualified by the host that owns it.
@@ -61,3 +62,26 @@ internal fun groupConversationsByWorkspace(
                 conversations = rows.map { HostConversationRow(serverId, it) },
             )
         }
+
+private val combiningMarks = Regex("\\p{Mn}+")
+
+/**
+ * The sidebar sort key of a row's drawn [label]: trimmed, NFKD-normalised, every combining mark (Mn)
+ * removed, then lowercased with locale-independent rules. Shared verbatim with desktop's `compareByTitle`.
+ */
+internal fun conversationSortKey(label: String): String =
+    combiningMarks.replace(Normalizer.normalize(label.trim(), Normalizer.Form.NFKD), "").lowercase()
+
+/**
+ * Orders one host's Channels or Chats section alphabetically by the label each row draws: its
+ * non-blank name, otherwise [placeholder] — the same string the row renders, so drawn and sorted text
+ * cannot disagree. Ascending by [conversationSortKey], then by trimmed label, then by id; every step
+ * compares UTF-16 code units, with no locale collation and no natural number order ("Chat 10" before
+ * "Chat 2"). The desktop twin `compareByTitle` applies the identical rule.
+ */
+internal fun conversationLabelComparator(placeholder: String): Comparator<Conversation> {
+    fun label(conversation: Conversation): String = conversation.name?.takeIf { it.isNotBlank() } ?: placeholder
+    return compareBy<Conversation> { conversationSortKey(label(it)) }
+        .thenBy { label(it).trim() }
+        .thenBy { it.id }
+}
