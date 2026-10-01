@@ -40,12 +40,18 @@ import kotlinx.coroutines.flow.flowOf
  * (here) or dropped mid-flight (the delegate). Delegation is behaviour-neutral: a wired mutation, a
  * throwing stub, or a wired error all propagate verbatim (AC #4) — the facade adds nothing.
  *
+ * **Held readings (#1317).** Given a host's [HostReadings], the five pushed readings it holds (announced model,
+ * session facts, context usage, usage limit, slash-command menu) are read from it directly rather than
+ * switched, so they stay on screen across a reconnect and the gap before it. The compatibility singleton
+ * passes none and keeps the switched behaviour.
+ *
  * Emits **no logs**, consistent with the coordinator/pump/supervisor posture: it moves only object
  * references and already-decoded domain values, and must not log repo contents or the not-connected
  * event.
  */
 class StableConversationRepository(
     private val currentRepository: StateFlow<ConversationRepository?>,
+    private val heldReadings: HostReadings? = null,
 ) : ConversationRepository {
     /**
      * Switch a cold read over [currentRepository]: delegate to the live repository's [select] flow, or
@@ -86,23 +92,26 @@ class StableConversationRepository(
         switchToLive<ResetStatus?>(null) { it.observeResetting(conversationId) }
 
     /**
-     * The announced-model reading for [conversationId] (#890), switched over the live connection. The switch
-     * is how a reconnect or a host switch clears it: [flatMapLatest] drops the previous connection's
-     * projection, so one host's claude is never reported as the next one's.
+     * The announced-model reading for [conversationId] (#890). With [heldReadings] (#1317) it reads the host's
+     * held reading, which survives reconnects and the gap between them and is dropped when the pairing ends.
+     * Without it, it switches over the live connection: [flatMapLatest] drops the previous connection's
+     * projection and the gap reports nothing.
      */
     override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> =
-        switchToLive<AnnouncedModel?>(null) { it.observeAnnouncedModel(conversationId) }
+        heldReadings?.observeAnnouncedModel(conversationId)
+            ?: switchToLive<AnnouncedModel?>(null) { it.observeAnnouncedModel(conversationId) }
 
-    /** The session-facts reading for [conversationId] (#890), cleared across connections as [observeAnnouncedModel] is. */
+    /** The session-facts reading for [conversationId] (#890), held or switched as [observeAnnouncedModel] is. */
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> =
-        switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
+        heldReadings?.observeSessionFacts(conversationId) ?: switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
-     * The context-usage reading for [conversationId] (#945), cleared across connections as [observeAnnouncedModel]
-     * is. After a reconnect it stays absent until the conversation's next turn ends on the new connection.
+     * The context-usage reading for [conversationId] (#945), held or switched as [observeAnnouncedModel] is. The
+     * phone never asks for it, so without [heldReadings] it stays absent after a reconnect until the
+     * conversation's next turn ends.
      */
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
-        switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
+        heldReadings?.observeContextUsage(conversationId) ?: switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
 
     /**
      * The files offered in [conversationId] on the owner host's live connection (#898). The switch is what
@@ -113,15 +122,14 @@ class StableConversationRepository(
         switchToLive(emptyList()) { it.observeAttachmentOffers(conversationId) }
 
     /**
-     * The usage-limit reading for [conversationId] (#802), switched over the live connection like every
-     * other cold read — and here the switch is the **account-isolation mechanism**, not just plumbing:
-     * a usage-limit window belongs to an account rather than to a conversation, so [flatMapLatest]
-     * dropping the previous connection's projection is what stops one account's quota posture being
-     * attributed to the next. `null` while none is live is the same "nothing to read" value an unheard
-     * conversation produces, so a consumer has one absent case, not two.
+     * The usage-limit reading for [conversationId] (#802). With [heldReadings] (#1317) it reads the host's held
+     * reading, kept across reconnects and dropped when the pairing ends, so one account's quota posture is never
+     * attributed to another host or a later pairing. Without it, it switches over the live connection like
+     * every other cold read. `null` is the same "nothing to read" value an unheard conversation produces, so a
+     * consumer has one absent case, not two.
      */
     override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> =
-        switchToLive<UsageLimitReading?>(null) { it.observeUsageLimit(conversationId) }
+        heldReadings?.observeUsageLimit(conversationId) ?: switchToLive<UsageLimitReading?>(null) { it.observeUsageLimit(conversationId) }
 
     /**
      * The thinking-progress reading for [conversationId] (#801), switched over the live connection like
@@ -157,13 +165,13 @@ class StableConversationRepository(
         switchToLive<ModelMenu?>(null) { it.observeModelMenu(conversationId) }
 
     /**
-     * The slash-command menu for [conversationId] (#882), switched over the live connection like
-     * [observeModelMenu]: [flatMapLatest] dropping the previous connection's projection is what stops one
-     * host's commands being offered for another's conversation. `null` while none is live is the same
-     * "no frame heard" value an unheard conversation produces.
+     * The slash-command menu for [conversationId] (#882), held or switched as [observeAnnouncedModel] is (#1317).
+     * Either way one host's commands are never offered for another's conversation. `null` is the same "no
+     * frame heard" value an unheard conversation produces.
      */
     override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> =
-        switchToLive<SlashCommandMenu?>(null) { it.observeSlashCommandMenu(conversationId) }
+        heldReadings?.observeSlashCommandMenu(conversationId)
+            ?: switchToLive<SlashCommandMenu?>(null) { it.observeSlashCommandMenu(conversationId) }
 
     /**
      * Invalidate [conversationId]'s settings reading on the live repository (#590). Deliberately routed

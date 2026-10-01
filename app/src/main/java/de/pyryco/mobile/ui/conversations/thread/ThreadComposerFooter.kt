@@ -213,12 +213,15 @@ internal fun footerMenu(
  * no write while one is outstanding, and none without a session to address. It adds one rule of its
  * own: a control with nothing to offer does not open an empty overlay. The permission control has its
  * own outstanding write, so a model or effort tap does not block it and it does not block them. The
- * Actions control (#884) is always enabled: a command send addresses no session and writes no setting.
+ * Actions control (#884) needs no session or idle configuration: a command send writes no setting.
+ * No control is enabled while the host is not [connected] (#1319), as on desktop.
  */
 internal fun footerControlEnabled(
     control: FooterControl,
     runConfig: ThreadRunConfig,
+    connected: Boolean,
 ): Boolean {
+    if (!connected) return false
     if (control == FooterControl.Actions) return true
     val outstanding = if (control == FooterControl.Permission) runConfig.pendingPermission != null else runConfig.pending
     return runConfig.writable && !outstanding && footerMenu(control, runConfig) != null
@@ -263,6 +266,7 @@ fun ThreadComposerFooter(
     agent: ConversationAgent = ConversationAgent.Claude,
     touchHeight: Dp = FooterButtonMinHeight,
     contentBottomPadding: Dp = 0.dp,
+    connected: Boolean = true,
 ) {
     // #1032: the text controls share one weighted slot, measured after the paperclip and the Status opener,
     // so a footer full of long labels shrinks the labels and never squeezes out the two icons.
@@ -276,7 +280,7 @@ fun ThreadComposerFooter(
             FooterButton(
                 label = stringResource(R.string.thread_footer_actions),
                 clickLabel = stringResource(R.string.thread_footer_open_actions),
-                enabled = true,
+                enabled = footerControlEnabled(FooterControl.Actions, runConfig, connected),
                 pending = false,
                 onClick = { onOpen(FooterControl.Actions) },
                 onBounds = { onAnchorChanged(FooterControl.Actions, it) },

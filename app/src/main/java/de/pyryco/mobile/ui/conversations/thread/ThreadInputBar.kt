@@ -81,6 +81,9 @@ private val ButtonGlyphSize = 28.dp
  * [sending] comes from the chat's pending attachments (#933): while they send, the button stays disabled so a
  * second tap cannot resend them. Pending attachments still need text to send (#1328), as on desktop.
  *
+ * [enabled] is false while the host is not connected (#1319): Send and Stop both grey out, and the field
+ * stays editable so the draft can still be written.
+ *
  * [onImagesReceived], when set, takes the image content URIs a paste or a keyboard image insert offers the
  * field (#934); the rest of the clip, text included, still goes into the field.
  *
@@ -99,6 +102,7 @@ fun ThreadInputBar(
     onAnchorChanged: (Rect) -> Unit = {},
     sending: Boolean = false,
     onImagesReceived: ((List<Uri>) -> Unit)? = null,
+    enabled: Boolean = true,
 ) {
     val textInset = with(LocalDensity.current) { FieldLeadingInset.toPx() }
     // One button, two jobs (#643) — the placement desktop's #678 settled, replacing the standalone
@@ -108,7 +112,7 @@ fun ThreadInputBar(
     // it. Stop therefore owns the button exactly when the composer's text is empty — the state anyone
     // reaching for stop is in. Pending attachments do not count: they cannot send without text (#1328).
     val stopping = isBusy && text.isBlank()
-    val buttonEnabled = stopping || (!sending && text.isNotBlank())
+    val buttonEnabled = enabled && (stopping || (!sending && text.isNotBlank()))
     // #885: the field keeps its own cursor, and text replaced from outside (a slash-command completion, a
     // cleared send) puts the cursor at the end. The draft returns asynchronously, so [text] can still be the
     // value from before the field's own latest edit ([textAtLastEdit]); that is not an outside change, and

@@ -180,7 +180,7 @@ class ThreadViewModelPermissionTest {
             assertEquals("default", vm.state.value.runConfig.pendingPermission)
             assertFalse(
                 "no second write while one is outstanding",
-                footerControlEnabled(FooterControl.Permission, vm.state.value.runConfig),
+                footerControlEnabled(FooterControl.Permission, vm.state.value.runConfig, connected = true),
             )
             vm.onPermissionModeSelected("acceptEdits")
             assertEquals(1, repo.calls.size)
