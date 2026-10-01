@@ -21,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,15 +42,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
-import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.PairingParseResult
-import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
@@ -79,7 +79,6 @@ import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.ScannerUiState
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
-import de.pyryco.mobile.ui.onboarding.confirmPairingAndConnect
 import de.pyryco.mobile.ui.settings.AboutScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
@@ -89,8 +88,10 @@ import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
+import kotlin.time.Duration.Companion.seconds
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -150,6 +151,7 @@ internal fun PyryNavHost(
 ) {
     val destinations = koinInject<ThreadDestinationFactory>()
     val appPreferences = koinInject<AppPreferences>()
+    val conversations = koinInject<HostConversationSource>()
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -170,30 +172,20 @@ internal fun PyryNavHost(
         }
         composable(Routes.SCANNER) {
             val context = LocalContext.current
-            val pairedServerStore = koinInject<PairedServerStore>()
-            val connectionController = koinInject<RelayConnectionController>()
-            val scope = rememberCoroutineScope()
             val vm = koinViewModel<ScannerViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
 
-            // Camera confirmation retains its existing save/connect path.
-            val confirmPairAndNavigate: (PairedServer) -> Unit = { server ->
-                scope.launch {
-                    confirmPairingAndConnect(
-                        server = server,
-                        store = pairedServerStore,
-                        controller = connectionController,
-                        onPersisted = {
-                            navController.navigate(Routes.CHANNEL_LIST) {
-                                popUpTo(Routes.SCANNER) { inclusive = true }
-                                launchSingleTop = true
-                            }
-                        },
-                        onFailed = { e ->
-                            Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
-                            vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
-                        },
-                    )
+            // #1386: Confirm saves and then waits in the VM; the channel list opens only once the host
+            // answered, and Cancel pops the scanner with the host still saved.
+            LaunchedEffect(state) {
+                when (state) {
+                    ScannerUiState.Paired ->
+                        navController.navigate(Routes.CHANNEL_LIST) {
+                            popUpTo(Routes.SCANNER) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    ScannerUiState.Cancelled -> navController.popBackStack()
+                    else -> Unit
                 }
             }
 
@@ -224,7 +216,7 @@ internal fun PyryNavHost(
             // The security gate (#343): a successful decode parses + validates the payload into a
             // real PairedServer (#320) and derives its static-key fingerprint (#342), then parks in
             // AwaitingConfirm — it does NOT persist. The persist moves behind the Confirm button
-            // (confirmPairAndNavigate); this effect never touches the store. A parse failure, or a
+            // (ScannerEvent.ConfirmPairing); this effect never touches the store. A parse failure, or a
             // derive that returns null (structurally unreachable for a Success — the stored key was
             // already proven base64-std-of-32-bytes — but handled so staticKeyFingerprint's require
             // can't throw into this coroutine), routes to the Error surface. On the AwaitingConfirm
@@ -255,6 +247,9 @@ internal fun PyryNavHost(
             BackHandler(enabled = state is ScannerUiState.AwaitingConfirm) {
                 vm.onEvent(ScannerEvent.DeclinePairing)
             }
+            BackHandler(enabled = state is ScannerUiState.Verifying || state is ScannerUiState.VerificationFailed) {
+                vm.onEvent(ScannerEvent.CancelVerification)
+            }
 
             ScannerScreen(
                 state = state,
@@ -268,14 +263,12 @@ internal fun PyryNavHost(
                     )
                 },
                 onPasteCode = { navController.navigate(Routes.PAIR_CODE) },
-                // Confirm reads the CURRENT collected state: if back/decline already moved it off
-                // AwaitingConfirm, the cast is null and confirm is a no-op — a save cannot fire after
-                // the gate closed. Persists exactly the parsed record the displayed fingerprint was
-                // derived from (no re-parse / re-derive).
-                onConfirmPairing = {
-                    (state as? ScannerUiState.AwaitingConfirm)?.let { confirmPairAndNavigate(it.server) }
-                },
+                // The VM confirms only from AwaitingConfirm, saving exactly the record whose fingerprint
+                // is shown; once back/decline moved it off, a late tap is a no-op.
+                onConfirmPairing = { vm.onEvent(ScannerEvent.ConfirmPairing) },
                 onDeclinePairing = { vm.onEvent(ScannerEvent.DeclinePairing) },
+                onRetryPairing = { vm.onEvent(ScannerEvent.RetryVerification) },
+                onCancelPairing = { vm.onEvent(ScannerEvent.CancelVerification) },
                 cameraPreview = {
                     if (state is ScannerUiState.ReadyToScan) {
                         CameraPreview(
@@ -450,12 +443,17 @@ internal fun PyryNavHost(
                 val turnOutcome by vm.turnOutcome.collectAsStateWithLifecycle()
                 val thinkingProgress by vm.thinkingProgress.collectAsStateWithLifecycle()
                 val isBusy by vm.isBusy.collectAsStateWithLifecycle()
+                // #1311: the band's stall arm and its local-send window.
+                val isStalled by vm.isStalled.collectAsStateWithLifecycle()
+                val localSendPending by vm.localSendPending.collectAsStateWithLifecycle()
                 val modalState by vm.currentModal.collectAsStateWithLifecycle()
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
                 val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
+                val systemPrompt by vm.systemPrompt.collectAsStateWithLifecycle()
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
                 val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
+                val attachmentUploadProgress by vm.attachmentUploadProgress.collectAsStateWithLifecycle()
                 val attachmentStates by vm.attachmentStates.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
                 val usageLimitDismissals = koinInject<UsageLimitDismissals>()
@@ -463,6 +461,9 @@ internal fun PyryNavHost(
                 // #1050: composed again means the operator is back on the thread, so a linked note's reader has
                 // closed. Its reader remembered the note, so dropping it here cannot empty that reader.
                 LaunchedEffect(vm) { vm.releaseLinkedMarkdown() }
+                // #1306: leaving this screen, by Back or by opening another thread on top, drops a half-made
+                // allow; the ViewModel keeps the session-grant draft for the same request.
+                DisposableEffect(vm) { onDispose { vm.onConversationLeft() } }
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
                         when (event) {
@@ -490,6 +491,8 @@ internal fun PyryNavHost(
                     turnOutcome = turnOutcome,
                     thinkingProgress = thinkingProgress,
                     isBusy = isBusy,
+                    isStalled = isStalled,
+                    localSendPending = localSendPending,
                     onInterrupt = vm::onInterrupt,
                     modalState = modalState,
                     armedOptionId = armedOptionId,
@@ -498,8 +501,8 @@ internal fun PyryNavHost(
                     archiveErrors = vm.archiveErrors,
                     changeWorkspaceErrors = vm.changeWorkspaceErrors,
                     sessionSettingsErrors = vm.sessionSettingsErrors,
-                    onModalOption = vm::onModalOption,
-                    onModalCancel = vm::onModalCancel,
+                    onModalOption = { modalId, optionId -> vm.onModalOption(optionId, modalId) },
+                    onModalCancel = { modalId -> vm.onModalCancel(modalId) },
                     alwaysAllowAccepted = alwaysAllowAccepted,
                     onAlwaysAllowChanged = vm::onAlwaysAllowChanged,
                     onDropQueued = vm::onDropQueued,
@@ -515,16 +518,24 @@ internal fun PyryNavHost(
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
+                    systemPrompt = systemPrompt,
                     // #933: the composer's attachment picker and strip, over the same per-chat draft store.
                     attachments = pendingAttachments,
                     attachmentsSending = attachmentsSending,
+                    attachmentUploadProgress = attachmentUploadProgress,
                     onAttachmentsPicked = vm::addPickedAttachments,
                     onRemoveAttachment = vm::removeAttachment,
                     attachmentRefusals = vm.attachmentRefusals,
+                    attachmentSendFailures = vm.attachmentSendFailures,
+                    // #1314: an accepted send follows the thread's newest end again.
+                    sentMessages = vm.sentMessages,
                     // #984: the thread's message attachments, loaded as their rows come on screen.
                     attachmentStates = attachmentStates,
                     onAttachmentShown = vm::onAttachmentShown,
                     onRetryAttachment = vm::onRetryAttachment,
+                    // #1329: a file other than an image loads only when it is tapped, then opens or saves.
+                    onRequestAttachment = vm::onAttachmentRequested,
+                    attachmentLoads = vm.attachmentLoads,
                     // #843: the tree row's re-pair route (#842), keyed by this destination's own host. The
                     // thread stays on the back stack beneath it, so Cancel returns to the cached history.
                     showRePair = rePairAvailable,
@@ -618,16 +629,29 @@ internal fun PyryNavHost(
             AboutScreen(onBack = { navController.popBackStack() })
         }
     }
-    // #685: the tap opens the thread above the channel list, so a conversation deleted since the alert
-    // still ends one Back away from a usable list. Only a saved host is accepted: the activity is
-    // exported, and anything can start it with these extras. Navigating is all a tap ever does.
+    // #685: the tap opens the thread above the channel list, so the list is always one Back away. Only a
+    // saved host is accepted: the activity is exported, and anything can start it with these extras.
+    // Navigating is all a tap ever does.
+    // #1400: and only a conversation the host's snapshot holds active. A snapshot cannot tell rows not
+    // loaded yet from rows without the target, so the tap waits a bounded time for the row to appear and
+    // otherwise stays on the list, never opening a conversation it could not check. A row that arrives
+    // after the user has left the list opens nothing.
     LaunchedEffect(openTarget) {
         val target = openTarget ?: return@LaunchedEffect
-        if (destinations.isSavedHost(target.serverId)) {
-            RelayLog.d { "event=notification_tap_accepted" }
-            navController.openThread(target)
-        } else {
+        if (!destinations.isSavedHost(target.serverId)) {
             RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
+            return@LaunchedEffect
+        }
+        val active = withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) { conversations.snapshots.first { it.holdsActive(target) } }
+        when {
+            active == null -> RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
+            // The user moved on during the wait; a late row must not push a thread over where they went.
+            navController.currentDestination?.route != Routes.CHANNEL_LIST ->
+                RelayLog.d { "event=notification_tap_rejected code=navigated_away" }
+            else -> {
+                RelayLog.d { "event=notification_tap_accepted" }
+                navController.openThread(target)
+            }
         }
     }
 }
@@ -686,14 +710,18 @@ private fun ArchiveDestination(navController: NavHostController) {
 
 private const val SETUP_URL = "https://pyryco.de/setup"
 
+/**
+ * How long a notification tap waits for its conversation to appear active in the host's snapshot (#1400).
+ * Cached rows land at once, so this bounds only a cold start with nothing cached.
+ */
+internal val NOTIFICATION_TAP_ROW_WAIT = 5.seconds
+
 private const val TAG = "MainActivity"
 
 // User-facing recovery copy for the Decoded -> Error path (#320). The UI layer owns the copy; the
 // parser only emits byte-safe category labels. Generic by design — never interpolates a field value.
 private const val PARSE_FAILED_MSG =
     "That QR code isn't a valid pyrycode pairing code. Scan the code shown by `pyry pair`."
-
-private const val SAVE_FAILED_MSG = "Couldn't save the pairing. Please try again."
 
 internal object Routes {
     const val WELCOME = "welcome"
@@ -823,6 +851,13 @@ private fun NavHostController.returnToWelcome() {
         launchSingleTop = true
     }
 }
+
+/** Whether [target]'s host holds it among its channels or chats, both of which exclude archived rows. */
+private fun List<HostConversationSnapshot>.holdsActive(target: HostConversationTarget): Boolean =
+    any { host ->
+        host.serverId == target.serverId &&
+            (host.channels.any { it.id == target.conversationId } || host.chats.any { it.id == target.conversationId })
+    }
 
 private fun NavHostController.openThread(target: HostConversationTarget) {
     if (currentDestination?.route == Routes.CONVERSATION_THREAD && Routes.target(currentBackStackEntry?.arguments) == target) return

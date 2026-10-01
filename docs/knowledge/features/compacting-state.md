@@ -89,6 +89,12 @@ The write is a genuine **read-modify-write** on the set (`it + id` / `it - id`),
 `api_retry`'s pure replace, so `MutableStateFlow.update {}` is load-bearing here rather than
 stylistic — a `.value = … + id` formulation would open a real check-then-mutate window.
 
+`CompactingProjection.observeIds(): Flow<Set<String>>` (#1452) exposes `compactingConversations`
+itself, host-wide rather than per-conversation, with no change to the onset/clearing edges above.
+`RemoteConversationRepository.observeBusyConversations()` unions it with the three sibling arms'
+own `observeIds()` so the host's list can blink a compacting chat's status dot even though no turn
+is running on it — see [Dependency injection — host conversation source § Attention state](dependency-injection-host-conversation-source.md#attention-state-877).
+
 ## Capability gate (fail-closed)
 
 The demux arm sits inside `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` — the same gate
@@ -151,6 +157,9 @@ threats (screenshot/overlay of a compaction banner) belong to #597.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted
   `observeCompacting` joins; [`StableConversationRepository`](stable-conversation-repository.md) — the
   facade that makes it reach the thread ViewModel.
+- [Dependency injection — host conversation source](dependency-injection-host-conversation-source.md#attention-state-877)
+  (#1452) — folds this arm's `observeIds()`, unioned with its siblings, into the host-wide
+  `ConversationAttention.Running` blink.
 - Consumer: [Compacting indicator](compacting-indicator.md) ([#597](../codebase/597.md)) — the
   visible "Compacting conversation" status, natively blocked by this ticket and now shipped.
 - Server SSOT: pyrycode#1074 (design, merged PR pyrycode#1160, 2026-07-21),

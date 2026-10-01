@@ -64,7 +64,7 @@ for the full mechanism.
 sends no reply to `question_answer` / `question_refused` and the batch is only truly resolved by the later
 `question_dismissed`. A modal that unlocked itself after `Sent` would let a second Continue race the first
 send. `answers()` returns one `QuestionAnswer` per question — option labels in **option order**, then the
-Other text **verbatim** when ticked and non-blank — or `null` if any question has no value; `canContinue`
+Other text **trimmed** when ticked and non-blank — or `null` if any question has no value; `canContinue`
 composes that with `!locked`.
 
 ## Batch ownership: process-lifetime drafts, source- and request-bound sends
@@ -132,11 +132,13 @@ and the source's own held batch for that conversation `=== batch` — synchronou
 sending, and always sends through the **captured** source, never a freshly selected one. Locks are always
 taken store → coordinator, so the two synchronized blocks cannot deadlock.
 
-**Verbatim, not trimmed.** The AC requires Other text sent "verbatim". Desktop's `resolveQuestionAnswers`
-trims it before sending; mobile does not — `values()` uses `otherText.isNotBlank()` only to decide whether
-Other counts as answered, and sends the exact typed string. A caller porting behaviour from the desktop
-`questionResolution.ts` reference should check each such transform against the ticket's own AC rather than
-assuming parity.
+**Trimmed, as desktop does.** #1305 shipped Other text sent verbatim; #1349 refined the AC to match desktop's
+`resolveQuestionAnswers`, which adds `otherText.trim()` only when Other is ticked and the trimmed text is
+non-empty. `values()` now does the same — `otherText.trim().takeIf { otherTicked && it.isNotEmpty() }` — so
+whitespace-only Other text still counts as no value. Only the sent value is trimmed; the held draft
+(`otherText` in `QuestionDraftStore`) stays untrimmed, so the text field keeps exactly what the operator
+typed. A caller porting behaviour from the desktop `questionResolution.ts` reference should still check each
+such transform against the ticket's own AC rather than assuming parity by default.
 
 **The question path never touches `answerModal` / `cancelModal`.** It holds its own
 `answerQuestionBatch` / `refuseQuestionBatch` lambdas, defaulted inert like every other outbound send this
@@ -147,6 +149,14 @@ untested path.
 **Koin closes the store.** `single { QuestionDraftStore() } onClose { it?.dispose() }` — `dispose()` cancels
 the store's `SupervisorJob` scope, clears every binding and source, and empties the drafts map. Nothing else
 calls `dispose()`; the store is meant to outlive every destination for the app process.
+
+**Continue and refuse are gated on the host connection, not just `locked` (#1321).** `onQuestionEvent`'s
+`Continue` and `Cancel` branches both add `promptSendAllowed(kind)` — the same tap-time helper
+[modal-answer-flow.md](modal-answer-flow.md#not-connected-refuses-the-tap-before-the-arm-or-grant-change-1321)
+describes for the permission surface — ahead of the existing `!held.locked` check and before `sendQuestion`,
+which is what moves the batch to `Sending`. A refused tap therefore never locks the batch: picks and Other
+text stay exactly as drafted, and the same Continue/Cancel tap sends once the host reconnects. Option toggles
+and Other-text edits are not gated — only the two sends are.
 
 ## Title names the conversation's agent (#1116)
 
@@ -194,6 +204,13 @@ and checkbox rows `347:6771` (inspected 2026-09-30). A tertiary exported glyph s
 beside the uppercase `labelSmall` header. The `background` card uses a 1 dp `primaryContainer` border and
 the 6 dp `modalControl` shape. Question text uses `bodyMedium`; choice labels and descriptions use
 `labelMedium`.
+
+**`QuestionBatchActions` takes a `connected: Boolean` (#1321), ANDed into Cancel's `!state.locked` and
+Continue's `state.canContinue` enabled checks.** `ThreadScreen` derives it the same way as the #1319 footer
+gate (`connectionState == ConnectionState.Connected`) and passes it alongside `pending` and `dispatch`.
+`QuestionBlock`'s own `enabled = !pending.locked` is unchanged — option rows and the Other field stay
+editable while the host is down, since only the two sends need the gate. See § Batch ownership above for the
+VM-side `promptSendAllowed` check this mirrors.
 
 Whole single-choice rows sit in one `selectableGroup()` with `Role.RadioButton`; multiple-choice
 rows use `Role.Checkbox` independently. The visible tertiary selectors are 20 dp, with a dot for a

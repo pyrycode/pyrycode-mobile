@@ -117,6 +117,48 @@ class ConversationsPayloadTest {
     }
 
     @Test
+    fun archivedAt_readsAValidTimeAndNullsAMissingNullOrUnparsableOneKeepingTheRow() {
+        val fixture =
+            """
+            {"conversations":[
+              {"id":"valid","name":"A","is_promoted":false,"is_archived":true,"cwd":"/p","archived_at":"2026-06-10T08:15:30.123456789Z","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"},
+              {"id":"missing","name":"B","is_promoted":false,"is_archived":true,"cwd":"/p","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"},
+              {"id":"null","name":"C","is_promoted":false,"cwd":"/p","archived_at":null,"last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"},
+              {"id":"garbage","name":"D","is_promoted":true,"is_archived":true,"cwd":"/q","archived_at":"yesterday","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-07T09:00:00Z"},
+              {"id":"out-of-range","name":"E","is_promoted":false,"is_archived":true,"cwd":"/p","archived_at":"+9999999999-01-01T00:00:00Z","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"}
+            ]}
+            """.trimIndent()
+        val rows = MobileJson.decodeFromJsonElement<ConversationsPayload>(MobileJson.parseToJsonElement(fixture)).toConversations()
+
+        assertEquals(listOf("valid", "missing", "null", "garbage", "out-of-range"), rows.map { it.id })
+        assertEquals(
+            listOf(Instant.parse("2026-06-10T08:15:30.123456789Z"), null, null, null, null),
+            rows.map { it.archivedAt },
+        )
+        // An unparsable stamp costs only the stamp: the rest of the row is read as usual.
+        val garbage = rows[3]
+        assertEquals("D", garbage.name)
+        assertTrue(garbage.isPromoted)
+        assertTrue(garbage.archived)
+        assertEquals("/q", garbage.cwd)
+        assertEquals(Instant.parse("2026-05-07T09:00:00Z"), garbage.lastUsedAt)
+    }
+
+    @Test
+    fun archivedAt_nonStringValueFailsTheListDecode() {
+        // A number is not "a string that does not parse": like a malformed `last_used_at`, it fails the
+        // whole payload, which `applySnapshot` drops through its IllegalArgumentException catch.
+        val numeric =
+            """{"conversations":[{"id":"c1","name":"x","is_promoted":false,"is_archived":true,"cwd":"/p",""" +
+                """"archived_at":1717000000,"last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"}]}"""
+        val element = MobileJson.parseToJsonElement(numeric)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            MobileJson.decodeFromJsonElement<ConversationsPayload>(element)
+        }
+    }
+
+    @Test
     fun scratchCwd_isPreservedVerbatim() {
         val element = MobileJson.parseToJsonElement(twoRowFixture)
         val result = MobileJson.decodeFromJsonElement<ConversationsPayload>(element).toConversations()

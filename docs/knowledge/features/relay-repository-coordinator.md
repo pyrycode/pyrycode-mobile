@@ -17,10 +17,24 @@ kept current for the life of an open connection since [#361](../codebase/361.md)
 rotation. Explicit [diagnostic archive requests](relay-debug-bundle-transfer.md)
 also enter through this owner so admission and teardown share a connection lifetime. It also
 switches the active connection's [held clarification-question batches](relay-repository-coordinator-seams-and-passthroughs.md#question-batch-projection-822)
-— unlike `currentModal`, that state resets on every reconnect instead of surviving it. It holds the
+— that state resets on every reconnect, including a plain teardown with no new connection yet. The
+sibling [`hostModals`](current-modal-state.md) fold is less eager about it: since
+[#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) it keeps every outstanding
+permission prompt through a teardown and clears only when a *new* connection is published, not on the
+drop itself. It holds the
 [background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677)
 the same reset way, except for which task ids have finished, which it retains across every reconnect so a
-completed task cannot come back as live when the daemon re-sends its retained roster.
+completed task cannot come back as live when the daemon re-sends its retained roster. It owns one
+`HostReadings` instance (#1317) — the five readings a host pushes (announced model, session facts,
+context usage, usage limit, slash-command menu), of which only context usage is also asked for again, by
+the open thread's `requestContextUsage` (#1410) — held for the **life of
+the host's pairing**, the `finishedBackgroundTasks` shape rather than the reset-on-reconnect one: a
+reconnect threads the same instance into the new connection's repository instead of starting empty. Since
+\#1320 the same instance also holds two readings the phone *does* ask for again on each connection: the
+model menu of each conversation and the last successful `session_settings` reply. Only the ask ledgers
+(`askedModelMenus`, `modelListAsks`, `heardModelMenus`) stay per connection; a held settings reading is only
+ever read back invalidated (permission mode unknown, memory search `Unknown`, marked `held = true`) so
+nothing automatic acts on it until the new connection's own reply replaces it whole.
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the
@@ -383,6 +397,27 @@ by the settled `.value` which is `null` on both); B's repo appears only once `pu
 reaches `pumps[1].sent` and the list loads (`reconnect_afterOpen_listConversationsSucceedsAndListLoads`).
 The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**.
 
+[#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317) added coordinator cases driving a
+connection, a teardown and a second connection: all five `hostReadings` reads hold their values through
+the gap and into the new connection, a frame on the new connection still replaces a held value,
+`session_transition` still drops announced model/session facts/context usage but leaves the usage limit
+and slash menu, the coordinator's own clock expires a held usage limit after a reconnect, and `close()`
+drops every held reading. `di/RelayConnectionFactoryTest.kt` adds a two-host case (a reading on A is
+invisible on B) and a reconnect-through-production-wiring case, plus a drop on removing a host and a
+fresh (empty) read after re-adding it. `StableConversationRepositoryTest` covers the facade's disconnected
+gap separately — see [its own Testing section](stable-conversation-repository.md#testing).
+
+[#1320](https://github.com/pyrycode/pyrycode-mobile/issues/1320) added coordinator cases for the two new
+held readings, through a `StableConversationRepository(coordinator.currentRepository, coordinator.hostReadings)`:
+a full `session_settings` reply on connection 1, the invalidated reading (model/effort/session kept,
+permission `""`, memory search `Unknown`, `held = true`) showing through the gap and at connection 2's head,
+connection 2 sending its own `request_session_settings`, and that reply replacing the whole reading; a
+model menu held through the gap and into connection 2 while connection 2 still sends `request_model_list`
+and a `model_list` on connection 2 replaces it; a `session_transition` on connection 2 re-reading and the
+reply replacing the held reading (the existing trigger unchanged); and the two-host case, where host A's
+held settings and menu never appear through host B and `close()` on A drops both, including for a collector
+sitting in the gap. A fresh coordinator's first subscription head is still `null`.
+
 ## Related
 
 - Tickets: [#351](../codebase/351.md) — the coordinator + `ManagedSessionPump` (files, line refs,
@@ -421,7 +456,23 @@ The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**
   [`backgroundTasks`](remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677)
   the `questionBatches` way, but adds one host-lifetime `FinishedBackgroundTasks` instance (the
   `replayCursor` shape) that the reset does not touch, so a task the daemon's reconnect roster re-lists
-  after it finished does not read as live again.
+  after it finished does not read as live again ·
+  [#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317) — `hostReadings`, a host-lifetime
+  `HostReadings` instance built with the coordinator's own clock and threaded into every connection's
+  `RemoteConversationRepository` (the `finishedBackgroundTasks` shape), so the announced model, session
+  facts, context usage, usage limit and slash-command menu survive a reconnect and the
+  [`StableConversationRepository`](stable-conversation-repository.md) facade reads them directly while
+  disconnected. `close()` drops it after `teardownActive()`, which is the pairing-scoped clear registry
+  reconcile gets for free on unpair or re-pair ·
+  [#1320](https://github.com/pyrycode/pyrycode-mobile/issues/1320) — extends the same `HostReadings`
+  instance to the per-conversation model menu and the last successful `session_settings` reply, the two
+  readings the phone itself asks for again on every connection. The ask ledgers
+  (`SessionSettingsCommands`'s re-read triggers, `ModelMenuProjection`'s `askedModelMenus`/`modelListAsks`/
+  `heardModelMenus`) stay per connection, so a new connection still asks; only the last answer is held. A
+  held settings reading is exposed **only** invalidated and marked `SessionSettings.held`, so the
+  [#686 effort recall](thread-composer-footer-effort-recall.md#remembered-effort-recall-686) and the #650
+  permission-settle/pending-model logic treat it as the lost context the old `null` head was, never as a
+  live reply to act on.
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status

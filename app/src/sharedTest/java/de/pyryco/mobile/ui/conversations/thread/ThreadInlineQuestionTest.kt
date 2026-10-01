@@ -10,6 +10,11 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -18,9 +23,12 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.ModalOption
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.QuestionOption
@@ -116,6 +124,96 @@ class ThreadInlineQuestionTest {
             .onNodeWithTag("question-send-failed")
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
             .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Error))
+    }
+
+    @Test
+    fun an_open_permission_prompt_withholds_the_question_until_it_resolves_with_picks_intact() {
+        val picked =
+            QuestionModalState(
+                QuestionBatch(
+                    "chat",
+                    "request",
+                    listOf(Question("Choose a language", "Language", listOf(QuestionOption("Kotlin", "JVM")), true)),
+                ),
+                selections = listOf(QuestionSelection(optionIndices = setOf(0), otherTicked = true, otherText = "Rust too")),
+                generation = 1,
+            )
+        val prompt =
+            ModalUiState.Open(
+                modalId = "m1",
+                modalClass = "permission",
+                title = "Permission required",
+                prompt = "claude wants to run ls",
+                options = listOf(ModalOption(id = "allow_once", label = "Allow once")),
+                defaultOptionId = "allow_once",
+            )
+        var modal by mutableStateOf<ModalUiState>(prompt)
+        rule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    ThreadUiState("chat", "Client planning", isPromoted = false),
+                    {},
+                    {},
+                    ConnectionState.Connected,
+                    {},
+                    questionState = picked,
+                    modalState = modal,
+                )
+            }
+        }
+        rule.onNodeWithText("Allow once").assertIsDisplayed()
+        rule.onNodeWithTag("question-batch-title").assertDoesNotExist()
+        rule.onNodeWithText("Choose a language").assertDoesNotExist()
+        rule.onNodeWithText("Waiting for answers").assertDoesNotExist()
+
+        rule.runOnIdle { modal = ModalUiState.Hidden }
+        rule.onNodeWithText("Allow once").assertDoesNotExist()
+        rule.onNodeWithText("Choose a language").assertIsDisplayed()
+        rule.onNodeWithTag("question_control_0_0_row").assertIsOn()
+        rule.onNodeWithTag("question_control_0_other_row").assertIsOn()
+        rule.onNodeWithTag("question_other_0").assertTextEquals("Rust too")
+    }
+
+    // #1321: answering and refusing wait for the host; picks and other text stay editable and are kept.
+    @Test
+    fun continue_and_refuse_are_disabled_offline_while_picks_stay_editable_and_re_enable_on_reconnect() {
+        var connection by mutableStateOf<ConnectionState>(ConnectionState.Offline)
+        val events = mutableListOf<QuestionModalEvent>()
+        val picked = question.copy(selections = listOf(QuestionSelection(optionIndices = setOf(0))))
+        rule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    ThreadUiState("chat", "Client planning", isPromoted = false),
+                    {},
+                    {},
+                    connection,
+                    {},
+                    questionState = picked,
+                    onQuestionEvent = { event, _ -> events += event },
+                )
+            }
+        }
+
+        rule.onNodeWithText("Continue").assertIsNotEnabled().performClick()
+        rule.onNodeWithText("Cancel").assertIsNotEnabled().performClick()
+        rule
+            .onNodeWithText("Kotlin")
+            .assertIsSelected()
+            .assertIsEnabled()
+            .performClick()
+        rule.onNodeWithTag("question_other_0").performTextInput("Go")
+        rule.runOnIdle {
+            assertEquals(listOf(QuestionModalEvent.OptionToggled(0, 0), QuestionModalEvent.OtherTextChanged(0, "Go")), events)
+        }
+
+        rule.runOnIdle {
+            events.clear()
+            connection = ConnectionState.Connected
+        }
+        rule.onNodeWithText("Kotlin").assertIsSelected()
+        rule.onNodeWithText("Cancel").assertIsEnabled()
+        rule.onNodeWithText("Continue").assertIsEnabled().performClick()
+        rule.runOnIdle { assertEquals(listOf<QuestionModalEvent>(QuestionModalEvent.Continue), events) }
     }
 
     private fun historyItems() =

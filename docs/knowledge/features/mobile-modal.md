@@ -22,7 +22,7 @@ internal fun MobileModal(
     loading: Boolean = false,
     error: String? = null,
     cancelLabel: String = "Cancel",
-    submitLabel: String = "OK",
+    submitLabel: String? = "OK",
     content: @Composable ColumnScope.() -> Unit,
 )
 ```
@@ -35,6 +35,12 @@ OK invokes `onSubmit` only when `submissionEnabled && !loading`; it never closes
 the modal automatically. Loading preserves the OK label beside a progress
 indicator and leaves all dismissal routes available. Set loading in the caller
 while work is in progress; the shell does not start or cancel operations.
+
+`submitLabel` is nullable (#1386): a null value omits the submit button entirely,
+leaving Cancel as the only footer action, mirroring the null-`submitLabel` case
+`MobileGateModal` already had. The [scanner's non-retryable verification
+failure](pairing-confirm-gate.md#confirm-the-wait-and-a-failure-share-one-modal-window-1386)
+is the first caller — a rejected pairing offers only Cancel, no Retry.
 
 The footer labels default to `Cancel` and `OK`. Callers can override the text
 without changing either callback: [pairing confirmation](pairing-confirm-gate.md)
@@ -66,8 +72,10 @@ internal fun MobileGateModal(
 )
 ```
 
-Added in #815 for the [permission-modal overlay](permission-modal-overlay.md#the-overlay-open), the shell's
-first caller whose actions are not a fixed Cancel/OK pair but a server-supplied option list. `MobileModal`
+Added in #815 for the [permission-modal overlay](permission-modal-overlay.md#the-inline-request-open), the
+shell's first caller whose actions are not a fixed Cancel/OK pair but a server-supplied option list.
+[#1306](permission-modal-overlay.md#what-1306-moved) later moved that overlay off this gate entirely, into
+`ThreadScreen`'s own message list — `CreateChatModal` is this gate's current caller. `MobileModal`
 and `MobileGateModal` both delegate to one private `MobileModalShell(title, onDismissRequest, gate: Boolean,
 modifier, error, footer: @Composable RowScope.(dismiss: () -> Unit) -> Unit, content)` — `gate` is the only
 switch between them, so the editing shell's behaviour cannot drift by editing the gate path and vice versa.

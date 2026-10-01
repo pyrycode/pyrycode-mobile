@@ -29,7 +29,7 @@ synchronously, `Eagerly`. `addAttachment` refuses an entry over `AttachmentUploa
 that would push the pair past `MessageAttachmentIds.MAX` (32), checked inside the store's own
 `update {}` so two concurrent adds can't both pass at 31.
 
-`sendMessage` snapshots the pair's attachment list at tap time. An entry that already carries an
+`sendMessage` refuses a blank `text` before it reads the pair's attachments at all — [#1328](https://github.com/pyrycode/pyrycode-mobile/issues/1328), matching desktop's `submitMessage`. A pending attachment cannot send on its own: the files and the draft both stay untouched for the next send, and no upload is attempted. (An earlier version of this rule read the attachments first and let them send with blank text; [`ThreadInputBar`](thread-input-bar.md#the-message-input-button--one-control-two-actions) tracked that with a `hasAttachments` parameter, since removed.) Past that guard, `sendMessage` snapshots the pair's attachment list at tap time. An entry that already carries an
 `attachmentId` is skipped; the rest are read through `AttachmentReader` — bytes only at send time, one
 file's at once, the store itself never holds file bytes — and uploaded via
 [`ConversationRepository.uploadAttachment`](attachment-upload.md), in order. Any read or upload failure
@@ -37,6 +37,24 @@ stops the send: text and every entry stay, and ids already acknowledged are kept
 re-upload them. On success `uploadAttachment`'s ids are named to `sendMessage`, then text and the sent
 snapshot's attachments clear together — an entry added after the snapshot survives, the same
 "the message is what was tapped" guarantee the text draft's in-flight guard already gives.
+
+**The failure notice ([#1325](https://github.com/pyrycode/pyrycode-mobile/issues/1325)).** The stop above
+used to be silent — the only visible change was the strip's "Sending" state ending. `ThreadViewModel.upload`
+now maps the read failure or the `AttachmentUploadResult.Failed` it hit through
+`AttachmentSendFailure` (`ui/conversations/thread/AttachmentSendFailure.kt`) — a pure, Compose-free mapping
+to one fixed sentence per reason, copying desktop's `ATTACHMENT_UPLOAD_FAILURE_COPY` — and sends it on
+`attachmentSendFailureChannel`, a one-shot `Channel<AttachmentSendFailure>` exposed as
+`attachmentSendFailures: Flow<AttachmentSendFailure>` beside `attachmentRefusals`. `ThreadScreen` collects
+it in a `LaunchedEffect` on the same `snackbarHostState` the pick-time refusals use — no new UI surface,
+no visual change. The send stops at the first failure, so one send emits at most one notice; a daemon
+`Refused` code is only ever compared against fixed constants to pick the enum entry, never rendered,
+formatted, or logged verbatim — an unrecognised code (`MALFORMED_REFUSAL` included) collapses to
+`UNCLASSIFIED`'s "unknown reason" sentence. The too-large sentence names the app's own limit via
+`formatMegabytes(AttachmentUploadLimit.MAX_BYTES)` — decimal megabytes to one decimal, integer arithmetic,
+so no locale changes the figure ("8" for the 8,010,000-byte bound). See [Attachment upload § The
+transfer](attachment-upload.md#the-transfer) for the `ConnectionLost` / `SendFailed` members this reads.
+
+**Upload progress figure ([#1327](https://github.com/pyrycode/pyrycode-mobile/issues/1327)).** `AttachmentUploadProgress.kt` copies desktop's threshold and figure as pure functions: `uploadProgressPercent(sentChunks, totalChunks)` is desktop's `uploadProgressPercent` — floor of `sent*100/total` in `Long` arithmetic, clamped to 0..100, and 0 for a non-positive total — and `attachmentUploadProgress(key, sentChunks, totalChunks)` wraps it in an `AttachmentUploadProgress(key, percent)`, returning `null` below `ATTACHMENT_PROGRESS_MIN_CHUNKS = 8` (desktop's threshold, about 360 kB — a smaller file finishes before a figure could be read). `ThreadViewModel` exposes this as `attachmentUploadProgress: StateFlow<AttachmentUploadProgress?>`, published from `uploadAttachment`'s `onProgress` callback ([#1326](https://github.com/pyrycode/pyrycode-mobile/issues/1326)) keyed to the entry currently uploading. The figure is scoped to one upload: it clears as soon as that `uploadAttachment` call returns, whether stored or failed, so the next file in the snapshot starts from its own chunks; `sendWithAttachments`'s `finally` clears it again, covering a throw or cancellation mid-upload, so no figure survives the send. In `ComposerAttachmentStrip`, only the tile whose key matches gets a determinate `CircularProgressIndicator` (same size, stroke and colour as the spinner, with a transparent track so only the fill changes) — every other tile, including one still waiting its turn or already uploaded, keeps the indeterminate spinner. The strip's state description reads "Uploading… N%" while a figure exists and "Sending" otherwise; neither the strip nor the indicator is a live region, so no chunk is announced individually.
 
 **Sent originals (#984).** Beside the text and pending-attachment maps, `ComposerDraftStore` keeps a
 third, unexposed `(serverId, conversationId)`-keyed map, attachment id to the content URI it was uploaded

@@ -77,7 +77,11 @@ internal data class ToolUsePayloadDto(
     val input: JsonElement? = null,
 )
 
-/** `tool_result`. [parentToolUseId] is lenient-defaulted for the reason [ToolUsePayloadDto] states (#810). */
+/**
+ * `tool_result`. [parentToolUseId] is lenient-defaulted for the reason [ToolUsePayloadDto] states (#810).
+ * [resultDetail] (#1316, pyrycode#2024) is the daemon's count of what the call returned, such as
+ * `"265 lines"`; `""` means no count, and a daemon predating the field omits it, which decodes the same.
+ */
 @Serializable
 internal data class ToolResultPayloadDto(
     @SerialName("conversation_id") val conversationId: String,
@@ -86,6 +90,7 @@ internal data class ToolResultPayloadDto(
     @SerialName("is_error") val isError: Boolean,
     @SerialName("result_summary") val resultSummary: String,
     @SerialName("parent_tool_use_id") val parentToolUseId: String = "",
+    @SerialName("result_detail") val resultDetail: String = "",
 )
 
 /**
@@ -616,7 +621,7 @@ internal fun ToolUsePayloadDto.toEvent(): LiveSessionEvent =
 
 /** Total field copy: every [ToolResultPayloadDto] decodes to a [LiveSessionEvent.ToolResult]. */
 internal fun ToolResultPayloadDto.toEvent(): LiveSessionEvent =
-    LiveSessionEvent.ToolResult(conversationId, turnId, toolUseId, isError, resultSummary, parentToolUseId)
+    LiveSessionEvent.ToolResult(conversationId, turnId, toolUseId, isError, resultSummary, parentToolUseId, resultDetail)
 
 /**
  * `tool_use.input` narrowed to its string fields (#810): anything but a JSON object yields no fields,

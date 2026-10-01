@@ -109,6 +109,28 @@ alone. Every other `RelayLinkStatus` case still falls back to the relay-only map
 stays on the relay-only mapping; #392's combined model has two independent consumers now (Settings,
 Thread), not a banner takeover.
 
+## `ThreadViewModel` holds the live value eagerly, for tap-time re-checks (#1319)
+
+`ThreadViewModel.connectionState` wraps `connectionStateSource.observe()` in `stateIn`. Before #1319 it used
+`SharingStarted.WhileSubscribed(5_000)`: with no UI collecting it — which is exactly the shape of a
+`ThreadViewModel` unit test, and briefly true in production between a screen's `onStop` and the 5s grace
+window expiring — the flow is not subscribed, so `.value` sits at its `initialValue` (`Connected`) no matter
+what the real source reports. #1319 needed a tap-time re-check (`sendMessage`, `onInterrupt`,
+`onComposerCommand`, `onModelSelected`, `onEffortSelected`, `onPermissionModeSelected` all read
+`connectionState.value` before doing anything), so a stale `Connected` would make the guard silently do
+nothing. The fix changed `started` to `SharingStarted.Eagerly`: the VM subscribes to the source for its own
+`viewModelScope` lifetime starting at construction, so `.value` tracks the real source continuously with no
+UI collector required. `initialValue` stays `Connected` — only reachable now in the narrow window before the
+eager collector's first value lands, under `Dispatchers.Main.immediate` effectively never outside a test that
+asserts before advancing the dispatcher.
+
+A `ThreadViewModel` test that wants to prove the tap-time guard must **not** collect `connectionState` itself
+(e.g. never call `.toList()` or start a `collect` on it) before flipping the fake source and tapping — doing so
+would pass against the old `WhileSubscribed` behaviour too, defeating the regression test's purpose. See
+[Thread composer footer — testing](thread-composer-footer-testing.md) and
+[Thread input bar](thread-input-bar.md) for the UI-side gating this live value now also drives via
+`ThreadScreen`'s own `connected = connectionState == ConnectionState.Connected`.
+
 ## Related
 
 - Ticket notes: [`../codebase/196.md`](../codebase/196.md) (model + source), [`../codebase/200.md`](../codebase/200.md) (banner UI consumer)

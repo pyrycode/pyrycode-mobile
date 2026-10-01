@@ -79,9 +79,11 @@ internal fun QuestionBatchTitle(state: QuestionModalState) {
     )
 }
 
+/** Cancel (refuse) and Continue, disabled while the host is not [connected] (#1321); the rows stay editable. */
 @Composable
 internal fun QuestionBatchActions(
     state: QuestionModalState,
+    connected: Boolean,
     onEvent: (QuestionModalEvent) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().testTag("question-batch-actions"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -104,7 +106,7 @@ internal fun QuestionBatchActions(
             val cancel: @Composable () -> Unit = {
                 OutlinedButton(
                     onClick = { onEvent(QuestionModalEvent.Cancel) },
-                    enabled = !state.locked,
+                    enabled = !state.locked && connected,
                     shape = MaterialTheme.shapes.modalControl,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
@@ -120,7 +122,7 @@ internal fun QuestionBatchActions(
             val submit: @Composable () -> Unit = {
                 Button(
                     onClick = { onEvent(QuestionModalEvent.Continue) },
-                    enabled = state.canContinue,
+                    enabled = state.canContinue && connected,
                     shape = MaterialTheme.shapes.modalControl,
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                 ) {

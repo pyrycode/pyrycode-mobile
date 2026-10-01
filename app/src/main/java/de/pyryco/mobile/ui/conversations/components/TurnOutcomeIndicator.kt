@@ -3,7 +3,6 @@ package de.pyryco.mobile.ui.conversations.components
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.StopCircle
@@ -17,8 +16,6 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-
-private val IndicatorHorizontalPadding = 16.dp
 
 /** The most characters of one claude-authored token this row shows; the daemon's 256-byte bound is not a layout bound. */
 private const val MAX_TOKEN_CHARS = 40
@@ -138,7 +135,7 @@ fun TurnOutcomeIndicator(
                     append(stringResource(R.string.thread_turn_outcome_agent_reports_error, name))
             }
         }
-    Row(modifier = modifier.fillMaxWidth().padding(horizontal = IndicatorHorizontalPadding)) {
+    Row(modifier = modifier.fillMaxWidth()) {
         NoticePill(
             text = label,
             isError = true,

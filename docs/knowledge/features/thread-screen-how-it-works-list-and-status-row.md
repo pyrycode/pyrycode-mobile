@@ -48,96 +48,7 @@ unmatched arm's key is deliberately position-derived, the one namespace where po
 
 ### Subagent tool-row nesting (#896)
 
-Beside `cutoffChronologicalIndex`, the same `else` arm computes `val toolDepths = remember(state.items) {
-toolNestingDepths(state.items) }` and the `ThreadItem.MessageItem` dispatch arm passes
-`toolNestingDepth = toolDepths[item.message.id] ?: 0` into `MessageBubble` — the only change #896 made to
-this file; the fold, the keys, the alpha wrap and every other arm are untouched. `toolNestingDepths` itself
-is `internal fun toolNestingDepths(items: List<ThreadItem>): Map<String, Int>`, declared in `ThreadRow.kt`
-beside `foldQueuedRows` (a pure derivation next to a pure derivation), not inside the screen.
-
-**What it computes.** A tool row's [`Message.id`](data-model.md) is its own `tool_use_id`; its
-[`ToolCall.parentToolUseId`](data-model.md) (#810) names the `Agent`/`Task` call whose subagent made it,
-or `""` for the main thread. A row's depth is `0` when `parentToolUseId` is empty or names no *tool* row
-loaded in the thread (an older page not yet fetched, an id belonging to some other kind of row, or —
-because the disk cache doesn't persist the field — any cache-restored row), otherwise `1 +` its parent's
-depth. The map holds only rows with depth `> 0`; a row absent from it renders at top level, which is what
-`?: 0` above falls back to.
-
-**Matching is independent of list order.** Candidates are collected into a `parentOf: Map<String, String>`
-first (one pass over `items`), then each row's depth is found by walking up its parent chain in that map,
-memoising every id the walk passes through `depthOf` so no id is walked twice — O(tool rows) total however
-deep the nesting goes, and correct whether a row's parent appears earlier or later in the list.
-
-**Cycle rule.** `parentToolUseId` is a grouping *hint*, not a capability (`protocol-mobile.md` §
-`tool_use`) — the daemon is never expected to send a loop, but the derivation still has to terminate if one
-somehow arrives (a corrupt cache row parented to itself, for instance). The walk tracks the ids on its
-current path in an `onPath` set and stops the moment it would revisit one; that row counts as top level,
-and every row walked before it on the path counts up from there. Deterministic for a given list, and it
-never loops, regardless of how the cycle is shaped (a two-row A→B→A pair and a one-row self-parent both
-terminate the same way).
-
-**Rejected alternative: a single forward pass.** A simpler shape — walk `items` once, looking up each row's
-already-computed depth by its `parentToolUseId` as it goes — is *not* what's shipped, because it silently
-leaves a row flat whenever its parent appears *later* in the list: the parent's depth isn't known yet at
-the point the child is visited, forward-only. The two-map walk above (`parentOf` built first, `depthOf`
-filled by a per-row backward walk) matches "a tool row loaded anywhere in the thread" as the AC requires,
-at the same O(tool rows) cost, and the cycle guard above is the price of allowing that backward walk to
-happen at all.
-
-Tested independently of any composable in `ToolNestingDepthsTest` (`app/src/test/.../thread/`): main-thread
-row absent from the map, matched child = 1, grandchild = 2, unmatched parent absent, empty-id row ignored,
-a parent id that matches a *user* message (not a tool row) does not nest, a parent listed after its child
-still nests, and both cycle shapes (a two-row loop, a self-parent) terminate per the rule above. The
-Compose-level assertion — that the indent and the "Subagent step, level N" description actually reach the
-rendered row — lives in `ToolRowNestingTest` (`app/src/sharedTest/.../thread/`), which mounts the real
-`ThreadScreen`; see [`MessageBubble` § Subagent nesting
-indent](message-bubble.md#subagent-nesting-indent-since-896) and [`ToolCallRow` § Subagent step
-description](tool-call-row.md#subagent-step-description-since-896) for what each level actually renders.
-No rung-3 scenario: this is a layout change over rows that already stream, and the live data path is
-unchanged.
-
-The message region's `LazyColumn` fills its weighted `Box`, with the top overlay drawn after it. The list keeps `reverseLayout = true`, scrolling upward from the bottom; connection readings in the composer and an Offline Retry overlay do not reserve list height. See [connection status placement](thread-screen-how-it-works-overlays-and-app-bar.md#connection-status-placement).
-
-**Streaming auto-scroll (since [#185](../codebase/185.md)).** While any `ThreadItem.MessageItem` in `state.items` carries `message.isStreaming = true`, the `LazyColumn` keeps the streaming bubble's growing bottom edge anchored at the viewport bottom. Six composition-scoped pieces of state hoisted at the top of the `else` block — adjacent to the existing `reversedItems` / `cutoffChronologicalIndex` lines — implement it: `val listState = rememberLazyListState()` (threaded as `state =` on the `LazyColumn`); `val hasStreamingMessage by remember(state.items) { derivedStateOf { state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming } } }` (the gate on the auto-pin coroutine, scan re-runs only when the list reference changes); `var userScrolledAway by remember { mutableStateOf(false) }` (yield flag); `val autoScrollNestedScroll = remember { object : NestedScrollConnection { ... } }` (sets `userScrolledAway = true` iff `source == NestedScrollSource.UserInput && available.y != 0f`, attached via `Modifier.nestedScroll(autoScrollNestedScroll)` on the column); `LaunchedEffect(listState) { snapshotFlow { firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0 }.collect { atBottom -> if (atBottom) userScrolledAway = false } }` (resumes auto-follow when the user manually returns to the bottom); and `LaunchedEffect(hasStreamingMessage, listState) { if (!hasStreamingMessage) return@LaunchedEffect; snapshotFlow { layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }?.size ?: 0 }.distinctUntilChanged().collect { if (!userScrolledAway) listState.scrollToItem(0) } }` (the auto-pin loop — re-anchors on every layout-pass size change of item 0). `scrollToItem(0)` (not `animateScrollToItem`) is the right primitive: instant, O(1) when already pinned, and it does **not** dispatch through `NestedScrollSource.UserInput` so it cannot recursively trip its own yield flag. Reverse-layout's bottom anchor is `firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0`; both effects rely on that. The auto-pin `LaunchedEffect` is gated by `hasStreamingMessage`, so non-streaming threads start no collector (AC4); when `isStreaming` flips `false` the effect re-launches with the new key and the early-return cancels the collector (AC3). The Phase-0 seed never flips `isStreaming = false` (the static seed stays streaming forever) — AC3's cancel path is verifiable only by code-review or a local seed flip + re-install; Phase 4's WS feed will exercise it naturally. The companion concern from [#184](../codebase/184.md) — `StreamingAssistantBody` losing its `revealedLength` when the bubble scrolls off-screen — is sidestepped (not solved) in the auto-pin happy path: keeping the bubble in the viewport prevents disposal. If the user yields by scrolling away during streaming, the bubble can still off-screen and re-reset on return; the Phase-4 hoist-into-VM fix from [#184](../codebase/184.md) is the proper remedy.
-
-**The newest-row pin (#981).** The auto-pin above only runs while `hasStreamingMessage` is true, and even
-then only re-anchors on a *size* change to the item at index 0 — a reply that arrives already finalized, a
-tool row, the operator's own echo, or any other row that becomes the new newest row without ever
-registering `isStreaming` never trips it. Under `reverseLayout = true`, `LazyListState` keeps its first
-visible row anchored by key: inserting a new newest row at index 0 pushes the previous first row to index
-1, which stays anchored at the bottom edge, so the new row lands below the viewport, uncomposed — invisible
-to the user and to a Compose test's `onNode` assertions — until something scrolls back to index 0. When the
-rows still fit the viewport, the list's own measure pulls index 0 back in to fill the gap, which is why
-this hid intermittently rather than always: [#977](../codebase/977.md)'s live diagnosis on the #687
-operator-bypass scenario found the daemon's allowed-Read reply finalizing about 1.4s after the allow, after
-the streaming pin's one delta had already been collected and had nothing left to re-trigger it. A second
-composition-scoped effect, added beside the size-driven pin, fixes this independently of streaming state:
-`val newestRowKey by rememberUpdatedState(rows.lastOrNull()?.listKey(rows.lastIndex))`, then
-`LaunchedEffect(listState) { snapshotFlow { newestRowKey }.drop(1).collect { if (!userScrolledAway) { try
-{ listState.scrollToItem(0) } catch (e: CancellationException) { ensureActive() } } } }`. Keyed on the
-newest row's *identity* rather than `isStreaming`, so any new newest row re-anchors, while a streaming row
-that only grows keeps its key and is left to the size-driven pin above. `drop(1)` skips the effect's own
-first collected value: `userScrolledAway` is plain `remember` (not saveable) while `listState` is, so
-without the skip a configuration change would pull a reader who had scrolled away back to the newest end on
-recreation. The `try`/`catch` around `scrollToItem` is required, not defensive: a finger resting at the
-newest end holds the list's `MutatorMutex` at `UserInput` priority while `userScrolledAway` is still
-`false` (it flips only on the *next* `NestedScrollSource.UserInput` delta), so a row arriving in that window
-gets its `scrollToItem` refused with a `CancellationException("Current mutation had a higher priority")`;
-unlike the streaming pin above, which relaunches on every `hasStreamingMessage` flip, this effect never
-relaunches, so an uncaught refusal would silently end it for the rest of the composition — every later
-non-streaming row would then land hidden until the screen left composition. `catch` + `ensureActive()`
-costs one scroll on a refusal and still lets a genuine cancellation propagate. One known gap, harmless: an
-unmatched `ThreadRow.Queued` keys on its chronological index (`"queued-row:$chronologicalIndex"`, § keys
-above), so an older-history prepend shifts that index and changes `newestRowKey` even when no row actually
-arrived at the newest end — but the effect only calls `scrollToItem(0)` while `userScrolledAway` is false,
-which means the reader is already at the newest end, so the resulting scroll is a no-op. Covered by
-`ThreadScreenNewestRowTest` (`app/src/sharedTest/.../thread/`), which seeds 30 rows so the list overflows
-(the same #777 lesson below applies to any `layoutInfo`-derived test): a complete non-streaming reply
-arriving at the newest end is composed and visible; a reader who dragged away with a real
-`performTouchInput { swipeDown() }` (not `performScrollToIndex`, which never sets the
-`NestedScrollSource.UserInput` yield flag) is not pulled back, for both a non-streaming and a streaming
-arrival; and a scroll refused under a resting finger costs only that one row — the next arrival after the
-finger lifts is still followed.
+Split out to [Thread screen — subagent tool-row nesting](thread-screen-subagent-tool-rows.md) on 2026-10-01 to keep this document under the docs guard's size cap. See that document for the full section.
 
 ### Inline question rows and the newest-end reveal (#1305)
 
@@ -149,7 +60,9 @@ see [Question batch modal § Rendering](question-batch-modal.md#rendering) for w
 `"question-actions:$generation"` / `"question:$generation:$it"` / `"question-title:$generation"` key
 scheme. The empty-thread branch (`!state.hasMessages && state.queuedMessages.isEmpty()`, § *Empty-state
 branch* below) also gates on `questionState == null`, so a thread whose only content is a pending batch
-renders the `LazyColumn` with the prompt rows, not `EmptyThreadState`.
+renders the `LazyColumn` with the prompt rows, not `EmptyThreadState`. [#1306](permission-modal-overlay.md)
+adds the same `openRequest == null` gate beside it for a pending permission or trust request — see §
+*Inline permission rows and the shared reveal* below, which reuses every mechanism this section describes.
 
 **Prompt rows count as a fixed prefix in the oldest-end history predicate (§ below), never as loaded
 history.** `val promptRowCount = questionState?.let { it.batch.questions.size + 2 } ?: 0` (`+2` for the
@@ -158,34 +71,31 @@ rows.isNotEmpty()` — **not** `historyRowCount > 0` — gates the demand instea
 thread with a pending batch and zero loaded message rows would have `historyRowCount > 0` true from the
 prompt rows alone and could fire `onDemandOlderHistory()` against a thread that has no history to page.
 
-**Prompt arrival and edits are excluded from the streaming auto-pin.** The streaming size-driven
-`LaunchedEffect(hasStreamingMessage, listState)` (§ *Streaming auto-scroll* above) gained
-`questionState != null` to its key and its early-return guard — while a batch is mounted, the streaming pin
-does not re-anchor on item 0's size, because item 0 while a batch is held is the prompt actions row, not a
-streaming message bubble, and its field sizing (the Other `BringIntoViewRequester`, the IME) must not drag a
-history reader back to the bottom.
+**Prompt arrival and edits are excluded from the growth signature while a batch is mounted (#1304), so field
+sizing never drags a reader down.** Originally the streaming size-driven pin gained `questionState != null`
+to its key and early-return guard, because item 0 while a batch is held is the prompt actions row, not a
+streaming message bubble, and its field sizing (the Other `BringIntoViewRequester`, the IME) must not read as
+growth. [#1314](https://github.com/pyrycode/pyrycode-mobile/issues/1314) carries the same rule forward:
+`FollowNewestEnd`'s `promptPresent` parameter masks the newest row's content and the anchor's size out of the
+growth signature while a prompt is mounted, so editing a field or the IME opening still cannot pull a history
+reader down — see [Thread screen — subagent tool-row nesting § The newest-end follow rule
+(#1314)](thread-screen-subagent-tool-rows.md#the-newest-end-follow-rule-1314).
 
-**A second, dedicated effect reveals a newly arrived batch to a reader already at the newest end** — the
-\#981 newest-row pin (above) only follows a new *message* row, and prompt rows insert below the anchored
-first visible row the same way a new message row would, landing off-screen until something scrolls back to
-index 0. A verifier pass on #1305 found this gap live: an operator watching the newest end saw only the
-composer's "Waiting for answers" status reading (below) until they thought to scroll further. The fix
-mirrors #981's shape: `val promptGeneration by rememberUpdatedState(questionState?.generation)`, then
-`LaunchedEffect(listState) { snapshotFlow { promptGeneration }.drop(1).filterNotNull().collect { ... } }`.
-`drop(1)` skips the effect's own first collected value, for the same reason #981's does — a configuration
-change must not pull a reader who scrolled away back to the newest end on recreation — and a `null`
-generation (dismissal) is filtered out rather than driving a scroll. On a genuine new generation, the
-effect scrolls to index 0 **only** when the reader has not scrolled away **and** is still at the newest
-end: `firstVisibleItemScrollOffset == 0 && (firstVisibleItemIndex == 0 || first?.key == newestRowKey)`. The
-key half of that check — not just `userScrolledAway == false` — covers a reader moved into history
-programmatically (`userScrolledAway` only flips on real `NestedScrollSource.UserInput`, so it alone cannot
-see that move); the existing history-anchor regression test is exactly that case and stays unchanged.
+**A newly arrived batch reveals itself to a reader already at the newest end, on the same rule that follows
+a new message row.** A verifier pass on #1305 found this gap live, before the #1314 rework below existed:
+an operator watching the newest end saw only the composer's "Waiting for answers" status reading (below)
+until they thought to scroll further, because prompt rows insert below the anchored first visible row the
+same way a new message row would, landing off-screen until something scrolls back to index 0. #1305 closed
+it with a dedicated effect keyed on `questionState?.generation`, shaped like the #981 newest-row pin it sat
+beside. **[#1314](https://github.com/pyrycode/pyrycode-mobile/issues/1314) folded that effect into the one
+following rule** described in [Thread screen — subagent tool-row nesting § The newest-end follow rule
+(#1314)](thread-screen-subagent-tool-rows.md#the-newest-end-follow-rule-1314): the prompt's identity
+(`shownQuestion?.generation to openRequest?.modalId` — see #1306 and #1341 below for why it reads
+`shownQuestion`) is part of `FollowNewestEnd`'s growth signature, so a new generation pins a reader who is
+following exactly as a new message row would, and does nothing to a reader who has scrolled into history.
 `scrollToItem(0)` reveals the actions row and the latest question, not the title first: under reverse
 layout, scrolling to the title of a batch taller than the viewport would need a second post-measure scroll,
-and a batch that already fits the viewport already shows its title at `scrollToItem(0)`. The same
-`try { scrollToItem(0) } catch (e: CancellationException) { ensureActive() }` pattern #981 uses tolerates a
-resting-finger mutation refusal without the effect silently dying for the rest of the composition (§ *The
-newest-row pin* above explains why the catch is required, not defensive). Covered by
+and a batch that already fits the viewport already shows its title at `scrollToItem(0)`. Covered by
 `ThreadInlineQuestionTest.arrival_reveals_the_batch_to_a_reader_at_the_newest_end`
 (`app/src/sharedTest/.../thread/`); `arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand`
 in the same file covers the complementary case — a reader scrolled into history is not pulled forward by
@@ -200,11 +110,65 @@ verifier's Rework 3 absence check additionally waits to disappear (`awaitNoInlin
 the lazy list's offscreen-vs-absent ambiguity the title and row tags have.
 
 **`QuestionPromptProtection`** (the `FLAG_SECURE` / obscured-touch guard the old dialog window used to own)
-is mounted directly by `ThreadScreen` — `if (questionState != null) QuestionPromptProtection()` — right
-after the screen's `rememberSaveable` block, so it is active for the composition's whole life while any
-batch is held, independent of which prompt rows happen to be visible. See [Question batch modal §
-Rendering](question-batch-modal.md#rendering) for the shared-ownership mechanism this guards against
-overlapping navigation transitions.
+is mounted directly by `ThreadScreen` — right after the screen's `rememberSaveable` block, so it is active
+for the composition's whole life while any batch is held, independent of which prompt rows happen to be
+visible. Since [#1306](permission-modal-overlay.md) the guard's condition is `questionState != null ||
+openRequest != null` from **one call site**, so a question batch handing off to a permission request (or
+the reverse) keeps the same owner throughout — see § *Inline permission rows and the shared reveal* below.
+See [Question batch modal § Rendering](question-batch-modal.md#rendering) for the shared-ownership
+mechanism this guards against overlapping navigation transitions. [#1341](https://github.com/pyrycode/pyrycode-mobile/issues/1341)
+later withholds the question from the rows it draws while a request is open, but this condition still reads
+`questionState`, not the withheld view — see § *Inline permission rows and the shared reveal* below for why.
+
+### Inline permission rows and the shared reveal (#1306)
+
+[The pending permission or trust request](permission-modal-overlay.md) moved out of its own dialog window
+into this same `LazyColumn` in #1306, following the #1305 question batch above almost row for row.
+`openRequest?.let { open -> permissionRequestItems(...) }` emits, immediately before the question items (so,
+under `reverseLayout = true`, drawn **below** the question rows and **above** every message row — the
+newest content on screen): Cancel, the card (prompt, decision context, the session-grant offer and the
+options), then the title — see [Permission-modal overlay](permission-modal-overlay.md) for what each
+renders and its `permission-cancel:$modalId` / `permission-card:$modalId` / `permission-title:$modalId` key
+scheme. The empty-thread branch and `promptRowCount` both gained a matching `openRequest` term (§ above and
+§ *The oldest-end history demand* below); `promptRowCount` adds a fixed `PERMISSION_ROW_COUNT = 3` rather
+than deriving a size from the request, since a permission/trust request always renders exactly three rows.
+
+**The growth mask and the newest-end reveal generalize to either prompt kind rather than duplicating.** The
+mask that excludes prompt content and sizing from the growth signature (§ above) reads `questionState != null
+|| openRequest != null` (`FollowNewestEnd`'s `promptPresent`), in place of the #1305 `questionState != null`
+alone. The reveal's identity widened from `questionState?.generation` alone to a `Pair`,
+`shownQuestion?.generation to openRequest?.modalId` (`promptIdentity`, since #1341 below reads `shownQuestion`
+rather than `questionState`), so either a new question generation or a new permission `modalId` — never both
+signals doing the same job twice — pins a following reader under the one rule § *Inline question rows and the
+newest-end reveal* above describes, which this reuses verbatim.
+
+**Leaving the request open does not cancel it.** Back, opening another conversation, and switching to a
+different chat all leave the request rendered (subject to the usual scroll-position rules above) rather
+than dismissing it — only an explicit Cancel tap or a daemon resolution removes it. `MainActivity`'s
+`DisposableEffect(vm) { onDispose { vm.onConversationLeft() } }` clears an armed non-default option on the
+way out so a returning reader needs two fresh taps, but never touches the request itself or the
+session-grant draft; see [Modal answer flow § Leaving the conversation](modal-answer-flow.md#leaving-the-conversation-clears-the-arm-not-the-grant-1306).
+
+**[#1341](https://github.com/pyrycode/pyrycode-mobile/issues/1341) makes the permission request take
+precedence over the question while both are outstanding in one chat.** `ThreadScreen` derives `val
+shownQuestion = questionState.takeIf { openRequest == null }` beside `openRequest` and reads `shownQuestion`
+everywhere it had read `questionState` to draw or measure the inline question — the question's lazy items,
+`promptRowCount`, the empty-thread gate, and the `promptIdentity` reveal key, which widens again to
+`shownQuestion?.generation to openRequest?.modalId`. The composer's `waitingForAnswers` reading switches to
+`shownQuestion != null` too, so it never names a question that is not on screen. This mirrors desktop's
+`ComposerSlot`, which hides `QuestionPanelSlot` while `selectHasOutstandingFor(conversationId)` holds. The
+question's picks and Other text live in the hoisted `QuestionModalState` (#1305's draft store), never in
+composition, so leaving the question out of composition loses nothing: `shownQuestion` reverts to
+`questionState` the moment the request resolves, with the selection and Other text intact, and the
+`promptIdentity` change reveals it to a reader parked at the newest end the same way a fresh arrival does.
+
+**`QuestionPromptProtection` and `FollowNewestEnd`'s `promptPresent` keep reading `questionState`, not
+`shownQuestion`.** Both conditions already hold whenever either prompt exists, so the withholding changes
+nothing in practice — but it is a deliberate choice, not an oversight: keying either one on `shownQuestion`
+would drop it for the one frame between the permission request resolving and the question returning, since
+`shownQuestion` is briefly `null` on both sides of that handoff from the request's own perspective. The rule
+generalizes past this ticket — a presence or protection check belongs on the state that exists, not on
+whichever state happens to be the one currently rendered.
 
 ### The oldest-end history demand (#777)
 
@@ -235,7 +199,9 @@ either way, so `distinctUntilChanged` sees no edge and issues no second demand. 
 index: an unmatched queued row can sit at the newest end of `rows` without a corresponding entry in
 `items`, and the oldest-end predicate must count what the list actually renders. **#1305** added a further
 `promptRowCount` on top of `rows.size` and replaced the `historyRowCount > 0` gate with a dedicated
-`hasHistoryRows` — see § *Inline question rows and the newest-end reveal* above.
+`hasHistoryRows` — see § *Inline question rows and the newest-end reveal* above. **#1306** added
+`PERMISSION_ROW_COUNT` to the same `promptRowCount` sum for an open permission/trust request — see §
+*Inline permission rows and the shared reveal* above.
 
 **This needed a 30-row regression test to catch, not a 3-row one.** The first version of the demand-loop
 test used three short rows and passed even against the deliberately-broken `totalItemsCount` predicate —
@@ -385,3 +351,27 @@ The three new `ThreadUiState` fields shipped in #145 (`model`, `effort`, `tokenP
 Through [#807](../codebase/807.md) the row read the typed enums as `state.selectedModel.label()` / `state.selectedEffort.label()`, and `ThreadViewModel.onModelSelected(model: Model)` / `onEffortSelected(effort: Effort)` wrote a per-conversation in-memory override over `AppPreferences.defaultModel` / `defaultEffort`. **#807 replaced both sides.** The row now reads `state.runConfig.modelLabel` / `state.runConfig.effortLabel` (`ThreadRunConfig` computed properties — "unknown" with no settings reading, "default" for an inherited `""`, otherwise the daemon-published row's label made inert), and `ThreadViewModel.onModelSelected(value: String)` / `onEffortSelected(level: String)` forward a published [`ModelMenuRow.value`](conversation-repository.md) / effort-level string verbatim to `ConversationRepository.setSessionSettings`, addressed to `SessionSettings.sessionId` — never `AppPreferences`. `ThreadStatusRow`'s `model: String` / `effort: String` parameter shape is unchanged; only what feeds them moved off the device enums.
 
 Post-[#254](../codebase/254.md) the `onExpandClick` parameter on `ThreadScreen` is **deleted** — the screen owns the trigger via an internal `{ sheetVisible = true }` lambda passed straight to the row. A new `onModelSelected: (Model) -> Unit = {}` parameter took its slot on the signature, bound to `vm::onModelSelected` ([#253](../codebase/253.md)) at the `MainActivity` destination; [#229](../codebase/229.md) appended `onEffortSelected: (Effort) -> Unit = {}` and `onYoloToggled: (Boolean) -> Unit = {}`. **[#807](../codebase/807.md) retyped the first two to `(String) -> Unit`**, matching the write arguments above; `onYoloToggled`'s signature is unchanged, but it now shares the same session-id routing and read-only gate as the other two (see [thread-composer-footer.md](thread-composer-footer.md) / [`ThreadViewModel`](thread-screen-how-it-works-state.md)). Tapping the row opens the [`StatusSheet`](status-sheet.md); model/effort selections forward to the VM and auto-close the sheet; YOLO toggles forward to the VM but **keep the sheet open** (a Switch is a state-change the user may want to immediately reverse). See the [Status Sheet hosting](thread-screen-how-it-works-sheets.md#status-sheet-hosting-post-254) section below for the host wiring.
+
+### The arm order (#1311)
+
+Not to be confused with the retired `ThreadStatusRow` above (`model · effort`) — this is `ThreadStatusArea`,
+the composer's turn-status band (§ "fourth, static reading" above covers its `waitingForAnswers` arm, above
+this order).
+
+[#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) ported desktop's `workingIndicatorState` so
+the band keeps one reading up for the whole running turn, instead of going dark once no tool is open during
+`responding`. The precedence used to live only as a `when`'s clause order; it now lives once, as `statusArm`
+beside `StatusReading`, returning a `StatusArm` enum: `None, Connection, Resetting, ApiRetry, Compacting,
+Stalled, TurnOutcome, Thinking, Working, RunningTool`, top wins. Reset session now outranks api-retry
+(matching desktop); `Stalled` (riding [`StallProjection`](stall-state.md) unchanged) and `Working` (the
+`responding` phase, no open tool) are new. Rationale:
+[Thinking indicator § Working and stalled](thinking-indicator.md#working-and-stalled-1311).
+
+**The band is always composed, one glyph (#1312).** `StatusArm.None` still makes `StatusReading` emit
+nothing, but the band no longer collapses when it does: `ThreadStatusArea` always draws the snowflake
+(`ThreadStatusGlyph`) at its leading edge, in a weighted reading box that holds its place even when empty, so
+the input field's position does not depend on which arm — or no arm — is showing. The waiting-for-answers
+reading (above this order) still draws its own question glyph in the snowflake's place instead. The glyph
+turns while `ThreadViewModel.isBusy || localSendPending` holds, independent of `statusArm`, so switching arms
+never restarts the rotation; see [Thinking indicator § The band is always composed, and the glyph always
+turns with it](thinking-indicator.md#working-and-stalled-1311) for the gate and the per-arm cleanup.

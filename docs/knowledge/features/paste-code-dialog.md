@@ -17,7 +17,9 @@ The implementation lives in `ui/onboarding/PairCodeScreen.kt` and
 `PairCodeScreen(state, onEvent, modifier)` is stateless. Its filled Host name and
 Pairing code fields have independent clear controls: clearing one leaves the other
 unchanged. Pair submits; persistence/connection failures change that action to
-Retry. Cancel and the toolbar back arrow share the Android Back event.
+Retry, except a held `PairCodeState.failure` that is not retryable
+(`Rejected`, \#1385), which disables the fields and keeps the button reading Pair, disabled.
+Cancel and the toolbar back arrow share the Android Back event.
 The footer opens `https://github.com/pyrycode/pyrycode-mobile`.
 
 The 412×892 mobile design uses theme colors and typography, an atmospheric glow,
@@ -134,24 +136,57 @@ reconciliation owns a bundle with the complete matching credentials. After
 re-pairing, a connection using the old token/key cannot satisfy the wait. Neither
 compatibility selection nor another host's healthy connection is consulted.
 
-Success requires both `RelayLinkStatus.Connected` and
-`PyrycodeLinkStatus.Connected` for that record. A bare relay socket is insufficient.
-The connection wait has a 30-second deadline; a reported `DaemonAbsent`,
-`PairingRejected` (#841), `UpdateRequired` (#1008) or `Offline` ends it earlier. A
-just-saved pairing the host refuses (a `4401`/`4426` close on its very first dial)
-therefore fails immediately with the same "Pairing saved. Host unavailable."
-feedback below, instead of waiting out the full 30 s — no new copy for this case.
-A just-saved pairing to a host that rejects this app build (a `4412` close) fails
-just as immediately, but with its own copy: "Pairing saved. This app is too old
-for this host. Update the app, then retry." — a retry cannot help until the app is
-updated, so the generic "Host unavailable" copy would mislead. The host's minimum
-version is not shown here (a follow-up ticket).
+Since #1385, the wait and its outcomes are a shared, Android-free step,
+`verifySavedPairing` in `ui/onboarding/PairingVerification.kt`, mirroring
+desktop's `createPairingVerification` (`pairingReducer` /
+`pairingState.ts`). It takes the saved `PairedServer` and the status-observing
+flow and knows nothing about this screen. `PairCodeViewModel.verify`
+calls it and holds the result in `PairCodeState.saved` (the record, kept across
+a failure for Retry to wait on again) and `PairCodeState.failure` (the held
+`PairingVerification.Failure`, if any — `error` carries its message). Since
+[#1386](scanner-screen.md#state-model--scannerviewmodel), `ScannerViewModel`
+calls the same step from its `Verifying`/`VerificationFailed` states, flattening
+the failure into `message`/`retryable` fields instead (its public sealed state
+cannot hold the `internal PairingVerification.Failure` directly).
 
-When a matching bundle is already unavailable, `pairingStatus` subscribes to its
-coordinator before requesting `retryHost(serverId, expectedBundle)` and suppresses
-only the initial stale unavailable status. Reading the terminal status immediately
-after requesting Retry reused the previous attempt's failure and rejected the new
-attempt before it could connect. Later unavailable emissions still end the wait.
+The rule, applied to each status within a 30-second deadline
+(`PAIRING_VERIFICATION_DEADLINE_MS`):
+
+| Status | Outcome |
+| --- | --- |
+| relay `Connected` and pyrycode `Connected` | Succeeds; a bare relay socket is insufficient. |
+| `null`, `Idle`, `Connecting`, `Reconnecting`, `Offline` | Keeps waiting — a relay blip no longer ends the wait (#1385; previously `Offline` failed it immediately). |
+| `DaemonAbsent` | Fails, retryable: *"The host is temporarily unavailable. The pairing is saved. Retry to wait again, or Cancel."* |
+| `PairingRejected` (#841) | Fails, **not** retryable: *"Pairing rejected. The saved host is retained. Cancel, then pair manually with a fresh code."* |
+| `UpdateRequired` (#1008) | Fails, retryable: *"Pairing saved. This app is too old for this host. Update the app, then retry."* — the host's minimum version is never read, rendered or logged. |
+| 30 s elapses, or the status flow completes without a decision | Fails, retryable, with the same unavailable text as `DaemonAbsent`. |
+
+A just-saved pairing the host refuses (a `4401`/`4426` close on its very first
+dial) reports `DaemonAbsent` and so fails immediately with the unavailable text
+instead of waiting out the full 30 s. A just-saved pairing to a host that rejects
+this app build (a `4412` close) fails just as immediately with the distinct
+update-required text.
+
+**Retry waits again; it never re-parses, re-confirms or saves.** While a
+`PairCodeState.failure` is held, `PairCodeEvent.Pair` only re-verifies the same
+`saved` record for a fresh 30 s deadline (`verify(saved, retry = true)`) if the
+failure is retryable; a non-retryable failure (`Rejected`) ignores Pair entirely.
+`Name`/`Code` events are also ignored while a failure is held — the draft fields
+freeze, mirroring desktop hiding the inputs after the save. This is why
+`PairCodeState` carries `saved` and `failure` rather than deriving a Retry target
+from the draft.
+
+On a retry, an absence already held over from the previous wait is not itself a
+new failure: `verifySavedPairing`'s own `ignoreAbsence` flag (mirroring desktop's
+`ignoredAbsence`) suppresses a `DaemonAbsent` seen before any other status in the
+new wait, so a stale fake status flow that simply replays its last value cannot
+immediately re-fail a fresh retry. The production registry's `pairingStatus`
+separately treats an initial `DaemonAbsent`/`Offline` as stale on resubscription
+and redials, emitting `null`; either guard alone would have been enough in
+production, but a `MutableStateFlow`-backed test fake only replays its held
+value, so the step needed its own guard to behave correctly under test. Each
+wait (initial or Retry) collects `observe(saved)` afresh, so the deadline is a
+fresh 30 s and the registry's own redial-on-resubscribe applies every time too.
 Retry retains the registry's foreground and exact-bundle lifecycle checks.
 
 ## Failure and cancellation
@@ -161,15 +196,19 @@ feedback. The distinction between the writes matters:
 
 | Failure | Saved state and next action |
 | --- | --- |
-| Invalid code or fingerprint derivation | No write; correct the code and Pair again. |
-| Credential save | Existing collection unchanged; retry after storage recovers. |
-| Name write after credential save | Pairing retained, prior name unchanged; feedback says the pairing was saved but the name was not. |
-| Target unavailable or deadline | Pairing and any successful name write retained; feedback says `Pairing saved. Host unavailable. Retry or cancel.` |
-| Target too old for this app build (#1008) | Pairing and any successful name write retained; feedback says `Pairing saved. This app is too old for this host. Update the app, then retry.` |
+| Invalid code or fingerprint derivation | No write; correct the code and Pair again (unchanged — re-parses on Retry). |
+| Credential save | Existing collection unchanged; retry after storage recovers (unchanged — re-parses on Retry). |
+| Name write after credential save | Pairing retained, prior name unchanged; feedback says the pairing was saved but the name was not (unchanged — re-parses on Retry). |
+| Target unavailable, or the 30 s deadline (#1385) | Pairing and any successful name write retained; feedback says `The host is temporarily unavailable. The pairing is saved. Retry to wait again, or Cancel.`; Retry waits again on the saved record. |
+| Target rejected the pairing (#841, #1385) | Pairing retained; feedback says `Pairing rejected. The saved host is retained. Cancel, then pair manually with a fresh code.`; Pair is disabled and not labelled Retry — only Cancel leaves. |
+| Target too old for this app build (#1008) | Pairing and any successful name write retained; feedback says `Pairing saved. This app is too old for this host. Update the app, then retry.`; Retry waits again on the saved record. |
 
-Retry returns through validation and the fingerprint gate. With the unchanged
-code, it upserts the same id without another entry. Cancel after partial success
-makes no further changes and does not roll back the saved pairing.
+Only the first three rows re-parse the draft and cross the fingerprint gate
+again on Retry — they set no `PairCodeState.failure`. The last three are
+connection-verification failures (#1385): Retry re-verifies the already-saved
+record for a fresh 30 s without parsing, confirming or saving again. See
+[target readiness and retry](#target-readiness-and-retry). Cancel after partial
+success makes no further changes and does not roll back the saved pairing.
 
 The ViewModel enters Saving synchronously before launching persistence, rejecting
 duplicate confirmation, field edits and Back while credential/name writes run.
@@ -194,11 +233,19 @@ still applies; this screen adds no such hardening contract.
 
 ## Testing
 
+New `PairingVerificationTest` (`ui/onboarding/`, no Android, `runTest` with virtual time) covers the
+shared `verifySavedPairing` step directly over scripted `ConnectionStatus` flows (#1385): `Offline` then
+relay+pyrycode `Connected` succeeds, as do `null`/`Idle`/`Connecting`/`Reconnecting` before `Connected`;
+relay `Connected` with pyrycode not yet connected keeps waiting; `DaemonAbsent`, `PairingRejected` and
+`UpdateRequired` produce their respective `Failure` with the right `retryable` flag and text; holding
+`Offline` keeps waiting at 29 999 ms and fails as `Deadline` at 30 000 ms; and `retry = true` over a held
+`DaemonAbsent` keeps waiting, while a fresh `DaemonAbsent` after some other status still fails it.
+
 `PairCodeViewModelTest` covers immutable confirmation binding, decline/draft return,
 duplicate confirmation, the persistence edit/Back lock, storage/name failures,
 retained retry, blank-name preservation, deadline and cancellation, and (#841) a
-`PairingRejected` status after save ending the wait immediately with the existing
-"Pairing saved. Host unavailable." feedback rather than after the 30 s deadline.
+`PairingRejected` status after save ending the wait immediately with the now-updated rejected-pairing
+feedback rather than after the 30 s deadline.
 (#1008) adds the `UpdateRequired` sibling, `updateRequiredEndsTheConnectionWaitImmediately`: a terminal
 `UpdateRequired("1.4.0")` status after save ends the wait immediately too, with the distinct "Update the
 app" feedback, and asserts the daemon-authored minimum is **not** echoed into the copy — the same
@@ -208,6 +255,18 @@ confirmation with zero saves; replacing only the target host's record while a pe
 is left equal and its stored name is kept (`setDisplayName` never called); cancel and a
 failed save leaving the store unchanged; and a rejection while connecting failing well
 before the 30 s deadline.
+(#1385) adds: an `Offline` status during the wait does not end it, and a following `Connected` still
+completes it; after a `DaemonAbsent` failure, Pair re-enters Connecting without a new confirmation, saves
+exactly once in total, is not ended by the held `DaemonAbsent` replaying from the test's
+`MutableStateFlow` fixture, runs a fresh 30 s deadline from the Retry tap, and completes on `Connected`
+with the save count still at one; after `PairingRejected`, Pair and Code events change nothing and Back
+still ends in Cancelled. These updates also carry the new unavailable/rejected copy into
+`failuresRetainDraftAndRetrySameHostWithoutLosingName`, `deadlineAndCancellationCannotNavigateLater`,
+`rejectedPairingEndsTheConnectionWaitImmediately` and `targetModeRejectedWhileConnectingFailsBeforeTheDeadline`.
+
+New `PairCodeScreenVerificationTest` (Robolectric, `app/src/sharedTest`, #1385): with a held `Rejected`
+failure the button reads Pair, is disabled, and no node reads Retry, while Cancel still sends Back; with
+a held `Unavailable` failure, Retry is enabled and sends Pair.
 
 `RelayConnectionFactoryTest.pairingStatusWaitsForExactCredentialsAndKeepsConnectedPeer`
 uses real Noise peers to pair/re-pair B while A stays connected, with equal names
@@ -282,3 +341,7 @@ remains [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676)'s scope.
 - [Channel list tree and controls](channel-list-screen-tree-and-controls.md#host-row-reconnect-control-840)
   § the plug control's `PairingRejected` branch, the caller into target mode (#842, spec:
   `docs/specs/architecture/842-repair-rejected-host-from-tree-row.md`).
+- The shared `verifySavedPairing` wait/failure/retry rule (#1385, spec:
+  `docs/specs/architecture/1385-pairing-verification-rule.md`), mirroring pyrycode-desktop's
+  `createPairingVerification`/`pairingReducer`. The QR scanner path's adoption of the same step is a
+  sibling ticket split from #1322.

@@ -187,6 +187,19 @@ and other test doubles staying on the default is invisible until something calls
 The plan for #1049 had budgeted only the interface and `RemoteConversationRepository`; the missing
 override here was caught during implementation, not planning.
 
+**Fetch on open, decided above this facade (#1329).** `fetchAttachment` itself does not know or care why
+it was called — it still delegates every call unconditionally. What changed is how often `ThreadViewModel`
+calls through it: a thread used to call `retrieveAttachment` for every attachment the moment its row was
+composed, so scrolling past a thread of PDFs or archives pulled each one over the relay. Since #1329,
+`ThreadViewModel.onAttachmentShown` only starts a load when the attachment is image-kind — by MIME type,
+or by a name-only reference's extension matching desktop's image list — and defers everything else until
+the row is tapped or long-pressed (`onAttachmentRequested`). A reference with neither a MIME type nor a
+name — the one case this facade's own caller cannot classify without fetching — still loads on show,
+because retrieval is the only way to learn what it is: that is the history-replayed row, which has no
+reference metadata to decide from. See [MessageBubble — attachment slot § Fetch on
+open](message-bubble-attachment-slot.md#fetch-on-open-since-1329) for the full rule and the claim/settle
+machinery that makes a tap open or save exactly once.
+
 ## Host store — `data/cache/AttachmentStore.kt`
 
 One Koin `single` over `File(androidContext().noBackupFilesDir, "attachments")` — the same backup

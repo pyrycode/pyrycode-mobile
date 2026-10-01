@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.LocalOverscrollFactory
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -8,33 +10,52 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onChild
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.percentOffset
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.then
 import androidx.compose.ui.text.TextLayoutResult
-import androidx.test.espresso.Espresso
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -86,25 +107,118 @@ class ThreadScreenModalTest {
         modalSendErrors: Flow<Unit> = emptyFlow(),
         alwaysAllowAccepted: Boolean = false,
         onAlwaysAllowChanged: (String, Boolean) -> Unit = { _, _ -> },
+        onBack: () -> Unit = {},
     ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 ThreadScreen(
                     state = baseState(),
-                    onBack = {},
+                    onBack = onBack,
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
                     onRetry = {},
                     modalState = modalState,
                     armedOptionId = armedOptionId,
                     modalSendErrors = modalSendErrors,
-                    onModalOption = onModalOption,
-                    onModalCancel = onModalCancel,
+                    onModalOption = { modalId, optionId -> onModalOption("$modalId/$optionId") },
+                    onModalCancel = { modalId -> if (modalId == "m1") onModalCancel() },
                     alwaysAllowAccepted = alwaysAllowAccepted,
                     onAlwaysAllowChanged = onAlwaysAllowChanged,
                 )
             }
         }
+    }
+
+    // ---- #1306: the request lives in its conversation's stream ---------------------------------------
+
+    @Test
+    fun open_request_renders_inline_in_an_empty_thread_with_no_dialog_and_live_navigation() {
+        var backs = 0
+        val tapped = mutableListOf<String>()
+        var cancelled = 0
+        setContent(openModal(), onModalOption = { tapped += it }, onModalCancel = { cancelled++ }, onBack = { backs++ })
+
+        composeTestRule.onNode(isDialog()).assertDoesNotExist()
+        composeTestRule.onNodeWithTag("permission-request-card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("permission-request-title").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))
+        composeTestRule.onNodeWithContentDescription("Send message").assertExists()
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.runOnIdle {
+            assertEquals(1, backs)
+            assertTrue("Back must not answer the request", tapped.isEmpty())
+            assertEquals("Back must not cancel the request", 0, cancelled)
+        }
+    }
+
+    @Test
+    fun arrival_and_grant_toggles_keep_a_history_reader_anchored_without_history_demand() {
+        var modal by mutableStateOf<ModalUiState>(ModalUiState.Hidden)
+        var accepted by mutableStateOf(false)
+        var demands = 0
+        val items =
+            (1..30).map { i ->
+                ThreadItem.MessageItem(
+                    Message("m$i", "session", Role.Assistant, "History $i", Instant.parse("2026-10-01T00:00:00Z"), isStreaming = false),
+                )
+            }
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        state = baseState().copy(hasMessages = true, items = items),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        isThinking = true,
+                        modalState = modal,
+                        alwaysAllowAccepted = accepted,
+                        onDemandOlderHistory = { demands++ },
+                    )
+                }
+            }
+        }
+        composeTestRule.onNode(hasScrollToIndexAction()).performScrollToIndex(15)
+        val anchor = composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot
+        composeTestRule.runOnIdle { modal = openModal().copy(alwaysAllowRules = offeredRules) }
+        assertEquals(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        composeTestRule.runOnIdle { accepted = true }
+        assertEquals(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        composeTestRule.onNodeWithTag("permission-request-card").assertDoesNotExist()
+        composeTestRule.onNode(hasScrollToIndexAction()).performScrollToIndex(32)
+        composeTestRule.runOnIdle { assertEquals(1, demands) }
+        composeTestRule.runOnIdle { modal = openModal().copy(modalId = "m2") }
+        composeTestRule.waitForIdle()
+        composeTestRule.runOnIdle { assertEquals("a replaced request cannot manufacture another history demand", 1, demands) }
+    }
+
+    @Test
+    fun arrival_reveals_the_request_to_a_reader_at_the_newest_end() {
+        var modal by mutableStateOf<ModalUiState>(ModalUiState.Hidden)
+        val items =
+            (1..30).map { i ->
+                ThreadItem.MessageItem(
+                    Message("m$i", "session", Role.Assistant, "History $i", Instant.parse("2026-10-01T00:00:00Z"), isStreaming = false),
+                )
+            }
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        state = baseState().copy(hasMessages = true, items = items),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        modalState = modal,
+                    )
+                }
+            }
+        }
+        composeTestRule.onNodeWithText("History 30").assertIsDisplayed()
+        composeTestRule.runOnIdle { modal = openModal() }
+        composeTestRule.onNodeWithTag("permission-request-cancel").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Reject once").assertIsDisplayed()
     }
 
     @Test
@@ -153,7 +267,7 @@ class ThreadScreenModalTest {
 
         composeTestRule.onNodeWithText("Allow once").performClick()
 
-        assertEquals(listOf("allow_once"), tapped)
+        assertEquals(listOf("m1/allow_once"), tapped)
     }
 
     @Test
@@ -212,7 +326,8 @@ class ThreadScreenModalTest {
         val blockedPathLabel = string(R.string.modal_context_blocked_path)
         listOf(ruleLabel, "Bash(rm:*) is on the ask list", descriptionLabel, "Remove the scratch directory")
             .plus(listOf(blockedPathLabel, "/tmp/scratch"))
-            .forEach { composeTestRule.onNodeWithText(it).assertIsDisplayed() }
+            // #1312: the always-present status band shortens the message area, so the lower rows scroll into view.
+            .forEach { composeTestRule.onNodeWithText(it).performScrollTo().assertIsDisplayed() }
 
         // prompt → reason → description → blocked path → options, top to bottom.
         val tops = listOf(modal.prompt, ruleLabel, descriptionLabel, blockedPathLabel, "Allow once").map(::top)
@@ -317,6 +432,67 @@ class ThreadScreenModalTest {
         assertTrue("accepting the offer must not answer the prompt", tapped.isEmpty())
     }
 
+    // #1321: every control that would send waits for the host; the session grant is a local choice.
+    @Test
+    fun sending_controls_are_disabled_offline_and_re_enable_on_reconnect_while_the_grant_stays_usable() {
+        var connection by mutableStateOf<ConnectionState>(ConnectionState.Offline)
+        val tapped = mutableListOf<String>()
+        var cancelled = 0
+        val changes = mutableListOf<Pair<String, Boolean>>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = baseState(),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = connection,
+                    onRetry = {},
+                    modalState = openModal().copy(alwaysAllowRules = offeredRules),
+                    armedOptionId = "allow_once",
+                    onModalOption = { modalId, optionId -> tapped += "$modalId/$optionId" },
+                    onModalCancel = { cancelled++ },
+                    onAlwaysAllowChanged = { modalId, accepted -> changes += modalId to accepted },
+                )
+            }
+        }
+        val options = permissionOptions.map { it.label }
+
+        options.forEach { composeTestRule.onNodeWithText(it).performScrollTo().assertIsNotEnabled() }
+        composeTestRule.onNodeWithText("Allow once").performClick() // the armed second tap
+        composeTestRule.onNodeWithText("Allow always").performClick() // a first tap that would arm
+        composeTestRule
+            .onNodeWithTag("permission-request-cancel")
+            .onChild()
+            .assertIsNotEnabled()
+            .performClick()
+        composeTestRule
+            .onNode(
+                hasText(string(R.string.modal_always_allow_label)).and(SemanticsMatcher.keyIsDefined(SemanticsProperties.ToggleableState)),
+            ).performScrollTo()
+            .assertIsEnabled()
+            // #1312: the always-present status band leaves the scroll stopping with this row at the message
+            // area's top, under the Offline retry pill; tap its lower part, which the pill does not cover.
+            .performTouchInput { click(percentOffset(0.5f, 0.85f)) }
+        composeTestRule.runOnIdle {
+            assertTrue("no option may be forwarded while offline", tapped.isEmpty())
+            assertEquals(0, cancelled)
+            assertEquals(listOf("m1" to true), changes)
+        }
+
+        composeTestRule.runOnIdle { connection = ConnectionState.Connected }
+        options.forEach { composeTestRule.onNodeWithText(it).performScrollTo().assertIsEnabled() }
+        composeTestRule.onNodeWithText("Allow once").performClick()
+        composeTestRule
+            .onNodeWithTag("permission-request-cancel")
+            .onChild()
+            .assertIsEnabled()
+            .performClick()
+        composeTestRule.runOnIdle {
+            assertEquals(listOf("m1/allow_once"), tapped)
+            assertEquals(1, cancelled)
+        }
+    }
+
     @Test
     fun accepted_offer_renders_checked() {
         setContent(openModal().copy(alwaysAllowRules = offeredRules), alwaysAllowAccepted = true)
@@ -345,7 +521,7 @@ class ThreadScreenModalTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun enlarged_text_keeps_all_permission_decisions_reachable_in_compact_dialog() {
+    fun enlarged_text_keeps_all_permission_decisions_reachable_in_the_compact_stream() {
         val longOptions =
             permissionOptions.map { option -> option.copy(label = "${option.label} for the current session with these rules") }
         val modal =
@@ -356,9 +532,18 @@ class ThreadScreenModalTest {
                 options = longOptions,
             )
         composeTestRule.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
+            DeviceConfigurationOverride(
+                DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 700.dp)) then DeviceConfigurationOverride.FontScale(1.5f),
+            ) {
                 PyrycodeMobileTheme(darkTheme = true) {
-                    PermissionModalOverlay(modal, armedOptionId = null, onOption = {}, onCancel = {})
+                    ThreadScreen(
+                        state = baseState(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        modalState = modal,
+                    )
                 }
             }
         }
@@ -379,6 +564,8 @@ class ThreadScreenModalTest {
                 assertFalse("${option.id} ellipsizes", layout.isLineEllipsized(line))
             }
         }
+        // Scrolling up to the prompt disposed the lazy Cancel item, so reach it through the list.
+        composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(string(R.string.modal_cancel)))
         composeTestRule.onNodeWithText(string(R.string.modal_cancel)).assertIsDisplayed()
     }
 
@@ -439,7 +626,7 @@ class ThreadScreenModalTest {
 
         composeTestRule.onNodeWithText("Reject once").performClick()
 
-        assertEquals(listOf("reject_once"), tapped)
+        assertEquals(listOf("m1/reject_once"), tapped)
     }
 
     @Test
@@ -453,19 +640,13 @@ class ThreadScreenModalTest {
     }
 
     @Test
-    fun back_press_neither_answers_nor_cancels_and_no_close_glyph_is_offered() {
-        val tapped = mutableListOf<String>()
-        var cancelled = 0
-        setContent(openModal(), onModalOption = { tapped += it }, onModalCancel = { cancelled++ })
+    fun no_close_glyph_is_offered_and_cancel_follows_the_card() {
+        setContent(openModal())
 
         composeTestRule.onNodeWithContentDescription("Close").assertDoesNotExist()
-        Espresso.pressBack()
-
-        composeTestRule.runOnIdle {
-            assertTrue("back must not answer the prompt", tapped.isEmpty())
-            assertEquals("back must not cancel the prompt", 0, cancelled)
-        }
-        composeTestRule.onNodeWithText(openModal().prompt).assertIsDisplayed()
+        val card = composeTestRule.onNodeWithTag("permission-request-card").fetchSemanticsNode().boundsInRoot
+        val cancel = composeTestRule.onNodeWithText(string(R.string.modal_cancel)).fetchSemanticsNode().boundsInRoot
+        assertTrue("Cancel sits below the card", cancel.top >= card.bottom)
     }
 
     // AC#4 "single tap does not confirm, second tap confirms" observed at the screen layer. The VM's
@@ -486,7 +667,7 @@ class ThreadScreenModalTest {
                     onRetry = {},
                     modalState = modal,
                     armedOptionId = armed,
-                    onModalOption = { id ->
+                    onModalOption = { _, id ->
                         when {
                             id == modal.defaultOptionId -> sent += id
                             armed == id -> {

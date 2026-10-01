@@ -315,12 +315,13 @@ class HistoryPageReducerTest {
             reduceHistoryPage(
                 listOf(
                     entry(3, "turn_end", turnEndPayload("turn-1")),
-                    entry(2, "assistant_delta", assistantDeltaPayload("turn-1", seq = 2, text = " world")),
-                    entry(1, "assistant_delta", assistantDeltaPayload("turn-1", seq = 1, text = "hello")),
+                    entry(2, "assistant_delta", assistantDeltaPayload("turn-1", seq = 1, text = " world")),
+                    entry(1, "assistant_delta", assistantDeltaPayload("turn-1", seq = 0, text = "hello")),
                 ),
                 interactive = true,
             )
 
+        // Every turn's text starts at seq 0, the delta that keys its first segment by the bare turn id (#1350).
         assertEquals(listOf("turn-1"), rows.messageIds())
         assertEquals("hello world", rows.messageRow("turn-1")?.content)
         assertFalse(rows.messageRow("turn-1")?.isStreaming ?: true)
@@ -1013,6 +1014,101 @@ class HistoryPageReducerTest {
         assertEquals(denial, toolCall?.denial)
         assertEquals("late", toolCall?.output)
     }
+
+    // ---- #1316: the result's count, and the first result and first denial win ------------------------
+
+    @Test
+    fun reduce_resultDetail_isCarriedOntoTheRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(
+                        2,
+                        "tool_result",
+                        toolResultPayload("t1", isError = false, summary = "ok", extra = """"result_detail":"265 lines""""),
+                    ),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Read", input = "a.kt")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals("265 lines", rows.messageRow("t1")?.toolCall?.resultDetail)
+    }
+
+    @Test
+    fun withToolResult_aSecondResultChangesNothing() {
+        val first = runningRow().withToolResult(result("first", isError = false, detail = "3 lines"))
+
+        val second = first.withToolResult(result("second", isError = true, detail = "9 lines"))
+
+        assertSame(first, second)
+        val toolCall = second.messageRow("t1")?.toolCall
+        assertEquals("first", toolCall?.output)
+        assertEquals(ToolCallStatus.Done, toolCall?.status)
+        assertEquals("3 lines", toolCall?.resultDetail)
+    }
+
+    @Test
+    fun withToolDenied_aSecondDenialChangesNothing() {
+        val first = runningRow().withToolDenied("t1", denial("first"))
+
+        val second = first.withToolDenied("t1", denial("second"))
+
+        assertSame(first, second)
+        assertEquals(denial("first"), second.messageRow("t1")?.toolCall?.denial)
+    }
+
+    @Test
+    fun resultThenDenial_marksDeniedAndKeepsTheResult() {
+        val rows =
+            runningRow()
+                .withToolResult(result("out", isError = false, detail = "2 lines"))
+                .withToolDenied("t1", denial("no"))
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(ToolCallStatus.Denied, toolCall?.status)
+        assertEquals(denial("no"), toolCall?.denial)
+        assertEquals("out", toolCall?.output)
+        assertEquals("2 lines", toolCall?.resultDetail)
+    }
+
+    @Test
+    fun denialThenResult_fillsTheOutputAndALaterResultChangesNothing() {
+        val filled =
+            runningRow()
+                .withToolDenied("t1", denial("no"))
+                .withToolResult(result("out", isError = true, detail = ""))
+
+        val toolCall = filled.messageRow("t1")?.toolCall
+        assertEquals(ToolCallStatus.Denied, toolCall?.status)
+        assertEquals("out", toolCall?.output)
+        assertEquals("", toolCall?.resultDetail)
+
+        assertSame(filled, filled.withToolResult(result("again", isError = false, detail = "5 lines")))
+    }
+
+    @Test
+    fun withToolResult_onAResolvedRowWithoutAResult_changesNothing() {
+        // The shape of a row restored from the disk cache: resolved, no result folded on this device.
+        val restored =
+            runningRow().map { item ->
+                val message = (item as ThreadItem.MessageItem).message
+                ThreadItem.MessageItem(message.copy(toolCall = message.toolCall?.copy(status = ToolCallStatus.Done, output = "cached")))
+            }
+
+        assertSame(restored, restored.withToolResult(result("replayed", isError = false, detail = "4 lines")))
+    }
+
+    private fun runningRow(): List<ThreadItem> =
+        listOf<ThreadItem>().withToolUse(LiveSessionEvent.ToolUse(CONVERSATION, "turn-1", "t1", "Bash", "ls"), TS_INSTANT)
+
+    private fun result(
+        summary: String,
+        isError: Boolean,
+        detail: String,
+    ) = LiveSessionEvent.ToolResult(CONVERSATION, "turn-1", "t1", isError = isError, resultSummary = summary, resultDetail = detail)
+
+    private fun denial(message: String) = ToolDenial("Bash", "", "", message, truncatedFields = null, droppedFields = null)
 
     // ---- #812: claude's elapsed-seconds reading on an open tool row --------------------------------
 
