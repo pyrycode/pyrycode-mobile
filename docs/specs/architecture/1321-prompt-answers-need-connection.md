@@ -89,3 +89,32 @@ Pending for the documentation stage: fold the "prompt answers require a connecte
 - The gate helper is `promptSendAllowed(kind)` rather than `hostConnectedNow()`: it does the same `hostConnection.value == Connected` read and also emits the planned `prompt_send_blocked` log, so each call site is one condition.
 - The permission race cases live in `ThreadViewModelTest`, beside the existing #451 `onModalOption` cases, not in `ThreadViewModelPermissionTest`, which covers the composer's permission *mode*. `vmWithModalSendPath` gained a `source` parameter.
 - Open question resolved: the affected classes (`ThreadViewModel*`, the thread package's screen tests, `RelayConnectionFactoryTest`) all pass. The one `StandardTestDispatcher` question case already calls `runCurrent()` after construction, so its eager collector reports `Connected` before any send.
+
+**2026-10-01 (rework after verifier review on PR #1384).**
+- Added the `## Security review` section below, which the `security-sensitive` label requires and the first pass omitted (verifier MUST FIX). No design change came out of it.
+- `ThreadScreen`: the `LazyColumn`'s own `connected` shadowed the function-scope one #1319 added; the inner `val` is gone and both prompts read the outer value (SHOULD FIX).
+- `hostConnection` KDoc no longer claims `connectionState` is not eager; since #1319 both are `Eagerly`, and the `null` seed is the only difference (NIT).
+- `onModalOption_whileNotConnected_neitherSendsNorArms_untilConnectedReturns` now also proves a non-default first tap arms once connected, as the testing strategy lists (NIT).
+- Not done here: merging `connectedFor` (#1319, optimistic seed) and `promptSendAllowed` (#1321, `null` seed) into one helper. The verifier marked it a follow-up, and changing `connectedFor`'s seed would alter #1319's behaviour, outside this ticket.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The ticket adds no inbound data path. The only input the gate reads is `ConnectionState` from the thread destination's `ConnectionStateSource`, an app-internal sealed type derived from the coordinator's handshake-gated status (#1318); no daemon-authored text or id reaches the new code. The prompt ids answered are still the VM's own server-supplied state (`scopedModal`, `currentQuestion`'s generation), never a caller value, and the #1306 stale-id guard runs before the gate.
+- [Permission decision sent, armed or lost while disconnected] No findings. The deterministic guard is `ThreadViewModel.promptSendAllowed`, called in `onModalOption` and `onModalCancel` before `sendAnswer`, `sendCancel`, the arm write and the grant-draft clear, and in `onQuestionEvent`'s `Continue`/`Cancel` before `sendQuestion`. The disabled buttons are presentation only; the VM tests call the VM directly with no screen and no `connectionState` collector, so they prove the gate without the UI. Nothing is lost: a refused tap is a pure early return, so the arm, the session-grant draft and the question picks stay as they were and the prompt answers after reconnect (each `ThreadViewModelTest` / `ThreadViewModelQuestionTest` race case asserts the post-reconnect send).
+- [Unknown state fails closed] No findings. `hostConnection` is `stateIn(viewModelScope, Eagerly, null)` and the gate allows only `== ConnectionState.Connected`; `null`, `Connecting`, `Reconnecting`, `Offline` and every other state refuse. A source that never emits therefore refuses forever, covered by the "source that has not emitted yet" unit case. The public `connectionState` keeps its optimistic seed for the banner only and is not read on these send paths.
+- [Stuck lock or cleared grant] No findings. The question gate sits inside the `!held.locked && …` condition ahead of `sendQuestion`, which is what moves the batch to `Sending`, so a refused tap never locks it. The permission cancel gate precedes `armedModalOption.value = null` and `grantDrafts.set(…, null)`, so a refused cancel keeps both. The #1305 generation/lock and #1306 arming handling are unchanged.
+- [Tokens, secrets, credentials] No findings. No token, key or credential is created, stored, read or logged.
+- [File / storage] No findings. No file, preference or cache I/O; the kept picks and grant draft live in existing in-memory state.
+- [Android attack surface] No findings. No new component, intent filter, pending intent, deep link, push handling or WebView.
+- [Crypto] No findings. No cryptographic code; the Noise transport is untouched.
+- [Network & I/O] No findings. No new frame, verb or socket use; the gate only prevents sends. The residual race (the socket drops after the gate passes but before the frame leaves) is unchanged from before and still lands in the existing `RelayErrorException` / `IllegalStateException` send-error handling, which does not lock the prompt.
+- [Logs] No findings. `prompt_send_blocked` carries `kind` from four string literals at the call sites (`permission_option`, `permission_cancel`, `question_answer`, `question_refuse`) and a static `reason`; no option id, modal id, answer text or other-text input. It goes through `RelayLog.d`, gated on `BuildConfig.DEBUG`, so nothing reaches Logcat in release.
+- [Concurrency] No findings. `hostConnection` is one more `Eagerly` collection in `viewModelScope`, cancelled with the VM. The gate is a single synchronous read on the main thread followed by main-thread state writes, with no suspension between check and act; it cannot interleave with the collector's update on `Dispatchers.Main.immediate`.
+- [Threat model] OUT OF SCOPE: answering a prompt that went stale while the host was away (it may have been resolved or replaced on the host) belongs to the separate stale-prompt ticket the issue names. A hostile relay can at most delay or drop the connection, which this ticket makes fail closed rather than send into a dead socket.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-01

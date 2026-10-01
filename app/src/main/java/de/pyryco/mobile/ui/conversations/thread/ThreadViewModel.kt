@@ -505,9 +505,9 @@ class ThreadViewModel(
             )
 
     /**
-     * The tap-time read of this thread's host connection (#1321). Unlike [connectionState] it is collected
-     * `Eagerly`, so it is current with no screen collecting, and it is seeded `null` rather than an
-     * optimistic `Connected`, so a host that has not reported yet cannot be answered.
+     * The tap-time read of this thread's host connection (#1321). Collected `Eagerly`, so it is current
+     * with no screen collecting. Unlike [connectionState] it is seeded `null` rather than an optimistic
+     * `Connected`, so a host that has not reported yet cannot be answered.
      */
     private val hostConnection: StateFlow<ConnectionState?> =
         connectionStateSource.observe().stateIn(viewModelScope, SharingStarted.Eagerly, null)

@@ -800,6 +800,8 @@ class ThreadViewModelTest {
             assertNull("a disabled option must not arm", vm.armedOptionId.value)
 
             source.emit(ConnectionState.Connected)
+            vm.onModalOption("allow_once")
+            assertEquals("the same first tap arms once connected", "allow_once", vm.armedOptionId.value)
             vm.onModalOption("reject_once")
             advanceUntilIdle()
             assertEquals(listOf("m1" to "reject_once"), recorder.answers)

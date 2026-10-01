@@ -334,6 +334,7 @@ fun ThreadScreen(
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
     // closes when the control stops offering anything (a write goes pending, a reading drops the menu).
     // #1319: Send, Stop, Actions and the run settings wait for the host's handshake, as on desktop.
+    // #1321: so do the inline permission and question answers.
     val connected = connectionState == ConnectionState.Connected
     var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
     // #678: the read-only background-task panel the Actions menu opens. Local and keyed like [openControl]:
@@ -654,8 +655,6 @@ fun ThreadScreen(
                                     .nestedScroll(autoScrollNestedScroll),
                             reverseLayout = true,
                         ) {
-                            // #1321: a prompt answer needs the host; Connecting and Reconnecting do not count.
-                            val connected = connectionState == ConnectionState.Connected
                             openRequest?.let { open ->
                                 permissionRequestItems(
                                     open = open,
