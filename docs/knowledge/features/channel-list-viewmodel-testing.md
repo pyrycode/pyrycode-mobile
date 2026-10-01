@@ -102,9 +102,10 @@ gave every fixture chat its own id. Opening `("Host","same")` pre-fills Host's o
 `("host","same")` pre-fills host's, a nameless chat pre-fills `""`, an unknown id opens nothing, and
 opening changes neither `selected` nor the navigation channel. Submitting `"  New  "` renames only on
 `"Host"`'s repo with `"New"` and closes the editor; `"host"`'s same-id chat is asserted unrenamed, and the
-projected row picks up `"New"` once the repo's own stream re-emits. `isHostConnected` flips false when the
-target host's status goes disconnected — with the editor left open and the typed text intact — and true
-again on reconnect; submitting while `repositoryFor` returns null sets `failed` and sends nothing. A
+projected row picks up `"New"` once the repo's own stream re-emits. Since #1336 the editor closes, rather
+than stay open, when the target host's status goes disconnected — the snapshot watcher's own coverage, not
+this suite's — reversing #1190's keep-open rule; submitting while `repositoryFor` returns null sets
+`failed` and sends nothing. A
 throwing `rename` leaves the editor open with `failed = true, saving = false`, the stored name unchanged,
 and asserts no captured log line carries the name, either id or the exception's message; a retry succeeds
 and closes. A gated write completing after `dismissChatEditor()` does not reopen the editor — the same
@@ -150,8 +151,10 @@ would still pass a suite that gave every fixture channel its own id. `Repo` gain
 `("Host","same")` and `("host","same")` each pre-filling that host's own name and reading that host's own
 prompt to `Read` with `Differs`, a chat target and an unknown host opening nothing, and asserts `selected`,
 the navigation channel and every write method stay untouched. `channelPromptIsReadOnceItsHostConnectsAndAFailedOrOversizeReadIsUnavailable`
-covers a disconnected host staying `Reading` until it connects, then reading once, plus a thrown read and a
-reply over `SystemPromptLimit.MAX_BYTES` both landing `Unavailable`. `channelSubmitSendsOnlyWhatChangedToTheEditorsOwnHostAndCloses`
+opens the editor on a connected host whose repository has not resolved yet — since #1336 a disconnected
+host refuses the open outright, so this case is no longer about connection — covers the field staying
+`Reading` until the repository resolves, then reading once, plus a thrown read and a reply over
+`SystemPromptLimit.MAX_BYTES` both landing `Unavailable`. `channelSubmitSendsOnlyWhatChangedToTheEditorsOwnHostAndCloses`
 covers an untouched form sending nothing and closing, a name-only submit renaming once on the row's own
 host, a prompt-only submit writing once verbatim, both together renaming then writing, and a stored `null`
 with an empty draft writing nothing — with `"host"`'s same-id channel asserted untouched throughout.
@@ -181,6 +184,22 @@ but whose prompt write fails records `savedMuted` and leaves the editor open; a 
 prompt, and the totals show exactly one rename, one mute and one prompt reaching the editor's own host, none
 reaching the colliding id's other host. Both tests assert no captured log line carries the name, the prompt,
 either id or an exception message; the failure log is the static `channel_mute_write_failed` event.
+
+**Disconnected-host coverage (#1336, same colliding-id fixture).** `disconnectClosesThatHostsCreateAndEditModalsAndKeepsAnotherHostsOpen`
+opens Host's Edit chat and Create channel, host's Edit channel and a failed Chats create on host, then flips
+Host offline: Host's Edit chat and Create channel close, host's Edit channel and failed create are
+untouched, and a half-up host (`Connected`/`Handshaking`) counts as not connected too — a reconnect brings
+back no modal. `aDisconnectedHostRefusesEveryCreateAndEditOpen` flips Host offline first, then calls
+`createChat`, `openCreateChannel`, `openChatEditor` and `openChannelEditor` on it: every one publishes
+nothing, reads or creates nothing, and logs its own `*_rejected code=disconnected` line.
+`aSubmitRacingADisconnectSendsNothingAndClosesItsModal` and `aChatsCreateRacingADisconnectSendsNothing`
+set `Main` to a `StandardTestDispatcher` on the test scheduler so the snapshot watcher is still queued when
+the submit runs — `Dispatchers.setMain(StandardTestDispatcher(testScheduler))`, not the suite's shared
+`UnconfinedTestDispatcher`, which would let the watcher close the modal before the submit's own check ran
+and prove nothing about that check. Each of `submitCreateChannel`, `submitChatName`, `archiveChat`,
+`submitChannelEdit` and `archiveChannel` is opened connected, raced against an offline flip, and asserted
+to send no write and to close its own modal, with its `code=disconnected` log line as the proof that the
+submit's own re-check (not the watcher) refused it; a Chats-section `createChat` is raced the same way.
 
 Unavailable-target coverage denies lookup even with cached rows and connected
 indicators. Failure tests inspect the action job's cancellation state as well as
