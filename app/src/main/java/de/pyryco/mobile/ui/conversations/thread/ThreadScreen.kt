@@ -333,6 +333,8 @@ fun ThreadScreen(
     // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
     // closes when the control stops offering anything (a write goes pending, a reading drops the menu).
+    // #1319: Send, Stop, Actions and the run settings wait for the host's handshake, as on desktop.
+    val connected = connectionState == ConnectionState.Connected
     var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
     // #678: the read-only background-task panel the Actions menu opens. Local and keyed like [openControl]:
     // closing it only flips this flag, so nothing is sent and no conversation or task changes.
@@ -341,7 +343,7 @@ fun ThreadScreen(
     var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     val openMenu =
         openControl
-            ?.takeIf { footerControlEnabled(it, state.runConfig) }
+            ?.takeIf { footerControlEnabled(it, state.runConfig, connected) }
             ?.let { control ->
                 footerMenu(
                     control,
@@ -461,6 +463,7 @@ fun ThreadScreen(
                         onAnchorChanged = { inputAnchor = it },
                         sending = attachmentsSending,
                         onImagesReceived = onImagesPasted,
+                        enabled = connected,
                     )
                     // The design puts the model/effort controls in the footer, below the input field, not
                     // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
@@ -481,6 +484,7 @@ fun ThreadScreen(
                         agent = state.agent,
                         touchHeight = FrameFooterTouchHeight,
                         contentBottomPadding = FooterTouchBottomOverflow,
+                        connected = connected,
                     )
                 }
             },
@@ -866,7 +870,8 @@ fun ThreadScreen(
             },
             pending = state.runConfig.pending,
             // An empty session id means the daemon has no session to address, so the controls read only.
-            enabled = state.runConfig.writable,
+            // So does a host that is not connected (#1319).
+            enabled = state.runConfig.writable && connected,
             onDismiss = { sheetVisible = false },
             effortNote = state.runConfig.effortNote?.text(state.agent),
             running = state.runConfig.running,
