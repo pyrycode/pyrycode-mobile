@@ -1,9 +1,11 @@
 package de.pyryco.mobile.data.cache
 
+import de.pyryco.mobile.data.model.AssistantSegment
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayLog
@@ -158,6 +160,48 @@ class FileConversationCacheThreadTest {
 
             val expected = message("m0", role = Role.User).let { it.copy(message = it.message.copy(content = "hi")) }
             assertEquals(listOf(expected), restored)
+        }
+
+    @Test
+    fun `an assistant segment seq record round-trips`() =
+        runTest {
+            val segment = AssistantSegment("turn-1", listOf(SegmentDelta(2, 6), SegmentDelta(3, 10)))
+            val row = message("turn-1#2").let { it.copy(message = it.message.copy(content = "Found it, really", segment = segment)) }
+            assertTrue(cache().writeThread("server-a", "conv-1", listOf(row)).isSuccess)
+
+            assertEquals(listOf(row), cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `an inconsistent seq record loads the row without it`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            val document = threadFiles().single()
+
+            fun row(
+                id: String,
+                segment: String,
+            ) = """{"message":{"id":"$id","sessionId":"session-1","role":"Assistant","content":"abc",""" +
+                """"timestamp":"2026-09-22T10:11:12.123456789Z","segment":$segment}}"""
+            document.writeText(
+                """{"version":1,"rows":[""" +
+                    listOf(
+                        // Lengths that do not sum to the content's length would slice past it.
+                        row("long", """{"turnId":"t","seqs":[0],"lengths":[9]}"""),
+                        row("unequal", """{"turnId":"t","seqs":[0,1],"lengths":[3]}"""),
+                        row("backwards", """{"turnId":"t","seqs":[1,0],"lengths":[1,2]}"""),
+                        row("negative", """{"turnId":"t","seqs":[0,1],"lengths":[4,-1]}"""),
+                        row("empty", """{"turnId":"t","seqs":[],"lengths":[]}"""),
+                    ).joinToString(",") + "]}",
+            )
+
+            val restored = cache().readThread("server-a", "conv-1")
+
+            assertEquals(
+                listOf("long", "unequal", "backwards", "negative", "empty"),
+                restored.map { (it as ThreadItem.MessageItem).message.id },
+            )
+            assertTrue(restored.all { (it as ThreadItem.MessageItem).message.segment == null })
         }
 
     @Test

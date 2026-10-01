@@ -27,37 +27,25 @@ interrupt control, which must stay visible across the *whole* in-flight turn (in
 exactly like `isThinking`; another conversation's events do not change this flag.
 
 It is declared **identically** to `isThinking` — same source, operator, and lifecycle — over the same
-[`liveSessionEvents`](live-session-events.md) coordinator seam ([#406](../codebase/406.md)):
+held per-conversation phase the repository now keeps (`TurnPhaseProjection`, #1313; see
+[Turn-state thinking flag § The data path](turn-state-thinking-flag.md#the-data-path)):
 
 ```kotlin
 val isBusy: StateFlow<Boolean> =
-    liveSessionEvents
-        .mapNotNull { event -> busyTransition(event) }
+    turnPhase
+        .map { it == Phase.Thinking || it == Phase.Responding }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialValue = false)
 ```
 
-`busyTransition` **mirrors `thinkingTransition` exactly**; the **only** difference is the phase
-predicate. It returns the next flag value, or `null` to leave the flag unchanged:
+`isBusy` broadens `isThinking`'s predicate to `thinking` **or** `responding`; both read the same
+`turnPhase = repository.observeTurnPhase(conversationId)`, so the routing-by-`conversationId` and the
+"hold until the next phase" behaviour live once, in the repository's `TurnPhaseProjection`, not in a
+per-flag reducer. The `thinkingTransition` / `busyTransition` event reducers this section used to
+describe are gone (#1313) — there is nothing left for either flag to route or hold on its own.
 
-| event for **this** `conversationId` | result | vs. `isThinking` |
-|---|---|---|
-| `TurnState(phase = Thinking)` | `true` | same |
-| `TurnState(phase = Responding)` | **`true`** | **`false`** — the one broadening |
-| `TurnState(phase = Idle)` | `false` | same |
-| `TurnEnd` | `false` | same |
-| `AssistantDelta` / `ToolUse` / `ToolResult` / `ReplayGap` | `null` (hold) | same |
-| any event for a **different** `conversationId` | `null` | same (other conversations never move it) |
-
-`mapNotNull` + `stateIn` gives "latest-wins with hold" for free — a non-transition event produces no
-emission, so the `StateFlow` retains its prior value across deltas/tool events within a turn; no explicit
-`scan`/`distinctUntilChanged`. The `false` initial value covers both "no event yet" and the inert
-empty-flow default.
-
-**Why a dedicated reducer, not `combine(isThinking, …)`.** The architect's deliberate call: a dedicated
-`busyTransition` adds no operator, reuses the exact established sibling shape, and is simpler than deriving
-`isBusy` by combining `isThinking` with a second "responding" flow. `isBusy` is a **hoisted sibling
-`StateFlow`, not a `ThreadUiState` field** — the same posture as `connectionState` / `isThinking` /
-`isStalled`, taken by the stateless screen as a separate parameter (per the ticket Technical Notes).
+`isBusy` is a **hoisted sibling `StateFlow`, not a `ThreadUiState` field** — the same posture as
+`connectionState` / `isThinking` / `isStalled`, taken by the stateless screen as a separate parameter
+(per the ticket Technical Notes).
 
 ## The control — `InterruptAffordance`
 
@@ -150,9 +138,9 @@ The flag + action reach `ThreadScreen` as **defaulted** hoisted params, sibling 
 
 ```
 turn_state{thinking|responding} ─┐
-turn_end / turn_state{idle} ─────┤  (liveSessionEvents, per conversation; #406 seam)
+turn_end / turn_state{idle} ─────┤  held per conversation in TurnPhaseProjection (#1313)
                                  ▼
-        ThreadViewModel.busyTransition ──▶ isBusy: StateFlow<Boolean>
+     ConversationRepository.observeTurnPhase ──▶ ThreadViewModel.isBusy: StateFlow<Boolean>
                                                  │ collectAsStateWithLifecycle (MainActivity)
                                                  ▼
                           ThreadScreen(isBusy, onInterrupt = vm::onInterrupt)
@@ -168,18 +156,20 @@ send path on either side of that hop are untouched, only the control that turns 
 ## Lifecycle, errors, edge cases
 
 - **Lifecycle** — `isBusy` is `stateIn(viewModelScope, WhileSubscribed(5_000), false)`, identical to
-  `isThinking`/`connectionState`. The reduction is pure (no dispatcher switch); on unsubscribe the
-  upstream stops after 5 s and the `StateFlow` retains its last value.
+  `isThinking`/`connectionState`. The `map` is pure (no dispatcher switch); on unsubscribe the upstream
+  stops after 5 s and the `StateFlow` retains its last value — but since #1313 the upstream is the
+  repository's held `TurnPhaseProjection`, not a `replay = 0` event stream, so resubscribing re-reads the
+  current phase rather than a frozen one (see [Turn-state thinking flag §
+  Lifecycle](turn-state-thinking-flag.md#lifecycle-errors-edge-cases)).
 - **No error handling in this slice.** `onInterrupt` is fire-and-forget; [#458](../codebase/458.md)
   already swallows the not-connected (`IllegalStateException`) and unreachable (`RelayErrorException`)
   paths inert, surfacing no error (the ticket explicitly defers any user-visible interrupt-failure
   surface). The affordance neither inspects a result nor shows a failure — its visibility is driven
   **solely** by `isBusy`; a failed send does not change it (the next real `turn_state`/`turn_end` does).
-- **Stale-`true`-on-resume (known, accepted)** — inherited from `isThinking`: with a `replay = 0`
-  upstream, if the turn ends while the screen is backgrounded > 5 s and re-foregrounds before a fresh
-  event, `isBusy` can momentarily read a stale `true` until the next event. Same transient "right-now"
-  posture accepted for `isThinking` / `isStalled` / `connectionState`; an `idle`/`turn_end`-on-resubscribe
-  reset is a deferred follow-up.
+- **Reset on reconnect (#1313)** — a reconnect rebuilds `RemoteConversationRepository`, so
+  `TurnPhaseProjection` starts over empty and `isBusy` reads `false` until the daemon reports a phase
+  again. The stale-`true`-on-resume gap this bullet used to describe no longer exists: `isBusy` no
+  longer depends on having been subscribed when the defining frame arrived.
 
 ### Edge cases / limitations
 
@@ -205,9 +195,11 @@ has no production call site any more (see [Placement & wiring](#placement--wirin
 
 Test-first, mirroring the `isThinking` coverage.
 
-- **Unit (`ThreadViewModelTest`)** — seven tests over the `isBusy` reduction: initial `false`; `thinking`
-  → `true`; **`responding` → `true` asserting `isBusy && !isThinking`** (the distinguishing case);
-  `idle`/`turn_end` → `false`; other-conversation isolation; non-phase events hold the flag.
+- **Unit (`ThreadViewModelTest`)** — the `isBusy` cases (initial `false`; `thinking` → `true`;
+  **`responding` → `true` asserting `isBusy && !isThinking`**, the distinguishing case; `idle`/`turn_end`
+  → `false`) drive a `TurnPhaseControllableRepo`'s held phase directly, since #1313; other-conversation
+  isolation and the `turn_end`-from-every-outcome case now live in `TurnPhaseProjectionTest`, which
+  covers the routing and holding both flags share.
 - **Instrumented (`ScriptedThreadRenderTest`, AC#4)** — `interrupt_shownWhileBusy_invokesOnTap_goneAfterTurnEnd`
   rides the real-graph [`ScriptedThreadHarness`](../codebase/432.md): assert initial
   absence → `thinking` shows Stop → `responding` hides the thinking spinner while
@@ -244,8 +236,11 @@ Test-first, mirroring the `isThinking` coverage.
   ([#407](../codebase/407.md)). Other foot/transient affordances:
   [Queued backlog section](queued-backlog-section.md) ([#461](../codebase/461.md)/[#467](../codebase/467.md)).
   The stall promotion banner ([#396](../codebase/396.md)) was another until [#883](../../specs/architecture/883-retire-literal-screen.md) retired it.
-- Upstream seam: [Live-session events](live-session-events.md) ([#385](../codebase/385.md)) →
-  [Relay repository coordinator](relay-repository-coordinator.md) `liveSessionEvents`.
+- Upstream source, since #1313: the repository-held `TurnPhaseProjection` — see [Turn-state thinking
+  flag § The data path](turn-state-thinking-flag.md#the-data-path). `liveSessionEvents`
+  ([Live-session events](live-session-events.md), [#385](../codebase/385.md), via [Relay repository
+  coordinator](relay-repository-coordinator.md)) stays wired into `ThreadViewModel` for `turnOutcome`
+  and the thread's live-event fold, just not for `isBusy` any more.
 - Host: [Thread screen](thread-screen.md) — `isBusy` is the fifth hoisted sibling `StateFlow`. Until
   [#643](../codebase/643.md) the affordance was the foot-of-list `Column`'s newest member; since #643
   its action lives on [`ThreadInputBar`](thread-input-bar.md#the-message-input-button--one-control-two-actions)'s

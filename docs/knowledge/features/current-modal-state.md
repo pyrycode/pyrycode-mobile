@@ -245,10 +245,11 @@ rationale moved verbatim from the VM to the coordinator in #492 (the reasoning i
 with a distinct source, taken by the stateless `ThreadScreen` as a **separate** parameter beside `state`.
 Folding it into the `state` `combine` would force a restructure and touch its `initialValue`. The render
 slice **#446** consumes it the same way — a separate `(state, currentModal, onEvent)` parameter on the
-stateless screen. Since #816 it **does** carry a `conversationId` filter, like
-[`thinkingTransition`](turn-state-thinking-flag.md)'s guard — but the filter lives in the ViewModel
-(`hostModal.map { it.scopedTo(conversationId) }`), not inside the coordinator's fold, which (since #1337)
-holds every outstanding prompt across the host rather than a single accumulator.
+stateless screen. Since #816 it **does** carry a `conversationId` filter, like the per-conversation
+routing [`TurnPhaseProjection`](turn-state-thinking-flag.md#the-data-path) keys its writes by — but the
+filter lives in the ViewModel
+(`hostModal.map { it.scopedTo(conversationId) }`), not inside the coordinator's fold, which since #1337
+holds every outstanding prompt across the host.
 
 ## Lifecycle, errors, edge cases
 
