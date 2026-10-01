@@ -22,6 +22,11 @@ is not a new affordance and does not change when the arm shows (§ What it does,
 `formatToolElapsed`. Unlike the progress reading, a running tool *does* change when the arm shows: it
 raises the arm during the `responding` phase too, the one gap #803 left (§ The running tool).
 
+[#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) closed the remaining gap: the `responding`
+phase with no open tool used to leave the arm empty while claude wrote text or waited between tool calls.
+It added two more booleans, `isWorking` and `isStalled` (§ Working and stalled), so the band keeps a
+reading for the whole running turn, matching desktop's `workingIndicatorState`.
+
 Package: `de.pyryco.mobile.ui.conversations.components`
 (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `ThinkingIndicator.kt`.
 
@@ -35,6 +40,8 @@ fun ThinkingIndicator(
     progress: ThinkingProgress? = null,
     runningTool: ToolCall? = null,
     agent: ConversationAgent = ConversationAgent.Claude,
+    isWorking: Boolean = false,
+    isStalled: Boolean = false,
 )
 ```
 
@@ -43,47 +50,58 @@ fun ThinkingIndicator(
 component renders exactly as it did before #803. `runningTool` (#897) is the trailing param for the same
 reason, and `null` means no tool is open. `agent` ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114))
 is the new trailing param, defaulting to `Claude` so every pre-#1114 call site and preview keeps compiling
-and rendering unchanged. The composable is a **pure function of its params** — no
+and rendering unchanged. `isWorking` and `isStalled` ([#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311))
+both default to `false` for the same reason — every pre-#1311 call site renders unchanged — and the caller
+never sets more than one of `isThinking`/`isWorking`/`isStalled`/a non-null `runningTool` at a time; which
+one holds is decided once, by `statusArm` beside [`ThreadScreen`](thread-screen.md) (§ Placement in the
+thread), not by this component. The composable is a **pure function of its params** — no
   `ViewModel` reference, no flow collection, no label cache, no `LaunchedEffect`, no `ThreadUiState` field.
 Statelessness is an AC, not a style choice.
 
 ## What it does
 
-- **`if (!isThinking && runningTool == null) return`** (#897 widened the pre-#897 `if (!isThinking)
-  return`) — emits nothing when neither signal is live (zero composition, zero height), mirroring
-  [`ConnectionBanner`](connection-banner.md)'s early-return show/hide idiom. The indicator clears the
-  instant both flip false, because it holds no local state of its own. **Visibility stays governed by
-  `isThinking` OR `runningTool` alone** — a live [`progress`](thinking-progress-state.md) reading does
-  not independently raise the arm; `turn_state` (#406) owns the thinking phase, and letting a reading
-  show the arm on its own would be a third arm wearing this one's name. `runningTool` is the one signal
-  that *does* raise the arm on its own (§ The running tool) — the caller gates it on `isBusy` before
-  passing it in, so a tool open during `responding` still shows, and a stale `Running` row after the
-  turn has ended does not.
+- **`if (!isThinking && !isWorking && !isStalled && runningTool == null) return`** (#1311 widened #897's
+  `if (!isThinking && runningTool == null) return`) — emits nothing when no signal is live (zero
+  composition, zero height), mirroring [`ConnectionBanner`](connection-banner.md)'s early-return show/hide
+  idiom. The indicator clears the instant all four flip false/null, because it holds no local state of its
+  own. **Visibility stays governed by these four alone** — a live [`progress`](thinking-progress-state.md)
+  reading does not independently raise the arm; `turn_state` (#406) owns the thinking phase, and letting a
+  reading show the arm on its own would be a fifth arm wearing this one's name. `runningTool`, `isWorking`
+  and `isStalled` are the signals that *do* raise the arm on their own (§ The running tool, § Working and
+  stalled) — the caller (`statusArm`, § Placement in the thread) decides which one, if any, is live.
 - When shown, renders a start-aligned `Row` (`fillMaxWidth`, `padding(horizontal = 16.dp, vertical =
   4.dp)`, `verticalAlignment = CenterVertically`, `horizontalArrangement = Arrangement.spacedBy(8.dp)`)
   containing:
   - the supplied 14 × 16 snowflake vector. Its opacity pulses without changing the glyph's bounds.
-  - an adjacent `Text`, chosen in priority order: with an open tool, "Running <tool>…"
-    (`thread_tool_running_label`) or, with an elapsed reading too, "Running <tool>… <elapsed>"
-    (`thread_tool_running_elapsed_label`); otherwise "Thinking…" (`thread_thinking_label`) or, with a
-    renderable progress reading, "Thinking… ~N tokens this step" (`thread_thinking_progress_label`) —
-    styled `MaterialTheme.typography.bodySmall` / `color = MaterialTheme.colorScheme.primary`.
+  - an adjacent `Text`, chosen in priority order (#1311 inserted `isStalled` at the top and `isWorking` at
+    the bottom): stalled, "The turn seems to have stalled…" (`thread_stalled_label`); else with an open
+    tool, "Running <tool>…" (`thread_tool_running_label`) or, with an elapsed reading too, "Running
+    <tool>… <elapsed>" (`thread_tool_running_elapsed_label`); else thinking, "Thinking…"
+    (`thread_thinking_label`) or, with a renderable progress reading, "Thinking… ~N tokens this step"
+    (`thread_thinking_progress_label`); else "Working…" (`thread_working_label`) — styled
+    `MaterialTheme.typography.bodySmall`, in `colorScheme.error` for the stalled reading and
+    `colorScheme.primary` for every other.
 - **Accessibility** — the row carries `Modifier.semantics(mergeDescendants = true) { contentDescription
-  = … }`, sourced by the same priority order: `cd_thread_tool_running` / `cd_thread_tool_running_elapsed`
-  for an open tool, else `cd_thread_thinking` ("Agent is thinking") or, with a renderable reading,
-  `cd_thread_thinking_progress` ("Claude is thinking, about N tokens into its current reasoning step").
-  Merging descendants makes TalkBack announce the indicator once as a single node; the decorative
-  glyph + visible label are subsumed under that accessible name.
-- **One `Row`, one glyph, deliberately (#803, extended by #897).** All four label
-  variants (plain thinking, thinking + tokens, running tool, running tool + elapsed) are chosen by
-  varying only the `Text` argument, its `maxLines`/`overflow`, and the row's content description inside a
-  single composition — never by an `if (…) Row { … } else Row { … }` split. Distinct `Row`/glyph call
-  sites would give Compose distinct groups: the first tool to open (or reading to arrive) would dispose
-  the old glyph and compose a fresh one, **restarting its pulse** at exactly the moment a tool opens
-  or a reading appears — a visible hitch, and the inverse of "updates without flicker". This property is
-  guaranteed **structurally**, not by assertion: Compose's test API cannot assert node identity across a
-  recomposition, so a test that claimed to would be proving something weaker than it reads.
-  [`ApiRetryIndicator`](api-retry-indicator.md) shares the identical structure for the identical reason.
+  = … }`, sourced by the same priority order: `cd_thread_stalled` ("The turn seems to have stalled") first,
+  then `cd_thread_tool_running` / `cd_thread_tool_running_elapsed` for an open tool, else
+  `cd_thread_thinking` ("Agent is thinking") or, with a renderable reading, `cd_thread_thinking_progress`
+  ("Claude is thinking, about N tokens into its current reasoning step"), else `cd_thread_working` /
+  `cd_thread_working_codex` ("Claude/Codex is working"). Merging descendants makes TalkBack announce the
+  indicator once as a single node; the decorative glyph + visible label are subsumed under that accessible
+  name.
+- **One `Row`, one glyph, deliberately (#803, extended by #897 and #1311).** All six label
+  variants (plain thinking, thinking + tokens, running tool, running tool + elapsed, working, stalled) are
+  chosen by varying only the `Text` argument, its `maxLines`/`overflow`, its color and the row's content
+  description inside a single composition — never by an `if (…) Row { … } else Row { … }` split. Distinct
+  `Row`/glyph call sites would give Compose distinct groups: the first tool to open (or reading to arrive,
+  or phase to change) would dispose the old glyph and compose a fresh one, **restarting its pulse** at
+  exactly the moment a tool opens or a reading appears — a visible hitch, and the inverse of "updates
+  without flicker". `statusArm`'s callers lean on this directly: Thinking → Working → Running tool →
+  Stalled all ride the same `StatusReading` branch (§ Placement in the thread) so the glyph's composition
+  identity survives every transition between them. This property is guaranteed **structurally**, not by
+  assertion: Compose's test API cannot assert node identity across a recomposition, so a test that claimed
+  to would be proving something weaker than it reads. [`ApiRetryIndicator`](api-retry-indicator.md) shares
+  the identical structure for the identical reason.
 - **No `remember`-cached label or `derivedStateOf` (#803, #897).** A cached label would
   freeze a changing reading — the inverse of the point. The reading reaches Compose already
   `distinctUntilChanged`-deduped upstream (see [Thinking-progress state](thinking-progress-state.md)), so
@@ -184,7 +202,8 @@ raise a call open during the `responding` phase — the gap #803 could not close
 never covers that phase — and a `Running` row that outlives the turn (a race between the result frame and
 the reducer clearing `isBusy`) never shows a label after the fact.
 
-**Label priority.** Inside `ThinkingIndicator`, a running tool always wins over the thinking labels: `Running
+**Label priority.** Inside `ThinkingIndicator`, a running tool wins over the thinking and working labels
+(but loses to `isStalled`, § Working and stalled): `Running
 <tool>…` alone, or `Running <tool>… <elapsed>` when `runningTool.elapsedSeconds` is non-null, where
 `<elapsed>` is [`formatToolElapsed`](tool-call-row.md#subject-and-elapsed-text) — the identical function
 and identical format `ToolCallRow` uses, imported from the Compose-free `ToolRowFormat.kt` so this
@@ -205,60 +224,87 @@ Figma pass.
 **Clears itself; nothing here decides that.** The label disappears the instant `openToolCall` stops
 returning this call — on `Done`/`Failed`/`Denied` ([`HistoryPageReducer`](live-tool-call.md) closes the
 row and clears `elapsedSeconds`) or on `isBusy` going false. `ThinkingIndicator` does not know or care
-why; it only ever sees the next `ToolCall?` value.
+why; it only ever sees the next `ToolCall?` value — a closed call drops the band to "Working…" or
+"Thinking…" since #1311 (§ Working and stalled), never to nothing while the turn is busy.
+
+## Working and stalled (#1311)
+
+Before [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311), the band went dark for most of a
+turn's `responding` phase: once no tool was open, nothing distinguished claude writing text from an idle
+composer. Desktop never had that gap — `workingIndicatorState` in
+`src/renderer/src/screens/conversation/ConversationScreen.tsx` keeps one label up for the whole running
+turn — so this ticket ported its order and copy (§ Placement in the thread) rather than inventing a new
+one.
+
+**`isWorking` is the `responding` phase of a running turn, full stop.** It reads "Working…"
+(`thread_working_label`) with `cd_thread_working` / `cd_thread_working_codex` ([#1114](https://github.com/pyrycode/pyrycode-mobile/issues/1114)-style
+agent-named content descriptions). It carries no token reading — `progress` only decorates the `isThinking`
+label (`StatusReading` passes `thinkingProgress.takeIf { isThinking }`), so a stray token count from the
+daemon's `thinking` phase can never leak onto "Working…". It loses to a running tool and to `isStalled`.
+
+**`isStalled` rides [`StallProjection`](stall-state.md)**, not a new upstream signal: `statusArm` treats
+`ThreadViewModel.isStalled` as the top turn-level arm (above thinking, working and a running tool) and
+below only connection, Reset session, api-retry, compaction and a turn outcome — the client-owned "The turn
+seems to have stalled…" (`thread_stalled_label`, `cd_thread_stalled`) never names or interpolates a
+daemon string. It draws in `colorScheme.error`, the color [`TurnOutcomeIndicator`](turn-outcome-indicator.md)'s
+text already uses for a failed turn, rather than a new color token. It clears the instant `StallProjection`
+clears — any further live session event for the conversation — with no new clearing rule introduced here.
+
+**The local-send window is not a `ThinkingIndicator` parameter.** From the moment a send reaches the
+daemon until its first `turn_state` for this conversation, `ThreadViewModel.localSendPending` holds and
+`statusArm` reads it as `StatusArm.Thinking` — so the caller passes `isThinking = true` for that window, and
+this component cannot tell a local-send "Thinking…" from a daemon-confirmed one. That is deliberate:
+`progress` is still gated on the real `isThinking` flag (`ThreadScreen`'s own `isThinking`, not the arm), so
+the local window never decorates itself with a leftover token reading from the previous turn. See [Thread
+screen § The arm order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for where the
+window opens and closes.
 
 ## Placement in the thread
 
 **Moved in [#643](../codebase/643.md).** [`ThreadScreen`](thread-screen.md) arbitrates this status slot
-— a three-way `when` at #597 (extended from #594's two-way `if`), widened to six arms as
-[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) (usage limit), #872 (resetting) and #805
-(turn outcome) each inserted an arm above this one, then narrowed back to a **five-way `when`** when
-[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed the usage-limit arm — that reading
-now draws as a pill in [`ThreadTopOverlay`](thread-top-overlay.md), pinned over the message area, because a
-live `allowed_warning` reading was masking every arm below it including this one — inside a private
-`ThreadStatusArea` composable (`ThreadScreen.kt`), the first child of the composer's `bottomBar` column —
-through #642 the same `when` lived at the foot of the content `Column`, above the composer rather than
-inside it:
+inside a private `ThreadStatusArea` composable (`ThreadScreen.kt`), the first child of the composer's
+`bottomBar` column — through #642 the same slot lived at the foot of the content `Column`, above the
+composer rather than inside it. [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311)
+re-expressed the arbitration as one pure function, `statusArm`, returning a `StatusArm` enum value that
+`StatusReading` switches on — the arm order used to live only as a `when`'s clause order; now it lives once,
+by name, and every test can assert it without going through Compose. See [Thread screen § The arm
+order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for `statusArm`'s full
+signature and precedence table; the turn-level tail that reaches this component is:
 
 ```kotlin
-when {
-    apiRetry != ApiRetryStatus.NotRetrying ->
-        ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
-    resetting != null ->
-        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth())
-    isCompacting ->
-        CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
-    turnOutcome != null ->
-        TurnOutcomeIndicator(report = turnOutcome, modifier = Modifier.fillMaxWidth())
-    else ->
-        ThinkingIndicator(
-            isThinking = isThinking,
-            modifier = Modifier.fillMaxWidth(),
-            progress = thinkingProgress,
-            runningTool = runningTool, // #897
-            agent = agent, // #1114
-        )
-}
+// StatusReading, ThreadScreen.kt — the turn-level arms share one branch (#1311)
+StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
+    ThinkingIndicator(
+        isThinking = arm == StatusArm.Thinking,
+        modifier = Modifier.fillMaxWidth(),
+        progress = thinkingProgress.takeIf { isThinking }, // never decorates Working or the local-send window
+        runningTool = runningTool.takeIf { arm == StatusArm.RunningTool },
+        agent = agent, // #1114
+        isWorking = arm == StatusArm.Working, // #1311
+        isStalled = arm == StatusArm.Stalled, // #1311
+    )
 ```
 
-(`apiRetry` and `isCompacting`'s own arms also gained `agent = agent` in #1114, and `resetting`'s gained
-it in #1112 — all three omitted from the ladder above for brevity; see [API-retry
-indicator](api-retry-indicator.md#placement-in-the-thread), [Compacting
+(`apiRetry`, `resetting` and `isCompacting`'s own arms also carry `agent = agent`, from #1114/#1112; see
+[API-retry indicator](api-retry-indicator.md#placement-in-the-thread), [Compacting
 indicator](compacting-indicator.md#placement-in-the-thread) and [Resetting indicator § The agent
 name](resetting-indicator.md#the-agent-name-1112). `turnOutcome` still has not.)
 
-**Exactly one affordance renders; the arms never stack.** api-retry keeps the top arm ("something is
-going wrong" over lower-urgency signals), then resetting, then compaction, then the turn outcome, then this
-arm — see [Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the full
-precedence rationale. Claude's usage-limit report shared this ladder, directly below api-retry, from #804
-to [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002); see [Usage-limit indicator §
-Placement](usage-limit-indicator.md#placement--the-top-overlay-not-the-status-ladder-post-1002) for why it
-now draws in [Thread top overlay](thread-top-overlay.md) instead. `#803`'s progress reading and `#897`'s
-running-tool label both ride this arm's own
-`else` branch, so neither adds **a new arm**: every arm above still pre-empts them for free, and mutual
-exclusion holds structurally rather than by an added check. `runningTool` is the one input to this arm
-that is not itself an arm-selector value — `ThreadScreen` passes it only while `isBusy`, so it can be
-non-null and still lose to a higher arm exactly like `thinkingProgress` does.
+**Exactly one affordance renders; the arms never stack.** The full order, top wins: connection, Reset
+session, api-retry, compaction, stall, turn outcome, then the turn-level tail above (an open tool while
+busy, else thinking, else working, else the local-send window reading as thinking). Reset session moved
+above api-retry in #1311, matching desktop — see [Thread screen § The arm
+order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for the full rationale and
+[Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the pre-#1311
+precedence discussion it still mostly holds. Claude's usage-limit report shared this ladder, directly below
+api-retry, from #804 to [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002); see [Usage-limit
+indicator § Placement](usage-limit-indicator.md#placement--the-top-overlay-not-the-status-ladder-post-1002)
+for why it now draws in [Thread top overlay](thread-top-overlay.md) instead. `#803`'s progress reading and
+`#897`'s running-tool label both ride the turn-level tail's own shared branch, so neither adds **a new
+arm**: every arm above still pre-empts them for free, and mutual exclusion holds structurally rather than
+by an added check. `runningTool` is the one input to this arm that is not itself an arm-selector value —
+`ThreadScreen` passes it only while `isBusy`, so it can be non-null and still lose to a higher arm exactly
+like `thinkingProgress` does.
 
 See [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
 for the gutter arithmetic of the composer's status band.
@@ -370,6 +416,10 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   translation changes) and a translator can inflect each sentence per agent rather than around a slotted
   name. See [Compacting indicator § Configuration](compacting-indicator.md#configuration) and [API-retry
   indicator § Configuration](api-retry-indicator.md#configuration) for the other three.
+- **Five more ([#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311))**, all client-owned, no
+  daemon text and no format arguments: `thread_working_label` ("Working…"), `cd_thread_working` ("Claude is
+  working"), `cd_thread_working_codex` ("Codex is working"), `thread_stalled_label` ("The turn seems to
+  have stalled…"), `cd_thread_stalled` ("The turn seems to have stalled") — see § Working and stalled.
 - **No `gradle/libs.versions.toml` edits.**
 
 ## Edge cases / limitations
@@ -447,6 +497,16 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   lands at ~30s on the one committed capture and cannot be held reliably, so only that half remains
   manual. See `docs/e2e-interactive-stream.md` § "What rung 3 is made of" and § "Scenarios (#454)" for
   both scenarios' mechanics.
+- **The band now never empties during a running turn, proved at three levels (#1311).** `StatusArmTest`
+  (pure, no Compose) drives the full precedence table behind `statusArm`, including Reset session now
+  outranking api-retry. `ScriptedStatusLineTest` (`app/src/sharedTest/`, Robolectric, real repository fold
+  via `ScriptedThreadHarness`) drives one scripted turn through thinking → responding with text deltas →
+  `tool_use` → `tool_progress` → `tool_result` → responding → a denied call → idle, asserting a label at
+  every busy step, plus the stall arm's onset, precedence and clear. `RunningToolIndicatorTest`'s denial
+  case, which used to assert an empty responding band, now asserts "Working…" instead — the gap this
+  ticket closed. On rung 3, `InteractiveStreamE2ETest.interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`
+  samples the live band against real claude from the tap on Send until the turn idles and fails on any
+  busy sample with no reading; see `docs/e2e-interactive-stream.md`.
 
 ## Related
 
@@ -457,7 +517,9 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
 - Specs: `docs/specs/architecture/407-thinking-indicator-thread-foot.md` ·
   `docs/specs/architecture/803-thinking-progress-status-render.md` ·
   `docs/specs/architecture/897-running-tool-status-label.md` ·
-  `docs/specs/architecture/1114-agent-status-screen-reader-labels.md` (§ The agent name).
+  `docs/specs/architecture/1114-agent-status-screen-reader-labels.md` (§ The agent name) ·
+  `docs/specs/architecture/1311-status-line-whole-turn.md` (§ Working and stalled, § Placement in the
+  thread).
 - Upstream signals: [Turn-state thinking flag](turn-state-thinking-flag.md) — `ThreadViewModel.isThinking`,
   the `turn_state` → flag reduction that governs visibility — and
   [Thinking-progress state](thinking-progress-state.md) — `ThreadViewModel.thinkingProgress` /
