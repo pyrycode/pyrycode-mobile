@@ -18,9 +18,11 @@ blocker (the bug manifests only with the relay repository live).
 outstanding prompt, not one.** Through #1337 the coordinator kept a single `ModalUiState` per host — a
 second chat's `modal_shown` **replaced** the first chat's, and the first's later `modal_dismissed` matched
 nothing (the fold's `modalId` guard only protected the one held modal from a spoofed dismiss, not a second
-chat's prompt from eviction). #1337 replaces that single value with [`HostModalState`](#the-hostmodalstate-fold-1337):
+chat's prompt from eviction). #1337 replaces that single value with
+[`HostModalState`](#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure):
 every still-open prompt, keyed on `modalId`, plus the ids resolved on the current connection. Each thread
-scopes the host state down to its own conversation ([`HostModalState.scopedTo`](#the-fold-scan-modalid-keyed-1337));
+scopes the host state down to its own conversation
+([`HostModalState.scopedTo`](#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure));
 answering or dismissing one conversation's prompt never touches another's. This follows desktop's
 `reduceModal` (`src/renderer/src/store/modalPrompts.ts`) and closes desktop #415/#510/#1140's mobile gap.
 **The ViewModel re-exposes the coordinator's scoped projection** — it still folds nothing itself.
@@ -61,7 +63,7 @@ over `hostModals` — `hostModals.map { it.latestOutstanding }` — kept for the
 readers (`HostAttentionState.resolve`, `HostConversationSource.promptKeys`,
 `RelayConnectionRegistry.currentModal`) until [#1338](#related) moves them onto the whole list. No thread
 screen reads it; threads scope `hostModals` directly. See [§ The `HostModalState`
-fold](#the-hostmodalstate-fold-1337) below.
+fold](#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure) below.
 
 The coordinator's fold is **host-level**, holding every outstanding prompt across all of that host's
 conversations in one `HostModalState`, keyed on `modalId` (not a separate fold per conversation). Since

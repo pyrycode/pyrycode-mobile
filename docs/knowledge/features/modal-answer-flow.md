@@ -197,8 +197,9 @@ internal data class PermissionGrantDraft(val modalId: String, val rules: List<St
 
 class PermissionDraftStore(dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate) {
     private val drafts = MutableStateFlow<Map<Pair<String, String>, PermissionGrantDraft>>(emptyMap())
-    // bind(serverId, owner, modals) starts one collector per host that retires a stale draft (see below);
-    // observe/current/set are keyed on (serverId, conversationId); dispose() cancels everything.
+    // bind(serverId, owner, modals) starts one collector per host that retires a draft once its request
+    // resolves or its conversation shows a different one (see below); observe/current/set are keyed on
+    // (serverId, conversationId); dispose() cancels everything.
 }
 ```
 
@@ -236,22 +237,31 @@ private fun grantsAlwaysAllow(open: ModalUiState.Open, optionId: String): Boolea
 - **Isolated by server, conversation, request identity and offer.** The map key is `(serverId,
   conversationId)`; the stored value additionally carries `(modalId, rules)`, so two conversations, two
   servers, or the same conversation's next request can never read each other's draft.
-- **A bound host retires a stale draft on its own, including while the chat is closed.** `bind(serverId,
-  owner, modals)` starts one `SupervisorJob`-scoped collector per host over the coordinator's
-  `hostModals: StateFlow<HostModalState>` ([#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)
-  — before it, `currentModal: StateFlow<ModalUiState>`, the host's single most-recent prompt); on every
-  emission `retireStale` drops any draft for that server whose conversation has **no** entry in
-  `modals.outstanding` that is `Open`, offers always-allow, has that conversation's id, and matches the
-  draft's exact `(modalId, rules)` pair — replacement, resolution, cancellation, or the same request
-  re-offered with different rules all retire it, whether or not a thread for that conversation is open.
-  **Because the check scans the whole `outstanding` list instead of one value, a second conversation's
-  prompt arriving no longer retires the first's draft** — the #1337 fix: before it, `retireStale` compared
-  against the host's single current modal, so chat B's `modal_shown` evicted chat A's tick the instant it
-  replaced A's entry in the old fold, even though A's prompt was still open. `bind` is idempotent per
-  `owner` (the coordinator instance); a different owner cancels the old collector and clears that host's
-  drafts before starting fresh. An **unbound** store (a test, the demo host) keeps every entry — the VM's
-  own `(modalId, rules)` equality check in `grantsAlwaysAllow` still hides a stale one from actually being
-  used, so an unbound store is inert-but-correct, never unsafe.
+- **A bound host retires a draft once its request is resolved, or its conversation shows a different
+  one — never on a reconnect clear alone.** `bind(serverId, owner, modals)` starts one `SupervisorJob`-scoped
+  collector per host over the coordinator's `hostModals: StateFlow<HostModalState>`
+  ([#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) — before it,
+  `currentModal: StateFlow<ModalUiState>`, the host's single most-recent prompt); on every emission,
+  `retireStale` drops a draft for that server when private `keeps(modals, conversationId, draft)` is `false`:
+  retired once the draft's `modalId` is in `modals.resolved`, or once the draft's conversation holds any
+  `outstanding` prompt and **none** of them is `Open`, offers always-allow, and matches the draft's exact
+  `(modalId, rules)` pair — so replacement by a different offer, resolution, or the same request re-offered
+  with different rules all retire it, whether or not a thread for that conversation is open. **A conversation
+  holding no `outstanding` prompt at all keeps its draft** — the rework that closed a verifier SHOULD FIX on
+  #1337: the reconnect marker (§ [Current-modal state](current-modal-state.md#lifecycle-errors-edge-cases))
+  empties `hostModals` on every new connection, and retiring on "not currently held" alone untucked the
+  checkbox the instant the daemon's connect-time re-send of the same `modal_id` had not yet landed. A stale
+  surviving draft can never grant more than intended: it is only read through `grantsAlwaysAllow`'s own
+  `(modalId, rules)` equality check against the *shown* prompt, so it stays invisible until that exact
+  request reappears, and the next prompt in that conversation either matches it or retires it.
+  **Because the conversation-holds-prompts branch scans the whole `outstanding` list instead of one value, a
+  second conversation's prompt arriving no longer retires the first's draft** — the original #1337 fix:
+  before it, `retireStale` compared against the host's single current modal, so chat B's `modal_shown`
+  evicted chat A's tick the instant it replaced A's entry in the old fold, even though A's prompt was still
+  open. `bind` is idempotent per `owner` (the coordinator instance); a different owner cancels the old
+  collector and clears that host's drafts before starting fresh. An **unbound** store (a test, the demo host)
+  keeps every entry — the VM's own `(modalId, rules)` equality check in `grantsAlwaysAllow` still hides a
+  stale one from actually being used, so an unbound store is inert-but-correct, never unsafe.
 - **`onAlwaysAllowChanged`'s `modalId` argument is a guard, never a target.** It only stops a tap that lands
   after the rendered prompt was replaced from silently accepting the replacement's offer — the toggle can
   never accept a prompt other than the one currently open. This was a security-review MUST FIX on #818 and
@@ -376,10 +386,19 @@ Taps on a VM with no open modal no-op via the `as? Open ?: return` guard.
 - **Send failure** — caught, emits one `modalSendErrors`; `currentModal` stays `Open` so the user can
   re-answer. No auto-retry, no error-code interpretation, no read-only degrade (that is #440/#452).
 - **VM teardown mid-send** — cancellation propagates cleanly (the rethrow); no spurious error signal.
-- **Stale `Open` across a reconnect** (deferred from #445/#446) — a connection drop pushes no "clear" event,
-  so a stale `Open` can persist. Answering it is rejected server-side (stale `modalId`) and surfaces via the
-  error signal, so a proactive stale-clear is a UX nicety, **not** a correctness requirement — **not built
-  here** (no observed failure; the daemon validation is the deterministic backstop).
+- **Stale `Open` across a plain disconnect, still persists; across a new connection, cleared since #1337**
+  (deferred from #445/#446, revised by [#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)) —
+  a connection *drop* alone (`activeConnection → null`) still pushes no "clear" event, so a prompt held at
+  that moment persists exactly as before. Answering a held prompt that the daemon has in fact already
+  resolved is rejected server-side (stale `modalId`) and surfaces via the error signal regardless, so that
+  backstop was never conditional on this projection. What #1337 adds: when `activeConnection` switches to a
+  **new** connection, the coordinator's `hostModals` fold is reset to empty before that connection's first
+  `modal_shown` is collected (see [Current-modal state §
+  Lifecycle](current-modal-state.md#lifecycle-errors-edge-cases)), and only the daemon's connect-time
+  re-send of every still-outstanding prompt (`protocol-mobile.md` § Reconcile on (re)connect) brings a prompt
+  back — one it does not re-send stays gone. A proactive stale-clear on a *plain* disconnect remains a UX
+  nicety, not a correctness requirement, for the same reason as before: the daemon validation is the
+  deterministic backstop.
 - **Scoped to this thread's conversation (#816), not app-level.** The coordinator's fold holds every
   outstanding prompt per host, keyed on `modalId` ([#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)
   — before it, one modal per host), but `onModalOption` / `onModalCancel` read it through a private
@@ -422,8 +441,8 @@ an allow after returning needs two fresh taps (the grant itself is untouched); a
 never inherits the previous one's grant. `PermissionDraftStoreTest` covers isolation by server and
 conversation, a bound collector retiring a draft on replacement / dismissal / a changed rule list / an owner
 rebind, and the matching request keeping its draft through all of that. `ThreadScreenModalTest` (31/31,
-adapted to the inline surface — see [Permission-modal overlay §
-Testing](permission-modal-overlay.md#testing)) covers the render side: no dialog, an empty thread, live
+adapted to the inline surface — see [Permission-modal overlay —
+testing](permission-modal-overlay-testing.md)) covers the render side: no dialog, an empty thread, live
 Back, the history anchor across arrival and the grant toggle, and the two-tap flow driven through the
 rendered `modalId`.
 
