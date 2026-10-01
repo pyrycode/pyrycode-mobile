@@ -113,6 +113,12 @@ A test that measures text exactly, such as
 single-line truncation or overflow, adds `@GraphicsMode(GraphicsMode.Mode.NATIVE)`
 so Robolectric uses real fonts. The device ignores Robolectric annotations.
 
+`ForcedSize` applied under Robolectric's 320dp default window rescales the
+density, so the root does not measure at the exact dp passed in —
+`ForcedSize(412.dp, …)` measures as 411.61dp, not 412. A test asserting an exact
+forced width fails on that rounding; compare within a pixel instead
+([#1334](https://github.com/pyrycode/pyrycode-mobile/issues/1334)).
+
 A shared test class needs `@RunWith(AndroidJUnit4::class)`. The device runner
 does not require it, but without it the JVM runs the class outside Robolectric and
 every test fails on a null `Build.FINGERPRINT`.
@@ -252,6 +258,19 @@ captured dialog view to initialize and gain window focus, focus the field and
 show the keyboard. Assert actual IME visibility and a nonzero inset as well as
 displayed content and footer bounds above the keyboard; a scroll test
 with no keyboard leaves that contract untested.
+
+The same ordering hazard applies to `wm size`/`wm density`, not only IME
+selection: a `@Before` method already runs after the Compose rule's activity is
+up, so a resize there (or a second one in the test body) can recreate or
+refocus the activity while the launcher briefly holds focus, surfacing as
+`IllegalStateException: No compose hierarchies found` (#1402).
+`ThreadActivityIndicatorCaptureTest` moved its resize into the same
+`order = 0` `TestRule` shape as `MobileModalCaptureTest`: apply density 160 and
+the test's final size, wait for idle, run the test, then restore both in
+`finally`, with the compose rule at `order = 1`. Where sibling tests in a class
+need different final sizes, read the size from a private runtime annotation on
+the test method (`@Viewport("320x692")`) instead of branching on the method
+name, so the size stays attached to the test it belongs to.
 
 Reply assertions must not depend on total substring-count growth: removing queued
 prompt text can offset a newly displayed assistant reply. For fresh discussions

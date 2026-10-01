@@ -209,6 +209,15 @@ class ThreadViewModel(
      */
     val attachmentsSending: StateFlow<Boolean> = _attachmentsSending.asStateFlow()
 
+    private val _attachmentUploadProgress = MutableStateFlow<AttachmentUploadProgress?>(null)
+
+    /**
+     * The figure of the upload running now (#1327), or `null`. It names one entry and lives for one upload:
+     * cleared when that upload is stored or fails, and however the send ends. Uploads under
+     * [ATTACHMENT_PROGRESS_MIN_CHUNKS] never publish one.
+     */
+    val attachmentUploadProgress: StateFlow<AttachmentUploadProgress?> = _attachmentUploadProgress.asStateFlow()
+
     private val attachmentRefusalChannel = Channel<AttachmentRefusal>(capacity = Channel.BUFFERED)
 
     /**
@@ -216,6 +225,14 @@ class ThreadViewModel(
      * only, never a name, URI or type, so the snackbar it drives shows fixed local text.
      */
     val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
+
+    private val attachmentSendFailureChannel = Channel<AttachmentSendFailure>(capacity = Channel.BUFFERED)
+
+    /**
+     * One notice per send that stopped at a failed read or upload (#1325), naming why. A reason only, never a
+     * name, URI or the daemon's code, so the snackbar it drives shows fixed local text.
+     */
+    val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
 
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
@@ -1334,11 +1351,15 @@ class ThreadViewModel(
             } finally {
                 // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
                 _attachmentsSending.value = false
+                _attachmentUploadProgress.value = null
             }
         }
     }
 
-    /** Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not. */
+    /**
+     * Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not and
+     * sending one [attachmentSendFailures] notice (#1325).
+     */
     private suspend fun upload(
         target: String,
         entry: PendingAttachment,
@@ -1346,17 +1367,29 @@ class ThreadViewModel(
         val bytes =
             when (val read = attachmentReader.read(entry.uri)) {
                 is AttachmentRead.Bytes -> read.bytes
-                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large")
-                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed")
+                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large", AttachmentSendFailure.TOO_LARGE)
+                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed", AttachmentSendFailure.UNREADABLE)
             }
-        val result = repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType)
-        if (result !is AttachmentUploadResult.Stored) return attachmentSendFailed("upload_failed")
-        draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
-        return result.attachmentId
+        val result =
+            repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType) { sent, total ->
+                _attachmentUploadProgress.value = attachmentUploadProgress(entry.key, sent, total)
+            }
+        _attachmentUploadProgress.value = null
+        when (result) {
+            is AttachmentUploadResult.Stored -> {
+                draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
+                return result.attachmentId
+            }
+            is AttachmentUploadResult.Failed -> return attachmentSendFailed("upload_failed", attachmentSendFailure(result))
+        }
     }
 
-    private fun attachmentSendFailed(outcome: String): String? {
+    private fun attachmentSendFailed(
+        outcome: String,
+        failure: AttachmentSendFailure,
+    ): String? {
         RelayLog.d { "event=composer_attachment_send outcome=$outcome" }
+        attachmentSendFailureChannel.trySend(failure)
         return null
     }
 

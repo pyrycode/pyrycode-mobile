@@ -242,9 +242,13 @@ fun ThreadScreen(
     // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
     attachments: List<PendingAttachment> = emptyList(),
     attachmentsSending: Boolean = false,
+    // #1327: the running upload's figure (ThreadViewModel.attachmentUploadProgress), drawn on its tile.
+    attachmentUploadProgress: AttachmentUploadProgress? = null,
     onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
     onRemoveAttachment: (Long) -> Unit = {},
     attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
+    // #1325: the one-shot notice of why a send stopped at a file (ThreadViewModel.attachmentSendFailures).
+    attachmentSendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
     // row is on screen, and a failed one's retry. Bound by MainActivity; defaulted so other screens and tests
     // draw attachments as loading and start nothing.
@@ -314,6 +318,10 @@ fun ThreadScreen(
                 snackbarHostState.showSnackbar(text)
             }
         }
+    }
+    // #1325: a send that stopped at a file says why in one fixed sentence — never a name or the daemon's code.
+    LaunchedEffect(attachmentSendFailures, snackbarHostState) {
+        attachmentSendFailures.collect { failure -> snackbarHostState.showSnackbar(failure.text(resources)) }
     }
     val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
     // #985: a ready message attachment opens in another app or saves to a picked document; each outcome the
@@ -444,6 +452,7 @@ fun ThreadScreen(
                             attachments = attachments,
                             sending = attachmentsSending,
                             onRemove = onRemoveAttachment,
+                            uploadProgress = attachmentUploadProgress,
                             modifier =
                                 Modifier
                                     .padding(horizontal = ComposerGutter)
