@@ -18,6 +18,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -293,6 +296,63 @@ class ThreadViewModelLocalSendTest {
 
             assertEquals(0, repo.sends)
             assertFalse(vm.localSendPending.value)
+        }
+
+    /** #1314: [ThreadViewModel.sentMessages] fires once per send the daemon accepted, and for nothing else. */
+    private suspend fun TestScope.sentSignals(
+        vm: ThreadViewModel,
+        act: suspend () -> Unit,
+    ): Int {
+        val signals = mutableListOf<Unit>()
+        val collector = launch { vm.sentMessages.toList(signals) }
+        act()
+        advanceUntilIdle()
+        collector.cancel()
+        return signals.size
+    }
+
+    @Test
+    fun anAcceptedTextSend_signalsOnce_andOnlyAfterTheDaemonAccepts() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val vm = vm(GatedRepository(gate))
+            val signals = mutableListOf<Unit>()
+            val collector = launch { vm.sentMessages.toList(signals) }
+
+            vm.sendMessage("hello")
+            advanceUntilIdle()
+            assertEquals("nothing while the send is in flight", 0, signals.size)
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+            collector.cancel()
+
+            assertEquals(1, signals.size)
+            assertTrue(logs.contains("event=thread_send_accepted"))
+            assertTrue(logs.none { "hello" in it })
+        }
+
+    @Test
+    fun anAcceptedAttachmentSend_signals() =
+        runTest {
+            val vm = vm(GatedRepository())
+            vm.addAttachment("content://docs/a", "a.txt", "text/plain", 5L)
+
+            assertEquals(1, sentSignals(vm) { vm.sendMessage("with a file") })
+        }
+
+    @Test
+    fun aFailedSend_aBlankSend_andAFailedUpload_neverSignal() =
+        runTest {
+            val failed = vm(GatedRepository(failure = RelayErrorException(code = "server.error", retryable = false, message = "no")))
+            assertEquals(0, sentSignals(failed) { failed.sendMessage("hello") })
+
+            val blank = vm(GatedRepository())
+            assertEquals(0, sentSignals(blank) { blank.sendMessage("   ") })
+
+            val upload = vm(GatedRepository(uploadOutcome = AttachmentUploadResult.TooLarge))
+            upload.addAttachment("content://docs/a", "a.txt", "text/plain", 5L)
+            assertEquals(0, sentSignals(upload) { upload.sendMessage("with a file") })
         }
 
     private companion object {
