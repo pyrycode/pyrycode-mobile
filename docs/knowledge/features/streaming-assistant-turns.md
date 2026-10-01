@@ -84,6 +84,31 @@ carries this turn's id** —
 `if (finished.any { it is ThreadItem.MessageItem && it.message.id == turn.turnId }) return finished`.
 See *Why the synthetic key never collides* below for why this is load-bearing against the live daemon.
 
+## Finished rows are now per-segment, not one bubble per turn ([#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350))
+
+Before #1350, the finished projection folded every `assistant_delta` of one turn into a single assistant
+row, found wherever it sat, so text claude wrote after a tool call drew in that one bubble, above the
+tool. `HistoryPageReducer.withAssistantDelta` — shared by the live lane and history replay — now extends
+the **last** row only when it is already a segment of the same turn; anything else (a tool row, a user
+message, a session boundary, or no row) opens a new segment at the end. A turn that goes text, tool, text
+now draws as two assistant rows with the tool row between them, live and on replay alike. The segment key,
+the per-delta record, and how a page boundary or a merge rejoins a segment a seam cut in two are in
+[Remote conversation repository § Assistant reply segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
+
+This changes what the `ThreadFold` accumulator above folds against, in two ways:
+
+- **Only the newest segment can stream.** `ThreadProjection.observe` settles every streaming row but the
+  last (`withOnlyLastRowStreaming`) before `Finished` ever reaches this fold, so a segment that a tool row
+  or a user message now follows is already static by the time it arrives here. **One known gap:**
+  `CachingConversationRepository.observeMessages` runs `mergeCachedRows` *after* that normalisation, so a
+  cached row the merge places above the live stream can still draw as streaming past its own turn — the
+  normalisation covers the projection, not a later composition of it. The verifier's PR #1420 review flagged
+  this as a SHOULD FIX, reproducible as a mid-turn reconnect; it was not fixed in #1350. A fix re-applies
+  `withOnlyLastRowStreaming()` at that composition point, with a reconnect-mid-turn test — the general lesson
+  being that a normalisation applied inside one projection's `observe` does not cover a reader that composes
+  that projection with another source afterwards.
+- **The key-uniqueness guard gained a segment clause**, described below.
+
 ## Why the dedup is structural, not id-correlated
 
 The finalise step must reconcile the in-flight turn with the finished `message` from #313's path, but:
@@ -127,6 +152,14 @@ double-render the colliding-at-baseline window. The guard and the baseline-diff 
 guard guarantees key uniqueness in the colliding case; neither relies on the other. In the colliding
 ordering `stream` lingers (non-rendered) until the next turn supersedes it — harmless, and
 `distinctUntilChanged` absorbs the no-op re-emissions so there is no flicker.
+
+**The guard gained a segment clause ([#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350)).**
+Once a turn's text can fold into more than one finished row, a bare-id check alone is not enough: a later
+segment is keyed `"<turnId>#<seq>"`, not `turn.turnId`, so the original guard would miss it and redraw the
+turn's live text a second time beside the finished segment. `ThreadFold.render` now also holds the synthetic
+back when the finished list carries *any* assistant row whose `segment.turnId` equals the streaming turn's
+id (`Message.isSegmentOf`), alongside the unchanged bare-id clause that still matches a row cached before
+segments existed.
 
 ## Lifecycle, errors, edge cases
 
@@ -175,6 +208,10 @@ Architect self-review **PASS**; code review **PASS** with zero findings.
 - [#425 implementation notes](../codebase/425.md) — the render-time key-uniqueness guard that lands the
   `turnId == message_id` fix on `main`; corrects the now-false "distinct namespace / never both present"
   assumptions.
+- [#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350) — per-segment assistant rows: a turn's
+  text, tool, text now draws as two bubbles around the tool row, live and on replay. See
+  [Remote conversation repository § Assistant reply segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+  and [ADR 0007](../decisions/0007-assistant-reply-segment-key-and-seam-join.md).
 - [Live-session events](live-session-events.md) ([#385](../codebase/385.md)) — the decode seam that
   produces `LiveSessionEvent.AssistantDelta`/`TurnEnd`; this slice realizes its "assistant_delta
   accumulation belongs to a consumer slice" deferral.

@@ -339,14 +339,13 @@ internal class ThreadProjection {
     }
 
     /**
-     * Fold one `assistant_delta` into the conversation's live streaming assistant row (#337). The
-     * first delta of a turn opens a [Role.Assistant] [Message] keyed by
-     * [LiveSessionEvent.AssistantDelta.turnId] with [Message.isStreaming] `= true`; each later delta
-     * for that turn **appends** its text in place, keeping the row's id and position. One atomic
+     * Fold one `assistant_delta` into the conversation's assistant reply segments (#337, #1350). A
+     * delta extends the last row when it is a segment of the same turn and otherwise opens a new
+     * streaming [Role.Assistant] segment at the end, so text after a tool call or a user message draws
+     * below it; [withAssistantDelta] has the segment key and the guards that keep it unique. One atomic
      * [MutableStateFlow.update] into the same [threadByConversation] the live `message` and tool
      * arms write, so the assistant text interleaves by **arrival order** with messages and tool rows
-     * (AC #4). The `&& role == Role.Assistant` match namespaces this row so a `turnId` can never
-     * clobber a `message_id` or `toolUseId` row.
+     * (AC #4).
      *
      * **Arrival-order concatenation, by design.** The wire delivers a turn's deltas in
      * [LiveSessionEvent.AssistantDelta.seq] order over the single ordered inbound stream, and a fresh
@@ -367,9 +366,8 @@ internal class ThreadProjection {
     }
 
     /**
-     * Finalize the live streaming assistant row on `turn_end` (#337): flip the matching
-     * [Role.Assistant] row (keyed by [LiveSessionEvent.TurnEnd.turnId]) to [Message.isStreaming]
-     * `= false` in place, so the thread renders the completed reply as static markdown rather than the
+     * Finalize the turn's assistant text on `turn_end` (#337): flip every streaming segment of
+     * [LiveSessionEvent.TurnEnd.turnId] (#1350) to [Message.isStreaming] `= false` in place, so the thread renders the completed reply as static markdown rather than the
      * streaming caret view. One atomic [MutableStateFlow.update]. **No-op when no streaming assistant
      * row exists for the turn** — a tool-only or empty turn carries no assistant text (AC #3), and a
      * duplicate `turn_end` re-applies the same flip (idempotent). `turn_end` carries no final text, so
@@ -515,9 +513,13 @@ internal class ThreadProjection {
      * [distinctUntilChanged] means a change to **another** conversation's slot does not re-emit this
      * flow (AC #3). A `StateFlow` always has a value, so a fresh collector receives the current thread
      * (empty until backfill/live arrives) on subscription.
+     *
+     * Every row but the last is read settled ([withOnlyLastRowStreaming], #1350): an assistant segment
+     * stops streaming once any row follows it, whichever write appended that row. This is the one read of
+     * the store, so no reader sees an earlier segment still streaming.
      */
     fun observe(conversationId: String): Flow<List<ThreadItem>> =
-        threadByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
+        threadByConversation.map { it[conversationId].orEmpty().withOnlyLastRowStreaming() }.distinctUntilChanged()
 
     /**
      * Decode one v2 `unrecognized_message` envelope (#609) to its routing [conversationId] and the mapped
