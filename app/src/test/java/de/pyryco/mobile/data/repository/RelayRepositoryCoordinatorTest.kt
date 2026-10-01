@@ -856,13 +856,13 @@ class RelayRepositoryCoordinatorTest {
 
     // ---- #492: the "current modal" projection is folded once at the process-scoped coordinator ---
 
-    // AC #4 (the regression): a modal_shown that arrives with NO collector on currentModal is still
+    // AC #4 (the regression): a modal_shown that arrives with NO collector on hostModals is still
     // accumulated — the Eagerly, process-scoped fold ran before any thread screen subscribed. Reading
     // `.value` with no subscriber is the proof (contrast the liveSessionEvents cold-flow test, which needs a
     // backgroundScope collector). This is precisely the drop the old per-ThreadViewModel fold suffered:
     // the coordinator's modal seam is `replay = 0`, so an event fired before the VM subscribed was lost.
     @Test
-    fun currentModal_accumulatesModalShownBeforeAnySubscriber() =
+    fun hostModals_accumulatesModalShownBeforeAnySubscriber() =
         runTest {
             val env = newEnv()
             env.connections.value = StubRelayTransport()
@@ -871,7 +871,7 @@ class RelayRepositoryCoordinatorTest {
             pump.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
             runCurrent()
 
-            // No collector on currentModal — mirrors "no thread screen on the back stack".
+            // No collector on hostModals — mirrors "no thread screen on the back stack".
             pump.push(modalShownEnvelope("m1"))
             runCurrent()
 
@@ -884,7 +884,8 @@ class RelayRepositoryCoordinatorTest {
                     options = listOf(ModalOption("allow", "Allow"), ModalOption("deny", "Deny")),
                     defaultOptionId = "deny",
                 ),
-                env.coordinator.currentModal.value,
+                env.coordinator.hostModals.value.outstanding
+                    .single(),
             )
 
             env.coordinator.close()
@@ -895,7 +896,7 @@ class RelayRepositoryCoordinatorTest {
     // decision — the answer path is guarded by the deterministic answerModal/cancelModal null-guard, never
     // by this UI projection, so retaining a stale Open cannot send an answer on a dead connection).
     @Test
-    fun currentModal_retainsOpenModalAcrossConnectionDrop() =
+    fun hostModals_retainsOpenModalAcrossConnectionDrop() =
         runTest {
             val env = newEnv()
             env.connections.value = StubRelayTransport()
@@ -905,13 +906,13 @@ class RelayRepositoryCoordinatorTest {
             runCurrent()
             pump.push(modalShownEnvelope("m1"))
             runCurrent()
-            assertTrue(env.coordinator.currentModal.value is ModalUiState.Open)
+            assertEquals(listOf("m1"), env.coordinator.heldIds())
 
             // Connection drops (teardownActive nulls activeRemoteRepo → emptyFlow); the scan holds its value.
             env.connections.value = null
             runCurrent()
 
-            assertEquals("m1", (env.coordinator.currentModal.value as ModalUiState.Open).modalId)
+            assertEquals(listOf("m1"), env.coordinator.heldIds())
 
             env.coordinator.close()
         }
@@ -929,7 +930,6 @@ class RelayRepositoryCoordinatorTest {
             pump1.push(modalShownEnvelope("m2", conversationId = "conv-b"))
             runCurrent()
             assertEquals(listOf("m1", "m2"), env.coordinator.heldIds())
-            assertEquals("m2", (env.coordinator.currentModal.value as ModalUiState.Open).modalId)
 
             env.connections.value = null
             runCurrent()
@@ -938,7 +938,6 @@ class RelayRepositoryCoordinatorTest {
             env.connections.value = StubRelayTransport()
             runCurrent()
             assertEquals("dropped when the next connection is published", emptyList<String>(), env.coordinator.heldIds())
-            assertEquals(ModalUiState.Hidden, env.coordinator.currentModal.value)
 
             val pump2 = env.pumps.last()
             pump2.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
