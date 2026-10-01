@@ -69,3 +69,7 @@ Not operator-facing in the daemon-flow sense (no new wire interaction), so no ru
 
 - `docs/knowledge/features/channel-list-screen-tree-and-controls.md`: a disconnected host shows no section plus and no row pen.
 - `docs/knowledge/features/channel-list-viewmodel.md`: this reverses #1190's keep-open-on-disconnect rule; create/edit modals close when their host stops being connected.
+
+## Revisions
+
+- **Open question resolved (implementation).** The fixture's host source and `Main` share one unconfined dispatcher, so a status flip reaches the watcher before the next call. The submit-race tests set `Main` to a `StandardTestDispatcher` on the test scheduler: the snapshot is already offline at the press while the watcher is still queued, so the submit's own re-check is what refuses, which is proven by its `code=disconnected` log line, and no repository call follows. `channelPromptIsReadOnceItsHostConnects…` now opens the editor on a connected host whose repository is not yet resolved, since a disconnected host no longer opens one.

@@ -651,7 +651,8 @@ private fun ConversationTree(
  * Emits a host once, followed by its two independent sections and direct conversation rows.
  *
  * A conversation row's tap target is built from the row's **own** `serverId`, so a tree drawing rows
- * from several hosts opens each on the host that owns it.
+ * from several hosts opens each on the host that owns it. While the host is not connected its section
+ * plus and row pens are not drawn (#1336); the host row's own controls, folding and row taps stay.
  */
 private fun LazyListScope.treeHost(
     index: Int,
@@ -661,6 +662,7 @@ private fun LazyListScope.treeHost(
 ) {
     val host = entry.host
     val hostKey = TreeFoldKey(ConversationTreeSection.Host, host.serverId)
+    val connected = hostState.isHostConnected(host.serverId)
     item(key = treeItemKey("host", host.serverId)) {
         TreeHostRow(
             serverId = host.serverId,
@@ -693,10 +695,14 @@ private fun LazyListScope.treeHost(
                 onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(sectionKey)) },
                 isChat = section == ConversationTreeSection.Chats,
                 onAddTapped =
-                    if (section == ConversationTreeSection.Channels) {
-                        { onEvent(ChannelListEvent.TreeHostChannelAddTapped(host.serverId)) }
-                    } else {
-                        { onEvent(ChannelListEvent.TreeHostChatAddTapped(host.serverId)) }
+                    when {
+                        !connected -> null
+                        section == ConversationTreeSection.Channels -> {
+                            { onEvent(ChannelListEvent.TreeHostChannelAddTapped(host.serverId)) }
+                        }
+                        else -> {
+                            { onEvent(ChannelListEvent.TreeHostChatAddTapped(host.serverId)) }
+                        }
                     },
             )
         }
@@ -724,13 +730,17 @@ private fun LazyListScope.treeHost(
                     modifier = Modifier.testTag(section.rowTestTag),
                     attention = entry.attentionFor(conversation.id),
                     onEditTapped =
-                        when (section) {
-                            ConversationTreeSection.Host -> error("Host is not a conversation section")
-                            ConversationTreeSection.Channels -> {
-                                { onEvent(ChannelListEvent.TreeChannelEditTapped(target)) }
-                            }
-                            ConversationTreeSection.Chats -> {
-                                { onEvent(ChannelListEvent.TreeChatEditTapped(target)) }
+                        if (!connected) {
+                            null
+                        } else {
+                            when (section) {
+                                ConversationTreeSection.Host -> error("Host is not a conversation section")
+                                ConversationTreeSection.Channels -> {
+                                    { onEvent(ChannelListEvent.TreeChannelEditTapped(target)) }
+                                }
+                                ConversationTreeSection.Chats -> {
+                                    { onEvent(ChannelListEvent.TreeChatEditTapped(target)) }
+                                }
                             }
                         },
                     editDescription =

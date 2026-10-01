@@ -211,6 +211,83 @@ class ChannelListScreenTest {
     }
 
     @Test
+    fun aDisconnectedHostDrawsNoSectionPlusOrRowPenAndTheyReturnOnReconnect() {
+        val first =
+            entry(
+                "first",
+                "First",
+                channels = listOf(conversation("c1", "first channel", "/a", true)),
+                chats = listOf(conversation("h1", "first chat", "/a", false)),
+            )
+        val second =
+            entry(
+                "second",
+                "Second",
+                channels = listOf(conversation("c2", "second channel", "/b", true)),
+                chats = listOf(conversation("h2", "second chat", "/b", false)),
+            )
+
+        fun HostChannelListEntry.withRelay(relay: RelayLinkStatus) =
+            copy(host = host.copy(connectionStatus = ConnectionStatus(relay, PyrycodeLinkStatus.Connected)))
+        var state by mutableStateOf(HostChannelListState(listOf(first, second)))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state, onEvent = { events += it }) }
+        }
+        val firstControls =
+            listOf(
+                hasTestTag(treeHostChannelAddTestTag("first")),
+                hasTestTag(treeHostChatAddTestTag("first")),
+                hasContentDescription(string(R.string.cd_tree_channel_edit, "first channel")),
+                hasContentDescription(string(R.string.cd_tree_chat_edit, "first chat")),
+            )
+        val secondControls =
+            listOf(
+                hasTestTag(treeHostChannelAddTestTag("second")),
+                hasTestTag(treeHostChatAddTestTag("second")),
+                hasContentDescription(string(R.string.cd_tree_channel_edit, "second channel")),
+                hasContentDescription(string(R.string.cd_tree_chat_edit, "second chat")),
+            )
+        val list = composeTestRule.onNode(hasScrollAction())
+
+        fun assertDrawn(
+            matchers: List<SemanticsMatcher>,
+            count: Int,
+        ) = matchers.forEach { matcher ->
+            if (count > 0) list.performScrollToNode(matcher)
+            composeTestRule.onAllNodes(matcher).assertCountEquals(count)
+        }
+        assertDrawn(firstControls, 1)
+        assertDrawn(secondControls, 1)
+
+        state = state.copy(hosts = listOf(first.withRelay(RelayLinkStatus.Offline), second))
+        composeTestRule.waitForIdle()
+        assertDrawn(firstControls, 0)
+        assertDrawn(secondControls, 1)
+        // The host row keeps Edit host and its reconnect control; folding and opening rows still work.
+        list.performScrollToNode(hasTestTag(treeHostEditTestTag("first")))
+        composeTestRule.onNodeWithTag(treeHostEditTestTag("first")).performClick()
+        composeTestRule.onAllNodes(hasTestTag(treeHostReconnectTestTag("first"))).onFirst().performClick()
+        list.performScrollToNode(hasText("first chat"))
+        composeTestRule.onNode(hasText("first chat")).performClick()
+        val firstChats = hasContentDescription(string(R.string.cd_tree_row_collapse, "Chats on First"))
+        composeTestRule.onNode(firstChats).performClick()
+        assertEquals(
+            listOf(
+                ChannelListEvent.TreeHostEditTapped("first"),
+                ChannelListEvent.TreeHostReconnectTapped("first"),
+                ChannelListEvent.TreeRowTapped(HostConversationTarget("first", "h1")),
+                ChannelListEvent.TreeFoldToggled(TreeFoldKey(ConversationTreeSection.Chats, "first")),
+            ),
+            events,
+        )
+
+        state = state.copy(hosts = listOf(first, second))
+        composeTestRule.waitForIdle()
+        assertDrawn(firstControls, 1)
+        assertDrawn(secondControls, 1)
+    }
+
+    @Test
     fun failedDirectCreateShowsGenericErrorWithoutOpeningDialog() {
         setTree(
             entry("first", "First", relay = RelayLinkStatus.Offline),
@@ -316,8 +393,8 @@ class ChannelListScreenTest {
         val secondChannel = hasText("Second channel")
         list.performScrollToNode(secondChannel)
         composeTestRule.onNode(secondChannel).assertIsNotSelected()
-        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_channel_edit, "Second channel"))).performClick()
-        assertEquals(ChannelListEvent.TreeChannelEditTapped(HostConversationTarget("second", "same")), events.last())
+        // #1336: the offline host's rows draw no pen, while the connected host's keep theirs.
+        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_channel_edit, "Second channel"))).assertCountEquals(0)
 
         val finalChat = hasText("Final chat")
         list.performScrollToNode(finalChat)
