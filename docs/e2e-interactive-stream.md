@@ -174,6 +174,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    paragraph below, after the peer scenarios. [#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193)
    extends the model-change method to select in Run configuration and verify selected radios after
    fresh settings replies for both chats; it remains in `InteractiveStreamE2ETest`.
+   [#1308](https://github.com/pyrycode/pyrycode-mobile/issues/1308) turns it into a **one real-claude turn**
+   scenario: an inherited chat's post-reply mark is now asserted against the announced model, by the same
+   value/`resolvedModel`/family tiers `ThreadRunConfig.selectedChoice` applies, and no radio may ever read
+   "Default".
    The **remembered-model new-chat** scenario (#1223 —
    `interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`) chooses a published model in
    one chat, creates another chat, verifies its model before the first send, receives a real Claude
@@ -729,13 +733,18 @@ its own conversations through the paired host's own repository — `RelayConnect
 session and cannot take a model or effort write; `create_conversation` binds one before it replies.
 Every method restores the settings it changed with `set_session_settings` on the same session and clears
 the remembered level in `finally`, so a red run cannot leave a write behind for a later method.
-`interactiveTurn_modelChange_roundTripsAndStaysPerConversation` (**zero** claude turns) picks three usable
-ordinary rows from the published model menu at run time — never a hard-coded model name — writes two chats
-to two of them, opens Run configuration from the footer to select the third for one chat, and checks its
-selected radio after a fresh daemon settings reply. It leaves and reopens that chat, verifies the selected
-radio against another fresh reply, then opens the other chat and verifies its original row remains selected
-against its own fresh reply. The runnable scenario is in `InteractiveStreamE2ETest`; it does not depend on
-the separately reported running model.
+`interactiveTurn_modelChange_roundTripsAndStaysPerConversation` (**one** real-claude turn, since #1308) keeps
+chat X inherited (no pick, no explicit saved model) and sends it one real ping. After the reply, the test
+computes the expected marked row itself from the fresh model menu and the host repository's own announced
+model, using its own copy of the three-tier rule `ThreadRunConfig.selectedChoice` applies (exact `value`,
+then `resolvedModel`, then family; the first tier with any candidate decides, more than one marks nothing).
+`awaitAnnouncedMark` then asserts either that row is marked by its label and `resolved_model` detail, or that
+no model radio is marked and the family note shows outside a radio — and, either way, that no radio reads
+"Default". It then opens Run configuration on X and picks a different published row, confirming the pick
+stays marked — no longer the announcement — after leaving and reopening X, while chat Y's own separately
+saved model is untouched throughout. The runnable scenario is in `InteractiveStreamE2ETest`; it does not
+depend on the separately reported `ThreadRunConfig.running` display text, only on the raw `announcedModel`
+key.
 
 `InteractiveStreamE2ETest.interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`
 (#1223, **one** real Claude turn) chooses a nondefault model published for the source chat's agent,
@@ -2721,6 +2730,23 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — updated:** [#1308](https://github.com/pyrycode/pyrycode-mobile/issues/1308) turns
+  `InteractiveStreamE2ETest.interactiveTurn_modelChange_roundTripsAndStaysPerConversation` into a
+  **one real-claude turn** scenario. Chat X stays inherited through one real ping reply; the test computes
+  the expected marked row itself from the fresh model menu and the host repository's announced model, using
+  its own copy of the value → `resolvedModel` → family tiers `ThreadRunConfig.selectedChoice` applies (the
+  first tier with any candidate decides, more than one marks nothing). `awaitAnnouncedMark` replaces the
+  former `awaitNoModelMarked`: it checks every non-default Claude row of the fresh menu, including rows that
+  share a family label, so it cannot pass by skipping the rows most likely to be marked wrongly, and it
+  requires either exactly the expected row (by label and `resolved_model` detail) or no model row at all with
+  the family note shown outside a radio — either way, that no radio reads "Default". X is then picked to a
+  different published row in Run configuration and the pick is confirmed to survive leaving and reopening,
+  no longer tracking the announcement; Y's own separately saved model is untouched throughout. The selector
+  and `LIVE_MINIMUM` are unchanged at 43 — this is a behaviour change to an existing method, not a new one.
+  The dispatcher's post-verifier `python3 scripts/android-test-gate.py live` run (branch `feature/1308` at
+  `457c238304` merged with `origin/main` at `e902919aa6`) executed 43 methods, failed 0 and skipped 0,
+  including this named method passing.
 
 - **Coverage — updated:** [#1306](https://github.com/pyrycode/pyrycode-mobile/issues/1306) adapted
   `InteractiveStreamE2ETest.interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` to the inline
