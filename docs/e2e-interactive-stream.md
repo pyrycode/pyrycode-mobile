@@ -191,6 +191,13 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    `interactiveTurn_createEditArchiveChannel_readsPromptBack` creates from an empty Channels section,
    reads the original and edited prompt, waits for a distinct reply after Reset session, then restores
    through the selected host's list-toolbar Archive entry and finds the edited name on the list.
+   **Archive order** (#1332 — `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`): archives two
+   freshly created chats on a live daemon, the newer-by-last-use one first and the older one second, then
+   opens Archive and asserts the second-archived chat is on top — proving the daemon's `archived_at` stamp,
+   not `lastUsedAt`, decides the order; the old order would put the first-archived (newer-by-last-use) chat
+   on top instead. Zero claude turns. **Not in the curated `LIVE=1` list** in `scripts/e2e-emulator.sh` — it
+   did not run in the #1332 real-claude gate evidence, which reported 38 executed tests with no entry for
+   this method (see the ticket for the resulting `needs-rework:verifier`).
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
