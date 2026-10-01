@@ -75,6 +75,7 @@ class ThreadViewModelAttachmentRetrievalTest {
             bytes: ByteArray,
             filename: String,
             mimeType: String,
+            onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
         ): AttachmentUploadResult = AttachmentUploadResult.Stored("id-$filename")
 
         override suspend fun sendMessage(
@@ -254,7 +255,7 @@ class ThreadViewModelAttachmentRetrievalTest {
             val vm = vm(probing, store)
             vm.addAttachment("content://docs/a", "a", "text/plain", 1L)
 
-            vm.sendMessage("")
+            vm.sendMessage("hi")
             advanceUntilIdle()
 
             assertEquals("content://docs/a", recordedAtSend)

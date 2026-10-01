@@ -37,6 +37,9 @@ sealed interface ThreadEvent {
 
     data object ChannelInfoDismiss : ThreadEvent
 
+    /** The Run configuration sheet opened (#1309); the thread re-reads its settings. */
+    data object RunConfigOpen : ThreadEvent
+
     data object SaveAsChannel : ThreadEvent
 
     /**
@@ -210,6 +213,12 @@ data class ThreadRunConfig(
     val menuAvailable: Boolean = false,
     val droppedModels: Int = 0,
     val hiddenChoices: Int = 0,
+    /**
+     * The rows past [MAX_RENDERED_MODEL_CHOICES], never composed. The announced mark (#1308) counts its
+     * candidates over them too, as [inheritedResolutionUnique] does, so a match the sheet cannot show still
+     * makes a rendered one ambiguous.
+     */
+    val overflowChoices: List<ThreadModelChoice> = emptyList(),
     val settingsAvailable: Boolean = false,
     val savedModel: String = "",
     val savedEffort: String = "",
@@ -223,9 +232,29 @@ data class ThreadRunConfig(
     val contextPercent: Int? = null,
     val capabilities: SessionCapabilities? = null,
     val memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
+    /** The raw model claude announced (#1308), `""` when none or cut. A comparison key only: never written or shown raw. */
+    val announcedModel: String = "",
+    val agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
+
+    /** No pick and no explicit saved model: the conversation runs whatever the daemon's default resolves to. */
+    private val inherited: Boolean
+        get() = pendingModel == null && (savedModel.isEmpty() || savedModel == INHERITED_DEFAULT_MODEL_VALUE)
+
+    /** The `default` row's concrete identifier, `""` when absent or a placeholder. */
+    private val defaultResolution: String
+        get() =
+            inheritedChoice
+                ?.resolvedModel
+                .orEmpty()
+                .takeUnless { it.isBlank() || it.startsWith("<") }
+                .orEmpty()
+
+    /** The announcement this conversation's inherited mark reads (#1308); Claude's only. */
+    private val announcedKey: String
+        get() = announcedModel.takeIf { agent == ConversationAgent.Claude }.orEmpty()
 
     /**
      * The effort the surfaces show and select (#889, desktop #1549 / #1554): a pending tap, else the value
@@ -252,16 +281,36 @@ data class ThreadRunConfig(
                 else -> EffortNote.DefaultRunningUnavailable
             }
 
-    /** Only a confirmed inherited choice may resolve through the hidden default's concrete identifier. */
+    /**
+     * The marked row. A pick or an explicit saved model marks only its exact-value row. An inherited Claude
+     * conversation marks the row claude's announcement maps to (#1308), matched by value, then
+     * `resolvedModel`, then family; the first tier with any candidate decides, and more than one marks
+     * nothing. Before any announcement it resolves through the hidden default's concrete identifier, which
+     * describes claude's recommended model rather than what runs, so the announcement wins once it arrives.
+     */
     val selectedChoice: ThreadModelChoice?
         get() {
             if (!settingsAvailable && pendingModel == null) return null
-            if (pendingModel == null && (savedModel.isEmpty() || savedModel == INHERITED_DEFAULT_MODEL_VALUE)) {
-                val resolved = inheritedChoice?.resolvedModel.orEmpty()
-                if (!inheritedResolutionUnique || resolved.isBlank() || resolved.startsWith("<")) return null
-                return choices.filter { it.resolvedModel == resolved }.singleOrNull()
+            if (!inherited) return choices.firstOrNull { it.value == selectedModel }
+            val announced = announcedKey
+            if (announced.isNotEmpty()) {
+                val family = announced.modelFamily()
+                val tiers =
+                    listOf<(ThreadModelChoice) -> Boolean>(
+                        { it.value == announced },
+                        { it.resolvedModel == announced },
+                        { family.isNotEmpty() && it.value.modelFamily() == family },
+                    )
+                for (matches in tiers) {
+                    val rendered = choices.filter(matches)
+                    val candidates = rendered.size + overflowChoices.count(matches)
+                    if (candidates > 0) return rendered.singleOrNull()?.takeIf { candidates == 1 }
+                }
+                return null
             }
-            return choices.firstOrNull { it.value == selectedModel }
+            val resolved = defaultResolution
+            if (!inheritedResolutionUnique || resolved.isEmpty()) return null
+            return choices.filter { it.resolvedModel == resolved }.singleOrNull()
         }
 
     /** Metadata follows the saved inherited setting even when no ordinary row can represent it. */
@@ -269,7 +318,7 @@ data class ThreadRunConfig(
         get() =
             if (!settingsAvailable && pendingModel == null) {
                 null
-            } else if (pendingModel == null && (savedModel.isEmpty() || savedModel == INHERITED_DEFAULT_MODEL_VALUE)) {
+            } else if (inherited) {
                 inheritedChoice
             } else {
                 selectedChoice
@@ -290,16 +339,27 @@ data class ThreadRunConfig(
     /** Whether a write can be addressed at all — the `""`-session-id read-only gate. */
     val writable: Boolean get() = sessionId.isNotEmpty()
 
-    /** The footer's model segment, sourced from selection rather than the independent running reading. */
+    /**
+     * The footer's model segment: the marked row's label. With nothing marked, an inherited conversation
+     * names the announced family, else the default resolution's family, else unavailable (#1308) — never
+     * "Default". An unmatched explicit choice shows its raw value.
+     */
     val modelLabel: String
         get() =
             when {
                 !settingsAvailable && pendingModel == null -> UNKNOWN_RUN_CONFIG_LABEL
                 selectedChoice != null -> selectedChoice?.label.orEmpty()
-                selectedModel.isEmpty() || (pendingModel == null && savedModel == INHERITED_DEFAULT_MODEL_VALUE) ->
-                    UNAVAILABLE_MODEL_LABEL
-                else -> selectedModel.inert()
+                inherited ->
+                    announcedKey
+                        .labelFamily()
+                        .ifEmpty { defaultResolution.labelFamily() }
+                        .ifEmpty { UNAVAILABLE_MODEL_LABEL }
+                else -> selectedModel.inert().ifEmpty { UNAVAILABLE_MODEL_LABEL }
             }
+
+    /** A fallback label's family, `""` when it would read as the hidden default's name. */
+    private fun String.labelFamily(): String =
+        modelFamily().takeUnless { it.equals(INHERITED_DEFAULT_MODEL_VALUE, ignoreCase = true) }.orEmpty()
 
     /** Text for an unrepresented confirmed or pending choice in the sheet, never a radio label. */
     val modelSelectionNote: String?

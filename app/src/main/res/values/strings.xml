@@ -287,6 +287,7 @@
     <string name="question_modal_title_codex">Codex has questions</string>
     <string name="question_other">Other</string>
     <string name="question_other_placeholder">Type your answer</string>
+    <string name="question_waiting_for_answers">Waiting for answers</string>
     <string name="question_continue">Continue</string>
     <string name="question_send_failed">Couldn\'t send. Try again.</string>
     <string name="new_session_failed">Couldn\'t reset the session. Check your connection.</string>

@@ -113,7 +113,7 @@ absent offer simply decodes to an empty list upstream, at [`ModalShownPayloadDto
 not here. `Open` derives `val offersAlwaysAllow: Boolean = modalClass == "permission" && alwaysAllowRules
 .isNotEmpty()`, the single property the render and answer paths both gate on (see [Permission-modal overlay
 § The always-allow offer](permission-modal-overlay.md#the-always-allow-offer-818) and [Modal answer flow §
-The always-allow session grant](modal-answer-flow.md#the-always-allow-session-grant-818)). A later `Shown`
+The session-grant draft](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)). A later `Shown`
 for the same `modalId` still **supersedes** the whole `Open` (the existing last-shown-wins rule above), so a
 re-offer with a different rule list replaces the old one rather than merging with it.
 

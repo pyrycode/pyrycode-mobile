@@ -72,6 +72,7 @@ RelayConnectionSupervisor          activeConnection (single source: pump + scope
   └─ relayStatus ───────────────────── combine ─────────────┘
                                           │
                               connectionStatus: StateFlow<ConnectionStatus>  ──▶ #390 Settings line
+                                                                              ──▶ #1318 Thread (via toConnectionState())
 ```
 
 - **`PumpState? → PyrycodeLinkStatus`** is a total `internal` mapping fun
@@ -103,8 +104,24 @@ RelayConnectionSupervisor          activeConnection (single source: pump + scope
   re-wrap — the upstream is already hot/`Eagerly`), collects it lifecycle-aware at the Settings host,
   and drops the [`ConnectionStatusLine`](connection-status-line.md) component under the Server row.
 
-This is the model's **first and only live consumer**; it shipped ahead of its UI by design (#391/#392
+This was the model's first live consumer; it shipped ahead of its UI by design (#391/#392
 landed the data, #397 the component, #398 the wiring).
+
+**#1318 (the thread — shipped)** is the second live consumer, added once the
+thread needed the pyrycode leg too: reporting `Connected` at relay socket-up hid real handshake
+failures. `RelayConnectionSupervisor.kt` gained `internal fun ConnectionStatus.toConnectionState():
+ConnectionState` beside the pre-existing relay-only `RelayLinkStatus.toConnectionState()`: relay
+`Connected` maps to `ConnectionState.Connected` only when the pyrycode leg is also `Connected`, to
+`Connecting` when the pyrycode leg is `Handshaking`/`Down`, and every other relay value falls back to
+`relay.toConnectionState()` unchanged (so `Idle` stays `Connected`, `Reconnecting(n)` keeps its
+countdown, and the halted states stay `Offline`). `ThreadDestinationFactory.thread`'s
+`ConnectionStateSource.observe()` (`AppModule.kt`) reads
+`bundle.coordinator.connectionStatus.map { it.toConnectionState() }` in place of the old
+relay-only `bundle.supervisor.observe()`. This is a single-ticket seam swap, not a reopening of the
+Strangler Fig from [Connection state § Now derived from the relay leg](connection-state.md#now-derived-from-the-relay-leg-landed-in-391):
+the [`ConnectionBanner`](./connection-banner.md)'s source (`RelayConnectionRegistry`, bound in
+`AppModule.kt`) is untouched and still relay-only. Retry, Re-pair (`PairingRejected`) and
+`repositoryAvailable` did not change — only when the thread reports `Connected` versus `Connecting`.
 
 ## Security
 
@@ -124,8 +141,11 @@ vetted in #391 and is passed through verbatim. Mirror trust-boundary shape to #3
 ## Related
 
 - Ticket notes: [`../codebase/392.md`](../codebase/392.md) — files/line refs, patterns, lessons.
+  #1318 landed after the per-ticket archive was frozen (2026-09-05); its spec is below instead.
 - Spec: `docs/specs/architecture/392-pyrycode-leg-readiness-combined-status.md` (§ Design,
-  § Security review — Verdict PASS).
+  § Security review — Verdict PASS) ·
+  `docs/specs/architecture/1318-thread-connected-after-handshake.md` (the thread's `toConnectionState()`
+  consumer).
 - Relay leg (held verbatim): [Relay link status](relay-link-status.md) (`RelayLinkStatus`,
   [#391](../codebase/391.md)).
 - Producer / wiring: [Relay repository coordinator](relay-repository-coordinator.md)
@@ -138,4 +158,6 @@ vetted in #391 and is passed through verbatim. Mirror trust-boundary shape to #3
 - Renderer (shipped): [Connection status line](connection-status-line.md)
   ([#397](../codebase/397.md)) — the two-part `● Relay   ● Pyrycode` component; live wiring shipped in
   [#398](../codebase/398.md).
+- Second consumer (shipped): [Conversation thread](thread-screen.md) (#1318) — the thread's single-dot
+  `ConnectionState` is now derived from this model via `toConnectionState()`, not the relay leg alone.
 </content>

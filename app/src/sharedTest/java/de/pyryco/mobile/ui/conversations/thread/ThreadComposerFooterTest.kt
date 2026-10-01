@@ -155,6 +155,20 @@ class ThreadComposerFooterTest {
         composeTestRule.onNodeWithText("Run configuration").assertDoesNotExist()
     }
 
+    // #1309: opening Run configuration asks the thread to re-read its settings once; closing asks nothing.
+    @Test
+    fun openingRunConfiguration_sendsOneOpenEvent_andClosingSendsNone() {
+        setThread(baseConfig.copy(permissionMode = "plan"))
+
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
+        composeTestRule.onNodeWithText("Run configuration").assertIsDisplayed()
+        assertEquals(listOf<ThreadEvent>(ThreadEvent.RunConfigOpen), overflowEvents)
+
+        composeTestRule.onNodeWithContentDescription("Close").performClick()
+        composeTestRule.onNodeWithText("Run configuration").assertDoesNotExist()
+        assertEquals(listOf<ThreadEvent>(ThreadEvent.RunConfigOpen), overflowEvents)
+    }
+
     @Test
     fun runConfigurationShowsUnavailablePermissionWhenNoConfirmedMode() {
         setThread(baseConfig.copy(permissionMode = ""))

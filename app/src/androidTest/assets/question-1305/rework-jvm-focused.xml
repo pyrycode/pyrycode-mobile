@@ -1,0 +1,124 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites tests="105" failures="0" errors="0" skipped="0">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-09-30T19:44:01.367Z" time="0.049">
+    <testcase name="a_codex_conversations_batch_names_codex_and_keeps_its_picks_when_the_list_arrives_late" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.004" />
+    <testcase name="one_send_while_in_flight_and_after_success" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.002" />
+    <testcase name="edits_share_the_agent_subscription_without_reseeding_codex" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.003" />
+    <testcase name="continue_is_enabled_only_when_every_question_has_an_answer" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.002" />
+    <testcase name="popping_and_reopening_retains_only_the_current_process_draft" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.007" />
+    <testcase name="navigation_cancels_a_send_without_stranding_the_retained_draft_locked" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.008" />
+    <testcase name="single_choice_other_clears_the_pick_and_multi_choice_keeps_both" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.003" />
+    <testcase name="failed_send_keeps_selections_and_allows_retry" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.002" />
+    <testcase name="queued_collector_cannot_send_or_edit_a_rebuilt_equal_request" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.006" />
+    <testcase name="a_claude_or_unlisted_conversations_batch_names_claude" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.002" />
+    <testcase name="another_conversations_batch_never_shows_or_receives_answers" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.002" />
+    <testcase name="cancel_refuses_once_and_a_failure_can_retry" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.003" />
+    <testcase name="dismissal_and_replacement_discard_selections" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.002" />
+    <testcase name="stale_edits_submissions_and_completions_cannot_touch_a_rebuilt_same_id_request" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.001" />
+    <testcase name="late_completion_never_touches_a_newer_batch" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest" time="0.001" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-30T19:43:54.298Z" time="0.006">
+    <testcase name="navigation_keeps_picks_and_owners_are_isolated" classname="de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest" time="0.0" />
+    <testcase name="dismissal_replacement_and_reconnect_invalidate_stale_callbacks_even_with_same_id" classname="de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest" time="0.0" />
+    <testcase name="host_observation_keeps_invalidating_without_a_screen_and_reconnect_does_not_need_a_null_tick" classname="de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest" time="0.006" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" tests="45" skipped="0" failures="0" errors="0" timestamp="2026-09-30T19:43:53.438Z" time="0.352">
+    <testcase name="registrationFailure_doesNotCrashOrWedgeTheConnection" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.133" />
+    <testcase name="answerModal_withActiveConnection_delegatesAndCompletesOnAck" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.01" />
+    <testcase name="debugBundleRetryUsesFreshOpenConnectionAndNeverReplaysIncompleteTransfer" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.009" />
+    <testcase name="backgroundTasks_areHeldPerHost" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.014" />
+    <testcase name="backgroundTasks_resetOnReconnectButTheFinishedMarkSurvivesTheReconciledRoster" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.011" />
+    <testcase name="backgroundTasks_holdFramesBeforeAnySubscriberAndReadPerConversation" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.003" />
+    <testcase name="pyrycodeLeg_tracksLivePumpAcrossReconnect" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.004" />
+    <testcase name="cancelModal_withNoActiveConnection_throwsIllegalState" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.003" />
+    <testcase name="questionSubmission_rejects_retired_sources_and_requests_before_async_projections_catch_up" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.009" />
+    <testcase name="replayCursor_survivesReconnect" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.005" />
+    <testcase name="connectionDrop_closesPumpAndStopsCollector" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.009" />
+    <testcase name="listPath_overLivePump_yieldsProjectedConversationList" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.045" />
+    <testcase name="onOpen_withNoStoredToken_sendsNothing" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.003" />
+    <testcase name="reconnect_directAtoB_neverExposesRepoWhileNewPumpHandshaking" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.004" />
+    <testcase name="currentModal_retainsOpenModalAcrossConnectionDrop" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.007" />
+    <testcase name="observeQuestionBatch_returnsOnlyThatConversationsBatch" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.004" />
+    <testcase name="interrupt_withActiveConnection_targetsBAfterA" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="reconnect_buildsFreshPumpAndRepository_noCarryover" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.005" />
+    <testcase name="onOpen_withStoredToken_registersOnceWithLiveDeviceName" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="questionBatches_areHeldPerHost" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="combinedModel_reflectsEachLegIndependently" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.003" />
+    <testcase name="tokenRotation_reRegistersOnOpenHostsAndReachesOfflineHostOnConnect" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.005" />
+    <testcase name="questionSends_failForABatchDroppedByReconnect" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="questionSends_withNoActiveConnection_throwIllegalState" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="reconnect_afterOpen_listConversationsSucceedsAndListLoads" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.004" />
+    <testcase name="cancelModal_withActiveConnection_delegatesAndCompletesOnAck" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="reconnect_reRegistersOncePerConnection" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.003" />
+    <testcase name="pumpClosed_pyrycodeLegIsDown_regardlessOfCause" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="liveConnection_startsPumpAndPublishesRepository" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="questionSends_reachOnlyTheHostTheyAreMadeOn" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="interrupt_withNoActiveConnection_throwsIllegalState" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.001" />
+    <testcase name="questionBatches_resetOnReconnectAndHoldReconciledBatchOnce" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="preOpenClosed_abortsWithoutRegistering" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="liveSessionEvents_surfaceTurnStateFromLiveConnection" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.004" />
+    <testcase name="currentModal_accumulatesModalShownBeforeAnySubscriber" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.001" />
+    <testcase name="liveSessionEvents_surviveReconnection" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.004" />
+    <testcase name="betweenConnections_repositoryIsNull" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="close_tearsDownActiveConnection" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="reconnect_directAtoB_exposesRepoOnlyOnceNewPumpReachesOpen" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.003" />
+    <testcase name="threadPath_overLivePump_yieldsOrderedThread" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.008" />
+    <testcase name="questionBatches_holdBatchShownBeforeAnySubscriber" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.001" />
+    <testcase name="pumpOpen_pyrycodeLegIsConnected" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.002" />
+    <testcase name="noPump_pyrycodeLegIsDown" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.001" />
+    <testcase name="bareSocketUp_isHandshaking_neverConnected" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.001" />
+    <testcase name="answerModal_withNoActiveConnection_throwsIllegalState" classname="de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest" time="0.001" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-09-30T19:44:01.302Z" time="0.062">
+    <testcase name="inheritedResolutionDoesNotClaimUniquenessWhenAnotherMatchIsPastTheRenderCap" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.01" />
+    <testcase name="longClaudeFamilyIsBoundedWithoutChangingTheWriteValue" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.005" />
+    <testcase name="inheritedClaudeSetting_selectsOnlyTheOrdinaryRowWithTheSameConcreteModel" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.004" />
+    <testcase name="claudeConversation_listsOnlyClaudeRows_andKeepsDroppedModels" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.004" />
+    <testcase name="codexConversation_withNoSavedModel_hasNoInheritedRow_andOffersNoEffort" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.004" />
+    <testcase name="codexConversation_listsOnlyCodexRows_inDaemonOrder_withTheDaemonsNames" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.003" />
+    <testcase name="codexConversation_leavesOutClaudesDroppedModels" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.003" />
+    <testcase name="codexConversation_savedCodexModel_offersThatRowsLevels" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.003" />
+    <testcase name="claudeRowsUseRawValueFamiliesAndFallBackToPublishedNames" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.008" />
+    <testcase name="theConversationsAgentArriving_refiltersTheMenu" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.003" />
+    <testcase name="untaggedMenu_inAClaudeConversation_isListedAsBefore" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.005" />
+    <testcase name="hiddenChoices_countsTheFilteredList" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentModelMenuTest" time="0.009" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-30T19:43:54.412Z" time="5.724">
+    <testcase name="arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="5.113" />
+    <testcase name="empty_thread_has_inline_questions_active_back_and_composer_without_history_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.233" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-09-30T19:44:00.139Z" time="0.59">
+    <testcase name="loading_row_is_shown_at_the_oldest_end_only_while_a_page_is_in_flight" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.106" />
+    <testcase name="retry_row_is_shown_for_a_retryable_failure_and_its_press_reaches_the_callback" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.095" />
+    <testcase name="dead_end_row_is_shown_for_a_permanent_failure_with_nothing_to_press" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.083" />
+    <testcase name="toggling_the_loading_flag_with_the_rows_unchanged_issues_no_further_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.115" />
+    <testcase name="cycling_the_whole_tail_with_the_rows_unchanged_issues_no_further_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.1" />
+    <testcase name="a_prepended_page_leaves_the_row_the_reader_is_looking_at_where_it_was" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest" time="0.088" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-09-30T19:44:00.733Z" time="0.566">
+    <testcase name="a_reader_scrolled_away_is_not_pulled_back_by_a_streaming_reply" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.167" />
+    <testcase name="a_scroll_refused_under_a_resting_finger_does_not_stop_later_rows_being_followed" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.164" />
+    <testcase name="a_reader_scrolled_away_is_not_pulled_back_by_a_complete_reply" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.122" />
+    <testcase name="a_complete_reply_arriving_at_the_newest_end_is_composed_and_visible" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.111" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.di.RelayConnectionFactoryTest" tests="18" skipped="0" failures="0" errors="0" timestamp="2026-09-30T19:43:53.793Z" time="0.504">
+    <testcase name="queuedDestinationRetryCannotReopenAfterBackgroundClose" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.106" />
+    <testcase name="appTooOldRejectionHaltsOnlyItsOwnHostAndCarriesTheSealedMinimum" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.018" />
+    <testcase name="hostSnapshotsFollowSavedBundlesAcrossBackgroundRenameAndCredentialRotation" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.031" />
+    <testcase name="unavailableHostDoesNotDelayOtherHostAndFailedSaveDoesNotNotify" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.006" />
+    <testcase name="debugBundlesStayWithExactHostsAcrossSelectionRemovalAndReconnect" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.016" />
+    <testcase name="handshakingHostHasStatusButNoExactRepositoryWhileAnotherHostIsLive" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.009" />
+    <testcase name="explicitRecordsKeepDialHandshakeAndRekeyIdentityAfterLatestSaveChanges" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.022" />
+    <testcase name="compatibilityWaitsForPairingAndReadsLatestOnForegroundReconnect" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.016" />
+    <testcase name="registryBackgroundAndDisposalFencePendingReadsAndPreserveResumeCursor" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.012" />
+    <testcase name="repositoryForRejectsRetiredRepositoryAtReconnectTransportEdge" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.01" />
+    <testcase name="registryKeepsPeerEventsModalCursorAndPendingReplyThroughOtherHostFailure" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.015" />
+    <testcase name="destinationRetryKeepsLifecycleLockThroughDialAndRejectsRetiredOwners" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.049" />
+    <testcase name="pairingStatusWaitsForExactCredentialsAndKeepsConnectedPeer" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.02" />
+    <testcase name="appModuleTracksLatestSurvivorWithoutReplacingStableConsumers" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.022" />
+    <testcase name="destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.085" />
+    <testcase name="registryReconcilesCredentialsButRetainsNamesAndIdenticalRecords" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.012" />
+    <testcase name="reconnectResetAndDisposalStayInsideOwningBundle" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.033" />
+    <testcase name="selectorSharesHostSourceAndKeepsDemoLookupSeparateFromSavedRelayHosts" classname="de.pyryco.mobile.di.RelayConnectionFactoryTest" time="0.022" />
+  </testsuite>
+</testsuites>

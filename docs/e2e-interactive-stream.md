@@ -174,6 +174,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    paragraph below, after the peer scenarios. [#1193](https://github.com/pyrycode/pyrycode-mobile/issues/1193)
    extends the model-change method to select in Run configuration and verify selected radios after
    fresh settings replies for both chats; it remains in `InteractiveStreamE2ETest`.
+   [#1308](https://github.com/pyrycode/pyrycode-mobile/issues/1308) turns it into a **one real-claude turn**
+   scenario: an inherited chat's post-reply mark is now asserted against the announced model, by the same
+   value/`resolvedModel`/family tiers `ThreadRunConfig.selectedChoice` applies, and no radio may ever read
+   "Default".
    The **remembered-model new-chat** scenario (#1223 —
    `interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`) chooses a published model in
    one chat, creates another chat, verifies its model before the first send, receives a real Claude
@@ -729,13 +733,18 @@ its own conversations through the paired host's own repository — `RelayConnect
 session and cannot take a model or effort write; `create_conversation` binds one before it replies.
 Every method restores the settings it changed with `set_session_settings` on the same session and clears
 the remembered level in `finally`, so a red run cannot leave a write behind for a later method.
-`interactiveTurn_modelChange_roundTripsAndStaysPerConversation` (**zero** claude turns) picks three usable
-ordinary rows from the published model menu at run time — never a hard-coded model name — writes two chats
-to two of them, opens Run configuration from the footer to select the third for one chat, and checks its
-selected radio after a fresh daemon settings reply. It leaves and reopens that chat, verifies the selected
-radio against another fresh reply, then opens the other chat and verifies its original row remains selected
-against its own fresh reply. The runnable scenario is in `InteractiveStreamE2ETest`; it does not depend on
-the separately reported running model.
+`interactiveTurn_modelChange_roundTripsAndStaysPerConversation` (**one** real-claude turn, since #1308) keeps
+chat X inherited (no pick, no explicit saved model) and sends it one real ping. After the reply, the test
+computes the expected marked row itself from the fresh model menu and the host repository's own announced
+model, using its own copy of the three-tier rule `ThreadRunConfig.selectedChoice` applies (exact `value`,
+then `resolvedModel`, then family; the first tier with any candidate decides, more than one marks nothing).
+`awaitAnnouncedMark` then asserts either that row is marked by its label and `resolved_model` detail, or that
+no model radio is marked and the family note shows outside a radio — and, either way, that no radio reads
+"Default". It then opens Run configuration on X and picks a different published row, confirming the pick
+stays marked — no longer the announcement — after leaving and reopening X, while chat Y's own separately
+saved model is untouched throughout. The runnable scenario is in `InteractiveStreamE2ETest`; it does not
+depend on the separately reported `ThreadRunConfig.running` display text, only on the raw `announcedModel`
+key.
 
 `InteractiveStreamE2ETest.interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage`
 (#1223, **one** real Claude turn) chooses a nondefault model published for the source chat's agent,
@@ -758,8 +767,11 @@ methods stay excluded. With #1208's tool-use method and #1286's Offline Retry pr
 restored methods' explicit presence, as well as excluding ignored methods.
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
-`effective_effort` (an omitted key fails the method) and that the reopened footer's label and note match
-that value exactly, with no default level assumed.
+`effective_effort` (an omitted key fails the method) and a non-empty `permissionMode`. Since
+[#1309](https://github.com/pyrycode/pyrycode-mobile/issues/1309) the thread stays open throughout — it no
+longer leaves and reopens to force a fresh subscription — and asserts the footer's effort label/note and
+its permission label both settle to that fresh reading's values, because the open thread now re-reads its
+settings when the turn ends and (redundantly) when `awaitFooter` opens Run configuration to check.
 `interactiveTurn_chosenEffort_appliesFromTheFirstTurn` (**one** turn) picks a model and effort level from
 the footer before the first message and asserts claude applies exactly that level on the first turn.
 `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` (**two** turns, one in its
@@ -895,19 +907,28 @@ fails the rest of the run.
 
 The permission-answer scenario opens two conversations (A, B) on the answer daemon. A prompt raised in A
 (`ANSWER_PERMISSION_PROMPT`, a `python3` command whose output token the prompt text never contains) shows
-in A's dialog with every decision-context field the frame carries and `always_allow.offered = true`;
-leaving A for B shows no dialog, and returning to A shows it again. Allowing it with don't-ask-again
-ticked closes the dialog, and claude's reply — read from the peer's recorded `assistant_delta` frames, not
-the phone's own bubble (see #981's diagnosis above) — carries the token. `assertBashRan` additionally
-requires a `Bash` `tool_use` and a non-error `tool_result` for it in the frames the peer recorded for that
-turn, so a reply claude could compute or recall (`966 * 7`) cannot pass in place of the command actually
-running. The same prompt sent again in A shows no second `modal_shown` and still passes `assertBashRan`,
-proving the grant held; the same prompt sent in B (whose session holds no grant) shows the dialog again,
-and the peer allowing it closes the dialog with no phone tap. Three real claude turns. The question-answer
+in A's stream with every decision-context field the frame carries and `always_allow.offered = true`.
+[#1306](knowledge/features/permission-modal-overlay.md) moved the request out of its own dialog and into
+`ThreadScreen`'s message stream (following #1305's question batch below); the scenario now also ticks the
+session-grant checkbox and arms Allow before leaving A for B — B shows no card and no A prompt text, and
+returning to A restores the checked grant but clears the arm, so allowing needs two fresh taps rather than
+one. Allowing it with don't-ask-again ticked removes the card, and claude's reply — read from the peer's
+recorded `assistant_delta` frames, not the phone's own bubble (see #981's diagnosis above) — carries the
+token. `assertBashRan` additionally requires a `Bash` `tool_use` and a non-error `tool_result` for it in the
+frames the peer recorded for that turn, so a reply claude could compute or recall (`966 * 7`) cannot pass in
+place of the command actually running. The same prompt sent again in A shows no second `modal_shown` and
+still passes `assertBashRan`, proving the grant held; the same prompt sent in B (whose session holds no
+grant) shows the card again, and the peer allowing it removes it with no phone tap. Three real claude turns.
+The question-answer
 scenario opens one conversation and sends a prompt asking claude to call `AskUserQuestion` with two labels
-and then echo the chosen one back (`QUESTION_PROMPT`); the phone answers one label from the batch modal and
-claude's reply names it and not the other, then the peer answers the modal shown for a repeat of the same
-prompt, closing it with no phone tap. Two real claude turns. Both scenarios resolved open questions from
+and then echo the chosen one back (`QUESTION_PROMPT`); the phone answers one label from the batch and
+claude's reply names it and not the other, then the peer answers the batch shown for a repeat of the same
+prompt, closing it with no phone tap. Two real claude turns. #1305 moved the batch from its own dialog into
+`ThreadScreen`'s scrollable stream (see [Question batch modal § Placement](knowledge/features/question-batch-modal.md#placement-inline-in-threadscreen-since-1305));
+`awaitInlineQuestion` / `awaitNoInlineQuestion` scroll the lazy list to the `question-batch-title` tag
+instead of waiting on a dialog-scoped title match, and the absence check also requires the
+`question-batch-actions` tag and the always-composed "Waiting for answers" status label to be gone, since a
+lazy row can be merely offscreen rather than actually absent. Both scenarios resolved open questions from
 the plan on their first live pass: claude does supply decision context and does offer don't-ask-again for a
 default-mode `python3` ask, and real claude did call `AskUserQuestion` reliably from the scripted prompt, so
 no deterministic-only fallback was needed. The protocol doc's paragraph that a `question_answer` is
@@ -1508,7 +1529,10 @@ transient 41-method branch failed the live gate, leaving 40. #1251 restored the 
 create-edit-archive method through reachable controls, bringing the selector and floor to 41.
 #1252 restored the host-backed diagnostic archive method, bringing both to 42. #1208 included the
 existing #481 tool-use method, bringing both to 43. #1286 adds the Offline Retry
-method, bringing both to 44. `LIVE_MINIMUM` is
+method, bringing both to 44. #1305 excluded the cross-host file method
+(`interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`), `@Ignore`d pointing at #1369 after
+daemon #2699 made the phone's ready-file row go missing on `main` too, bringing both back to 43; #1369
+restores all three (the method, its LIVE list entry and `LIVE_MINIMUM`). `LIVE_MINIMUM` is
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -2709,6 +2733,50 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — updated:** [#1309](https://github.com/pyrycode/pyrycode-mobile/issues/1309) rewrote
+  `InteractiveStreamE2ETest.interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` to drop
+  `leaveThread` / `openChatRow`: the thread now re-reads its run settings itself when the turn ends and when
+  a sheet opens (see [Thread composer footer § Applied
+  effort](knowledge/features/thread-composer-footer.md#applied-effort-889)), so a fresh subscription is no
+  longer needed to see the settled reading. The method also asserts the fresh reply's `permissionMode` is
+  non-empty and that the footer's permission label settles to it, through the same `awaitFooter` helper
+  `appliedEffortFooter` already used for effort. The selector and `LIVE_MINIMUM` are unchanged at 43 — this
+  is a behaviour change to an existing method, not a new one. The dispatcher's post-verifier
+  `python3 scripts/android-test-gate.py live` run (branch `feature/1309` at `eee5056e5e`, merged with
+  `origin/main` at `8537b1cf00` in a detached worktree) executed 43 methods, failed 0 and skipped 0,
+  including this named method passing.
+
+- **Coverage — updated:** [#1308](https://github.com/pyrycode/pyrycode-mobile/issues/1308) turns
+  `InteractiveStreamE2ETest.interactiveTurn_modelChange_roundTripsAndStaysPerConversation` into a
+  **one real-claude turn** scenario. Chat X stays inherited through one real ping reply; the test computes
+  the expected marked row itself from the fresh model menu and the host repository's announced model, using
+  its own copy of the value → `resolvedModel` → family tiers `ThreadRunConfig.selectedChoice` applies (the
+  first tier with any candidate decides, more than one marks nothing). `awaitAnnouncedMark` replaces the
+  former `awaitNoModelMarked`: it checks every non-default Claude row of the fresh menu, including rows that
+  share a family label, so it cannot pass by skipping the rows most likely to be marked wrongly, and it
+  requires either exactly the expected row (by label and `resolved_model` detail) or no model row at all with
+  the family note shown outside a radio — either way, that no radio reads "Default". X is then picked to a
+  different published row in Run configuration and the pick is confirmed to survive leaving and reopening,
+  no longer tracking the announcement; Y's own separately saved model is untouched throughout. The selector
+  and `LIVE_MINIMUM` are unchanged at 43 — this is a behaviour change to an existing method, not a new one.
+  The dispatcher's post-verifier `python3 scripts/android-test-gate.py live` run (branch `feature/1308` at
+  `457c238304` merged with `origin/main` at `e902919aa6`) executed 43 methods, failed 0 and skipped 0,
+  including this named method passing.
+
+- **Coverage — updated:** [#1306](https://github.com/pyrycode/pyrycode-mobile/issues/1306) adapted
+  `InteractiveStreamE2ETest.interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` to the inline
+  permission surface (see [Permission-modal overlay](knowledge/features/permission-modal-overlay.md), which
+  moved the request out of its dialog into `ThreadScreen`'s own message stream). `promptDialog` /
+  `inPromptDialog` / `awaitPromptDialog` / `awaitNoPromptDialog` now key on the request card instead of the
+  dialog's Cancel; `awaitReadPrompt` was rescoped mid-build to the card specifically, because scoping by "an
+  ancestor holding Cancel" would also match the phone's own message naming the same file once the request is
+  inline. The scenario now additionally ticks the session-grant checkbox and arms Allow in conversation A
+  before leaving for B (no card, no A prompt text there), returns to A (the grant checkbox restored, the arm
+  cleared), and confirms allowing needs two fresh taps — proving the phone's answer, A's session grant and
+  B's peer resolution all survive the inline move. The selector and `LIVE_MINIMUM` are unchanged at 43 — this
+  is an adaptation of an existing method, not a new one. The 2026-09-30 full live suite executed 43 methods,
+  failed 0 and skipped 0, including this passing method; this was not a separate focused live run.
 
 - **Coverage — added:** [#1286](https://github.com/pyrycode/pyrycode-mobile/issues/1286)
   adds `InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`

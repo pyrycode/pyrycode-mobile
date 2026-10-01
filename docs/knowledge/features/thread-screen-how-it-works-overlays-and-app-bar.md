@@ -214,15 +214,51 @@ top edge, 12 dp below the completed bar, and its right edge shares the 20 dp gut
 
 [#883](../../specs/architecture/883-retire-literal-screen.md) removed the banner outright, once the daemon dropped the server-side screen-snapshot render path the action opened: `ThreadScreen` no longer renders it, and since it was `isStalled`'s only consumer, `ThreadScreen`'s `isStalled` parameter and `MainActivity`'s collection of `vm.isStalled` were removed too. `ThreadViewModel.isStalled` and the underlying `observeStall` projection are untouched — see [Stall state](stall-state.md), which now has no UI consumer.
 
-### Permission-modal overlay placement (post-#446)
+### Permission-modal placement (post-#446, moved inline in #1306)
 
-[#446](../codebase/446.md) renders the hoisted [`currentModal`](current-modal-state.md) (#445; since #816,
-already filtered to this thread's own conversation) as the **seventh `Scaffold` sibling** — a `when (modalState)` block after the `DeleteConfirmationDialog` block (`ThreadScreen.kt:314`), **outside** the content `Column` (it is a floating dialog window, not part of the thread layout). `MainActivity` collects `currentModal` (and, since [#452](../codebase/452.md), `armedOptionId`) via `collectAsStateWithLifecycle` and forwards them as the defaulted `modalState` / `armedOptionId` params, the same defaulted-flat-sibling shape `isThinking` uses (and `isStalled` used, before [#883](../../specs/architecture/883-retire-literal-screen.md) retired it); `modalSendErrors` is forwarded by reference and collected inside `ThreadScreen` (single-consumer; the snackbar is a screen concern). Full doc: [Permission-modal overlay](permission-modal-overlay.md).
+[#446](../codebase/446.md) rendered the hoisted [`currentModal`](current-modal-state.md) (#445; since #816,
+already filtered to this thread's own conversation) as the seventh `Scaffold` sibling — a floating dialog
+window, outside the content `Column`. **[#1306](permission-modal-overlay.md) removed that sibling for the
+`Open` case**: the request now renders as three `LazyColumn` items inside the message list itself (§
+[list and status row § Inline permission rows](thread-screen-how-it-works-list-and-status-row.md#inline-permission-rows-and-the-shared-reveal-1306)),
+so the reader can scroll history, go Back or switch conversations without answering or cancelling. Only
+`Dismissed` still reaches this `when (modalState)` block after the `DeleteConfirmationDialog` block
+(`ThreadScreen.kt`) — `Open` now resolves to `Unit` there, since its rendering moved into the list. Full
+doc: [Permission-modal overlay](permission-modal-overlay.md).
 
-- **Separate surface, not a `LazyColumn` row.** `Open` → a private `PermissionModalOverlay` built on **`BasicAlertDialog`** (not the 2-button `AlertDialog` — the option count varies 4/2), rendering verbatim `title` / `prompt` / `options` (wire **array order**); `ModalOptionButton` is a stateless **3-way** ([#452](../codebase/452.md), `isArmed` precedence): the fail-safe-deny `defaultOptionId` → filled `Button`, the VM's armed non-default (`armedOptionId`) → `FilledTonalButton` (below the default's emphasis), else `OutlinedButton`, each with its `stateDescription` marker. `modalClass` is carried but not branched on. **Live since [#452](../codebase/452.md):** the option-tap forwards verbatim to `onModalOption` (the VM decides arm-vs-send, no UI-side arming), an explicit low-emphasis Cancel `TextButton` reaches `onModalCancel`, and `filterTouchesWhenObscured = true` on the dialog's own window adds a tapjacking net now that taps are live.
-- **Scoped to this thread's conversation (#816).** The coordinator's fold holds one modal per host (not a per-conversation map), but `ThreadViewModel.currentModal` filters it via `ModalUiState.scopedTo(conversationId)` before the screen ever sees it: a modal raised for another conversation on the same host arrives here as `Hidden`, so it neither renders nor can be answered from this thread. A missing/blank `conversation_id` on the wire scopes to no thread rather than every thread.
-- **Dismiss = snackbar, not overlay.** `Dismissed` renders no overlay and fires a `LaunchedEffect(modalId)` snackbar surfacing a **mapped local** reason (`dismissReasonText`: remote/local/timeout + a generic forward-compat fallback). The Scaffold gains a `remember { SnackbarHostState() }` + `snackbarHost` (the only change to the existing Scaffold), mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent. Keying on `modalId` (a sticky terminal state in #445's fold) fires it exactly once per resolution.
-- **Security (this slice owns the render-time obligations #445 deferred).** Plain `Text` only (never [`MarkdownText`](markdown-text.md)/`SelectionContainer`), and `DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` sets `FLAG_SECURE` on the **dialog's own window** — the [#381](../codebase/381.md) `LiteralScreenSurface` precedent (retired by [#883](../../specs/architecture/883-retire-literal-screen.md)) flagged the **Activity** window, which a dialog draws outside of, so `SecureOn` (not the default `Inherit`) is load-bearing. No modal text reaches `rememberSaveable` / saved-instance state; the mapped-not-echoed dismiss reason is a confidentiality requirement (the snackbar draws in the un-secured Activity window). `dismissOnBackPress`/`dismissOnClickOutside = false` — a permission gate ignores stray taps; cancel is the explicit Cancel button only. [#452](../codebase/452.md) adds the remaining live-tap obligations: **send-error confidentiality** (the `modalSendErrors` event is `Flow<Unit>` + a fixed local `modal_send_failed` string ⇒ structurally no payload reaches the snackbar) and **tapjacking** (`filterTouchesWhenObscured = true` on the dialog's own window, the View-level analog of `SecureOn`, different fabric from the second-confirm UX belt).
+- **Inline card, not a separate surface.** `permissionRequestItems` renders verbatim `title` / `prompt` /
+  `options` (wire **array order**) inside a bordered card, then Cancel below it; `ModalOptionButton` keeps
+  its stateless **3-way** ([#452](../codebase/452.md), `isArmed` precedence): the fail-safe-deny
+  `defaultOptionId` → filled `Button`, the VM's armed non-default (`armedOptionId`) → `FilledTonalButton`
+  (below the default's emphasis), else `OutlinedButton`, each with its `stateDescription` marker.
+  `modalClass` is carried but not branched on.
+- **Every decision callback now carries the rendered `modalId`.** `onModalOption(modalId, optionId)` /
+  `onModalCancel(modalId)` / `onAlwaysAllowChanged(modalId, accepted)` all forward the id the composed item
+  was drawn for; `ThreadViewModel` rejects a mismatch against `scopedModal()`'s synchronous read
+  ([Modal answer flow § Stale taps](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306)) — a tap
+  composed before a replacement can no longer answer, cancel or grant the replacement in one tap.
+- **Scoped to this thread's conversation (#816).** Unchanged: the coordinator's fold holds one modal per
+  host (not a per-conversation map), but `ThreadViewModel.currentModal` filters it via
+  `ModalUiState.scopedTo(conversationId)` before the screen ever sees it: a modal raised for another
+  conversation on the same host arrives here as `Hidden`, so it neither renders nor can be answered from
+  this thread. A missing/blank `conversation_id` on the wire scopes to no thread rather than every thread.
+- **Dismiss stays a snackbar, not a row.** `Dismissed` renders no list item and fires a
+  `LaunchedEffect(modalId)` snackbar surfacing a **mapped local** reason (`dismissReasonText`:
+  remote/local/timeout + a generic forward-compat fallback). The Scaffold still carries its
+  `remember { SnackbarHostState() }` + `snackbarHost`, mirroring the
+  [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent. Keying on `modalId`
+  (a sticky terminal state in #445's fold) fires it exactly once per resolution.
+- **Security moved from the dialog window to the activity surface (#1306).** Plain `Text` only, bounded by a
+  length constant (never [`MarkdownText`](markdown-text.md)/`SelectionContainer`) — unchanged. But the
+  dialog's own-window `FLAG_SECURE` and `filterTouchesWhenObscured` are gone along with the dialog; the
+  request now relies on the same `QuestionPromptProtection` the #1305 question batch mounts on the activity
+  surface, kept for either prompt kind from one call site (§
+  [list and status row](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305)).
+  No modal text reaches `rememberSaveable` / saved-instance state. Back / outside-tap no longer have a
+  dialog's `dismissOnBackPress`/`dismissOnClickOutside` to disable — they simply don't reach the request at
+  all (it is list content, not a dismissable surface); Cancel is still the only path to `onModalCancel`. The
+  send-error confidentiality and the fail-safe-deny posture are unchanged; see
+  [Permission-modal overlay § Security](permission-modal-overlay.md#security) for the full accounting.
 
 ### Slash-command type-ahead placement (post-#885)
 
@@ -256,9 +292,7 @@ SlashCommandTypeAhead(
 after the footer's `OptionsOverlay` `Box` closes and before the `WorkspacePicker` mount — not as an eighth
 `Scaffold` sibling and not from the `MainActivity` destination block the way
 [`QuestionBatchModal`](question-batch-modal.md) is drawn (`MobileReadOnlyModal` opens its own `Dialog`
-window, so its place in the composition tree doesn't affect what it draws over — the same reasoning
-[Permission-modal overlay placement](#permission-modal-overlay-placement-post-446) already gives for its own
-`Scaffold`-sibling `when` block):
+window, so its place in the composition tree doesn't affect what it draws over):
 
 ```kotlin
 var backgroundTasksOpen by remember(state.conversationId) { mutableStateOf(false) }
@@ -307,6 +341,8 @@ val connectionState: StateFlow<ConnectionState> =
 ```
 
 `SharingStarted.WhileSubscribed(5_000)` matches the `state` flow's lifetime policy — both share the same `viewModelScope` and subscription window. If the screen resumes within 5s of leaving the back stack, the existing collector is reused (no `Connected` flash from re-subscription). `initialValue = ConnectionState.Connected` matches the fake's seeded value so the screen's first frame paints with the banner already short-circuited.
+
+The VM's own `connectionStateSource.observe()` call is unchanged by #1318 — what changed is what `ThreadDestinationFactory.thread` (`di/AppModule.kt`) passes as the `ConnectionStateSource`. It now reads `bundle.coordinator.connectionStatus.map { it.toConnectionState() }`, the two-leg model, in place of the relay-only `bundle.supervisor.observe()`: `Connected` now means the pyrycode leg's Noise handshake finished, not just the relay socket opening, so a live-socket-but-unhandshaken host reads `Connecting`. See [Connection state § #1318](connection-state.md) for the mapping and [Relay reconnect supervisor § #1318](relay-reconnect-supervisor.md) for the `toConnectionState()` overload.
 
 ### `ThreadTopAppBar` — Figma `16:8` chrome
 

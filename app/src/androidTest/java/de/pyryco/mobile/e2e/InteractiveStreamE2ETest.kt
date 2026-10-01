@@ -26,6 +26,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
@@ -2604,15 +2605,18 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A model change made on the phone reaches only its own conversation and survives a reopen (#545).
-     * Two chats are prepared through the host's own repository: `create_conversation` binds a session, so
-     * a chat nobody has messaged can take a write. X gets a model with effort levels, Y another model and a
-     * different effort. Every model comes from the menu the host publishes for X at run time, and none is
-     * named here. Neither chat has run claude, so no model change restarts one.
+     * A model change made on the phone reaches only its own conversation and survives a reopen (#545), and
+     * an inherited chat marks the model claude announced rather than the `default` row's resolution
+     * (#1308). Two chats are prepared through the host's own repository: `create_conversation` binds a
+     * session, so a chat nobody has messaged can take a write. X stays inherited and runs one real turn;
+     * the row its announcement maps to is computed here from the fresh published menu, by value, then
+     * `resolved_model`, then family, and no model radio may read "Default". A picked row then stays
+     * marked after leaving and reopening. Y gets its own model and effort, which X's pick must not touch.
+     * Every model comes from the menu the host publishes at run time, and none is named here.
      *
      * The "fresh reply" is a new `request_session_settings`, sent by [freshSettings] on every call.
      *
-     * **Zero real-claude turns.**
+     * **One real-claude turn.**
      */
     @Test
     fun interactiveTurn_modelChange_roundTripsAndStaysPerConversation() {
@@ -2625,26 +2629,35 @@ class InteractiveStreamE2ETest {
             val nameX = MODEL_X_NAME_PREFIX + stamp
             val chatX = prepareChat(nameX, originals)
             val chatY = prepareChat(MODEL_Y_NAME_PREFIX + stamp, originals)
+            assertTrue("X starts with a saved model", freshSettings(chatX.id).model in setOf("", INHERITED_MODEL_VALUE))
             val rows = usableRows(publishedMenu(chatX.id)).filter { it.value != INHERITED_MODEL_VALUE }
-            val rowA = checkNotNull(rows.firstOrNull { it.effortLevels.isNotEmpty() }) { "no published model offers effort levels" }
-            val rowB = checkNotNull(rows.firstOrNull { it.value != rowA.value }) { "the menu publishes fewer than two usable models" }
-            val target =
-                checkNotNull(rows.firstOrNull { it.value != rowA.value && it.value != rowB.value }) {
-                    "the menu publishes fewer than three usable models"
-                }
-            val effortX = rowA.effortLevels.first()
-            val effortY = rowB.effortLevels.firstOrNull { it != effortX }.orEmpty()
-            writeSettings(chatX.id, model = rowA.value, effort = effortX)
+            val rowB = checkNotNull(rows.firstOrNull()) { "the menu publishes no usable model" }
+            val effortY = rowB.effortLevels.firstOrNull().orEmpty()
             writeSettings(chatY.id, model = rowB.value, effort = effortY)
-            assertSaved(chatX.id, rowA.value, effortX)
             assertSaved(chatY.id, rowB.value, effortY)
 
-            // Open Run configuration from the footer and pick a published row. A fresh reading settles it.
+            // X inherits: after a real turn the mark follows what claude announced, not the default row.
             openChatRow(nameX)
-            awaitFooter(changeModelLabel, rowA.dropdownLabel(ConversationAgent.Claude))
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            val announced = announcedModel(chatX.id)
+            check(announced.isNotEmpty()) { "claude's announced model was cut" }
+            val freshMenu = publishedMenu(chatX.id)
+            val marked = announcedRow(freshMenu, announced)
+            awaitAnnouncedMark(freshMenu, marked, claudeFamily(announced).ifEmpty { UNAVAILABLE_MODEL_LABEL })
+            if (marked != null) awaitFooter(changeModelLabel, marked.dropdownLabel(ConversationAgent.Claude))
+            assertNoDefaultModelRadio()
+
+            // A pick is exact-value and is never moved by the announcement.
+            val target =
+                checkNotNull(
+                    rows.firstOrNull { it.value != marked?.value && it.value != rowB.value }
+                        ?: rows.firstOrNull { it.value != marked?.value },
+                ) {
+                    "the menu publishes no usable model other than the announced one"
+                }
             pickFooterOption(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
-
             assertEquals("X's saved model after the change", target.value, freshSettings(chatX.id).model)
             assertSaved(chatY.id, rowB.value, effortY)
 
@@ -2727,9 +2740,9 @@ class InteractiveStreamE2ETest {
      * `effective_effort`, and an omitted key fails. The expectation is built from that reply, so no default
      * level is assumed.
      *
-     * The open thread re-reads its settings only on subscription, a session transition or a settled write,
-     * not at the end of a turn. The settled footer is therefore read after leaving and reopening the
-     * thread, which subscribes again.
+     * The thread stays open throughout (#1309): it re-reads its settings when the turn ends and when Run
+     * configuration opens, so the applied effort and claude's reported permission mode both appear without
+     * leaving and reopening it.
      *
      * **One real-claude turn.**
      */
@@ -2748,11 +2761,13 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            val (label, note) = appliedEffortFooter(freshSettings(chat.id).effectiveEffort)
+            val fresh = freshSettings(chat.id)
+            val (label, note) = appliedEffortFooter(fresh.effectiveEffort)
+            val mode = fresh.permissionMode
+            assertTrue("the fresh reading after a real turn confirms no permission mode", mode.isNotEmpty())
 
-            leaveThread()
-            openChatRow(name)
             awaitFooter(changeEffortLabel, label) { it == note }
+            awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
         } finally {
             restoreSettings(originals)
         }
@@ -3060,8 +3075,10 @@ class InteractiveStreamE2ETest {
      * the stdio prompt surface on, the one path that offers don't-ask-again. The phone pairs with it by code
      * `--allow-remote-permissions`; it is the only host where the phone may answer. A peer paired the same way
      * records every frame and allows the last prompt.
-     *  * **Only the asking thread shows it.** Chat A's command raises a prompt the phone draws in A with its
-     *    decision context, and not in chat B.
+     *  * **Only the asking thread shows it.** Chat A's command raises a prompt the phone draws inline in A with
+     *    its decision context, and not in chat B.
+     *  * **Leaving keeps the grant, not the arm (#1306).** Ticking don't-ask-again and arming Allow in A, then
+     *    leaving for B and back, restores the tick and clears the arm, so allowing takes two new taps.
      *  * **The phone's allow reaches A's claude.** Ticking don't-ask-again and allowing on the phone ends A's
      *    turn, and claude's reply carries the command's output, which no prompt contains.
      *  * **Don't-ask-again holds.** The same command in A runs again with no second prompt.
@@ -3102,29 +3119,38 @@ class InteractiveStreamE2ETest {
                 (shown.alwaysAllow as? JsonObject)?.get("offered")?.jsonPrimitive?.contentOrNull,
             )
 
-            // 2. AC-1: the prompt belongs to A. B's thread draws none; A's draws it again.
+            // 2. #1306 AC-2: in A, tick don't-ask-again and arm Allow (a non-default option arms first), inline.
+            val offer = hasText(string(R.string.modal_always_allow_label)) and hasClickAction() and inPromptDialog()
+            tapInPrompt(offer)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(offer and isOn()).fetchSemanticsNodes().isNotEmpty()
+            }
+            val allow = hasText(shown.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
+            val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
+            tapInPrompt(allow)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
+            }
+
+            // 3. AC-1: the prompt belongs to A. Leaving A for B shows no A prompt there; returning to A restores
+            //    the ticked grant but not the arm, so allowing takes two new taps.
             leaveThread()
             openChatRow(nameB)
             composeTestRule.waitForIdle()
             SystemClock.sleep(SCOPE_SETTLE_MS)
             composeTestRule.onAllNodes(promptDialog()).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasText(shown.prompt, substring = true)).assertCountEquals(0)
             leaveThread()
             openChatRow(nameA)
             awaitPromptDialog()
-
-            // 3. AC-1 / AC-2: tick don't-ask-again, then allow on the phone (a non-default option arms first).
-            val offer = hasText(string(R.string.modal_always_allow_label)) and hasClickAction()
-            composeTestRule.onNode(offer).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(offer and isOn()).fetchSemanticsNodes().isNotEmpty()
-            }
-            val allow = hasText(shown.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
-            composeTestRule.onNode(allow).performClick()
-            val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
+            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(offer)
+            composeTestRule.onNode(offer).assertIsOn()
+            composeTestRule.onAllNodes(armed).assertCountEquals(0)
+            tapInPrompt(allow)
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
             }
-            composeTestRule.onNode(allow).performClick()
+            tapInPrompt(allow)
 
             // 4. AC-1: the daemon took the phone's answer for this prompt, A's turn ends, and claude's reply
             //    carries the command's output. The dialog leaves the thread.
@@ -3186,18 +3212,25 @@ class InteractiveStreamE2ETest {
             // 1. AC-3: claude asks in this chat, and the phone draws the question.
             sendFromPhone(QUESTION_PROMPT)
             val batchId = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS) }
-            awaitQuestionModal()
+            awaitInlineQuestion()
 
             // 2. AC-3: the phone picks one option and continues; the daemon takes it as this batch's answer.
             val mark = peer.recorded(chat).size
+            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(
+                hasText(QUESTION_PICK, substring = true) and hasClickAction(),
+            )
             composeTestRule
-                .onAllNodes(hasText(QUESTION_PICK, substring = true) and hasClickAction() and inPromptDialog())
-                .onFirst()
+                .onAllNodes(
+                    hasText(QUESTION_PICK, substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("thread-question-row")),
+                ).onFirst()
                 .performClick()
-            val continueButton = hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled()
+            val continueButton =
+                hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled() and
+                    hasAnyAncestor(hasTestTag("question-batch-actions"))
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
             }
+            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(continueButton)
             composeTestRule.onNode(continueButton).performClick()
             val dismissed = runBlocking { peer.awaitQuestionDismissed(batchId, THREAD_TIMEOUT_MS) }
             assertEquals("who resolved the question", REMOTE_SOURCE, peer.field(dismissed, "source"))
@@ -3208,14 +3241,14 @@ class InteractiveStreamE2ETest {
             val reply = assistantText(peer, chat, mark)
             assertTrue("the reply does not name the chosen option", QUESTION_PICK in reply)
             assertTrue("the reply names the option the phone did not choose", QUESTION_OTHER !in reply)
-            awaitNoQuestionModal("the question stayed after the phone answered it")
+            awaitNoInlineQuestion("the question stayed after the phone answered it")
 
-            // 4. AC-4: asked again, the peer answers, and the phone's modal closes with no tap.
+            // 4. AC-4: asked again, the peer answers, and the phone's inline batch disappears with no tap.
             sendFromPhone(QUESTION_PROMPT)
             val second = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS, occurrence = 2) }
-            awaitQuestionModal()
+            awaitInlineQuestion()
             runBlocking { peer.answerQuestion(second, 0, QUESTION_OTHER, THREAD_TIMEOUT_MS) }
-            awaitNoQuestionModal("the question stayed after the peer answered it")
+            awaitNoInlineQuestion("the question stayed after the peer answered it")
             awaitTurnEnd(peer, chat, 2, "the peer-answered turn")
         } finally {
             peer.close()
@@ -4310,7 +4343,11 @@ class InteractiveStreamE2ETest {
      *    no such id, and host B itself answers the id as not found.
      *
      * **One real-claude turn**: the phone's message on host A.
+     *
+     * Ignored and left out of the live list since daemon #2699 pushes the sender's own message back: the
+     * phone's ready file row never appears, on `main` too. #1369 tracks the fix and restores both.
      */
+    @Ignore("blocked on #1369 — the phone's file row is missing after daemon #2699 pushes the sent message back")
     @Test
     fun interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost() {
         val serverIdA = twoHostArg(ARG_SERVER_ID)
@@ -5165,33 +5202,59 @@ class InteractiveStreamE2ETest {
             "missing instrumentation arg '$key' — scripts/e2e-emulator.sh passes it once the answer daemon (#966) is up"
         }
 
-    /** A modal's Cancel, which every open prompt dialog draws. */
-    private fun promptDialog(): SemanticsMatcher = hasText(modalCancel) and hasClickAction()
+    /** The inline permission request's card (#1306), which holds its prompt, context, grant offer and options. */
+    private fun promptDialog(): SemanticsMatcher = hasTestTag(PERMISSION_CARD_TEST_TAG)
 
-    /** A node inside the open prompt dialog, the window holding its Cancel. */
-    private fun inPromptDialog(): SemanticsMatcher = hasAnyAncestor(hasAnyDescendant(promptDialog()))
+    /** A node inside the open request's card. */
+    private fun inPromptDialog(): SemanticsMatcher = hasAnyAncestor(promptDialog())
 
+    /** The request's lazy rows can be merely offscreen, so bring the card into view before judging it present. */
     private fun awaitPromptDialog() {
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            runCatching { composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(promptDialog()) }.isSuccess &&
+                composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private fun awaitNoPromptDialog(failure: String) {
         try {
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().isEmpty() }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                listOf(PERMISSION_CARD_TEST_TAG, "permission-request-title", "permission-request-cancel").all { tag ->
+                    composeTestRule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isEmpty()
+                }
+            }
         } catch (e: ComposeTimeoutException) {
             throw AssertionError(failure, e)
         }
     }
 
-    private fun awaitQuestionModal() {
-        val title = hasText(string(R.string.question_modal_title))
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(title).fetchSemanticsNodes().isNotEmpty() }
+    /** Scroll the thread to [matcher] inside the open request, then tap it with a real pointer. */
+    private fun tapInPrompt(matcher: SemanticsMatcher) {
+        composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(matcher)
+        composeTestRule.onNode(matcher).performTouchInput { click(center) }
     }
 
-    private fun awaitNoQuestionModal(failure: String) {
-        val title = hasText(string(R.string.question_modal_title))
+    private fun awaitInlineQuestion() {
+        val title = hasTestTag("question-batch-title")
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            runCatching { composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(title) }.isSuccess &&
+                composeTestRule.onAllNodes(title).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun awaitNoInlineQuestion(failure: String) {
+        val title = hasTestTag("question-batch-title")
         try {
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(title).fetchSemanticsNodes().isEmpty() }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                // Lazy prompt rows can be absent merely offscreen; the status band's label is always composed.
+                composeTestRule.onAllNodes(title).fetchSemanticsNodes().isEmpty() &&
+                    composeTestRule.onAllNodes(hasTestTag("thread-question-row")).fetchSemanticsNodes().isEmpty() &&
+                    composeTestRule.onAllNodes(hasTestTag("question-batch-actions")).fetchSemanticsNodes().isEmpty() &&
+                    composeTestRule
+                        .onAllNodes(hasText(string(R.string.question_waiting_for_answers)))
+                        .fetchSemanticsNodes()
+                        .isEmpty()
+            }
         } catch (e: ComposeTimeoutException) {
             throw AssertionError(failure, e)
         }
@@ -5301,12 +5364,13 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Wait until the open thread shows a permission prompt that names this Read: a node in the prompt's
-     * dialog, the one holding its Cancel, whose text carries the file's [baseName] or the tool name `Read`.
-     * The phone's own message names both, so the dialog scope is what makes the match the prompt's.
+     * Wait until the open thread shows a permission prompt that names this Read: a node in the inline request's
+     * card (#1306) whose text carries the file's [baseName] or the tool name `Read`. The phone's own message
+     * names both, so the card scope is what makes the match the prompt's.
      */
     private fun awaitReadPrompt(baseName: String) {
-        val inPrompt = hasAnyAncestor(hasAnyDescendant(hasText(modalCancel) and hasClickAction()))
+        awaitPromptDialog()
+        val inPrompt = inPromptDialog()
         val namesRead =
             SemanticsMatcher("names the Read of $baseName") { node ->
                 val text =
@@ -5321,8 +5385,8 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(namesRead and inPrompt).fetchSemanticsNodes().isNotEmpty()
             }
         } catch (e: ComposeTimeoutException) {
-            val shown = composeTestRule.onAllNodes(hasText(modalCancel) and hasClickAction()).fetchSemanticsNodes().size
-            throw AssertionError("no permission prompt naming the Read appeared on the phone (prompts with Cancel: $shown)", e)
+            val shown = composeTestRule.onAllNodes(promptDialog()).fetchSemanticsNodes().size
+            throw AssertionError("no permission prompt naming the Read appeared on the phone (request cards: $shown)", e)
         }
     }
 
@@ -5516,6 +5580,113 @@ class InteractiveStreamE2ETest {
                 )
         }
 
+    /** The raw model claude announced for [conversationId]'s latest turn, as the phone's host repository holds it. */
+    private fun announcedModel(conversationId: String): String {
+        val repository = hostRepository()
+        val announced =
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeAnnouncedModel(conversationId).filterNotNull().first() } }
+        return announced.model.takeUnless { announced.truncated }.orEmpty()
+    }
+
+    /** Desktop's family rule, restated here so the scenario does not share the code it checks. */
+    private fun claudeFamily(identifier: String): String =
+        identifier
+            .removePrefix("claude-")
+            .takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
+            .replaceFirstChar { it.uppercaseChar() }
+
+    /**
+     * The Claude row an inherited conversation marks for [announced] (#1308): exact value, else
+     * `resolved_model`, else family. The first tier with any candidate decides; more than one marks nothing.
+     */
+    private fun announcedRow(
+        menu: ModelMenu,
+        announced: String,
+    ): ModelMenuRow? {
+        if (announced.isEmpty()) return null
+        val rows = menu.rows.filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
+        val family = claudeFamily(announced)
+        val tiers =
+            listOf<(ModelMenuRow) -> Boolean>(
+                { it.value == announced },
+                { it.resolvedModel == announced && "resolved_model" !in it.truncatedFields.orEmpty() },
+                { family.isNotEmpty() && claudeFamily(it.value) == family },
+            )
+        for (matches in tiers) {
+            val candidates = rows.filter(matches)
+            if (candidates.isNotEmpty()) return candidates.singleOrNull()
+        }
+        return null
+    }
+
+    /**
+     * Run configuration marks exactly [marked]'s radio, told apart by its label and `resolved_model` detail,
+     * or, with [marked] `null`, no model radio at all and shows [note] outside the radios (#1308). Every
+     * non-default Claude row of [menu] counts, including rows whose family label another row shares, since
+     * those are the rows a wrong mark would land on.
+     */
+    private fun awaitAnnouncedMark(
+        menu: ModelMenu,
+        marked: ModelMenuRow?,
+        note: String,
+    ) {
+        val labels =
+            menu.rows
+                .filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
+                .map { it.dropdownLabel(ConversationAgent.Claude) }
+                .toSet()
+        val markedModelRadio =
+            SemanticsMatcher("a marked model radio") { node ->
+                node.config.getOrNull(SemanticsProperties.Role) == SemanticsRole.RadioButton &&
+                    node.config.getOrNull(SemanticsProperties.Selected) == true &&
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        ?.firstOrNull()
+                        ?.text in labels
+            }
+        val expected =
+            marked?.let { row ->
+                val label = row.dropdownLabel(ConversationAgent.Claude)
+                val detail = row.resolvedModel.inert().takeIf { it.isNotBlank() && it != label }
+                listOfNotNull(label, detail)
+            }
+
+        fun markedTexts() =
+            composeTestRule.onAllNodes(markedModelRadio).fetchSemanticsNodes().map { node ->
+                node.config
+                    .getOrNull(SemanticsProperties.Text)
+                    .orEmpty()
+                    .map { it.text }
+            }
+        openRunConfiguration()
+        try {
+            if (expected != null) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { markedTexts() == listOf(expected) }
+            } else {
+                val standaloneNote = hasText(note) and SemanticsMatcher.keyNotDefined(SemanticsProperties.Role)
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(standaloneNote).fetchSemanticsNodes().isNotEmpty()
+                }
+                assertEquals("a model radio is marked for an ambiguous or unmatched announcement", emptyList<List<String>>(), markedTexts())
+            }
+        } finally {
+            composeTestRule.onNodeWithContentDescription("Close").performClick()
+        }
+    }
+
+    /** No radio in Run configuration reads "Default" (#1308). */
+    private fun assertNoDefaultModelRadio() {
+        openRunConfiguration()
+        try {
+            val defaultRadio =
+                SemanticsMatcher.expectValue(SemanticsProperties.Role, SemanticsRole.RadioButton) and
+                    hasText("Default", substring = true)
+            assertTrue("a radio reads Default", composeTestRule.onAllNodes(defaultRadio).fetchSemanticsNodes().isEmpty())
+        } finally {
+            composeTestRule.onNodeWithContentDescription("Close").performClick()
+        }
+    }
+
     /** Expected inherited label from the host's fresh published list, independent of a running turn. */
     private fun inheritedModelLabel(menu: ModelMenu): String {
         val claudeRows = menu.rows.filter { it.agent == ConversationAgent.Claude }
@@ -5524,10 +5695,12 @@ class InteractiveStreamE2ETest {
         if (resolved.isBlank() || resolved.startsWith("<") || "resolved_model" in default?.truncatedFields.orEmpty()) {
             return UNAVAILABLE_MODEL_LABEL
         }
+        // #1308: with no unique row, the label names the default resolution's family, never "Default".
         return claudeRows
             .filter { it.value != INHERITED_MODEL_VALUE && it.resolvedModel == resolved }
             .singleOrNull()
-            ?.dropdownLabel(ConversationAgent.Claude) ?: UNAVAILABLE_MODEL_LABEL
+            ?.dropdownLabel(ConversationAgent.Claude)
+            ?: claudeFamily(resolved).ifEmpty { UNAVAILABLE_MODEL_LABEL }
     }
 
     /**
@@ -6267,6 +6440,9 @@ class InteractiveStreamE2ETest {
     }
 
     private companion object {
+        /** The inline permission request's card (#1306), from `permissionRequestItems`. */
+        const val PERMISSION_CARD_TEST_TAG = "permission-request-card"
+
         // Tool-use determinism lever (#481): a direct imperative to RUN a shell command reliably makes
         // real claude use its shell tool (claude names it "Bash"), where "what does X output?" might be
         // answered inline. `echo <fixed string>` is read-only, side-effect-free, and harmless on the
