@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
@@ -244,6 +245,16 @@ class ThreadViewModel(
     private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)
     val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()
 
+    /** Set once the thread has left for an archived row (#1399), so its own archive pops only once. */
+    private val leftArchived = AtomicBoolean(false)
+
+    /** Sends the archive exit's [ThreadNavigation.PopBack] the first time only; returns whether it sent. */
+    private suspend fun leaveForList(): Boolean {
+        if (!leftArchived.compareAndSet(false, true)) return false
+        navigationChannel.send(ThreadNavigation.PopBack)
+        return true
+    }
+
     /** A model tap whose write has not settled, or `null`. A matching fresh settings reading confirms it;
      *  a rejected write or lost settings context clears it. */
     private val pendingModel = MutableStateFlow<String?>(null)
@@ -321,11 +332,18 @@ class ThreadViewModel(
     /**
      * The conversation list, shared (#1110) so [state] and [conversationAgent] ride one upstream
      * subscription: the remote repository sends a `list_conversations` request on every subscription.
+     *
+     * #1399: a list showing this row archived, from any client, leaves for the list. Upstream of `shareIn`
+     * so it runs once per emission. A row that disappears, or is only renamed or moved, stays (desktop #653).
      */
     private val conversations: Flow<List<Conversation>> =
         repository
             .observeConversations(ConversationFilter.All)
-            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+            .onEach { list ->
+                if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
+                    RelayLog.d { "event=thread_left_archived" }
+                }
+            }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
 
     /** The agent that runs this conversation (#1110); Claude while the list does not hold it yet. */
     private val conversationAgent: Flow<ConversationAgent> =
@@ -1749,7 +1767,8 @@ class ThreadViewModel(
         viewModelScope.launch {
             try {
                 repository.archive(conversationId)
-                navigationChannel.send(ThreadNavigation.PopBack)
+                // #1399: the reply may already have popped through [conversations]; leave once.
+                leaveForList()
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
