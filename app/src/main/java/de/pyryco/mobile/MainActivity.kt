@@ -525,6 +525,7 @@ internal fun PyryNavHost(
                     onAttachmentsPicked = vm::addPickedAttachments,
                     onRemoveAttachment = vm::removeAttachment,
                     attachmentRefusals = vm.attachmentRefusals,
+                    attachmentSendFailures = vm.attachmentSendFailures,
                     // #984: the thread's message attachments, loaded as their rows come on screen.
                     attachmentStates = attachmentStates,
                     onAttachmentShown = vm::onAttachmentShown,

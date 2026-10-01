@@ -257,7 +257,7 @@ class RemoteConversationRepositoryAttachmentTest {
                 val upload = startUpload(repo, ByteArray(3 * 45_000), onProgress)
                 runCurrent()
 
-                assertEquals(AttachmentUploadResult.ReconnectRequired, upload())
+                assertEquals(AttachmentUploadResult.SendFailed, upload())
                 assertEquals(listOf("1/3@1"), reports)
             }
         }
@@ -293,7 +293,7 @@ class RemoteConversationRepositoryAttachmentTest {
         }
 
     @Test
-    fun refusedSend_failsAsReconnectRequired_withoutFurtherChunks() =
+    fun refusedSend_failsAsSendFailed_withoutFurtherChunks() =
         runTest {
             listOf(false, true).forEach { throwOnSend ->
                 val pump = FakeSessionPump()
@@ -304,13 +304,13 @@ class RemoteConversationRepositoryAttachmentTest {
                 val upload = startUpload(repo, ByteArray(3 * 45_000))
                 runCurrent()
 
-                assertEquals(AttachmentUploadResult.ReconnectRequired, upload())
+                assertEquals(AttachmentUploadResult.SendFailed, upload())
                 assertEquals(1, pump.sent.size)
             }
         }
 
     @Test
-    fun connectionDropMidUpload_failsAsReconnectRequired_andALaterUploadSendsNothing() =
+    fun connectionDropMidUpload_failsAsConnectionLost_andALaterUploadIsNotConnected() =
         runTest {
             val pump = FakeSessionPump()
             val repo = repo(pump)
@@ -320,7 +320,7 @@ class RemoteConversationRepositoryAttachmentTest {
             val id = pump.chunks().single().attachmentId
             pump.close()
             runCurrent()
-            assertEquals(AttachmentUploadResult.ReconnectRequired, upload())
+            assertEquals(AttachmentUploadResult.ConnectionLost, upload())
 
             val later = startUpload(repo, ByteArray(10))
             runCurrent()

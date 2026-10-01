@@ -439,6 +439,20 @@
     <string name="thread_attachment_failed">Couldn\'t load file</string>
     <string name="thread_attachment_retry">Retry</string>
     <!-- #985: a ready attachment's tap and long-press labels, and the notices each outcome shows. -->
+    <!-- #1325: why a send carrying attachments stopped at a file, one sentence per reason, as on desktop. -->
+    <string name="thread_attachment_send_unreadable">That file could not be read.</string>
+    <string name="thread_attachment_send_too_large">Too large to attach — this app sends files up to %1$s MB.</string>
+    <string name="thread_attachment_send_not_connected">Not connected — the file was not sent.</string>
+    <string name="thread_attachment_send_connection_lost">The connection dropped before the file finished uploading.</string>
+    <string name="thread_attachment_send_failed">The file could not be sent.</string>
+    <string name="thread_attachment_send_host_invalid_chunk">The host rejected part of the upload.</string>
+    <string name="thread_attachment_send_host_integrity_failed">The host could not verify the uploaded file.</string>
+    <string name="thread_attachment_send_host_too_large">The host refused the file as too large.</string>
+    <string name="thread_attachment_send_host_too_many_uploads">The host has too many uploads in progress. Try again shortly.</string>
+    <string name="thread_attachment_send_host_storage_failed">The host could not store the file.</string>
+    <string name="thread_attachment_send_host_message_too_long">The host refused the upload as too long.</string>
+    <string name="thread_attachment_send_host_incomplete">The upload did not complete.</string>
+    <string name="thread_attachment_send_unclassified">The upload failed for an unknown reason.</string>
     <string name="thread_attachment_open">Open</string>
     <string name="thread_attachment_save">Save</string>
     <string name="thread_attachment_no_app">No app can open this file</string>

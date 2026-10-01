@@ -195,6 +195,21 @@ class ComposerAttachmentStripTest {
     }
 
     @Test
+    fun aFailedSend_saysWhyInOneSnackbar_withTheLimitDerivedFromTheConstant() {
+        val failures = Channel<AttachmentSendFailure>(Channel.BUFFERED)
+        setScreen(attachments = emptyList(), sendFailures = failures.receiveAsFlow())
+
+        failures.trySend(AttachmentSendFailure.TOO_LARGE)
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule
+                .onAllNodesWithText("Too large to attach — this app sends files up to 8 MB.")
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+    }
+
+    @Test
     fun switchingChats_showsEachChatsOwnStrip() {
         val store = ComposerDraftStore()
         store.addAttachment(HOST, "chat-a", docUri("only-in-a.txt").toString(), "only-in-a.txt", "text/plain", 1L)
@@ -243,6 +258,7 @@ class ComposerAttachmentStripTest {
         registry: ActivityResultRegistry? = null,
         onPicked: (List<PickedAttachment>) -> Unit = {},
         refusals: Flow<AttachmentRefusal> = emptyFlow(),
+        sendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     ) {
         composeRule.setContent {
             PyrycodeMobileTheme {
@@ -252,10 +268,10 @@ class ComposerAttachmentStripTest {
                             override val activityResultRegistry: ActivityResultRegistry = registry
                         }
                     CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-                        Screen(attachments, sending, onRemove, onSend, onPicked, refusals)
+                        Screen(attachments, sending, onRemove, onSend, onPicked, refusals, sendFailures)
                     }
                 } else {
-                    Screen(attachments, sending, onRemove, onSend, onPicked, refusals)
+                    Screen(attachments, sending, onRemove, onSend, onPicked, refusals, sendFailures)
                 }
             }
         }
@@ -269,6 +285,7 @@ class ComposerAttachmentStripTest {
         onSend: (String) -> Unit,
         onPicked: (List<PickedAttachment>) -> Unit,
         refusals: Flow<AttachmentRefusal>,
+        sendFailures: Flow<AttachmentSendFailure>,
     ) {
         var draft by remember { mutableStateOf("") }
         ThreadScreen(
@@ -284,6 +301,7 @@ class ComposerAttachmentStripTest {
             onAttachmentsPicked = onPicked,
             onRemoveAttachment = onRemove,
             attachmentRefusals = refusals,
+            attachmentSendFailures = sendFailures,
         )
     }
 

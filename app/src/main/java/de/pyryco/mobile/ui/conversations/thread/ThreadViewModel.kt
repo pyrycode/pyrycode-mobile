@@ -216,6 +216,14 @@ class ThreadViewModel(
      */
     val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
 
+    private val attachmentSendFailureChannel = Channel<AttachmentSendFailure>(capacity = Channel.BUFFERED)
+
+    /**
+     * One notice per send that stopped at a failed read or upload (#1325), naming why. A reason only, never a
+     * name, URI or the daemon's code, so the snackbar it drives shows fixed local text.
+     */
+    val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
+
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
     /**
@@ -1297,7 +1305,10 @@ class ThreadViewModel(
         }
     }
 
-    /** Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not. */
+    /**
+     * Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not and
+     * sending one [attachmentSendFailures] notice (#1325).
+     */
     private suspend fun upload(
         target: String,
         entry: PendingAttachment,
@@ -1305,17 +1316,24 @@ class ThreadViewModel(
         val bytes =
             when (val read = attachmentReader.read(entry.uri)) {
                 is AttachmentRead.Bytes -> read.bytes
-                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large")
-                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed")
+                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large", AttachmentSendFailure.TOO_LARGE)
+                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed", AttachmentSendFailure.UNREADABLE)
             }
-        val result = repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType)
-        if (result !is AttachmentUploadResult.Stored) return attachmentSendFailed("upload_failed")
-        draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
-        return result.attachmentId
+        when (val result = repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType)) {
+            is AttachmentUploadResult.Stored -> {
+                draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
+                return result.attachmentId
+            }
+            is AttachmentUploadResult.Failed -> return attachmentSendFailed("upload_failed", attachmentSendFailure(result))
+        }
     }
 
-    private fun attachmentSendFailed(outcome: String): String? {
+    private fun attachmentSendFailed(
+        outcome: String,
+        failure: AttachmentSendFailure,
+    ): String? {
         RelayLog.d { "event=composer_attachment_send outcome=$outcome" }
+        attachmentSendFailureChannel.trySend(failure)
         return null
     }
 
