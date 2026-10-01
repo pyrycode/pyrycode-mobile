@@ -67,6 +67,17 @@ same as every other cold read on that path. `ThreadDestinationFactory.repository
 supplies `heldReadings` (`bundle?.coordinator?.hostReadings`), since `ThreadViewModel` is the five
 readings' only production consumer.
 
+**Held-or-switched readings (#1320).** `observeSessionSettings` and `observeModelMenu` join the five above
+but through a second helper, `switchToLiveOrHeld(held, select)` — the live repository's own read (which
+still triggers that connection's `request_session_settings`/`request_model_list`) while a connection is
+live, `held` in the gap. The settings held value is `HostReadings.observeHeldSessionSettings`, already
+invalidated (`permissionMode = ""`, `memorySearch = Unknown`, `held = true`) and consumed display-only —
+see [`ThreadRunConfig.settingsHeld`](thread-composer-footer-effort-recall.md#remembered-effort-recall-686).
+The model menu's held value is `HostReadings.observeModelMenu`; a new connection still asks for its own
+menu (`ModelMenuProjection`'s per-connection `heardModelMenus` guard, not the held map, gates the ask), so
+the held value is a placeholder the reply replaces, not a reason to skip asking. Without `heldReadings`
+both keep the pre-#1320 switched `null` in the gap.
+
 It overrides **all** interface members — the stream-shaped reads (`observeConversations`,
 `observeMessages`, `observeLastMessage`, `observeStall` (#395), `observeQueue` (#460),
 `observeApiRetry` (#593), `observeCompacting` (#596), `observeThinkingProgress` (#801),
@@ -341,6 +352,16 @@ instead of the switched `null`; after `heldReadings.close()` they emit `null` li
 case. Without `heldReadings` the facade is unchanged, so no new test duplicates the existing switched-`null`
 coverage.
 
+[#1320](https://github.com/pyrycode/pyrycode-mobile/issues/1320) added the same disconnected-gap shape for
+`observeSessionSettings` and `observeModelMenu`: with `heldReadings` supplied and no live repository, both
+emit the held value (settings already invalidated and marked `held = true`) instead of the switched `null`;
+after `close()` they emit `null` like the other five. The coordinator-level two-connection and two-host
+proof (full reply on connection 1 → invalidated reading in the gap and at connection 2's head → connection
+2's own reply replaces it whole; a model menu held through the gap while connection 2 still sends
+`request_model_list`; host A's held settings/menu never surface through host B) lives in
+`RelayRepositoryCoordinatorTest`, not here — see [its Testing
+section](relay-repository-coordinator.md#testing).
+
 ## Related
 
 - Ticket: [#352](../codebase/352.md) — implementation record (files, line refs, patterns, lessons).
@@ -385,6 +406,11 @@ coverage.
   this facade's `heldReadings` constructor parameter reads from, which lets `observeAnnouncedModel`,
   `observeSessionFacts`, `observeContextUsage`, `observeUsageLimit` and `observeSlashCommandMenu` survive a
   reconnect instead of switching to `null` in the gap.
+- Held-or-switched readings: [Relay repository coordinator § `HostReadings`](relay-repository-coordinator.md)
+  ([#1320](https://github.com/pyrycode/pyrycode-mobile/issues/1320)) — the same holder's `SessionSettings`
+  and model-menu maps, read through this facade's `switchToLiveOrHeld` so `observeSessionSettings` and
+  `observeModelMenu` show the held (invalidated, display-only) value in the gap while the live connection
+  still asks for its own. Consumer: [`ThreadRunConfig.settingsHeld`](thread-composer-footer-effort-recall.md#remembered-effort-recall-686).
 - Delegated capability: `mutationsSupported` ([#507](../codebase/507.md)) — the fail-safe-deny `false`
   delegation (the third not-connected posture: answer, don't throw); consumed by no composable yet (#508).
 - Delegated one-shot: `requestHistory` (#623) — the on-disk history page read, forwarded verbatim with

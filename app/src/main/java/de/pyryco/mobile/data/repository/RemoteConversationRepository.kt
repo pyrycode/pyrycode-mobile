@@ -137,8 +137,9 @@ class RemoteConversationRepository(
      * facts, context usage, usage limit and slash-command menu. [RelayRepositoryCoordinator] owns the instance
      * for the host's pairing and threads it into each repository, the [finishedBackgroundTasks] shape, so a
      * reconnect starts from the held readings rather than nothing. Every arm still applies, replaces and
-     * clears through it as before. **Defaulted to a throwaway instance** on this repository's [now], so
-     * existing constructions compile unchanged and keep connection-scoped readings.
+     * clears through it as before. Since #1320 it also holds the model menus and the last successful
+     * settings reply. **Defaulted to a throwaway instance** on this repository's [now], so existing
+     * constructions compile unchanged and keep connection-scoped readings.
      */
     hostReadings: HostReadings = HostReadings(now),
 ) : ConversationRepository {
@@ -191,7 +192,8 @@ class RemoteConversationRepository(
 
     /**
      * The model menu of every conversation (#913): the retained menus, the one-shot `request_model_list`
-     * ask and its refusal correlation. [onInbound] hands it `model_list` behind the `interactive` gate and
+     * ask and its refusal correlation, the menus held in [HostReadings] (#1320) and the asks this
+     * connection's own. [onInbound] hands it `model_list` behind the `interactive` gate and
      * the refusal half of `error`; [observeModelMenu] reads it. Its ask takes its envelope id from this
      * repository's one counter in [relayRequests] — read through a lambda, because [relayRequests] is
      * declared below and a bound reference would capture it before it is initialised.
@@ -201,6 +203,7 @@ class RemoteConversationRepository(
             send = pump::send,
             negotiatedCapabilities = negotiatedCapabilities,
             nextRequestId = { relayRequests.nextRequestId() },
+            readings = hostReadings,
         )
 
     /**
@@ -268,6 +271,7 @@ class RemoteConversationRepository(
             requests = relayRequests,
             negotiatedCapabilities = negotiatedCapabilities,
             conversationList = conversationListProjection,
+            readings = hostReadings,
         )
 
     /**
