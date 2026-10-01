@@ -767,8 +767,11 @@ methods stay excluded. With #1208's tool-use method and #1286's Offline Retry pr
 restored methods' explicit presence, as well as excluding ignored methods.
 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` (**one** turn) starts a chat with no
 saved or remembered effort, sends the ping prompt, and asserts the next fresh reply carries
-`effective_effort` (an omitted key fails the method) and that the reopened footer's label and note match
-that value exactly, with no default level assumed.
+`effective_effort` (an omitted key fails the method) and a non-empty `permissionMode`. Since
+[#1309](https://github.com/pyrycode/pyrycode-mobile/issues/1309) the thread stays open throughout — it no
+longer leaves and reopens to force a fresh subscription — and asserts the footer's effort label/note and
+its permission label both settle to that fresh reading's values, because the open thread now re-reads its
+settings when the turn ends and (redundantly) when `awaitFooter` opens Run configuration to check.
 `interactiveTurn_chosenEffort_appliesFromTheFirstTurn` (**one** turn) picks a model and effort level from
 the footer before the first message and asserts claude applies exactly that level on the first turn.
 `interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel` (**two** turns, one in its
@@ -2730,6 +2733,19 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — updated:** [#1309](https://github.com/pyrycode/pyrycode-mobile/issues/1309) rewrote
+  `InteractiveStreamE2ETest.interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` to drop
+  `leaveThread` / `openChatRow`: the thread now re-reads its run settings itself when the turn ends and when
+  a sheet opens (see [Thread composer footer § Applied
+  effort](knowledge/features/thread-composer-footer.md#applied-effort-889)), so a fresh subscription is no
+  longer needed to see the settled reading. The method also asserts the fresh reply's `permissionMode` is
+  non-empty and that the footer's permission label settles to it, through the same `awaitFooter` helper
+  `appliedEffortFooter` already used for effort. The selector and `LIVE_MINIMUM` are unchanged at 43 — this
+  is a behaviour change to an existing method, not a new one. The dispatcher's post-verifier
+  `python3 scripts/android-test-gate.py live` run (branch `feature/1309` at `eee5056e5e`, merged with
+  `origin/main` at `8537b1cf00` in a detached worktree) executed 43 methods, failed 0 and skipped 0,
+  including this named method passing.
 
 - **Coverage — updated:** [#1308](https://github.com/pyrycode/pyrycode-mobile/issues/1308) turns
   `InteractiveStreamE2ETest.interactiveTurn_modelChange_roundTripsAndStaysPerConversation` into a

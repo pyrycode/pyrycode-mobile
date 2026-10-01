@@ -1036,6 +1036,31 @@ class ThreadViewModel(
                     }
                 }
         }
+
+        // #1309: a conversation whose claude had not run yet reads no permission mode and no applied effort,
+        // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
+        // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
+        viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+    }
+
+    /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun runSettingsRereadEdges(liveSessionEvents: Flow<LiveSessionEvent>): Flow<String> =
+        merge(
+            repositoryAvailable
+                .distinctUntilChanged()
+                .flatMapLatest { available -> if (available) turnEndEdges(liveSessionEvents) else emptyFlow() }
+                .map { "turn_end" },
+            resetEndEdges(repository.observeResetting(conversationId)).map { "reset_end" },
+        )
+
+    /**
+     * Ask for a fresh reading of this thread's run settings (#1309). The repository's `flatMapLatest` cancels
+     * an in-flight read first, and a reply still replaces the whole reading. [reason] is a static code.
+     */
+    private fun rereadRunSettings(reason: String) {
+        RelayLog.d { "event=run_settings_reread reason=$reason" }
+        repository.refreshSessionSettings(conversationId)
     }
 
     /**
@@ -2010,8 +2035,10 @@ class ThreadViewModel(
                 pendingSaveAsChannelDialog.value = null
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
-            ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true
+            // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
+            ThreadEvent.ChannelInfo -> if (pendingChannelInfo.compareAndSet(false, true)) rereadRunSettings("channel_info_open")
             ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
+            ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
         }
