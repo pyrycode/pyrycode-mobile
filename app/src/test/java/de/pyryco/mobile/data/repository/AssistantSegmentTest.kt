@@ -200,8 +200,7 @@ class AssistantSegmentTest {
     fun backwardWalk_everyCutPoint_mergesToTheUncutRows() =
         runTest {
             val all = entries(FULL)
-            // A newest page holding only the turn_end is not a cut inside a segment; that case is #1419's, below.
-            for (cut in 1 until all.size - 1) {
+            for (cut in 1 until all.size) {
                 val projection = ThreadProjection()
                 projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(all.drop(cut)), "c", atStart = false), interactive = true)
                 projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(all.take(cut)), "", atStart = true), interactive = true)
@@ -218,7 +217,7 @@ class AssistantSegmentTest {
             val script = listOf(Delta(0, "a"), Delta(1, "b"), Delta(2, "c"), Delta(3, "d"), End)
             val all = entries(script)
             for (first in 1 until all.size) {
-                for (second in first + 1 until all.size - 1) {
+                for (second in first + 1 until all.size) {
                     val projection = ThreadProjection()
                     for (slice in listOf(all.drop(second), all.subList(first, second), all.take(first))) {
                         projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(slice), "c", atStart = false), interactive = true)

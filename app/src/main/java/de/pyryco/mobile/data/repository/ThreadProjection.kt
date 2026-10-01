@@ -59,9 +59,15 @@ internal class ThreadProjection {
      * the `turn_end`, or a live one can land before the page with the turn's deltas. Any row of an ended
      * turn that enters the thread later is settled against this set ([withSettledTurns]).
      *
-     * Every writer records here **before** it updates the thread, and a merge reads this inside its
-     * thread `update`. A merge that misses a concurrent record is therefore followed by that writer's own
-     * flip. Grow-only, since an ended turn never streams again. Connection-scoped and in-memory like
+     * Every writer records here **before** it updates the thread. A history merge runs on the caller's
+     * coroutine while a live `turn_end` runs on the inbound collector, so the two can race, and a
+     * finalize whose flip finds none of the turn's rows writes nothing: a [MutableStateFlow.update] to an
+     * equal value never makes the merge's compare-and-set fail. So after its merge commits,
+     * [mergeHistoryPage] runs [settleEndedTurns], which reads this set afresh. Either the finalize
+     * recorded before that read, and the pass settles the rows, or its thread update starts after the
+     * merge committed, and its own flip finds them. A live delta needs no such pass: its update always
+     * changes the thread, so a racing merge either retries and sees the record or is seen by the delta.
+     * Grow-only, since an ended turn never streams again. Connection-scoped and in-memory like
      * [mintedMessageIds], and dropped with the thread by [remove].
      */
     private val endedTurns = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
@@ -518,6 +524,21 @@ internal class ThreadProjection {
             val existing = current[conversationId].orEmpty()
             val merged = existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive))
             current + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty()))
+        }
+        settleEndedTurns(conversationId)
+    }
+
+    /**
+     * Settle every row of [conversationId]'s thread whose turn has ended, after a merge has committed
+     * (#1419). The merge's own settle can miss a live `turn_end` recorded while it ran, and that
+     * finalize's thread update cannot make the merge retry when it changes nothing; this pass closes the
+     * window (see [endedTurns]). Writes nothing when nothing changes.
+     */
+    private fun settleEndedTurns(conversationId: String) {
+        threadByConversation.update { current ->
+            val rows = current[conversationId] ?: return@update current
+            val settled = rows.withSettledTurns(endedTurns.value[conversationId].orEmpty())
+            if (settled === rows) current else current + (conversationId to settled)
         }
     }
 

@@ -64,3 +64,13 @@ None of this is operator-facing in the sense of needing a new flow, so no rung-3
 ## Open Questions
 
 None.
+
+## Revisions
+
+### 2026-10-01: post-commit settle pass after a history merge
+
+Driven by the verifier's MUST FIX on PR #1442. The "State and concurrency model" argument above is wrong in its second branch. A history merge runs on the caller's coroutine (Main, from `ThreadViewModel`) and a live `turn_end` runs on the inbound collector (`Dispatchers.Default`), so they race. When the finalize's thread update finds none of the turn's rows, `withFinalizedTurn` returns an equal map and `MutableStateFlow.update` writes nothing, so the merge's compare-and-set still succeeds and commits the turn's newest row streaming. "The finalize's own thread update then runs afterwards and flips the rows" holds only when that update actually changes the value.
+
+New contract: after its thread `update` commits, `mergeHistoryPage` calls a private `settleEndedTurns(conversationId)`, one more `update` that re-reads `endedTurns.value[conversationId]` and settles the slice, writing nothing when nothing changes. Either the finalize recorded before that read, so the pass settles the rows, or the finalize's thread update starts after the merge committed, so it sees the rows. The in-merge settle stays so the common case emits no streaming intermediate state. A live delta needs no pass, because its update always changes the thread. No deterministic interleaving harness exists for the two flows, so the argument lives in the `endedTurns` KDoc rather than in a test.
+
+The two backward-walk loops in `AssistantSegmentTest` now also run through the cut that leaves the newest page holding only the `turn_end`.
