@@ -49,6 +49,7 @@ import org.koin.compose.KoinIsolatedContext
 import org.koin.core.KoinApplication
 import org.koin.dsl.binds
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 
 /**
  * A notification tap's target on the production graph and `Routes` (#685): a saved host's conversation
@@ -81,7 +82,7 @@ class NotificationTapNavigationTest {
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
         compose.runOnIdle {
             assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments))
-            // A conversation deleted since the alert still leaves the list one Back away.
+            // The thread opens above the list, so the list is one Back away.
             nav.popBackStack()
         }
         compose.waitForIdle()
@@ -134,6 +135,20 @@ class NotificationTapNavigationTest {
         compose.runOnIdle {
             assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
             assertEquals(null, nav.previousBackStackEntry)
+        }
+    }
+
+    @Test fun aRowArrivingAfterTheUserLeftTheListOpensNothing() {
+        start(HostConversationTarget(SAVED, "conv"))
+        compose.runOnIdle { nav.navigate(Routes.ABOUT) }
+        compose.waitForIdle()
+
+        rows.complete(listOf(conversation("conv", promoted = true)))
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(Routes.ABOUT, nav.currentDestination?.route)
+            assertEquals(Routes.CHANNEL_LIST, nav.previousBackStackEntry?.destination?.route)
         }
     }
 
@@ -232,7 +247,9 @@ class NotificationTapNavigationTest {
                     single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                     // On the main thread like the registry above: the test's effect dispatcher does not
                     // redispatch, so a snapshot published from Dispatchers.Default would navigate off it.
-                    single { HostConversationSource.relay(get(), Dispatchers.Main.immediate, cache = get(), viewing = get()) }
+                    single { HostConversationSource.relay(get(), Dispatchers.Main.immediate, cache = get(), viewing = get()) } onClose {
+                        it?.dispose()
+                    }
                 },
             )
         compose.setContent {

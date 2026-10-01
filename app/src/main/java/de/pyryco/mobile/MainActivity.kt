@@ -617,12 +617,13 @@ internal fun PyryNavHost(
             AboutScreen(onBack = { navController.popBackStack() })
         }
     }
-    // #685: the tap opens the thread above the channel list, so a conversation deleted since the alert
-    // still ends one Back away from a usable list. Only a saved host is accepted: the activity is
-    // exported, and anything can start it with these extras. Navigating is all a tap ever does.
+    // #685: the tap opens the thread above the channel list, so the list is always one Back away. Only a
+    // saved host is accepted: the activity is exported, and anything can start it with these extras.
+    // Navigating is all a tap ever does.
     // #1400: and only a conversation the host's snapshot holds active. A snapshot cannot tell rows not
     // loaded yet from rows without the target, so the tap waits a bounded time for the row to appear and
-    // otherwise stays on the list, never opening a conversation it could not check.
+    // otherwise stays on the list, never opening a conversation it could not check. A row that arrives
+    // after the user has left the list opens nothing.
     LaunchedEffect(openTarget) {
         val target = openTarget ?: return@LaunchedEffect
         if (!destinations.isSavedHost(target.serverId)) {
@@ -630,11 +631,15 @@ internal fun PyryNavHost(
             return@LaunchedEffect
         }
         val active = withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) { conversations.snapshots.first { it.holdsActive(target) } }
-        if (active != null) {
-            RelayLog.d { "event=notification_tap_accepted" }
-            navController.openThread(target)
-        } else {
-            RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
+        when {
+            active == null -> RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
+            // The user moved on during the wait; a late row must not push a thread over where they went.
+            navController.currentDestination?.route != Routes.CHANNEL_LIST ->
+                RelayLog.d { "event=notification_tap_rejected code=navigated_away" }
+            else -> {
+                RelayLog.d { "event=notification_tap_accepted" }
+                navController.openThread(target)
+            }
         }
     }
 }
@@ -837,7 +842,10 @@ private fun NavHostController.returnToWelcome() {
 
 /** Whether [target]'s host holds it among its channels or chats, both of which exclude archived rows. */
 private fun List<HostConversationSnapshot>.holdsActive(target: HostConversationTarget): Boolean =
-    any { host -> host.serverId == target.serverId && (host.channels + host.chats).any { it.id == target.conversationId } }
+    any { host ->
+        host.serverId == target.serverId &&
+            (host.channels.any { it.id == target.conversationId } || host.chats.any { it.id == target.conversationId })
+    }
 
 private fun NavHostController.openThread(target: HostConversationTarget) {
     if (currentDestination?.route == Routes.CONVERSATION_THREAD && Routes.target(currentBackStackEntry?.arguments) == target) return
