@@ -2811,7 +2811,7 @@ class InteractiveStreamE2ETest {
             // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
             //    conversation's second; the stopped turn's own reply was never drawn.
             sendFromPhone(PING_PROMPT)
-            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            awaitPingReplyNamingLayer(peer, serverId, conversationId, priorTurnEnds = 1)
             peerStep(
                 peer,
                 "await the ping turn's turn_end",
@@ -6576,6 +6576,51 @@ class InteractiveStreamE2ETest {
         } catch (e: TimeoutCancellationException) {
             throw AssertionError("peer step '$step' timed out; ${peer.linkState()}", e)
         }
+
+    /**
+     * [awaitDisplayedPingReply] for a ping sent after [priorTurnEnds] of [conversationId]'s turns ended. On
+     * timeout it names the first layer that did not hold the reply (#1456): the [peer]'s recorded frames, the
+     * phone's live repository for [serverId], or the thread screen's nodes.
+     */
+    private fun awaitPingReplyNamingLayer(
+        peer: SecondClientPeer,
+        serverId: String,
+        conversationId: String,
+        priorTurnEnds: Int,
+    ) {
+        try {
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        } catch (e: ComposeTimeoutException) {
+            val frames = peer.recorded(conversationId)
+            val nodes = composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).fetchSemanticsNodes().size
+            throw PingReplyEvidence(
+                peerTurnEnds = frames.count { it.type == "turn_end" },
+                peerSawReply = followUpPingReplyRecorded(frames, priorTurnEnds),
+                repositoryHoldsReply = liveRepositoryHoldsPingReply(serverId, conversationId),
+                replyNodes = nodes,
+                replyDisplayed = nodes == 1 && composeTestRule.onNode(pingReplyMatcher(), useUnmergedTree = true).isDisplayed(),
+            ).failure(expectedTurnEnds = priorTurnEnds + 1, cause = e)
+        }
+    }
+
+    /**
+     * Whether [serverId]'s current live repository holds an assistant `ping` row for [conversationId] (#1456),
+     * or null when there is no repository or its thread does not emit in time.
+     */
+    private fun liveRepositoryHoldsPingReply(
+        serverId: String,
+        conversationId: String,
+    ): Boolean? {
+        val repository =
+            GlobalContext
+                .get()
+                .get<RelayConnectionRegistry>()
+                .connectionFor(serverId)
+                ?.coordinator
+                ?.currentRepository
+                ?.value ?: return null
+        return runBlocking { withTimeoutOrNull(THREAD_TIMEOUT_MS) { holdsPingReply(repository.observeMessages(conversationId).first()) } }
+    }
 
     /** The #849 peer on the first test daemon, the one device allowed to answer its permission prompts. */
     private fun runningToolPeer(): SecondClientPeer {
