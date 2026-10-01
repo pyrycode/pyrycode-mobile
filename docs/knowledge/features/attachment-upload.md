@@ -60,11 +60,25 @@ sealed interface AttachmentUploadResult {
     data class Refused(val code: String, val retryable: Boolean) : Failed
     data object TooLarge : Failed
     data object ReconnectRequired : Failed
+    data object ConnectionLost : Failed
+    data object SendFailed : Failed
 }
 ```
 
 `Failed` variants carry **no id** — a failure can never be reported as stored, structurally, not just by
 convention. `code` is daemon-authored text; consumers branch on it and never render or log it verbatim.
+
+Three members separate "never connected," "connected, then dropped" and "connected, chunk refused" for a
+send's own failure notice ([#1325](https://github.com/pyrycode/pyrycode-mobile/issues/1325) —
+see [Thread screen § Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)
+for the notice itself): `ReconnectRequired` now means only "no live connection before the first chunk" —
+`beginUpload` refused, or `StableConversationRepository` has no live repository; `ConnectionLost` is the
+inbound collector ending while this transfer was live (`endAttachmentUploads`'s `finally`); `SendFailed` is
+a chunk's own `send` call returning `false` or throwing. The last two can race on a connection that drops
+mid-chunk — a closed socket refuses the chunk while the collector's `finally` also runs — and
+`AttachmentUploadTransfer.fail`'s first-outcome-wins settlement picks whichever reaches it first; both are
+honest, so nothing reads the race as a bug. None of the three is retryable: the daemon discards a partial
+upload with its connection either way, so a retry resends every chunk from scratch.
 
 ### The local 8 MB bound — `AttachmentUploadLimit`
 
@@ -122,7 +136,7 @@ the first has settled, so the socket's send queue never carries two uploads' chu
 `ReconnectRequired`) if the inbound collector has already ended, closing the race between a teardown and
 a start. For each chunk: stop if already settled; record the envelope id with `expectReplyTo` **before**
 sending; a `false` return or a thrown exception from the pump's `send` fails the transfer
-`ReconnectRequired` and stops the loop (no further chunks) — that chunk is never reported. After a
+`SendFailed` (#1325) and stops the loop (no further chunks) — that chunk is never reported. After a
 successful send, and before the `yield()`, the loop calls `onProgress(index + 1, plan.totalChunks)`
 unless `transfer.isSettled` (#1326) — the same flag the loop itself re-reads, so a chunk's report and the
 chunk stop for the same reason, mirroring desktop's `reportProgress` in `attachmentTransfer.ts`. A
@@ -134,7 +148,7 @@ repository's `onInbound` routes `messageCommands.routeAttachmentUpload` right af
 `messageCommands.routeDebugBundle`, both ahead of the general demux `when`.
 The inbound collector's `finally` calls `messageCommands.endAttachmentUploads()`, which sets
 `uploadInboundEnded` and
-fails any still-active transfer `ReconnectRequired` — the daemon discards a partial upload with its
+fails any still-active transfer `ConnectionLost` (#1325) — the daemon discards a partial upload with its
 connection, so a retry after reconnecting resends every chunk from scratch. No upload timeout: a daemon
 that never answers is ended by the connection's own liveness teardown, the same choice
 `pyrycode-desktop`'s `attachmentTransfer` made (`pyrycode-desktop` `docs/knowledge/features/attachment-transfer.md`).
@@ -181,7 +195,8 @@ for how `StableConversationRepository` reaches the thread's own host with no new
 ## Logging
 
 `RelayLog.d` only, gated as always to debug builds: `event=attachment_chunk id=<uuid> index=<i>
-total=<n>` per chunk, `event=attachment_upload id=<uuid> outcome=<Stored|Refused|TooLarge|ReconnectRequired>`
+total=<n>` per chunk, `event=attachment_upload id=<uuid>
+outcome=<Stored|Refused|TooLarge|ReconnectRequired|ConnectionLost|SendFailed>`
 at settle. Never the bytes, filename, digest, MIME type, or daemon error text.
 
 ## Testing
@@ -193,8 +208,9 @@ pattern `RemoteConversationRepositorySystemPromptTest` established) drives the d
 a stored reply for another id settling nothing before the right one settles it; a second repository
 (a different host) receiving the first's `attachment_stored` never settling the first's upload; two
 uploads with the same filename minting distinct ids and each settling only on its own reply; a refusal
-mid-upload stopping further chunks; send failure/throw and pump close each giving `ReconnectRequired`
-with no further chunks; an oversized file giving `TooLarge` with zero frames sent. Progress cases
+mid-upload stopping further chunks; a chunk send's failure or throw gives `SendFailed`, and a pump close
+mid-upload gives `ConnectionLost` (#1325), both with no further chunks; an oversized file giving
+`TooLarge` with zero frames sent. Progress cases
 (\#1326): an N-chunk upload reports `1..N` of `N` in order, each seen after that chunk was recorded by
 the fake pump; a refusal pushed during a chunk's send and settled inside `send`
 (`UnconfinedTestDispatcher`) skips that chunk's report; a refusal settled at the following `yield` still
@@ -218,10 +234,14 @@ No emulator scenario of its own: this is a data-layer ticket with no operator-fa
 proving the phone's own upload reaches a real second client with matching bytes.
 [#1017](https://github.com/pyrycode/pyrycode-mobile/issues/1017) adds
 `interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes`, proving that a link cut after one
-chunk of a multi-chunk upload settles `ReconnectRequired` and that a retry, once the link is restored,
+chunk of a multi-chunk upload settles the transfer `Failed` and that a retry, once the link is restored,
 reaches the peer as exactly one message with the fixture's exact bytes — no duplicate, because the failed
 attempt never reached `send_message`. The cut is fired deterministically from the `event=attachment_chunk`
-`RelayLog` line above, not from a timer, so it can never race `attachment_stored`.
+`RelayLog` line above, not from a timer, so it can never race `attachment_stored`. Since
+[#1325](https://github.com/pyrycode/pyrycode-mobile/issues/1325) split `ReconnectRequired` into three
+members, which of `ConnectionLost` or `SendFailed` settles depends on whether the inbound collector's end
+or the refused chunk's send notices the cut first — `AttachmentUploadTransfer.fail`'s first-outcome-wins
+settlement lets either win, and the test asserts neither, only that the retry still produces one message.
 
 ## Related
 
