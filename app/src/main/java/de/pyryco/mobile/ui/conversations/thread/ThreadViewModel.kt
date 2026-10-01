@@ -236,6 +236,14 @@ class ThreadViewModel(
      */
     val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
 
+    private val sentMessageChannel = Channel<Unit>(capacity = Channel.CONFLATED)
+
+    /**
+     * One signal per send the daemon accepted, of text or attachments (#1314), desktop's `onMessageSent`. The
+     * screen follows the newest end on it. Conflated: sends accepted before the screen collects follow once.
+     */
+    val sentMessages: Flow<Unit> = sentMessageChannel.receiveAsFlow()
+
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
     /**
@@ -1127,15 +1135,22 @@ class ThreadViewModel(
         _localSendPending.value = false
     }
 
-    /** Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. */
+    /**
+     * Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. A send
+     * that returns was accepted, and tells the screen to follow the newest end again (#1314).
+     */
     private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
         openLocalSendWindow()
-        try {
-            return send()
-        } catch (e: Throwable) {
-            closeLocalSendWindow("send_failed")
-            throw e
-        }
+        val sent =
+            try {
+                send()
+            } catch (e: Throwable) {
+                closeLocalSendWindow("send_failed")
+                throw e
+            }
+        RelayLog.d { "event=thread_send_accepted" }
+        sentMessageChannel.trySend(Unit)
+        return sent
     }
 
     /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */

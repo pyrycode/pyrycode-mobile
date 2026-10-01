@@ -71,34 +71,31 @@ rows.isNotEmpty()` — **not** `historyRowCount > 0` — gates the demand instea
 thread with a pending batch and zero loaded message rows would have `historyRowCount > 0` true from the
 prompt rows alone and could fire `onDemandOlderHistory()` against a thread that has no history to page.
 
-**Prompt arrival and edits are excluded from the streaming auto-pin.** The streaming size-driven
-`LaunchedEffect(hasStreamingMessage, listState)` (§ *Streaming auto-scroll* above) gained
-`questionState != null` to its key and its early-return guard — while a batch is mounted, the streaming pin
-does not re-anchor on item 0's size, because item 0 while a batch is held is the prompt actions row, not a
-streaming message bubble, and its field sizing (the Other `BringIntoViewRequester`, the IME) must not drag a
-history reader back to the bottom.
+**Prompt arrival and edits are excluded from the growth signature while a batch is mounted (#1304), so field
+sizing never drags a reader down.** Originally the streaming size-driven pin gained `questionState != null`
+to its key and early-return guard, because item 0 while a batch is held is the prompt actions row, not a
+streaming message bubble, and its field sizing (the Other `BringIntoViewRequester`, the IME) must not read as
+growth. [#1314](https://github.com/pyrycode/pyrycode-mobile/issues/1314) carries the same rule forward:
+`FollowNewestEnd`'s `promptPresent` parameter masks the newest row's content and the anchor's size out of the
+growth signature while a prompt is mounted, so editing a field or the IME opening still cannot pull a history
+reader down — see [Thread screen — subagent tool-row nesting § The newest-end follow rule
+(#1314)](thread-screen-subagent-tool-rows.md#the-newest-end-follow-rule-1314).
 
-**A second, dedicated effect reveals a newly arrived batch to a reader already at the newest end** — the
-\#981 newest-row pin (above) only follows a new *message* row, and prompt rows insert below the anchored
-first visible row the same way a new message row would, landing off-screen until something scrolls back to
-index 0. A verifier pass on #1305 found this gap live: an operator watching the newest end saw only the
-composer's "Waiting for answers" status reading (below) until they thought to scroll further. The fix
-mirrors #981's shape: `val promptGeneration by rememberUpdatedState(questionState?.generation)`, then
-`LaunchedEffect(listState) { snapshotFlow { promptGeneration }.drop(1).filterNotNull().collect { ... } }`.
-`drop(1)` skips the effect's own first collected value, for the same reason #981's does — a configuration
-change must not pull a reader who scrolled away back to the newest end on recreation — and a `null`
-generation (dismissal) is filtered out rather than driving a scroll. On a genuine new generation, the
-effect scrolls to index 0 **only** when the reader has not scrolled away **and** is still at the newest
-end: `firstVisibleItemScrollOffset == 0 && (firstVisibleItemIndex == 0 || first?.key == newestRowKey)`. The
-key half of that check — not just `userScrolledAway == false` — covers a reader moved into history
-programmatically (`userScrolledAway` only flips on real `NestedScrollSource.UserInput`, so it alone cannot
-see that move); the existing history-anchor regression test is exactly that case and stays unchanged.
+**A newly arrived batch reveals itself to a reader already at the newest end, on the same rule that follows
+a new message row.** A verifier pass on #1305 found this gap live, before the #1314 rework below existed:
+an operator watching the newest end saw only the composer's "Waiting for answers" status reading (below)
+until they thought to scroll further, because prompt rows insert below the anchored first visible row the
+same way a new message row would, landing off-screen until something scrolls back to index 0. #1305 closed
+it with a dedicated effect keyed on `questionState?.generation`, shaped like the #981 newest-row pin it sat
+beside. **[#1314](https://github.com/pyrycode/pyrycode-mobile/issues/1314) folded that effect into the one
+following rule** described in [Thread screen — subagent tool-row nesting § The newest-end follow rule
+(#1314)](thread-screen-subagent-tool-rows.md#the-newest-end-follow-rule-1314): the prompt's identity
+(`shownQuestion?.generation to openRequest?.modalId` — see #1306 and #1341 below for why it reads
+`shownQuestion`) is part of `FollowNewestEnd`'s growth signature, so a new generation pins a reader who is
+following exactly as a new message row would, and does nothing to a reader who has scrolled into history.
 `scrollToItem(0)` reveals the actions row and the latest question, not the title first: under reverse
 layout, scrolling to the title of a batch taller than the viewport would need a second post-measure scroll,
-and a batch that already fits the viewport already shows its title at `scrollToItem(0)`. The same
-`try { scrollToItem(0) } catch (e: CancellationException) { ensureActive() }` pattern #981 uses tolerates a
-resting-finger mutation refusal without the effect silently dying for the rest of the composition (§ *The
-newest-row pin* above explains why the catch is required, not defensive). Covered by
+and a batch that already fits the viewport already shows its title at `scrollToItem(0)`. Covered by
 `ThreadInlineQuestionTest.arrival_reveals_the_batch_to_a_reader_at_the_newest_end`
 (`app/src/sharedTest/.../thread/`); `arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand`
 in the same file covers the complementary case — a reader scrolled into history is not pulled forward by
@@ -136,14 +133,14 @@ scheme. The empty-thread branch and `promptRowCount` both gained a matching `ope
 § *The oldest-end history demand* below); `promptRowCount` adds a fixed `PERMISSION_ROW_COUNT = 3` rather
 than deriving a size from the request, since a permission/trust request always renders exactly three rows.
 
-**The streaming pin and the newest-end reveal generalize to either prompt kind rather than duplicating.**
-The streaming auto-pin's guard became `questionState != null || openRequest != null` (a local
-`promptPresent` val) in place of the #1305 `questionState != null` alone. The reveal effect's key widened
-from `questionState?.generation` alone to a `Pair`, `questionState?.generation to openRequest?.modalId`, so
-either a new question generation or a new permission `modalId` — never both signals doing the same
-job twice — re-triggers the scroll to index 0 under the same `drop(1)` / `filter` / anchored-reader guard
-the #1305 effect established; see § *Inline question rows and the newest-end reveal* above for the full
-mechanism, which this reuses verbatim.
+**The growth mask and the newest-end reveal generalize to either prompt kind rather than duplicating.** The
+mask that excludes prompt content and sizing from the growth signature (§ above) reads `questionState != null
+|| openRequest != null` (`FollowNewestEnd`'s `promptPresent`), in place of the #1305 `questionState != null`
+alone. The reveal's identity widened from `questionState?.generation` alone to a `Pair`,
+`shownQuestion?.generation to openRequest?.modalId` (`promptIdentity`, since #1341 below reads `shownQuestion`
+rather than `questionState`), so either a new question generation or a new permission `modalId` — never both
+signals doing the same job twice — pins a following reader under the one rule § *Inline question rows and the
+newest-end reveal* above describes, which this reuses verbatim.
 
 **Leaving the request open does not cancel it.** Back, opening another conversation, and switching to a
 different chat all leave the request rendered (subject to the usual scroll-position rules above) rather
@@ -165,7 +162,7 @@ composition, so leaving the question out of composition loses nothing: `shownQue
 `questionState` the moment the request resolves, with the selection and Other text intact, and the
 `promptIdentity` change reveals it to a reader parked at the newest end the same way a fresh arrival does.
 
-**`QuestionPromptProtection` and the streaming pin's `promptPresent` keep reading `questionState`, not
+**`QuestionPromptProtection` and `FollowNewestEnd`'s `promptPresent` keep reading `questionState`, not
 `shownQuestion`.** Both conditions already hold whenever either prompt exists, so the withholding changes
 nothing in practice — but it is a deliberate choice, not an oversight: keying either one on `shownQuestion`
 would drop it for the one frame between the permission request resolving and the question returning, since
