@@ -38,11 +38,11 @@ private val OverlayPillGap = 12.dp
  * to the top of the message area, drawn over the messages so it takes no layout space. Notices live here
  * rather than in the status row, so they never hide what the running turn is doing.
  *
- * Top to bottom: the usage-limit report, a failed MCP server, then a pairing error or offline retry. The report is a Default pill with an
- * X only when [usageLimitIsWarning] says so, and it is left out once [usageLimitDismissed]; any other
- * reading is an Error pill that cannot be hidden. Pairing failure takes precedence over the offline pill
- * because a network retry cannot repair a rejected pairing. With neither, nothing is emitted. The report
- * names [agent] (#1115).
+ * Top to bottom: the usage-limit report, a failed MCP server, then a pairing error or offline retry. The
+ * report is a Default pill with an X only when [usageLimitIsWarning] says so, and it is left out once
+ * [usageLimitDismissed]; any other reading is an Error pill that cannot be hidden. Pairing failure takes
+ * precedence over the offline pill because a network retry cannot repair a rejected pairing. With none of
+ * them, nothing is emitted. The report names [agent] (#1115).
  *
  * [mcpFailure] (#1345) is the Claude-authored name of a failed MCP server: an Error pill with no X whose tap
  * runs [onOpenMcpFailure]. It is never drawn beside the pairing or offline pill.
