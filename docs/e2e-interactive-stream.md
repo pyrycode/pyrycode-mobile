@@ -1297,7 +1297,8 @@ live selector: `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` lists it after
 status](#verification-status).
 
 The **scanner-confirm-waits-for-host** scenario ([#1394](https://github.com/pyrycode/pyrycode-mobile/issues/1394) —
-`interactiveTurn_scannerConfirm_waitsForHostThenOpensList`) is **always-on** (not `@Ignore`d): [#1386's
+`interactiveTurn_scannerConfirm_waitsForHostThenOpensList`) is on the LIVE curated selector and counted by
+`LIVE_MINIMUM` (not `@Ignore`d): [#1386's
 PR #1391](https://github.com/pyrycode/pyrycode-mobile/pull/1391) made `ScannerViewModel` report a pairing done
 only after the host answers — `ConfirmPairing` saves the record and moves to `Verifying`, and only
 `Paired` lets the `Routes.SCANNER` composable in `MainActivity` navigate to the channel list — proven on
@@ -1325,6 +1326,10 @@ keep `scannerViewModelModule` in step with `AppModule`'s definition by hand; the
 the two are not kept in step. Zero real-claude turns: pairing and the list are daemon round-trips. B is
 removed in `finally`. No rung-4 twin: the deterministic harness provisions one host per invocation and
 cannot pair a second, and this scenario needs the second live host that only rung 3 / `LIVE` provisions.
+The method joins `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` after
+`interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`, and `android-test-gate.py`'s `LIVE_MINIMUM`
+counts it (see [Pre-ship gate](#pre-ship-gate)). Its first live pass is recorded in [Verification
+status](#verification-status).
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -2147,7 +2152,17 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-01 (#1311).** The dispatcher ran the full
+**Current live verification — 2026-10-01 (#1394).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1394` at
+`ba11f50add`, merged with `origin/main` at `2e1e2e46cd` (0 commits behind before the merge):
+**40 executed, 40 passed, 0 failed, 0 skipped**, exit 0, wall clock 527.1s. This is full-suite evidence;
+no separate focused live run is claimed. `LIVE_MINIMUM` rose from 39 to 40 with this ticket's new method,
+`interactiveTurn_scannerConfirm_waitsForHostThenOpensList`, joining the curated selector (see
+[Pre-ship gate](#pre-ship-gate)); this is the method's first live run. An earlier attempt on PR #1424
+executed 39 and did not include the new method, because the curated selector and `LIVE_MINIMUM` had not
+yet been updated for it; that gap was found in review and fixed in commit `ba11f50a` before this run.
+
+**Previous live verification — 2026-10-01 (#1311).** The dispatcher ran the full
 `python3 scripts/android-test-gate.py live` suite against `feature/1311` at `3fae3a6dc2`,
 merged with `origin/main` at `a61c5eb4b1`: **39 executed, 39 passed, 0 failed, 0 skipped**,
 exit 0, wall clock 520.7s. The fresh XML contains a passing, unskipped
