@@ -1,9 +1,9 @@
-# Current-modal state — the hoisted `currentModal` projection
+# Current-modal state — the hoisted `hostModals` fold
 
 The **state/projection half of the permission/choice-modal UI surface**: how the daemon's decoded modal
-lifecycle (`modal_shown` → `modal_dismissed`) is folded into a single "which modal is currently open"
-observable, `currentModal: StateFlow<ModalUiState>`. Introduced in [#445](../codebase/445.md) (split from
-\#443, the render half of #439), part of the Phase 3 permission-modal feature (epic pyrycode#597, ADR 025).
+lifecycle (`modal_shown` → `modal_dismissed`) is folded into the host's outstanding prompts,
+`hostModals: StateFlow<HostModalState>`. Introduced in [#445](../codebase/445.md) (split from \#443, the
+render half of #439), part of the Phase 3 permission-modal feature (epic pyrycode#597, ADR 025).
 
 **As of [#492](../codebase/492.md) the fold is hoisted to the process-scoped
 [`RelayRepositoryCoordinator`](relay-repository-coordinator.md).** It used to fold per-thread-screen inside
@@ -11,9 +11,21 @@ observable, `currentModal: StateFlow<ModalUiState>`. Introduced in [#445](../cod
 `modal_shown` fired **before any subscriber existed** was dropped by the `replay = 0`
 [`modalEvents`](modal-events.md) seam, leaving the prompt stuck daemon-side while the phone showed nothing.
 The coordinator outlives any screen and already owns the reconnection-surviving seam, so folding there
-accumulates the projection whether or not a thread screen is subscribed; **the ViewModel now re-exposes the
-coordinator's `StateFlow<ModalUiState>` verbatim instead of folding the raw stream itself.** This closed a
-`USE_RELAY_REPOSITORY` blocker (the bug manifests only with the relay repository live).
+accumulates the projection whether or not a thread screen is subscribed. This closed a `USE_RELAY_REPOSITORY`
+blocker (the bug manifests only with the relay repository live).
+
+**As of [#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) the fold holds every
+outstanding prompt, not one.** Through #1337 the coordinator kept a single `ModalUiState` per host — a
+second chat's `modal_shown` **replaced** the first chat's, and the first's later `modal_dismissed` matched
+nothing (the fold's `modalId` guard only protected the one held modal from a spoofed dismiss, not a second
+chat's prompt from eviction). #1337 replaces that single value with
+[`HostModalState`](#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure):
+every still-open prompt, keyed on `modalId`, plus the ids resolved on the current connection. Each thread
+scopes the host state down to its own conversation
+([`HostModalState.scopedTo`](#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure));
+answering or dismissing one conversation's prompt never touches another's. This follows desktop's
+`reduceModal` (`src/renderer/src/store/modalPrompts.ts`) and closes desktop #415/#510/#1140's mobile gap.
+**The ViewModel re-exposes the coordinator's scoped projection** — it still folds nothing itself.
 
 The visual overlay, the fail-safe-deny default highlight, the inert-text output-encoding, and the
 dismiss-reason UI are the **sibling render slice #446** ([shipped](permission-modal-overlay.md) — it
@@ -28,29 +40,39 @@ modal_shown / modal_dismissed  ──(#437 decode, capability-gated)──▶  M
         │                                                                  on RemoteConversationRepository
         │                                                                  .modalEvents (concrete, per-connection, replay=0)
         ▼
-RelayRepositoryCoordinator.modalEvents : Flow<ModalEvent>   ◀── #445 seam, now #492-PRIVATE (reconnection-surviving)
-        │  scan + ModalUiState.reduce (modalId-keyed, last-shown-wins), stateIn(scope, Eagerly)   ◀── #492 fold (hoisted here)
+RelayRepositoryCoordinator.modalEvents : Flow<ModalEvent?>   ◀── #445 seam, now #492-PRIVATE; #1337 prefixes each
+        │                                                        connection's inner flow with a null reconnect marker
+        │  scan + HostModalState.reduce (modalId-keyed, hold-all) — a null input resets to HostModalState(),
+        │  stateIn(scope, Eagerly)   ◀── #492 hoists the fold here; #1337 widens it to every outstanding prompt
         ▼
-RelayRepositoryCoordinator.currentModal : StateFlow<ModalUiState>   ◀── #492 the single process-scoped projection
-        │  injected at the AppModule ThreadViewModel factory (no new Koin binding)
+RelayRepositoryCoordinator.hostModals : StateFlow<HostModalState>   ◀── #1337 the process-scoped fold: every
+        │                                                               outstanding prompt + this connection's resolved ids
+        │  HostModalState.scopedTo(conversationId)   ◀── #1337 per-thread filter (this ViewModel's own conversationId)
         ▼
-ThreadViewModel.hostModal : StateFlow<ModalUiState>   ◀── #492 taken verbatim as a private ctor property (renamed in #816)
-        │  ModalUiState.scopedTo(conversationId)   ◀── #816 per-thread filter (this ViewModel's own conversationId)
+ThreadViewModel.hostModal : StateFlow<HostModalState>   ◀── #1337 taken verbatim as a private ctor property (renamed from a
+        │                                                     StateFlow<ModalUiState> in #492/#816; same ctor name)
         ▼
-ThreadViewModel.currentModal : StateFlow<ModalUiState>   ◀── #816 scoped, stateIn(viewModelScope, Eagerly)
+ThreadViewModel.currentModal : StateFlow<ModalUiState>   ◀── #1337 scoped via HostModalState.scopedTo, stateIn(viewModelScope, Eagerly)
         │  separate parameter beside `state` / `isThinking` / `isStalled`
         ▼
 ThreadScreen → modal overlay (#446 renders it; #451 answers it, #452 renders the armed affordance)
 ```
 
-The coordinator's fold is **host-level**, not per-conversation: it is keyed solely on `modalId` and holds
-**one** active modal per host, not a map keyed by conversation (desktop keeps such a map; mobile
-deliberately does not — #816's Technical Notes). Since #816, `modal_shown` carries a `conversation_id`
-(daemon #1065) that scopes **display**, not the fold itself: each `ThreadViewModel` filters the host's
-single modal down to its own conversation via `ModalUiState.scopedTo` before exposing its own
+`RelayRepositoryCoordinator.currentModal : StateFlow<ModalUiState>` still exists as a **single-value view**
+over `hostModals` — `hostModals.map { it.latestOutstanding }` — kept for the conversation-list attention
+readers (`HostAttentionState.resolve`, `HostConversationSource.promptKeys`,
+`RelayConnectionRegistry.currentModal`) until [#1338](#related) moves them onto the whole list. No thread
+screen reads it; threads scope `hostModals` directly. See [§ The `HostModalState`
+fold](#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure) below.
+
+The coordinator's fold is **host-level**, holding every outstanding prompt across all of that host's
+conversations in one `HostModalState`, keyed on `modalId` (not a separate fold per conversation). Since
+\#816, `modal_shown` carries a `conversation_id` (daemon #1065) that scopes **display**: each `ThreadViewModel`
+filters the host's prompts down to its own conversation via `HostModalState.scopedTo` before exposing its own
 `currentModal`, so a modal raised by conversation A never renders — or answers — in an open thread for
-conversation B on the same host. A blank/absent `conversation_id` decodes to `""` and matches no thread
-(see [Modal events](modal-events.md#conversation_id-the-one-defaulted-field-816)).
+conversation B on the same host, and (since #1337) A's prompt is never evicted by B's. A blank/absent
+`conversation_id` decodes to `""` and matches no thread (see [Modal
+events](modal-events.md#conversation_id-the-one-defaulted-field-816)).
 
 ### 1. The coordinator seam (reconnection-surviving) → the hoisted fold
 
@@ -59,49 +81,95 @@ that is **connection-scoped** (rebuilt per connection, absent between) and delib
 `ConversationRepository` interface the thread ViewModel consumes (the
 [Why on the concrete repo](modal-events.md#why-on-the-concrete-repo-not-the-interface-ac-4) posture). So
 the ViewModel cannot reach it directly. [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
-threads it up (a byte-for-byte mirror of the `liveSessionEvents` seam) **and folds it** into the current
-projection:
+threads it up (a byte-for-byte mirror of the `liveSessionEvents` seam) **and folds it** into the host's
+outstanding prompts:
 
 ```kotlin
-// #492: modalEvents is now PRIVATE — its sole consumer is currentModal.
+// #492: modalEvents is PRIVATE — its sole consumer is hostModals. #1337 widens the element type to
+// ModalEvent? and prefixes each connection's inner flow with a null "this connection just started" marker.
 @OptIn(ExperimentalCoroutinesApi::class)
-private val modalEvents: Flow<ModalEvent> =
-    activeConnection.flatMapLatest { conn -> conn?.repo?.modalEvents ?: emptyFlow() }
+private val modalEvents: Flow<ModalEvent?> =
+    activeConnection.flatMapLatest { conn ->
+        conn?.repo?.modalEvents?.onStart<ModalEvent?> { emit(null) } ?: emptyFlow()
+    }
 
-// #492: the single hoisted "which modal is open" projection, folded once at this process-scoped layer.
-val currentModal: StateFlow<ModalUiState> =
+// #1337: every outstanding prompt + this connection's resolved ids, folded once at this process-scoped
+// layer. A null input (the reconnect marker) resets to an empty HostModalState — see § below.
+val hostModals: StateFlow<HostModalState> =
     modalEvents
-        .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
+        .scan(HostModalState()) { state, event -> if (event == null) HostModalState() else state.reduce(event) }
+        .stateIn(scope, SharingStarted.Eagerly, HostModalState())
+
+// #1337: the single-value view kept for the conversation-list attention readers until #1338.
+val currentModal: StateFlow<ModalUiState> =
+    hostModals
+        .map { it.latestOutstanding }
         .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 ```
 
 `flatMapLatest` switches to the fresh connection's repo and cancels the prior on reconnect; `emptyFlow()`
-covers between-connections. The `.scan` sits **downstream** of `flatMapLatest`, so across a reconnect the
-inner source switches but the outer `scan` is **not** restarted — the accumulator survives connection churn
-(see [Lifecycle, errors, edge cases](#lifecycle-errors-edge-cases) for the retain-on-teardown decision).
-`modalEvents` was demoted to `private` in #492 because after the hoist nothing outside the coordinator
-reads the raw event stream.
+covers between-connections. `onStart { emit(null) }` is the **reconnect marker**: it is the first emission
+of the new inner flow, so it folds strictly after the old connection's collection is cancelled and strictly
+before the new connection's first `modal_shown` is collected — the clear can never race a re-sent frame in
+either direction. The `.scan` sits **downstream** of `flatMapLatest`, so across the switch the inner source
+changes but the outer `scan` is **not** restarted — its accumulator only resets when a `null` marker reaches
+it, i.e. on a **new connection being published**, never on a plain teardown (`activeConnection → null`
+switches to `emptyFlow()`, which emits nothing and folds nothing — see [Lifecycle, errors,
+edge cases](#lifecycle-errors-edge-cases)). `modalEvents` stays `private` because nothing outside the
+coordinator reads the raw event stream; its element type widened to `ModalEvent?` in #1337 is an
+implementation detail of the marker, invisible past `hostModals`.
 
-### 2. The fold (`scan`, `modalId`-keyed, last-shown-wins) + the ViewModel re-exposure
+### 2. The `HostModalState` fold (#1337) + the ViewModel re-exposure
 
-The fold uses the pure, side-effect-free `ModalUiState.reduce` — as of #492 co-located with the
-`ModalUiState` type in **`data/model/ModalUiState.kt`** (moved from `ui/conversations/thread/` so the `data`-layer
-coordinator can see it; `reduce` has no Android/UI dependency), **no logging** of any field:
+The fold uses the pure, side-effect-free `HostModalState.reduce`, co-located with `ModalUiState` in
+**`data/model/ModalUiState.kt`** (moved there in #492 so the `data`-layer coordinator can see it; `reduce`
+has no Android/UI dependency), **no logging** of any field:
 
 | receiver → event | result | why |
 |---|---|---|
-| any → `Shown` | `Open(...)` carrying the event **verbatim** | a later `Shown` **supersedes** any open modal (last-shown wins; AC #3) |
-| `Open(id=X)` → `Dismissed(id=X)` | `Dismissed(id, outcome, source)` (verbatim reason) | the open modal resolved (AC #2) |
-| `Open(id=X)` → `Dismissed(id=Y≠X)` | receiver unchanged | **spoofed-dismiss safety** — an out-of-band dismiss can't clear an unresolved modal (AC #2) |
-| `Hidden` / `Dismissed` → `Dismissed` | receiver unchanged | nothing open to clear (AC #2) |
+| any → `Shown(id=X)`, X already in `resolved` | unchanged | an answered/dismissed prompt doesn't come back before the next reconnect (AC #3) |
+| any → `Shown(id=X)`, X held in `outstanding` | that entry **replaced in place**, same position | a re-shown prompt (e.g. a refreshed offer) updates rather than reorders (AC #1) |
+| any → `Shown(id=X)`, X new | **appended** to `outstanding` as `Open` carrying the event verbatim | a second chat's prompt no longer evicts the first's — the #1337 fix (AC #1) |
+| `Dismissed(id=X)`, X held in `outstanding` | X removed from `outstanding`, appended to `resolved` as `Dismissed(modalId, outcome, source, conversationId = held.conversationId)` | the prompt resolved; its conversation is copied from the held `Open` since the wire dismiss carries none (#816) (AC #3) |
+| `Dismissed(id=X)`, X not held | unchanged | **spoofed-dismiss safety** — an out-of-band dismiss can't clear a prompt that isn't open (AC #3) |
 
-`ModalUiState` is a `sealed interface { Hidden, Open, Dismissed }`. `Open` mirrors `ModalEvent.Shown`
-field-for-field (`modalId`, `modalClass`, `title`, `prompt`, `options: List<ModalOption>` in wire array
-order, `defaultOptionId`, and since [#818](#the-alwaysallowrules-field-818) `alwaysAllowRules`); `Dismissed`
-mirrors `ModalEvent.Dismissed` (`modalId`, `outcome`, `source`). Every field is carried **verbatim** — no
+`HostModalState(outstanding: List<ModalUiState.Open>, resolved: List<ModalUiState.Dismissed>)` replaces the
+pre-#1337 single `ModalUiState` accumulator. `outstanding` is in first-shown order; `resolved` only accumulates
+for the life of the **current connection** — a new connection resets both lists to empty (§ below), so
+`resolved` is never a mechanism for "answered forever," only "answered since the last reconnect."
+
+`ModalUiState` is still a `sealed interface { Hidden, Open, Dismissed }`, one entry of either `outstanding`
+or `resolved`. `Open` mirrors `ModalEvent.Shown` field-for-field (`modalId`, `modalClass`, `title`, `prompt`,
+`options: List<ModalOption>` in wire array order, `defaultOptionId`, and since
+[#818](#the-alwaysallowrules-field-818) `alwaysAllowRules`); `Dismissed` mirrors `ModalEvent.Dismissed`
+(`modalId`, `outcome`, `source`) plus the copied `conversationId`. Every field is carried **verbatim** — no
 parsing, enum-coercion, trimming, or reordering (preserves \#437's forward-compat posture). It reuses
-`data.model.ModalOption` (no parallel option type). `Hidden` is the initial / resolved-and-cleared state and
-does double duty as the inert default.
+`data.model.ModalOption` (no parallel option type). `Hidden` is `HostModalState.scopedTo`'s result when a
+conversation has neither an outstanding prompt nor a recorded dismissal, and still does double duty as the
+inert default for a fresh/unbound `ThreadViewModel`.
+
+Two scoping functions sit on top, both pure:
+
+```kotlin
+fun HostModalState.scopedTo(conversationId: String): ModalUiState =
+    outstanding.firstOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }
+        ?: resolved.lastOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }
+        ?: ModalUiState.Hidden
+
+val HostModalState.latestOutstanding: ModalUiState
+    get() = outstanding.lastOrNull() ?: ModalUiState.Hidden
+```
+
+`scopedTo(conversationId)` — what `ThreadViewModel.currentModal` is built from — is **first outstanding,
+else most recent dismissal, else Hidden**, each step reusing `ModalUiState.scopedTo` (unchanged since #816:
+a blank or non-matching `conversationId` always yields `Hidden`). The "most recent dismissal" fallback is
+why `ThreadScreen`'s `LaunchedEffect(modalState.modalId)` resolved-snackbar can fire again: reopening a
+conversation re-reads the same `Dismissed` from `resolved` until the next reconnect clears it — see [§
+Permission-modal overlay](permission-modal-overlay.md#the-dismissal-dismissed) for the render-side
+consequence. `latestOutstanding` is `currentModal`'s basis: the single most-recently-shown prompt across the
+whole host, `Hidden` when nothing is outstanding, never a `Dismissed` — the shape the three remaining
+single-value readers (`HostAttentionState.resolve`, `HostConversationSource.promptKeys`,
+`RelayConnectionRegistry.currentModal`) need, since all three only test the `Open` case.
 
 ### The `alwaysAllowRules` field (#818)
 
@@ -114,25 +182,24 @@ not here. `Open` derives `val offersAlwaysAllow: Boolean = modalClass == "permis
 .isNotEmpty()`, the single property the render and answer paths both gate on (see [Permission-modal overlay
 § The always-allow offer](permission-modal-overlay.md#the-always-allow-offer-818) and [Modal answer flow §
 The session-grant draft](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)). A later `Shown`
-for the same `modalId` still **supersedes** the whole `Open` (the existing last-shown-wins rule above), so a
-re-offer with a different rule list replaces the old one rather than merging with it.
+for the same `modalId` still **supersedes** the whole `Open` (the "replace in place" row of the fold table
+above), so a re-offer with a different rule list replaces the old one rather than merging with it.
 
-`ThreadViewModel` takes the coordinator's already-folded projection as a **defaulted, private** `hostModal`
-ctor property (renamed from the public `currentModal` in #816) and derives its own scoped `currentModal`
-from it:
+`ThreadViewModel` takes the coordinator's already-folded host state as a **defaulted, private** `hostModal`
+ctor property (its type widened from `StateFlow<ModalUiState>` to `StateFlow<HostModalState>` in #1337; the
+ctor parameter name is unchanged from the #816 rename) and derives its own scoped `currentModal` from it:
 
 ```kotlin
 class ThreadViewModel(
     …,
-    // #492: the host coordinator's process-scoped, reconnection-surviving "current modal" projection,
-    // folded once at the coordinator. It holds the host's single modal whichever conversation raised it;
-    // #816 scopes it to this thread as [currentModal]. Default = a fresh MutableStateFlow(Hidden) so the
-    // fake-backed Koin graph + non-modal tests stay inert.
-    private val hostModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    // #1337: the host coordinator's process-scoped, reconnection-surviving fold of every outstanding
+    // prompt. #1337 scopes it to this thread as [currentModal]. Default = a fresh MutableStateFlow(…) so
+    // the fake-backed Koin graph + non-modal tests stay inert.
+    private val hostModal: StateFlow<HostModalState> = MutableStateFlow(HostModalState()),
     …,
 ) {
-    // #816: this thread's own view of the host modal — Hidden unless hostModal's conversationId
-    // matches this VM's own conversationId. Seeded from hostModal.value so .value is right at construction.
+    // #1337: this thread's own view of the host's prompts — its own first outstanding prompt, else its
+    // own most recent dismissal, else Hidden. Seeded from hostModal.value so .value is right at construction.
     val currentModal: StateFlow<ModalUiState> =
         hostModal
             .map { it.scopedTo(conversationId) }
@@ -140,13 +207,15 @@ class ThreadViewModel(
 }
 ```
 
-`AppModule` passes the coordinator's `currentModal` as the `hostModal` argument (a rename only — the value
-supplied is unchanged). `armedOptionId` combines the scoped `currentModal`, so an arm never surfaces for a
-foreign prompt. `onModalOption` / `onModalCancel` do **not** read `currentModal.value` — they read
-`hostModal.value.scopedTo(conversationId)` synchronously through a private `scopedModal()` helper, so the
-input guard never lags the host flow by a dispatch: a tap in another thread cannot answer this thread's
-prompt (or vice versa) even in the instant before the `stateIn` collector runs. `sendAnswer` / `sendCancel`
-are unchanged — they still take a `modalId` and never see a conversation.
+`AppModule` passes the coordinator's `hostModals` as the `hostModal` argument (the value supplied changed
+in #1337; the argument name did not). `armedOptionId` combines the scoped `currentModal`, so an arm never
+surfaces for a foreign prompt. `onModalOption` / `onModalCancel` do **not** read `currentModal.value` — they
+read `hostModal.value.scopedTo(conversationId)` synchronously through a private `scopedModal()` helper, so
+the input guard never lags the host flow by a dispatch: a tap in another thread cannot answer this thread's
+prompt (or vice versa) even in the instant before the `stateIn` collector runs, and (since #1337) cannot
+answer a *different conversation's* held prompt on the same host either, since `scopedTo` only ever returns
+this thread's own entry. `sendAnswer` / `sendCancel` are unchanged — they still take a `modalId` and never
+see a conversation.
 
 ## Why `Eagerly`, not `WhileSubscribed`
 
@@ -156,24 +225,21 @@ rationale moved verbatim from the VM to the coordinator in #492 (the reasoning i
 
 - `scan` **re-emits its initial accumulator on every fresh upstream collection.** Under `WhileSubscribed`,
   when collection stops past the timeout the upstream cancels; on resubscription `scan` restarts and emits
-  `Hidden`, **overwriting a retained `Open`**. Because the source `modalEvents` is `replay = 0`, the prior
-  events do **not** replay to rebuild the accumulator — a still-open modal would silently clear. This is a
-  deterministic consequence of `scan` + `replay = 0`, not a speculative guard.
+  an empty `HostModalState`, **overwriting every held prompt**. Because the source `modalEvents` is
+  `replay = 0`, the prior events do **not** replay to rebuild the accumulator — still-open prompts would
+  silently clear. This is a deterministic consequence of `scan` + `replay = 0`, not a speculative guard.
 - `Eagerly` collects for the **coordinator's process lifetime** (the `scope` is `SupervisorJob() +
   dispatcher`, created at `createdAtStart` Koin init and cancelled only by `close()`), so the `scan`
-  accumulator runs **exactly once** and is monotonic; `.value` is always the true current projection. This
-  matches the coordinator's own accumulate-a-`replay=0`-stream precedent (`currentRepository` /
-  `connectionStatus`, both `Eagerly`). Cost is negligible — modals are one-at-a-time, user-driven, low-rate.
-  **Collection begins at coordinator construction — before any thread screen — which is precisely why a
-  pre-subscriber `modal_shown` is no longer dropped.**
+  accumulator runs **exactly once** per coordinator and is monotonic *within a connection*; `.value` is
+  always the true current projection. This matches the coordinator's own accumulate-a-`replay=0`-stream
+  precedent (`currentRepository` / `connectionStatus`, both `Eagerly`). Cost is negligible — modals are
+  low-rate and the lists are cleared on every reconnect (§ below), so they cannot grow across the app's
+  whole session. **Collection begins at coordinator construction — before any thread screen — which is
+  precisely why a pre-subscriber `modal_shown` is no longer dropped.**
 - The sibling `isThinking` is safe under `WhileSubscribed` **only because `mapNotNull` never re-emits a
   stale value on resubscription** (a non-matching event produces no emission, so `.value` is retained).
   The same policy is wrong for a `scan` accumulator. Pick the started policy from the operator
   (`scan` accumulates vs `mapNotNull` transitions), not from the sibling.
-
-> **Kotlin gotcha:** `scan`'s accumulator type is inferred from the initial value, so
-> `scan(ModalUiState.Hidden) { … }` infers `R = ModalUiState.Hidden` (the singleton type) and rejects a
-> lambda returning `ModalUiState.Open`. Type it explicitly: `scan<ModalEvent, ModalUiState>(ModalUiState.Hidden)`.
 
 ## Why a sibling `StateFlow`, not a `ThreadUiState` field
 
@@ -181,40 +247,49 @@ rationale moved verbatim from the VM to the coordinator in #492 (the reasoning i
 with a distinct source, taken by the stateless `ThreadScreen` as a **separate** parameter beside `state`.
 Folding it into the `state` `combine` would force a restructure and touch its `initialValue`. The render
 slice **#446** consumes it the same way — a separate `(state, currentModal, onEvent)` parameter on the
-stateless screen. Since #816 it **does** carry a `conversationId` filter, like
-[`thinkingTransition`](turn-state-thinking-flag.md)'s guard — but the filter lives in the ViewModel
-(`hostModal.map { it.scopedTo(conversationId) }`), not inside the coordinator's fold, which stays a single
-host-wide accumulator.
+stateless screen. Since #816 it **does** carry a `conversationId` filter, like the per-conversation
+routing [`TurnPhaseProjection`](turn-state-thinking-flag.md#the-data-path) keys its writes by — but the
+filter lives in the ViewModel
+(`hostModal.map { it.scopedTo(conversationId) }`), not inside the coordinator's fold, which since #1337
+holds every outstanding prompt across the host.
 
 ## Lifecycle, errors, edge cases
 
-- **Lifecycle** — `stateIn(scope, Eagerly, Hidden)` on the coordinator's **process-lived** scope (not
-  `viewModelScope`): the host fold collects for the coordinator's lifetime, cancelled only by `close()`.
-  Since #816 the VM layers its own `stateIn(viewModelScope, Eagerly, …)` on top to compute the scoped
+- **Lifecycle** — `stateIn(scope, Eagerly, HostModalState())` on the coordinator's **process-lived** scope
+  (not `viewModelScope`): the host fold collects for the coordinator's lifetime, cancelled only by
+  `close()`. The VM layers its own `stateIn(viewModelScope, Eagerly, …)` on top to compute the scoped
   `currentModal`, cancelled with the VM; no parallel mutable modal state exists on either layer, and the
   scoping `map` is pure (no dispatcher switch).
 - **Errors** — none. `modalEvents` is a `SharedFlow` that never completes-with-error; malformed envelopes
   are already dropped at the #437 decode boundary, so every event reaching the fold is well-typed and the
-  fold is total over the sealed `ModalEvent`. Absence of a live source is the empty flow ⇒ state stays
-  `Hidden`. No `catch`, no result type.
-- **Connection teardown = RETAIN, not reset (the #492 security-relevant decision).** On a connection drop
-  `activeConnection` goes `null → emptyFlow()`, so no event flows and the `scan` **holds its last
-  accumulator** — a still-`Open` modal is retained, *not* reset to `Hidden`. This is safe because the answer
-  path is guarded by **deterministic code**, never by this projection: `coordinator.answerModal` /
+  fold is total over the sealed `ModalEvent` plus the `null` reconnect marker. Absence of a live source is
+  the empty flow ⇒ the fold holds whatever it already had (no event ⇒ no reduce call — see teardown below).
+  No `catch`, no result type.
+- **Connection teardown still RETAINs; a new connection now CLEARS (#1337 revises #492's decision).**
+  On a connection drop `activeConnection` goes `null → emptyFlow()`, so no event flows — including no
+  reconnect marker — and the `scan` **holds its last accumulator**: every still-outstanding prompt is
+  retained, *not* reset to empty. This half of #492's decision is unchanged and for the same reason: the
+  answer path is guarded by **deterministic code**, never by this projection — `coordinator.answerModal` /
   `cancelModal` throw `IllegalStateException` on no active connection (surfaced as a one-shot
   `modalSendErrors` snackbar), and `modalId`s are unique per instance so a stale answer can't match a fresh
-  modal on a new connection (daemon rejects → `RelayErrorException` → same one-shot error). Belt-and-
+  prompt on a new connection (daemon rejects → `RelayErrorException` → same one-shot error). Belt-and-
   suspenders with **different fabric**: the projection is UI state, the guard is deterministic code (the
-  [#490](../codebase/490.md) pairing pattern). **Clearing would be worse** — absent a *confirmed* daemon
-  replay-on-reconnect (the replay cursor advances past seen events, so re-raise is not guaranteed), a reset
-  would blank a still-outstanding modal and it would not come back, re-introducing the exact bug #492 fixes.
-  Net effect of a stale `Open` is at worst a cosmetic lingering prompt superseded by the next
-  `Shown`/`Dismissed`. If a future wire signal *guarantees* re-raise-or-dismiss on reconnect, a follow-up
-  could switch to clear-on-teardown (out of scope — don't build for an unobserved failure).
+  [#490](../codebase/490.md) pairing pattern).
+  <br><br>
+  What #492 left open — "should a connection drop clear a stale `Open`?" — #1337 answers for the **new
+  connection**, not the drop: when `activeConnection` switches to a *fresh* `Connection`, the `onStart {
+  emit(null) }` marker (§ above) resets the fold to an empty `HostModalState` before that connection's first
+  `modal_shown` is collected. This is now safe because the daemon **guarantees** a connect-time re-send of
+  every still-outstanding prompt (`protocol-mobile.md` § Reconcile on (re)connect) — the "unconfirmed
+  re-raise" gap #492 cited no longer exists. Net effect: a prompt held across a **plain disconnect** (no new
+  connection yet) stays exactly as #492 left it; a prompt held into a **new connection** is dropped and only
+  returns if the daemon re-sends it — which per the protocol it always does for anything still outstanding,
+  and never does for anything already answered. See [Permission-modal overlay](permission-modal-overlay.md)
+  for what this means for the don't-ask-again draft and the resolved-snackbar.
 
 ## Wiring
 
-`AppModule` fetches the **folded projection** off the already-registered concrete coordinator singleton at
+`AppModule` fetches the **folded host state** off the already-registered concrete coordinator singleton at
 the `ThreadViewModel` factory — **no new Koin binding** — mirroring the `liveSessionEvents` arg:
 
 ```kotlin
@@ -222,9 +297,8 @@ viewModel {
     ThreadViewModel(
         get(), get(), get(), get(),
         coordinator.liveSessionEvents,
-        // #492: the process-scoped "current modal" projection, folded once at the coordinator.
-        // #816 renamed the ctor parameter to hostModal; the value supplied is unchanged.
-        hostModal = coordinator.currentModal,
+        // #1337: the process-scoped fold of every outstanding prompt, cleared on each new connection.
+        hostModal = coordinator.hostModals,
         answerModal = coordinator::answerModal,
         cancelModal = coordinator::cancelModal,
         …,
@@ -232,13 +306,13 @@ viewModel {
 }
 ```
 
-`AppModule` supplies `coordinator.currentModal` as `hostModal` in both real and demo builds; the
+`AppModule` supplies `coordinator.hostModals` as `hostModal` in both real and demo builds; the
 [repository build option](dependency-injection.md#how-it-works) does not gate this flow.
-The defaulted `MutableStateFlow(Hidden)` is used by direct test/preview construction
-that omits the argument. A fresh coordinator also starts at `Hidden` until a modal
-event arrives; connection teardown retains its last state as described above — and since that
-retained state still flows through `scopedTo` in the VM, a retained `Open` for another conversation
-stays invisible to a thread that isn't its own.
+The defaulted `MutableStateFlow(HostModalState())` is used by direct test/preview construction
+that omits the argument. A fresh coordinator also starts at an empty `HostModalState` until a modal
+event arrives; connection teardown retains its held prompts as described above, and since that retained
+state still flows through `scopedTo` in the VM, a retained prompt for another conversation stays invisible
+to a thread that isn't its own.
 
 ## Related
 
@@ -250,13 +324,19 @@ stays invisible to a thread that isn't its own.
   `ModalEvent` stream; this slice realizes its "folding into a current-modal state is the consumer's
   projection" deferral (now folded at the coordinator).
 - [Relay repository coordinator](relay-repository-coordinator.md) — owns + publishes the `modalEvents`
-  seam (now private) and the hoisted `currentModal` fold (§ Modal event seam).
+  seam (now private) and the hoisted `hostModals` fold (§ Modal event seam).
 - [Turn-state thinking flag](turn-state-thinking-flag.md) ([#406](../codebase/406.md)) — the `isThinking`
   projection this is the **modal twin** of; contrast the `scan`/`Eagerly` vs `mapNotNull`/`WhileSubscribed`
   choice. `isThinking` remains folded per-conversation directly in the VM; the modal *fold* stays hoisted
-  and host-level at the coordinator (one modal per host, not a per-conversation map — the reason it hoists
-  cleanly at all), and since #816 the VM applies its own per-conversation filter (`scopedTo`) on top,
-  giving the two signals the same conversation-scoped shape at the point the screen consumes them.
+  and host-level at the coordinator — since #1337 it folds every conversation's outstanding prompts into
+  one `HostModalState`, not a single value — and the VM applies its own per-conversation filter (`scopedTo`)
+  on top, giving the two signals the same conversation-scoped shape at the point the screen consumes them.
+- `docs/specs/architecture/1337-hold-every-outstanding-prompt.md` — the #1337 plan: the `HostModalState`
+  design, the reconnect-marker ordering proof, and the security review for holding an unbounded list per
+  host.
+- #1338 (open) — plans to move `HostAttentionState.resolve`, `HostConversationSource.promptKeys` and
+  `RelayConnectionRegistry.currentModal` off the single-value `currentModal` view onto the full
+  `HostModalState`, so the conversation list can show attention for more than the most recent prompt.
 - [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the other sibling transient signal
   (`isStalled`).
 - [Guarded repo launch](guarded-repo-launch.md) ([#490](../codebase/490.md)) — the deterministic

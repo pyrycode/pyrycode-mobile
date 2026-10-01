@@ -19,7 +19,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Settings](features/settings-screen.md): notifications-only modal and persisted push control.
 - [Shared mobile modal](features/mobile-modal.md): caller-controlled editing shell, theme mapping, focus and IME behavior.
 - [Host editor](features/host-editor.md): the shared Edit host state machine (`ui/host/HostEditor.kt`) used by the channel list.
-- [System prompt editor](features/system-prompt-editor.md): the shared channel system-prompt editing state (`ui/conversations/components/SystemPromptEditor.kt`) the create/save-as and edit channel modals will own.
+- [System prompt editor](features/system-prompt-editor.md): the shared channel system-prompt editing state (`ui/conversations/components/SystemPromptEditor.kt`), mounted by `ThreadViewModel` for Channel info's System prompt section.
 
 ## Data and transport
 

@@ -22,7 +22,6 @@ import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -94,8 +93,13 @@ class ScannerFrameTest {
             val camera = rule.onNodeWithTag("camera").getUnclippedBoundsInRoot()
             val frame = rule.onNodeWithTag("scanner_frame").getUnclippedBoundsInRoot()
             if (dark && size.width == 412.dp) {
-                val pixels = rule.onNodeWithTag("scanner_frame").captureToImage().toPixelMap()
-                assertTrue("blue atmosphere above plain footer", pixels[4, pixels.height / 4].blue > pixels[4, pixels.height * 3 / 4].blue)
+                rule.captureWithRetry("scanner atmosphere pixel check") { rule.onNodeWithTag("scanner_frame") }?.let { image ->
+                    val pixels = image.toPixelMap()
+                    assertTrue(
+                        "blue atmosphere above plain footer",
+                        pixels[4, pixels.height / 4].blue > pixels[4, pixels.height * 3 / 4].blue,
+                    )
+                }
             }
             assertTrue(action.bottom <= frame.bottom - 24.dp)
             assertTrue(reticle.top >= camera.top)

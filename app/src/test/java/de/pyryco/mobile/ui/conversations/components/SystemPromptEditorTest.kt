@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
@@ -12,6 +13,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.SerializationException
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -196,30 +198,107 @@ class SystemPromptEditorTest {
             runCurrent()
 
             assertEquals(listOf<String?>(null), repo.writes)
-            assertEquals(Loaded(null, SessionPromptStatus.Differs, draft = ""), editor.state.value)
-            assertFalse((editor.state.value as Loaded).canClear)
+            assertEquals(Loaded(null, SessionPromptStatus.Differs, draft = "", saved = true), editor.state.value)
+            // Desktop's rule: Clear needs only a settled write, so it stays available with nothing stored.
+            assertTrue((editor.state.value as Loaded).canClear)
         }
 
     @Test
-    fun anUnchangedDraftSendsNothingSoNoPromptNeverBecomesEmpty() =
+    fun saveAndClearFollowDesktopRulesWhateverTheBoxHolds() =
         runTest {
+            // deriveSystemPromptSection: Save needs a settled write and a fitting box; Clear needs a settled write.
             for (stored in listOf(null, "", "kept")) {
-                val repo = PromptRepo(reads = readings(SystemPromptReading(stored, SessionPromptStatus.NoSession)))
+                val repo =
+                    PromptRepo(
+                        reads =
+                            readings(
+                                SystemPromptReading(stored, SessionPromptStatus.NoSession),
+                                SystemPromptReading(stored, SessionPromptStatus.NoSession),
+                                SystemPromptReading(null, SessionPromptStatus.NoSession),
+                            ),
+                    )
                 val editor = loadedEditor(repo)
+                val loaded = editor.state.value as Loaded
+                assertTrue("stored=$stored", loaded.canSave && loaded.canClear)
 
-                editor.save()
-                editor.edit("x")
-                editor.edit(stored.orEmpty())
+                // An untouched box is sent verbatim, "" included; Clear then sends null.
                 editor.save()
                 runCurrent()
+                editor.clear()
+                runCurrent()
 
-                assertTrue("stored=$stored", repo.writes.isEmpty())
-                assertFalse((editor.state.value as Loaded).canSave)
+                assertEquals("stored=$stored", listOf(stored.orEmpty(), null), repo.writes)
             }
-            val none = loadedEditor(PromptRepo(reads = readings(SystemPromptReading(null, SessionPromptStatus.NoSession))))
-            none.clear()
+        }
+
+    @Test
+    fun noControlIsAvailableWhileAWriteIsInFlight() =
+        runTest {
+            val write = CompletableDeferred<Unit>()
+            val repo =
+                PromptRepo(
+                    reads =
+                        readings(
+                            SystemPromptReading("kept", SessionPromptStatus.Matches),
+                            SystemPromptReading("kept", SessionPromptStatus.Matches),
+                        ),
+                )
+            val editor = loadedEditor(repo)
+            repo.writeGate = write
+
+            editor.save()
             runCurrent()
-            assertEquals(Loaded(null, SessionPromptStatus.NoSession, draft = ""), none.state.value)
+            val saving = editor.state.value as Loaded
+            assertTrue(saving.saving)
+            assertFalse(saving.canSave || saving.canClear)
+
+            write.complete(Unit)
+            runCurrent()
+            val settled = editor.state.value as Loaded
+            assertTrue(settled.saved && settled.canSave && settled.canClear)
+        }
+
+    @Test
+    fun aRefusedWriteIsClassifiedByItsCodeAndTheNextWriteForgetsIt() =
+        runTest {
+            val cases =
+                listOf(
+                    RelayErrorException("protocol.malformed", retryable = false, message = "x") to SystemPromptRefusal.Malformed,
+                    // RelayRequests.mapError turns conversation.not_found into an IllegalArgumentException.
+                    IllegalArgumentException("Unknown conversation") to SystemPromptRefusal.NotFound,
+                    RelayErrorException("conversation.not_found", retryable = false, message = "x") to SystemPromptRefusal.NotFound,
+                    RelayErrorException("server.busy", retryable = true, message = "x") to SystemPromptRefusal.Unclassified,
+                    IllegalStateException("not connected") to SystemPromptRefusal.Unclassified,
+                    // An undecodable ack is an IllegalArgumentException too, but the write probably landed.
+                    SerializationException("bad ack") to SystemPromptRefusal.Unclassified,
+                )
+            for ((error, refusal) in cases) {
+                val repo =
+                    PromptRepo(
+                        reads =
+                            readings(
+                                SystemPromptReading("old", SessionPromptStatus.Matches),
+                                SystemPromptReading("new", SessionPromptStatus.Differs),
+                            ),
+                    )
+                val editor = loadedEditor(repo)
+                repo.writeFailures += error
+
+                editor.edit("new")
+                editor.save()
+                runCurrent()
+                val failed = editor.state.value as Loaded
+                assertTrue(failed.saveFailed)
+                assertFalse(failed.saved)
+                assertEquals(error.toString(), refusal, failed.refusal)
+
+                editor.save()
+                runCurrent()
+                val saved = editor.state.value as Loaded
+                assertNull(saved.refusal)
+                assertFalse(saved.saveFailed)
+                assertTrue(saved.saved)
+            }
         }
 
     @Test
@@ -241,11 +320,11 @@ class SystemPromptEditorTest {
             editor.edit("new")
             editor.save()
             runCurrent()
-            assertEquals(Loaded("new", null, draft = "new", saving = true), editor.state.value)
+            assertEquals(Loaded("new", null, draft = "new", saving = true, saved = true), editor.state.value)
 
             refresh.complete(Unit)
             runCurrent()
-            assertEquals(Loaded("new", SessionPromptStatus.Differs, draft = "new"), editor.state.value)
+            assertEquals(Loaded("new", SessionPromptStatus.Differs, draft = "new", saved = true), editor.state.value)
             assertEquals(listOf(CONVERSATION_ID, CONVERSATION_ID), repo.readIds)
             assertEquals(listOf(CONVERSATION_ID), repo.writeIds)
         }
@@ -267,7 +346,7 @@ class SystemPromptEditorTest {
             editor.save()
             runCurrent()
 
-            assertEquals(Loaded("new", null, draft = "new"), editor.state.value)
+            assertEquals(Loaded("new", null, draft = "new", saved = true), editor.state.value)
         }
 
     @Test
@@ -288,14 +367,20 @@ class SystemPromptEditorTest {
             editor.save()
             runCurrent()
             assertEquals(
-                Loaded("old", SessionPromptStatus.Matches, draft = "new", saveFailed = true),
+                Loaded(
+                    "old",
+                    SessionPromptStatus.Matches,
+                    draft = "new",
+                    saveFailed = true,
+                    refusal = SystemPromptRefusal.Unclassified,
+                ),
                 editor.state.value,
             )
 
             editor.save()
             runCurrent()
             assertEquals(listOf<String?>("new", "new"), repo.writes)
-            assertEquals(Loaded("new", SessionPromptStatus.Differs, draft = "new"), editor.state.value)
+            assertEquals(Loaded("new", SessionPromptStatus.Differs, draft = "new", saved = true), editor.state.value)
         }
 
     @Test
@@ -323,7 +408,7 @@ class SystemPromptEditorTest {
             runCurrent()
 
             assertEquals(listOf<String?>("first"), repo.writes)
-            assertEquals(Loaded("first", SessionPromptStatus.NoSession, draft = "second"), editor.state.value)
+            assertEquals(Loaded("first", SessionPromptStatus.NoSession, draft = "second", saved = true), editor.state.value)
         }
 
     @Test
