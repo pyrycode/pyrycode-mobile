@@ -135,6 +135,9 @@ import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
+import de.pyryco.mobile.ui.onboarding.ScannerEvent
+import de.pyryco.mobile.ui.onboarding.ScannerUiState
+import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -166,6 +169,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
+import org.koin.core.context.loadKoinModules
+import org.koin.core.module.Module
+import org.koin.core.module.dsl.viewModel
+import org.koin.dsl.module
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
@@ -459,6 +466,88 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(TOOL_NEVER_USED, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    /**
+     * The status band keeps a reading for the whole running turn (#1311, rung 3). [TOOL_THEN_TEXT_PROMPT]
+     * makes real claude run a read-only `echo` and then answer in text, so one turn walks thinking, a tool
+     * call and the `responding` text that used to leave the band dark. From the tap on Send the band is
+     * sampled inside `waitUntil` until the turn has been seen busy and then idle. "Busy" is the stop control,
+     * which shows exactly while `isBusy` holds and the composer is empty. A reading is the status glyph
+     * (thinking, working, running tool, stalled) or any other arm that can pre-empt it mid-turn: compaction,
+     * api-retry, Reset session, the connection arm during a reconnect, or waiting for answers. A sample counts
+     * as dark only when busy holds both before and after its reading checks, so `turn_state{idle}` landing
+     * between the reads at the turn's falling edge is not mistaken for an empty band. Any dark sample is
+     * recorded, and the list must be empty.
+     *
+     * Always-on: it asserts an absence over the whole turn rather than catching a transient label, so no
+     * timing decides the outcome. Non-vacuity: at least one busy sample must have been taken.
+     *
+     * **One real-claude turn.**
+     */
+    @Test
+    fun interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val stopControl = hasContentDescription(context.getString(R.string.cd_thread_interrupt))
+        val compactingReading = context.getString(R.string.cd_thread_compacting)
+        // Every api-retry description, counted or not, opens with this agent-named phrase.
+        val retryPrefix = context.getString(R.string.cd_thread_api_retry_unknown).substringBefore(",")
+        val exactReadings =
+            setOf(
+                compactingReading,
+                context.getString(R.string.thread_resetting_wrapping_up),
+                context.getString(R.string.thread_resetting_restarting_written),
+                context.getString(R.string.thread_resetting_restarting_skipped),
+                context.getString(R.string.thread_resetting_restarting),
+                context.getString(R.string.thread_connection_connecting),
+                context.getString(R.string.question_waiting_for_answers),
+            )
+        // Unformatted, so the prefix stops before the countdown's placeholder.
+        val reconnectingPrefix = context.resources.getString(R.string.thread_connection_reconnecting).substringBefore("%")
+        val otherReading =
+            SemanticsMatcher("a compaction, api-retry, reset, connection or waiting reading") { node ->
+                val descriptions = node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+                val texts =
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .map { it.text }
+                (descriptions + texts).any {
+                    it in exactReadings || it.startsWith(retryPrefix) || it.startsWith(reconnectingPrefix)
+                }
+            }
+        awaitChannelList()
+        awaitConnected()
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(TOOL_THEN_TEXT_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+
+        var busySamples = 0
+        var seenBusy = false
+        val darkSamples = mutableListOf<Int>()
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            val busy = composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+            if (busy) {
+                seenBusy = true
+                busySamples++
+                val glyph =
+                    composeTestRule
+                        .onAllNodes(hasTestTag(STATUS_GLYPH_TEST_TAG), useUnmergedTree = true)
+                        .fetchSemanticsNodes()
+                        .isNotEmpty()
+                val other = composeTestRule.onAllNodes(otherReading).fetchSemanticsNodes().isNotEmpty()
+                val stillBusy = composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+                if (!glyph && !other && stillBusy) darkSamples += busySamples
+            }
+            seenBusy && !busy
+        }
+
+        assertTrue("the turn was never seen busy, so nothing was sampled", busySamples > 0)
+        assertTrue("busy samples with no status reading: $darkSamples of $busySamples", darkSamples.isEmpty())
     }
 
     /**
@@ -1095,6 +1184,79 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).onFirst().assertIsDisplayed()
+    }
+
+    /**
+     * The Archive lists the most recently archived chat first (#1332). Chat A is created before chat B, so B
+     * has the newer `last_used_at`; B is archived first and A second. Rename and archive do not bump
+     * `last_used_at` on the daemon, so the old last-use order would put B on top and only the daemon's
+     * `archived_at` puts A there — the scenario fails on the pre-#1332 order.
+     *
+     * When the screen opens, B already carries its stamp from the `list_conversations` reply that confirmed its
+     * archive, while A may still hold none: that confirming read can match on the held list, where A was folded
+     * in from `conversation_updated`, before its own reply lands. A can therefore first draw below B and move
+     * in front of it when the screen's own list reply arrives; the screen keeps an at-top list on its new first
+     * row, so the order is waited for rather than read once. Zero real-claude turns; both chats are deleted
+     * afterwards.
+     */
+    @Test
+    fun interactiveTurn_archiveTwoChats_listsSecondArchivedFirst() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val stamp = System.currentTimeMillis()
+        val nameA = "${ARCHIVE_ORDER_PREFIX}a-$stamp"
+        val nameB = "${ARCHIVE_ORDER_PREFIX}b-$stamp"
+        var beforeA: Set<String>? = null
+        var beforeB: Set<String>? = null
+        var idA: String? = null
+        var idB: String? = null
+        try {
+            // 1. A, then B: B is the newer by last use.
+            beforeA = hostConversationIds(serverId)
+            idA = createChatOn(serverId)
+            renameOpenThread(nameA)
+            leaveThread()
+            beforeB = hostConversationIds(serverId)
+            idB = createChatOn(serverId)
+            renameOpenThread(nameB)
+
+            // 2. Archive B from its open thread, then A from its reopened thread.
+            archiveOpenThread()
+            archivedIds(serverId) { idB in it }
+            openChatRow(nameA)
+            archiveOpenThread()
+            archivedIds(serverId) { idA in it }
+
+            // 3. Open Archive on its default Discussions tab: A, archived last, is the first row.
+            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+            }
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val restoreA = hasContentDescription(context.getString(R.string.cd_restore_archive, nameA))
+            val restoreB = hasContentDescription(context.getString(R.string.cd_restore_archive, nameB))
+            val anyRestore = hasContentDescription(context.getString(R.string.cd_restore_archive, ""), substring = true)
+
+            fun topOf(matcher: SemanticsMatcher): Float? =
+                composeTestRule
+                    .onAllNodes(matcher)
+                    .fetchSemanticsNodes()
+                    .firstOrNull()
+                    ?.boundsInRoot
+                    ?.top
+
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                val a = topOf(restoreA)
+                val b = topOf(restoreB)
+                a != null && b != null && a < b
+            }
+            val topmost = composeTestRule.onAllNodes(anyRestore).fetchSemanticsNodes().minOf { it.boundsInRoot.top }
+            assertEquals("the second-archived chat is not the Archive's first row", topmost, topOf(restoreA))
+        } finally {
+            beforeA?.let { cleanupCreatedConversation(serverId, it, idA, "archive order cleanup failed") }
+            beforeB?.let { cleanupCreatedConversation(serverId, it, idB, "archive order cleanup failed") }
+        }
     }
 
     /**
@@ -1797,6 +1959,50 @@ class InteractiveStreamE2ETest {
                 runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).delete(id) } } }
                     .onFailure { Log.w("E2E", "diagnostic marker cleanup failed: ${it::class.simpleName}") }
             }
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
+        }
+    }
+
+    /**
+     * The scanner reports a pairing done only once the host answered (#1386), over the real relay (#1394,
+     * rung 3). No camera reads a code: once the scanner is ready, host B's pair code goes in as a decoded
+     * QR, which the scanner parses as the code path does. Confirm, then the view model's connection wait,
+     * then the list ([pairHostByScanner]).
+     *
+     * **Which label.** A scanner pairing saves no name, so both hosts would read "Unnamed host". B is named
+     * with the store call the Edit host modal makes, then each seeded conversation is folded away under its
+     * own host's label. A's is read by id, since #847 renames it.
+     *
+     * **Zero real-claude turns**: pairing and the list are daemon round-trips. B is removed in `finally`.
+     */
+    @Test
+    fun interactiveTurn_scannerConfirm_waitsForHostThenOpensList() {
+        val serverIdA = twoHostArg(ARG_SERVER_ID)
+        val serverIdB = twoHostArg(ARG_SERVER_ID_B)
+        val nameB = twoHostArg(ARG_COLLISION_NAME_B)
+        val store = GlobalContext.get().get<PairedServerCollectionStore>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val nameA =
+                checkNotNull(heldConversationName(serverIdA, twoHostArg(ARG_COLLISION_CONVERSATION_ID))) {
+                    "host A's seeded conversation has no name"
+                }
+
+            pairHostByScanner(twoHostArg(ARG_PAIR_CODE_B))
+            assertNotNull("the scanner did not save host B", runBlocking { store.loadById(serverIdB) })
+            awaitChannelRow(nameB)
+
+            runBlocking { store.setDisplayName(serverIdB, HOST_B_NAME) }
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(hasContentDescription(hostEditDescription(HOST_B_NAME))) }.isSuccess
+            }
+            val labelA = hostLabel(serverIdA)
+            val labelB = hostLabel(serverIdB)
+            assertEquals(HOST_B_NAME, labelB)
+            assertEachUnderOwnHost(labelB to nameB, labelA to nameA)
+            assertEachUnderOwnHost(labelA to nameA, labelB to nameB)
+        } finally {
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
         }
     }
@@ -6239,6 +6445,16 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** Archive the open thread's conversation from its overflow and wait for the pop back to the list. */
+    private fun archiveOpenThread() {
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(ARCHIVE_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText(ARCHIVE_ITEM).performClick()
+        awaitChannelList()
+    }
+
     /** The first archived-id set [serverId]'s live repository lists that satisfies [ready]. */
     private fun archivedIds(
         serverId: String,
@@ -6284,6 +6500,55 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
         }
     }
+
+    /**
+     * Pair a host through the scanner's own confirm (#1386), with [payload] standing in for a decoded QR. The
+     * list's pair-another-host control opens the scanner; once its view model is
+     * [ReadyToScan][ScannerUiState.ReadyToScan] the payload goes in as [ScannerEvent.QrDecoded] and the route
+     * prepares the confirmation itself. Confirm → save → wait for the host → only on
+     * [Paired][ScannerUiState.Paired] does the route open the list.
+     *
+     * `MainActivity` keeps its nav controller to itself, so the route's view model is captured where Koin
+     * builds it ([scannerViewModelModule]) and the plain definition is restored afterwards.
+     */
+    private fun pairHostByScanner(payload: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        // The scanner asks for CAMERA at runtime; granting it first keeps the system dialog off screen.
+        instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+        val captured = AtomicReference<ScannerViewModel?>()
+        loadKoinModules(scannerViewModelModule { captured.set(it) })
+        try {
+            composeTestRule.onNode(hasContentDescription(context.getString(R.string.cd_pair_another_host))).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { captured.get()?.state?.value == ScannerUiState.ReadyToScan }
+            val scanner = checkNotNull(captured.get())
+            instrumentation.runOnMainSync { scanner.onEvent(ScannerEvent.QrDecoded(payload)) }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(CONFIRM_PAIRING).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(CONFIRM_PAIRING).performClick()
+            // Save, then up to the view model's 30 s connection wait, then the navigation to the list.
+            composeTestRule.waitUntil(PAIR_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+            }
+            assertEquals(ScannerUiState.Paired, scanner.state.value)
+        } finally {
+            loadKoinModules(scannerViewModelModule {})
+        }
+    }
+
+    /**
+     * A mirror of `AppModule`'s [ScannerViewModel] definition that also hands [onCreated] each instance.
+     * The scenario's `finally` reloads this mirror, so later live methods resolve the scanner VM from it:
+     * keep it in step with `AppModule`.
+     */
+    private fun scannerViewModelModule(onCreated: (ScannerViewModel) -> Unit): Module =
+        module {
+            viewModel {
+                val registry = get<RelayConnectionRegistry>()
+                ScannerViewModel(get(), registry, registry::pairingStatus).also(onCreated)
+            }
+        }
 
     /** Both halves of "separate", for both hosts: see [assertEachUnderOwnHost] and [assertRowOpensOwnThread]. */
     private fun assertHostsStaySeparate(
@@ -6458,6 +6723,15 @@ class InteractiveStreamE2ETest {
         // Claude's verbatim shell-tool name; renders in the tool-row header (#388) in all three states.
         const val TOOL_NAME = "Bash"
 
+        // #1311: a tool call and then a text answer in one turn, so the band is sampled across thinking, a
+        // running tool and the responding text. `echo` is read-only and auto-allowed, as in TOOL_PROMPT.
+        const val TOOL_THEN_TEXT_PROMPT =
+            "Run this exact shell command with your tools: echo pyry1311. Then reply with one short sentence " +
+                "saying what it printed."
+
+        // The status glyph ThinkingIndicator draws for thinking, working, a running tool and a stall.
+        const val STATUS_GLYPH_TEST_TAG = "thinking_glyph"
+
         // Negative control: a real, distinct tool name the read-only echo prompt never asks claude to
         // use, so the matcher's selectivity is what is proven (not a nonsense string).
         const val TOOL_NEVER_USED = "Edit"
@@ -6568,6 +6842,9 @@ class InteractiveStreamE2ETest {
         // cannot pre-exist on screen — the presence check (step 5), its inversion after archive (step 8), and
         // the re-appearance after restore (step 13) are all genuine; also keeps repeated LIVE gate runs clean.
         const val ARCHIVE_NAME_PREFIX = "e2e551-"
+
+        // #1332 archive-order scenario: runtime-unique names for its two chats.
+        const val ARCHIVE_ORDER_PREFIX = "e2e1332-"
 
         // #537 rename-conversation scenario. Reuses the #554 rename constants (RENAME_ITEM, RENAME_SAVE) and
         // the overflow opener (CD_MORE_ACTIONS); adds only this prefix. Runtime-unique rename target:

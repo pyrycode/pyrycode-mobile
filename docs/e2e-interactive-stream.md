@@ -191,6 +191,12 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    `interactiveTurn_createEditArchiveChannel_readsPromptBack` creates from an empty Channels section,
    reads the original and edited prompt, waits for a distinct reply after Reset session, then restores
    through the selected host's list-toolbar Archive entry and finds the edited name on the list.
+   **Archive order** (#1332 — `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`): archives two
+   freshly created chats on a live daemon, the newer-by-last-use one first and the older one second, then
+   opens Archive and asserts the second-archived chat is on top — proving the daemon's `archived_at` stamp,
+   not `lastUsedAt`, decides the order; the old order would put the first-archived (newer-by-last-use) chat
+   on top instead. Zero claude turns. In the curated `LIVE=1` list in `scripts/e2e-emulator.sh`, which
+   raised `LIVE_MINIMUM` by one.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -287,7 +293,7 @@ production-side KDoc and its relationship to the tier tags #731 minted the same 
 [Add controls](../knowledge/features/channel-list-screen-tree-and-controls.md#add-controls-738) for `treeHostAddTestTag`'s own
 clamping rule.
 
-Rung 3 covers twenty-three scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers twenty-four scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed on the resolved row's accessible Done status); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -366,7 +372,15 @@ no percentage hard-coded — proving the daemon's post-turn `context_usage` push
 `ThreadRunConfig.contextPercent` and renders in the footer; **one** claude turn — the scenario's own ping;
 no reconnect or subscription-time ask is exercised, since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946)'s
 Rework 1 removed the phone's `request_context_usage` send outright — see [Thread composer footer § Context
-usage segment](knowledge/features/thread-composer-footer.md#context-usage-segment-946)). The tool-use
+usage segment](knowledge/features/thread-composer-footer.md#context-usage-segment-946)); and a
+**status-band-never-empty** scenario ([#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) —
+`interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`: a prompt that makes real claude run a
+read-only `echo` and then answer in one sentence, sampled continuously from the tap on Send until the turn
+goes idle, asserting that every sample busy both before and after its reading checks (the Stop control
+present on both reads, which closes the race at the turn's falling edge) shows a reading — the status
+glyph, or a Reset-session, connection or "waiting for answers" reading — proving the band never goes dark
+across thinking, a running tool, and the `responding` text that used to leave it empty; **one** claude
+turn: the scenario's own tool-then-text reply). The tool-use
 test asserts the **durable** terminal signal — the resolved row's accessible Done status —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
@@ -1262,10 +1276,75 @@ in `finally`, as #847 does, so a red run cannot leave it paired or selected for 
 real-claude turns: pairing, rename and unpair are daemon round-trips or phone-local. No rung-4 twin: the
 scripted harness has one daemon and no second host to manage.
 
+The **status-band-never-empty** scenario ([#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) —
+`interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`) is **always-on** (not `@Ignore`d): a prompt
+that makes real claude run a read-only `echo` and then answer in a short sentence drives one turn through
+`thinking`, a tool call and `responding` text — the exact sequence that, before this ticket, left the band
+dark for most of its length. From the tap on Send the test samples the band inside one `waitUntil`, using
+the composer's Stop control (`cd_thread_interrupt`) as the busy proxy — the same control `stopping` in
+[Thread input bar](knowledge/features/thread-input-bar.md) shows exactly while `isBusy` holds and the draft
+is blank, so there is no second flaky "is the turn running" signal to keep in sync with the band's own. A
+sample is recorded as dark only when the Stop control is present on **both** a read taken before and a
+read taken after the reading checks — closing a race where `turn_state{idle}` lands between the two and a
+genuinely busy sample is misread as dark at the turn's falling edge. A reading is either the status glyph
+(`STATUS_GLYPH_TEST_TAG`, present for thinking, working, a running tool or a stall) or a matched content
+description or text for a Reset-session reading, the connection arm's "Connecting"/"Reconnecting" copy (the
+unformatted template, so a live countdown does not break the match), a compaction or api-retry reading, or
+"waiting for answers" — so a higher-ranked arm shown instead of the glyph is never mistaken for an empty
+band. Any busy sample with neither is recorded, and the assertion is that the recorded list is empty; a
+non-vacuity check requires at least one busy sample to have been taken, so the scenario cannot pass by never
+catching the turn busy. One real claude turn: the scenario's own tool-then-text reply. No rung-4 twin:
+`ScriptedStatusLineTest` (`app/src/sharedTest/.../thread/`) already proves the identical sequence
+deterministically against the real repository fold — see [Thinking indicator §
+Edge cases](knowledge/features/thinking-indicator.md#edge-cases--limitations). The method is in the curated
+live selector: `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` lists it after
+`#interactiveTurn_toolPrompt_rendersToolStepInThread`, and `android-test-gate.py`'s `LIVE_MINIMUM` counts it
+(see [Pre-ship gate](#pre-ship-gate)). Its first live pass is recorded in [Verification
+status](#verification-status).
+
+The **scanner-confirm-waits-for-host** scenario ([#1394](https://github.com/pyrycode/pyrycode-mobile/issues/1394) —
+`interactiveTurn_scannerConfirm_waitsForHostThenOpensList`) is on the LIVE curated selector and counted by
+`LIVE_MINIMUM` (not `@Ignore`d): [#1386's
+PR #1391](https://github.com/pyrycode/pyrycode-mobile/pull/1391) made `ScannerViewModel` report a pairing done
+only after the host answers — `ConfirmPairing` saves the record and moves to `Verifying`, and only
+`Paired` lets the `Routes.SCANNER` composable in `MainActivity` navigate to the channel list — proven on
+the JVM and in Robolectric but not over the real relay. This drives the scanner's own confirm, not the
+paste-link path `pairHostByCode` exercises: it opens the scanner from the list's pair-another-host
+control, waits for `ScannerUiState.ReadyToScan`, injects host B's existing pair code as
+`ScannerEvent.QrDecoded` (the scanner and the paste-code path share `parsePairingPayload`, so no new
+fixture is needed), taps "Confirm pairing", then waits up to `PAIR_TIMEOUT_MS` — covering the view
+model's 30 s connection wait plus the pop — for the channel-list tag (`pairHostByScanner`). It asserts
+the scanner view model itself ended in `Paired`, so a `Cancelled` return to the list cannot pass by
+coincidence, that host B is saved, and that B's seeded conversation (`ARG_COLLISION_NAME_B`) folds away
+under B's label and not A's, with the converse check for A. A scanner pairing saves no display name, so
+both hosts would read "Unnamed host"; the scenario names B first with
+`PairedServerCollectionStore.setDisplayName` (the call the Edit host modal makes) so the two labels
+differ. **VM access.** `MainActivity` builds its `NavHostController` inside `setContent`, and Compose's
+`NavHost` does not tag the view with it, so the route's `ScannerViewModel` is unreachable by
+`nav.getBackStackEntry(...)` the way `PairCodeScreenTest` reaches its own screen-owned nav host. Instead
+`pairHostByScanner` swaps in `scannerViewModelModule { captured.set(it) }`, a mirror of `AppModule`'s
+`ScannerViewModel` definition that also records the instance Koin builds, and restores the plain mirror
+in `finally`; the VM is still created by the route's own `koinViewModel` call in the route's back-stack
+entry, so the `Paired` navigation and the pop are the production ones. Because the restore loads the
+plain mirror rather than reinstating `AppModule`'s own definition, every later live method in the same
+process resolves the scanner view model from the mirror, not from `AppModule`, until the process ends;
+keep `scannerViewModelModule` in step with `AppModule`'s definition by hand; the drift has no error if
+the two are not kept in step. Zero real-claude turns: pairing and the list are daemon round-trips. B is
+removed in `finally`. No rung-4 twin: the deterministic harness provisions one host per invocation and
+cannot pair a second, and this scenario needs the second live host that only rung 3 / `LIVE` provisions.
+The method joins `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` after
+`interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`, and `android-test-gate.py`'s `LIVE_MINIMUM`
+counts it (see [Pre-ship gate](#pre-ship-gate)). Its first live pass is recorded in [Verification
+status](#verification-status).
+
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
-token, `turn_state` flips to `responding`, `isThinking` goes false, and `ThinkingIndicator` early-returns,
-leaving nothing on screen. With no scripted backend to hold the turn open and no way to imperatively pause
+token, `turn_state` flips to `responding` and `isThinking` goes false. Before [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311)
+this left `ThinkingIndicator` early-returning with nothing on screen; the band now shows "Working…"
+instead (§ the status-band-never-empty scenario above), but that durable "Working…" reading proves only
+that *a* turn is busy, not that the *spinner specifically* was shown mid-turn, so this scenario's own
+mid-turn window is still undeterminable the same way. With no scripted backend to hold the turn open and no
+way to imperatively pause
   real claude (the levers rung 4's two-fragment release and the #432 component twin's `pushTurnState` have), the
 mid-turn window cannot be made deterministic, so the developer cannot prove reliability without operator
 infra. It therefore lands as a documented manual case (presence-only, tolerant, keyed on
@@ -1563,7 +1642,10 @@ to 40, adding the two-host default-workspace and Archive method, #1087 raised it
 to 41, adding the workspace add-rename-archive method, #1088 raised it again, from 41 to 42,
 adding the channel create-edit-archive method, #1089 raised it again, from 42 to 43, adding the
 peer-set workspace label method, and #1090 raised it again, from 43 to 44, adding the attention-dot
-method. Shell cleanup
+method. Later tickets moved it further still, each change recorded as a `LIVE_MINIMUM += N` / `-= N` line
+with its own comment in `scripts/android-test-gate.py` — that file's comment trail, not this prose, is the
+authoritative running total. Most recently, #1311 added one, for the status-band-never-empty method (§
+*What rung 3 is made of* above). Shell cleanup
 preserves the original result and retains failure artifacts; a clean XML report with a failing process
 status is not a passing gate.
 
@@ -2076,7 +2158,43 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-09-30 (#1286).** The dispatcher ran the full
+**Current live verification — 2026-10-01 (#1332).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1332` at
+`cc94a05bbc`, merged with `origin/main` at `18ea26526a` (0 commits behind before the merge):
+**41 executed, 41 passed, 0 failed, 0 skipped**, exit 0, wall clock 518.8s. This is full-suite evidence;
+no separate focused live run is claimed. `LIVE_MINIMUM` rose from 40 to 41 with this ticket's new method,
+`interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`, joining the curated selector (see
+[Pre-ship gate](#pre-ship-gate)); this is the method's first live run. An earlier attempt reported 38
+executed and did not include the new method, because the curated selector and `LIVE_MINIMUM` had not yet
+been updated for it; that gap was found in review and fixed before this run. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1332#issuecomment-5932798343).
+
+**Previous live verification — 2026-10-01 (#1394).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1394` at
+`ba11f50add`, merged with `origin/main` at `2e1e2e46cd` (0 commits behind before the merge):
+**40 executed, 40 passed, 0 failed, 0 skipped**, exit 0, wall clock 527.1s. This is full-suite evidence;
+no separate focused live run is claimed. `LIVE_MINIMUM` rose from 39 to 40 with this ticket's new method,
+`interactiveTurn_scannerConfirm_waitsForHostThenOpensList`, joining the curated selector (see
+[Pre-ship gate](#pre-ship-gate)); this is the method's first live run. An earlier attempt on PR #1424
+executed 39 and did not include the new method, because the curated selector and `LIVE_MINIMUM` had not
+yet been updated for it; that gap was found in review and fixed in commit `ba11f50a` before this run.
+
+**Previous live verification — 2026-10-01 (#1311).** The dispatcher ran the full
+`python3 scripts/android-test-gate.py live` suite against `feature/1311` at `3fae3a6dc2`,
+merged with `origin/main` at `a61c5eb4b1`: **39 executed, 39 passed, 0 failed, 0 skipped**,
+exit 0, wall clock 520.7s. The fresh XML contains a passing, unskipped
+`InteractiveStreamE2ETest.interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy` testcase —
+this is the method's first live run, and `LIVE_MINIMUM` rose from 38 to 39 with its addition to the
+curated selector (see [Pre-ship gate](#pre-ship-gate)). This is full-suite evidence; no separate
+focused live run is claimed. An earlier attempt on this branch (`32609a7535` merged with
+`01d81756d9`) executed 38 and did not include this method, because the curated selector and
+`LIVE_MINIMUM` had not yet been updated for it; that gap was found and fixed before this run. See the
+[earlier-run evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1311#issuecomment-5928693537)
+(38 executed, the gap not yet fixed) and the
+[fresh dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1311#issuecomment-5929813330)
+for this 39/39 PASS.
+
+**Previous live verification — 2026-09-30 (#1286).** The dispatcher ran the full
 `python3 scripts/android-test-gate.py live` suite against `feature/1286` at
 `a6fec3f720`, merged with `origin/main` at `1119eb051d`: **44 executed, 44 passed,
 0 failed, 0 skipped**, exit 0. The fresh XML contains a passing, unskipped
