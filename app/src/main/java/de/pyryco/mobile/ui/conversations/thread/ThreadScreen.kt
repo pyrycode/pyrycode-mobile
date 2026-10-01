@@ -459,7 +459,6 @@ fun ThreadScreen(
                         isBusy = isBusy,
                         onInterrupt = onInterrupt,
                         onAnchorChanged = { inputAnchor = it },
-                        hasAttachments = attachments.isNotEmpty(),
                         sending = attachmentsSending,
                         onImagesReceived = onImagesPasted,
                     )
