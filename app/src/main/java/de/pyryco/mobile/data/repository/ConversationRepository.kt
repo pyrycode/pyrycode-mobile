@@ -1151,11 +1151,13 @@ data class MemorySearchReport(
  *   reachable only as `yolo`.
  * @param slashCommands Whether the session answers slash commands at all; `true` when the daemon predates
  *   the flag.
+ * @param mcpServers Whether the session answers MCP status at all (#1344); `true` when the daemon predates the flag.
  */
 data class SessionCapabilities(
     val effortLevels: List<String>,
     val permissionModes: List<String>,
     val slashCommands: Boolean = true,
+    val mcpServers: Boolean = true,
 )
 
 /**
