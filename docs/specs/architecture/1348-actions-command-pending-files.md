@@ -30,4 +30,11 @@ The existing `ThreadViewModelAttachmentTest` covers `sendMessage`'s draft clear 
 
 ## Documentation handoff
 
-- `docs/knowledge/features/thread-composer-footer-actions-menu.md`, "Dispatch and send": pending for the documentation stage. It says a command leaves pending attachments untouched; it now carries them through `sendWithAttachments`, refuses while an attachment send is in flight, and still leaves the draft alone.
+- `docs/knowledge/features/thread-composer-footer-actions-menu.md`, "Dispatch and send": pending for the documentation stage. It says a command leaves pending attachments untouched; it now carries them through `sendWithAttachments`, refuses while an attachment send is in flight, and still leaves the draft alone. A command sent with files opens the local send window; a text-only command does not.
+
+## Revisions
+
+### 2026-10-02: rework after review on PR #1414
+
+- A command sent with files goes through `sendWithAttachments`, so it opens the local "Thinking…" send window and emits `sentMessages` (follow newest), as a typed message with files does. A text-only command still does neither. "Nothing else moves" in Change excludes this side effect of reusing the attachment path; it is intended, and the documentation handoff now names it.
+- The real-Claude scenario for a command sent with files is filed as a follow-up, #1460, rather than landed here. The daemon appends its attachment block after the text, so real Claude receives `/compact` followed by the file paths, and only a live run shows how Claude Code treats that. The existing `interactiveTurn_reconnect_slashCommandsAndCompactStillWork` and `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` each cover one half.

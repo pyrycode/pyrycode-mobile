@@ -1677,9 +1677,10 @@ class ThreadViewModel(
 
     /**
      * Send the Actions menu's [action] command (#884) as an ordinary message to this conversation, through
-     * the same guarded send [sendMessage] runs, so a failed send is handled exactly as a composer message's.
-     * Pending files go with it through [sendWithAttachments], as desktop's `sendText` takes them for both its
-     * callers (#1348), and it is refused while an earlier attachment send still owns them. It leaves the
+     * a guarded send, so a failed send is handled exactly as a composer message's. With pending files it goes
+     * through [sendWithAttachments], as desktop's `sendText` takes them for both its callers (#1348), and so
+     * opens the local send window that a text-only command does not; it is refused while an earlier
+     * attachment send still owns them. It leaves the
      * typed draft alone, so there is no clear on success. A command the published menu proves absent is
      * refused here too, behind the greyed-out row. Reset session carries no command and never comes this
      * way. Logs static codes only.
