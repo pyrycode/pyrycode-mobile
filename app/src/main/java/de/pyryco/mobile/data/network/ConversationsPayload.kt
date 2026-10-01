@@ -56,6 +56,9 @@ data class ConversationSummaryDto(
     @SerialName("workspace_label") val workspaceLabel: String? = null,
     // Raw and defaulted: only a `multi_agent` client is sent the key; [conversationAgentOf] reads it.
     val agent: String? = null,
+    // Raw, not an [Instant]: an unparsable stamp must cost only the stamp, not the whole list, so
+    // [parseArchivedAt] reads it. A non-string value still fails the decode, as a bad `last_used_at` does.
+    @SerialName("archived_at") val archivedAt: String? = null,
 )
 
 /**
@@ -86,7 +89,25 @@ private fun ConversationSummaryDto.toConversation(): Conversation =
         archived = isArchived,
         muted = isMuted,
         agent = conversationAgentOf(agent),
+        archivedAt = parseArchivedAt(archivedAt),
     )
+
+/**
+ * The daemon's `archived_at` as an [Instant], or `null` when it is absent or does not parse. Total on
+ * purpose: it runs after [de.pyryco.mobile.data.repository.ConversationListProjection.applySnapshot]'s
+ * decode guard, so a throw here would end the connection's inbound collector. An out-of-range year
+ * surfaces as an arithmetic error rather than a format error, hence both catches.
+ */
+private fun parseArchivedAt(wire: String?): Instant? =
+    wire?.let {
+        try {
+            Instant.parse(it)
+        } catch (e: IllegalArgumentException) {
+            null
+        } catch (e: ArithmeticException) {
+            null
+        }
+    }
 
 /**
  * The daemon's `agent` string as a [ConversationAgent]: exactly `codex` is Codex, and any other value or an
