@@ -134,3 +134,26 @@ Pending for the documentation stage: fold the two new held readings into the `Ho
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-01
+
+## Revisions
+
+### 2026-10-01 — held readings are marked, and nothing automatic acts on one (verifier findings on PR #1390)
+
+**What changed.** The design above missed two `ThreadViewModel` consumers that relied on the old `null` head after a reconnect. A held reading is now marked rather than recognised by its blank permission mode, because a live reply may also carry `permission_mode: ""` (protocol: "may be empty").
+
+- `SessionSettings` gains `held: Boolean = false`. `HostReadings.observeHeldSessionSettings` is the only place that sets it, in the same `copy` that blanks the permission mode and memory search. Every reply on a live connection keeps the default `false`. Because it is part of the value, the live reply after a held head is never swallowed by `distinctUntilChanged`.
+- `ThreadRunConfig` gains `settingsHeld`, folded from the reading in `runConfig`.
+- **#686 effort recall (MUST FIX).** `EffortRecall.decide` returns without deciding while `settingsHeld`. In the disconnected gap there is no connection to write on, and at the new connection's head the reading may name a session the daemon replaced or an effort another client set. The recall stays undecided, so the new connection's own reply decides it once, at that reply's session id.
+- **#650 permission write and pending model (SHOULD FIX).** The `sessionSettings` `onEach` treats a held reading as a lost context, as it treated the `null` head: it clears `pendingModel` and cancels an outstanding permission write and its settle loop. This restores the pre-#1320 reconnect behaviour rather than letting held readings count as non-confirming settle reads.
+
+**New contract.** A held reading is display-only: it fills the footer and Status sheet, and no automatic write, confirmation or settle step acts on it.
+
+**Tests.** `ThreadViewModelEffortRecallTest`: a held reading in the gap and at the new head sends no write and raises no settings-failed signal, and the live reply then recalls once at its own session; a held reading for a replaced session is never addressed. `ThreadViewModelPermissionTest`: a held reading on a reconnect cancels the settle retries and clears a pending model. `ThreadViewModelHeldSettingsTest` asserts `settingsHeld`. The coordinator and facade tests expect the held marker on the invalidated reading.
+
+#### Security review (re-run for this revision)
+
+**Verdict:** PASS
+
+- [Trust boundaries — confirmed-looking permission] Corrects the original finding. "`writable` staying true while disconnected is gated by #1319's connection check on every write" was wrong. #1319's `connectedFor` gates only user taps, and the #686 recall's `startEffortRecall` → `sendSessionSettings` path bypassed it. That automatic write path is now closed by `EffortRecall.decide`'s `settingsHeld` guard. With the guard, every automatic write waits for a reading from the live connection, and every user write still passes `connectedFor`.
+- [Concurrency] No findings. The `held` flag is part of an immutable value, and the new checks run on Main in the existing collectors. No new scope or job.
+- All other findings above stand unchanged.

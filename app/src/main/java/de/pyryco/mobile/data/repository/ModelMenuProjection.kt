@@ -164,8 +164,8 @@ internal class ModelMenuProjection(
      * the lookup is by the caller's own id — never another conversation's rows.
      *
      * [HostReadings.observeModelMenu]'s `distinctUntilChanged` suppresses only value-*identical*
-     * re-emissions, so a `model_list` for **another** conversation does not re-emit this flow, and the reconnect burst's re-send of an
-     * unchanged menu costs a consumer nothing. A genuinely different menu is a different [ModelMenu]
+     * re-emissions, so a `model_list` for **another** conversation does not re-emit this flow, and the
+     * reconnect burst's re-send of an unchanged menu costs a consumer nothing. A genuinely different menu is a different [ModelMenu]
      * value and does reach the collector — the [RemoteConversationRepository.observeApiRetry] property,
      * which a membership `Set` could not provide. A `StateFlow` always has a current value, so every
      * collector (including a `flatMapLatest` re-subscription through the facade) receives the current

@@ -64,13 +64,15 @@ class HostReadings(
     /**
      * The held settings reading of [conversationId] (#1320) as desktop's `invalidate()` leaves it on a `connected`
      * edge: the model, effort and session kept, the permission mode not yet known and memory search
-     * [MemorySearchReport.Unknown], until the live connection's own reply replaces it. `null` when none is held.
+     * [MemorySearchReport.Unknown], until the live connection's own reply replaces it. Marked
+     * [SessionSettings.held], so nothing acts on it. `null` when none is held.
      */
     fun observeHeldSessionSettings(conversationId: String): Flow<SessionSettings?> =
         whileOpen {
             sessionSettings
-                .map { held -> held[conversationId]?.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown) }
-                .distinctUntilChanged()
+                .map { held ->
+                    held[conversationId]?.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown, held = true)
+                }.distinctUntilChanged()
         }
 
     /** Replace [conversationId]'s held settings reading with a successful reply (#1320). */

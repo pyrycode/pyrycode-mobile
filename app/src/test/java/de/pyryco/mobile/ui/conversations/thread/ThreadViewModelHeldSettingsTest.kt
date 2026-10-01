@@ -54,10 +54,11 @@ class ThreadViewModelHeldSettingsTest {
         runTest {
             val vm = collectedVm()
 
-            settings.value = CONFIRMED.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown)
+            settings.value = CONFIRMED.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown, held = true)
             runCurrent()
             val held = vm.state.value.runConfig
             assertTrue(held.settingsAvailable)
+            assertTrue("marked held, so nothing automatic acts on it", held.settingsHeld)
             assertTrue("a held reading keeps the footer writable", held.writable)
             assertEquals("opus", held.savedModel)
             assertEquals("high", held.savedEffort)
@@ -67,6 +68,7 @@ class ThreadViewModelHeldSettingsTest {
             settings.value = CONFIRMED
             runCurrent()
             val confirmed = vm.state.value.runConfig
+            assertFalse(confirmed.settingsHeld)
             assertEquals("plan", confirmed.permissionMode)
             assertEquals(MemorySearchAvailability.Available, confirmed.memorySearch.availability)
             assertEquals("opus", confirmed.savedModel)

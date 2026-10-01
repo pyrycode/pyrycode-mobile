@@ -969,7 +969,7 @@ class StableConversationRepositoryTest {
             backgroundScope.launch { facade.observeModelMenu("c1").collect { menus += it } }
             runCurrent()
 
-            assertEquals(READING.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown), settings.last())
+            assertEquals(READING.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown, held = true), settings.last())
             assertEquals(MENU, menus.last())
             assertNull(facade.observeSessionSettings("c2").first())
             assertNull(facade.observeModelMenu("c2").first())

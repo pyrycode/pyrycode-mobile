@@ -1238,7 +1238,7 @@ class RelayRepositoryCoordinatorTest {
             val confirmed = readings.last()
             assertEquals("plan", confirmed?.permissionMode)
             assertEquals(MemorySearchAvailability.Available, confirmed?.memorySearch?.availability)
-            val held = confirmed?.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown)
+            val held = confirmed?.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown, held = true)
 
             env.connections.value = null
             runCurrent()
