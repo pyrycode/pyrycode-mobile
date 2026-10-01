@@ -81,6 +81,8 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM -= 1
 # #1325 excludes five settings methods failing on main since #1320 until #1397 restores them.
 LIVE_MINIMUM -= 5
+# #1311 adds the status-band-never-empty method.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

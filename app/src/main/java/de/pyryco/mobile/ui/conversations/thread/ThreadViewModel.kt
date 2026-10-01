@@ -664,6 +664,18 @@ class ThreadViewModel(
                 initialValue = false,
             )
 
+    private val _localSendPending = MutableStateFlow(false)
+
+    /**
+     * The local-send window (#1311), desktop's `localSendPending`: `true` from the moment a send is handed
+     * to the daemon until the daemon first speaks, so the status band reads "Thinking…" across the round
+     * trip instead of going dark. Opened in [sendMessage] and [sendWithAttachments] immediately before the
+     * repository send, so a blank, refused or upload-failed send never opens it. Closed by any `turn_state`
+     * for this conversation, by a failed send, and by a change of connection ([closeLocalSendWindow]).
+     * Not [isBusy]: a window the daemon has not confirmed must never arm the stop control.
+     */
+    val localSendPending: StateFlow<Boolean> = _localSendPending.asStateFlow()
+
     /**
      * Whether this conversation's remote claude is stuck retrying an API error, and at which attempt
      * (#593) — drives the "Retrying — attempt N/M" status that replaces the indefinite generic spinner
@@ -1106,6 +1118,8 @@ class ThreadViewModel(
                 .distinctUntilChanged()
                 .drop(1)
                 .collect { available ->
+                    // #1311: a drop and the return both end the round trip the window was waiting on.
+                    closeLocalSendWindow("reconnect")
                     if (available) {
                         RelayLog.d { "event=history_walk_restart reason=reconnect" }
                         restartHistoryWalk(fromWalk = historyDemand.value.walk)
@@ -1113,10 +1127,42 @@ class ThreadViewModel(
                 }
         }
 
+        // #1311: the daemon's first `turn_state` for this conversation, of any phase, closes the local-send
+        // window. Collected here rather than behind a subscriber-bound stateIn, so it closes even while the
+        // screen is not collecting.
+        viewModelScope.launch {
+            liveSessionEvents.collect { event ->
+                if (event is LiveSessionEvent.TurnState && event.conversationId == conversationId) {
+                    closeLocalSendWindow("turn_state")
+                }
+            }
+        }
+
         // #1309: a conversation whose claude had not run yet reads no permission mode and no applied effort,
         // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
         viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+    }
+
+    private fun openLocalSendWindow() {
+        if (!_localSendPending.value) RelayLog.d { "event=local_send_window state=open" }
+        _localSendPending.value = true
+    }
+
+    private fun closeLocalSendWindow(reason: String) {
+        if (_localSendPending.value) RelayLog.d { "event=local_send_window state=closed reason=$reason" }
+        _localSendPending.value = false
+    }
+
+    /** Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. */
+    private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
+        openLocalSendWindow()
+        try {
+            return send()
+        } catch (e: Throwable) {
+            closeLocalSendWindow("send_failed")
+            throw e
+        }
     }
 
     /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */
@@ -1308,7 +1354,7 @@ class ThreadViewModel(
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
-            repository.sendMessage(state.value.conversationId, text)
+            sendInLocalWindow { repository.sendMessage(state.value.conversationId, text) }
             if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
         }
     }
@@ -1347,7 +1393,7 @@ class ThreadViewModel(
                 draftStore.recordSentOriginals(serverId, conversationId, originals)
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
-                repository.sendMessage(target, text, references)
+                sendInLocalWindow { repository.sendMessage(target, text, references) }
                 if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
                 draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
             } finally {
