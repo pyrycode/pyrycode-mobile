@@ -72,6 +72,12 @@ class AgentStatusLabelsTest {
     }
 
     @Test
+    fun codex_working_namesCodex() {
+        show { ThinkingIndicator(isThinking = false, isWorking = true, agent = ConversationAgent.Codex) }
+        assertDescribed("Codex is working")
+    }
+
+    @Test
     fun codex_apiRetryCounter_namesCodex() {
         show { ApiRetryIndicator(status = ApiRetryStatus.Attempt(current = 3, total = 10), agent = ConversationAgent.Codex) }
         assertDescribed("Codex is retrying, attempt 3 of 10")

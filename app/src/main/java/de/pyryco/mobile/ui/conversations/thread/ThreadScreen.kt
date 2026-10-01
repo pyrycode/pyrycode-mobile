@@ -32,7 +32,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -52,9 +51,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -104,13 +100,9 @@ import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.theme.threadColors
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -183,6 +175,8 @@ fun ThreadScreen(
     turnOutcome: TurnOutcomeReport? = null, // #805: how the last turn failed or was interrupted, above thinking
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
+    isStalled: Boolean = false, // #1311: the daemon reported a stall; the band's stall arm
+    localSendPending: Boolean = false, // #1311: a send is with the daemon, which has not spoken yet → "Thinking…"
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
@@ -247,6 +241,8 @@ fun ThreadScreen(
     onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
     onRemoveAttachment: (Long) -> Unit = {},
     attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
+    // #1314: one signal per send the daemon accepted (ThreadViewModel.sentMessages); the list follows again.
+    sentMessages: Flow<Unit> = emptyFlow(),
     // #1325: the one-shot notice of why a send stopped at a file (ThreadViewModel.attachmentSendFailures).
     attachmentSendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
@@ -266,6 +262,9 @@ fun ThreadScreen(
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val openRequest = modalState as? ModalUiState.Open
+    // #1341: an open permission request goes first, as desktop's ComposerSlot hides QuestionPanelSlot. The
+    // question's picks live in the hoisted state (#1305's draft store), so it returns intact on resolution.
+    val shownQuestion = questionState.takeIf { openRequest == null }
     // #1306: one call site for both prompt kinds, so a question → permission hand-over keeps one owner.
     if (questionState != null || openRequest != null) QuestionPromptProtection()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -435,11 +434,14 @@ fun ThreadScreen(
                         apiRetry = apiRetry,
                         resetting = resetting,
                         isCompacting = isCompacting,
+                        isStalled = isStalled,
                         turnOutcome = turnOutcome,
                         isThinking = isThinking,
+                        isBusy = isBusy,
+                        localSendPending = localSendPending,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
-                        waitingForAnswers = questionState != null && connectionState == ConnectionState.Connected,
+                        waitingForAnswers = shownQuestion != null && connectionState == ConnectionState.Connected,
                         connectionState = connectionState,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
@@ -521,7 +523,7 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
-                    if (!state.hasMessages && state.queuedMessages.isEmpty() && questionState == null && openRequest == null) {
+                    if (!state.hasMessages && state.queuedMessages.isEmpty() && shownQuestion == null && openRequest == null) {
                         EmptyThreadState(
                             modifier =
                                 Modifier
@@ -538,34 +540,6 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                         val listState = rememberLazyListState()
-                        val hasStreamingMessage by remember(state.items) {
-                            derivedStateOf {
-                                state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming }
-                            }
-                        }
-                        var userScrolledAway by remember { mutableStateOf(false) }
-                        val autoScrollNestedScroll =
-                            remember {
-                                object : NestedScrollConnection {
-                                    override fun onPreScroll(
-                                        available: Offset,
-                                        source: NestedScrollSource,
-                                    ): Offset {
-                                        if (source == NestedScrollSource.UserInput && available.y != 0f) {
-                                            userScrolledAway = true
-                                        }
-                                        return Offset.Zero
-                                    }
-                                }
-                            }
-                        LaunchedEffect(listState) {
-                            snapshotFlow {
-                                listState.firstVisibleItemIndex == 0 &&
-                                    listState.firstVisibleItemScrollOffset == 0
-                            }.collect { atBottom ->
-                                if (atBottom) userScrolledAway = false
-                            }
-                        }
                         // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
                         // visible index, not the first.
                         //
@@ -578,7 +552,7 @@ fun ThreadScreen(
                         // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
                         // so distinctUntilChanged sees no edge and no second demand is issued.
                         val promptRowCount =
-                            (questionState?.let { it.batch.questions.size + 2 } ?: 0) +
+                            (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0)
                         val historyRowCount by rememberUpdatedState(rows.size + promptRowCount)
                         val hasHistoryRows by rememberUpdatedState(rows.isNotEmpty())
@@ -593,75 +567,22 @@ fun ThreadScreen(
                             }.distinctUntilChanged()
                                 .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
                         }
-                        val promptPresent = questionState != null || openRequest != null
-                        LaunchedEffect(hasStreamingMessage, promptPresent, listState) {
-                            if (!hasStreamingMessage || promptPresent) return@LaunchedEffect
-                            snapshotFlow {
-                                listState.layoutInfo.visibleItemsInfo
-                                    .firstOrNull { it.index == 0 }
-                                    ?.size ?: 0
-                            }.distinctUntilChanged()
-                                .collect {
-                                    if (!userScrolledAway) {
-                                        listState.scrollToItem(0)
-                                    }
-                                }
-                        }
-                        // #981: the list keeps its first visible row anchored by key, so under reverseLayout a new
-                        // newest row lands at index 0 below the viewport. The streaming pin above only covers a
-                        // row that is still streaming when it collects; a reply that arrives whole, a tool row or
-                        // the operator's own echo needs this one. A streaming row that grows keeps its key and is
-                        // left to the pin. drop(1) skips the first value, because userScrolledAway is not saved
-                        // and a recreation must not pull a reader who had scrolled away back to the newest end.
-                        val newestRowKey by rememberUpdatedState(rows.lastOrNull()?.listKey(rows.lastIndex))
-                        LaunchedEffect(listState) {
-                            snapshotFlow { newestRowKey }
-                                .drop(1)
-                                .collect {
-                                    if (!userScrolledAway) {
-                                        // A finger resting at the newest end holds the list at UserInput priority,
-                                        // which refuses this scroll with a CancellationException. Unlike the
-                                        // streaming pin, this effect never relaunches, so the refusal costs this one
-                                        // scroll only; a real cancellation of the effect still ends it.
-                                        try {
-                                            listState.scrollToItem(0)
-                                        } catch (e: CancellationException) {
-                                            ensureActive()
-                                        }
-                                    }
-                                }
-                        }
-                        // #1305: prompt rows insert at index 0 below the anchored newest row, so a batch arriving
-                        // while the reader sits at the newest end would land offscreen. Reveal it from its
-                        // actions upward, but only for that reader: userScrolledAway misses a programmatic scroll
-                        // into history, so the newest row must also still be the first visible item. drop(1)
-                        // keeps a recreation from moving a restored position, as in the #981 effect. #1306: a
-                        // permission request inserts at the same end, so either prompt's new identity reveals.
-                        val promptIdentity by rememberUpdatedState(questionState?.generation to openRequest?.modalId)
-                        LaunchedEffect(listState) {
-                            snapshotFlow { promptIdentity }
-                                .drop(1)
-                                .filter { (generation, modalId) -> generation != null || modalId != null }
-                                .collect {
-                                    val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
-                                    val atNewestEnd =
-                                        listState.firstVisibleItemScrollOffset == 0 &&
-                                            (listState.firstVisibleItemIndex == 0 || first?.key == newestRowKey)
-                                    if (!userScrolledAway && atNewestEnd) {
-                                        try {
-                                            listState.scrollToItem(0)
-                                        } catch (e: CancellationException) {
-                                            ensureActive()
-                                        }
-                                    }
-                                }
-                        }
+                        // #1314: one following state, derived from position on every scroll as desktop's
+                        // useThreadScrollPin does, replaces the #185 streaming pin, the #981 newest-row pin and
+                        // the #1305/#1306 prompt reveal. New rows, streamed growth and a new prompt pin a reader
+                        // who is following; an accepted send follows again.
+                        val promptIdentity by rememberUpdatedState(shownQuestion?.generation to openRequest?.modalId)
+                        FollowNewestEnd(
+                            listState = listState,
+                            newestRowKey = rows.lastOrNull()?.listKey(rows.lastIndex),
+                            newestRow = rows.lastOrNull(),
+                            promptIdentity = promptIdentity,
+                            promptPresent = questionState != null || openRequest != null,
+                            sentMessages = sentMessages,
+                        )
                         LazyColumn(
                             state = listState,
-                            modifier =
-                                Modifier
-                                    .fillMaxSize()
-                                    .nestedScroll(autoScrollNestedScroll),
+                            modifier = Modifier.fillMaxSize(),
                             reverseLayout = true,
                         ) {
                             openRequest?.let { open ->
@@ -676,7 +597,7 @@ fun ThreadScreen(
                                     gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp),
                                 )
                             }
-                            questionState?.let { pending ->
+                            shownQuestion?.let { pending ->
                                 val dispatch: (QuestionModalEvent) -> Unit = { onQuestionEvent(it, pending.generation) }
                                 val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp)
                                 item(key = "question-actions:${pending.generation}") {
@@ -942,17 +863,21 @@ fun ThreadScreen(
  * Figma `16:8`'s `Status area` (`111:3525`) — the composer's top band, carrying whichever live turn-status
  * signal is current (#643 moved this block here from the foot of the content `Column`).
  *
- * One status slot, top wins: connecting / reconnecting → api-retry → resetting → compaction → turn
- * outcome → thinking / running tool. While the link is unavailable, turn readings cannot be refreshed;
- * Offline is instead shown in the Top overlay as a retry pill.
+ * One status slot, top wins, decided by [statusArm] (#1311): connecting / reconnecting → resetting →
+ * api-retry → compaction → stall → turn outcome → thinking / working / running tool. While a turn runs the
+ * band always has a reading, as desktop's `workingIndicatorState` keeps one up. While the link is
+ * unavailable, turn readings cannot be refreshed; Offline is instead shown in the Top overlay as a retry
+ * pill.
  * No two may ever stack. Single-sourcing the mutual exclusion here, in the screen, is deliberate:
  * `isThinking` stays defined as the `turn_state` phase (other tests assert it directly), so suppressing it
  * at its source would make the VM's contract lie.
  *
- * api-retry (#594) keeps the top arm because it is the "something is going wrong" signal, and the benign
- * affordances below must never mask it. A running Reset session's phase (#872) sits next: the wrap-up is
- * itself a claude turn, so without this ordering the reset the user started would read as generic thinking
- * or as a compaction inside it, and it outranks a turn outcome lingering from before the reset. A phase
+ * A running Reset session's phase (#872) is the top turn arm, above api-retry since #1311 as on desktop:
+ * the wrap-up is itself a claude turn, so without this ordering the reset the user started would read as
+ * generic thinking or as a compaction inside it, and it outranks a turn outcome lingering from before the
+ * reset. api-retry (#594) is the "something is going wrong" signal, and the benign affordances below must
+ * never mask it. A stall (#395, #1311) is client-owned copy in the error colour; it clears on the next live
+ * event through `StallProjection`, and outranks every reading of the running turn. A phase
  * change replaces the reading in this one arm; the falling edge and the session transition clear it
  * upstream. Compaction (#597) is mid-turn and outlives the thinking phase. A failed or interrupted turn's
  * outcome (#805) is post-turn and clears when the next turn starts.
@@ -962,14 +887,11 @@ fun ThreadScreen(
  * the wrap-up or "interrupted". When no signal is live every arm returns without emitting, so the band
  * contributes no node and the composer column's gap above the input field collapses with it.
  *
- * [thinkingProgress] (#803) adds **no arm**: it decorates the thinking arm's label and rides the `else`
- * branch, so every arm above pre-empts a live reading for free. Visibility stays governed by [isThinking]
- * alone — `turn_state` owns the thinking phase (#406).
+ * [thinkingProgress] (#803) adds **no arm**: it decorates the daemon's thinking phase only, so every arm
+ * above pre-empts a live reading for free and the local-send window never shows a stale one.
  *
- * [runningTool] (#897) rides the same `else` branch and does raise it: a tool claude is running during
- * the `responding` phase is exactly the signal the band otherwise lacks. The screen passes it only while
- * the turn is busy, so every arm above still pre-empts it and a closed call drops the band back to what
- * it would otherwise show.
+ * [runningTool] (#897) names the open call while the turn is busy; closing it drops the band back to
+ * "Working…" or "Thinking…" (#1311), never to nothing while [isBusy] holds.
  *
  * [taskCount] (#1043) is not an arm either: above zero, a pill reading it sits at the band's right end
  * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel. At zero
@@ -980,8 +902,11 @@ private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
     isCompacting: Boolean,
+    isStalled: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
+    isBusy: Boolean,
+    localSendPending: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
     waitingForAnswers: Boolean,
@@ -1011,16 +936,28 @@ private fun ThreadStatusArea(
             }
         } else {
             StatusReading(
-                apiRetry,
-                resetting,
-                isCompacting,
-                turnOutcome,
-                isThinking,
-                thinkingProgress,
-                runningTool,
-                connectionState,
-                agent,
-                modifier,
+                arm =
+                    statusArm(
+                        connectionState = connectionState,
+                        resetting = resetting != null,
+                        apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
+                        isCompacting = isCompacting,
+                        isStalled = isStalled,
+                        hasTurnOutcome = turnOutcome != null,
+                        isThinking = isThinking,
+                        isBusy = isBusy,
+                        localSendPending = localSendPending,
+                        hasOpenTool = runningTool != null,
+                    ),
+                apiRetry = apiRetry,
+                resetting = resetting,
+                turnOutcome = turnOutcome,
+                isThinking = isThinking,
+                thinkingProgress = thinkingProgress,
+                runningTool = runningTool,
+                connectionState = connectionState,
+                agent = agent,
+                modifier = modifier,
             )
         }
     }
@@ -1053,12 +990,54 @@ private fun ThreadStatusArea(
     }
 }
 
-/** The band's one live reading, top wins; see [ThreadStatusArea]. Emits nothing when no signal is live. */
+/** Which one reading the status band shows (#1311); see [statusArm]. */
+internal enum class StatusArm { None, Connection, Resetting, ApiRetry, Compacting, Stalled, TurnOutcome, Thinking, Working, RunningTool }
+
+/**
+ * The status band's one arm order (#1311), desktop's `workingIndicatorState` and
+ * `workingIndicatorStateWithLocalSend` with Mobile's connection arm at the top and its turn-outcome arm
+ * above the turn's own readings. Top wins: connection, Reset session, api-retry, compaction, stall, turn
+ * outcome, then the running turn — an open tool while busy, else thinking, else working — and last the
+ * local-send window, which reads as thinking. Offline returns [StatusArm.None]: the Top overlay's retry
+ * pill owns it.
+ *
+ * A pending local send hides a turn outcome: that outcome belongs to the turn before the send, and the new
+ * turn's first `thinking` / `responding` would clear it anyway. An `idle` answer closes the window and the
+ * outcome shows again, since the outcome fold keeps it on `idle`.
+ */
+internal fun statusArm(
+    connectionState: ConnectionState,
+    resetting: Boolean,
+    apiRetrying: Boolean,
+    isCompacting: Boolean,
+    isStalled: Boolean,
+    hasTurnOutcome: Boolean,
+    isThinking: Boolean,
+    isBusy: Boolean,
+    localSendPending: Boolean,
+    hasOpenTool: Boolean,
+): StatusArm =
+    when {
+        connectionState == ConnectionState.Offline -> StatusArm.None
+        connectionState != ConnectionState.Connected -> StatusArm.Connection
+        resetting -> StatusArm.Resetting
+        apiRetrying -> StatusArm.ApiRetry
+        isCompacting -> StatusArm.Compacting
+        isStalled -> StatusArm.Stalled
+        hasTurnOutcome && !localSendPending -> StatusArm.TurnOutcome
+        isBusy && hasOpenTool -> StatusArm.RunningTool
+        isThinking -> StatusArm.Thinking
+        isBusy -> StatusArm.Working
+        localSendPending -> StatusArm.Thinking
+        else -> StatusArm.None
+    }
+
+/** The band's one live reading, [arm], drawn; see [ThreadStatusArea]. Emits nothing for [StatusArm.None]. */
 @Composable
 private fun StatusReading(
+    arm: StatusArm,
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
@@ -1067,20 +1046,24 @@ private fun StatusReading(
     agent: ConversationAgent,
     modifier: Modifier = Modifier,
 ) {
-    when {
-        connectionState == ConnectionState.Offline -> Unit
-        connectionState != ConnectionState.Connected -> ConnectionStatusIndicator(state = connectionState, modifier = modifier)
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
-        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
-        else ->
+    when (arm) {
+        StatusArm.None -> Unit
+        StatusArm.Connection -> ConnectionStatusIndicator(state = connectionState, modifier = modifier)
+        StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
+        StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
+        StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
+        StatusArm.TurnOutcome -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
+        // One branch, so the glyph keeps its composition identity, and its pulse, across these readings.
+        StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
-                isThinking = isThinking,
+                isThinking = arm == StatusArm.Thinking,
                 modifier = modifier,
-                progress = thinkingProgress,
-                runningTool = runningTool,
+                // The token reading belongs to the daemon's thinking phase, never to the local-send window.
+                progress = thinkingProgress.takeIf { isThinking },
+                runningTool = runningTool.takeIf { arm == StatusArm.RunningTool },
                 agent = agent,
+                isWorking = arm == StatusArm.Working,
+                isStalled = arm == StatusArm.Stalled,
             )
     }
 }
