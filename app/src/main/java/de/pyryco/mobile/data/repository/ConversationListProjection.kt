@@ -146,6 +146,10 @@ internal class ConversationListProjection {
      * (#1108): an older daemon omits it on `conversation_updated`, so a record without it keeps the stored
      * row's [Conversation.agent] instead of resetting a Codex conversation to Claude. Returns the row as
      * stored, so a caller that hands the conversation back returns the kept agent too.
+     *
+     * The record never carries `archived_at` (#1332), so a still-archived row keeps the stamp the last
+     * snapshot gave it, and an unarchived one is left without. A row archived here gets its stamp from the
+     * next `conversations` snapshot.
      */
     fun upsertConversation(record: ConversationResponseDto): Conversation {
         val incoming = record.toConversation()
@@ -154,7 +158,12 @@ internal class ConversationListProjection {
             val existing = current.orEmpty()
             val index = existing.indexOfFirst { it.id == incoming.id }
             if (index >= 0) {
-                stored = if (record.agent == null) incoming.copy(agent = existing[index].agent) else incoming
+                val held = existing[index]
+                stored =
+                    incoming.copy(
+                        agent = if (record.agent == null) held.agent else incoming.agent,
+                        archivedAt = if (incoming.archived) held.archivedAt else null,
+                    )
                 existing.toMutableList().apply { this[index] = stored }
             } else {
                 stored = incoming

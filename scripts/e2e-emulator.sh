@@ -1205,9 +1205,16 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership"
+  # #1332: the Archive lists the second-archived chat first, ordered by the daemon's archived_at. No Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_archiveTwoChats_listsSecondArchivedFirst"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsArchive_staysPerHost"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_createEditArchiveChannel_readsPromptBack"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolPrompt_rendersToolStepInThread"
+  # #1311: the status band keeps a reading for the whole tool-then-text turn. One turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy"
+  # #1394: the scanner's confirm waits for host B to answer before the list opens. Pairing over the
+  # scanner and a phone-local unpair only, so it spends no Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_scannerConfirm_waitsForHostThenOpensList"
   # #1410: reopening a chat after a fresh connection shows its context reading from the thread's own ask, before
   # any turn on the phone. One turn (the peer's ping, run while the phone is offline).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn"

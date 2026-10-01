@@ -18,6 +18,10 @@ The first host has zero extra top padding; subsequent hosts use `TreeHostGap = 1
 [toolbar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) supplies the 24dp gap from its
 divider to the first row. With the old tier divider gone, the toolbar rule is the only full-width rule.
 The section content begins 4dp and conversation content 12dp from the list's 20dp content edge.
+A conversation row's `Box` pads that 12dp on the start only; it ends flush at the tree gutter
+like `TreeHostRow` does, so the Channels/Chats row pens share one horizontal centre with the
+Edit host pen ([#1334](https://github.com/pyrycode/pyrycode-mobile/issues/1334) — the row used
+to pad both sides, which put its pen 12dp left of the host pen's column).
 Each section uses a closed/open folder glyph and right/down chevron to match its fold state. Its fold
 and both section plus controls retain separate 48dp touch targets and host-qualified TalkBack names.
 
@@ -112,6 +116,19 @@ Chats-section plus (#1190), including when either section has no conversations. 
 are separate 48dp targets. `TreeRowControl` in `ConversationTreeRows.kt` draws their 16dp glyphs with a
 `clickable` and a host-qualified content description; it has no long-press path.
 
+**A disconnected host draws neither control (#1336).** `treeHost` computes `connected =
+hostState.isHostConnected(host.serverId)` once per host and passes `null` for both section pluses and
+every conversation row's pen when it is false; `TreeHostSectionRow.onAddTapped` took the nullable
+`(() -> Unit)?` shape `TreeConversationRow.onEditTapped` already had. A null plus or pen draws nothing —
+the row keeps its layout, and the fold and row taps are untouched. They reappear on the very next snapshot
+that reports the host connected. This excludes the Edit host pen and the reconnect/re-pair/update controls
+on [the host row](#host-row-edit-control-744), which stay regardless of connection, and the toolbar's
+pairing plus, which pairs a new host rather than acting on an existing one. The toolbar cannot close over
+the host-availability bug #1190 feared for a different reason: this is a rendering gate, not a request
+that could be sent and fail. See [ChannelListViewModel](channel-list-viewmodel.md) for the companion rule
+that closes any already-open Create channel, Edit chat or Edit channel modal, and clears a failed Chats
+create, for a host that stops being connected — this reverses #1190's keep-open-on-disconnect rule.
+
 - **Toolbar “Pair another host”** uses the static `R.string.cd_pair_another_host`, with no section suffix.
   Tapping it emits `ChannelListEvent.PairHostTapped`, which the route maps to
   `navController.navigate(Routes.SCANNER)`. The scanner's paste action opens code pairing; code Cancel/Back
@@ -124,8 +141,9 @@ are separate 48dp targets. `TreeRowControl` in `ConversationTreeRows.kt` draws t
 for that host without sending a request or folding the section. The dialog names the host and offers Create
 and Cancel. Confirming sends `createDiscussion(null)` to the held host, leaving `cwd` for the daemon to
 choose independently of the app's saved per-host default. Success selects and opens the returned chat;
-failure leaves the dialog open with a generic retryable error. The dialog and error survive disconnect and
-reconnect, with Create disabled while the host is unavailable. A fresh dialog identity prevents a delayed
+failure leaves the dialog open with a generic retryable error. Since #1336 the dialog and its error close,
+rather than survive, when the held host stops being connected — see [ChannelListViewModel](channel-list-viewmodel.md)
+for the snapshot watcher that clears it, reversing the keep-open rule #1190 set. A fresh dialog identity prevents a delayed
 reply from a dismissed dialog closing or navigating from a later one, even on the same host. The old host
 row plus and its Add workspace long press are removed; folder choice remains in the thread's
 [workspace picker](workspace-picker.md#consumers), while the underlying Add workspace state remains.
