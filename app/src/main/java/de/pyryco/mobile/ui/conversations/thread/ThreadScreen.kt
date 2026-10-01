@@ -590,6 +590,7 @@ fun ThreadScreen(
                             newestRow = rows.lastOrNull(),
                             promptIdentity = promptIdentity,
                             promptPresent = questionState != null || openRequest != null,
+                            promptRows = promptRowCount,
                             sentMessages = sentMessages,
                         )
                         LazyColumn(
