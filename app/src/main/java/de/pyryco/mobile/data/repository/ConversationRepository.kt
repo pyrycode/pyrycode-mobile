@@ -802,8 +802,8 @@ sealed interface ThreadItem {
      *
      * **[text] is claude-authored and unsanitized** — bounded daemon-side at 4 KiB, never cleaned. It is
      * held verbatim; the render boundary owes the control-character and escape stripping (see
-     * `BannerNoticeRow`). Consumers must render it inert and attributed to claude, must not persist it, and
-     * must not log it.
+     * `BannerNoticeRow`). Consumers must render it inert and attributed to claude and must not log it. The
+     * thread cache stores it as held (#1353), and a restored row renders through the same boundary.
      *
      * Identity: [occurredAt], the envelope's (or stored entry's) `ts` — the protocol's `(type, ts)` join
      * key with the type implied by this variant. Invariant: unique among a thread's banners. The thread's
@@ -836,7 +836,7 @@ sealed interface ThreadItem {
      * obligation — both thread writers skip one the thread already holds (`holdsCompactionBoundary`) —
      * documented here and asserted in tests, not enforced at construction (as [SessionBoundary]).
      *
-     * Never cached: history replay restores it.
+     * The thread cache stores it (#1353), since history loads only when the user asks.
      *
      * @param preTokens claude's context size before the compaction, or null when it stated none, stated
      *   `null`, or stated a value that is not a non-negative safe integer. Never a stand-in `0`.
@@ -860,7 +860,8 @@ sealed interface ThreadItem {
      *
      * **Every string here is claude-authored and unsanitized** — bounded daemon-side, never cleaned. Held
      * verbatim; the render boundary owes the stripping (see `ModelRefusalRow`). Consumers must render them
-     * inert and attributed to claude, must not persist them, and must not log them.
+     * inert and attributed to claude and must not log them. The thread cache stores them as held (#1353), and
+     * a restored row renders through the same boundary.
      *
      * Identity: the frame type — `fallbackModel != null` — plus [occurredAt], the envelope's (or stored
      * entry's) `ts`: the protocol's `(type, ts)` join key. Invariant: unique among a thread's refusal rows.

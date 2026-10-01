@@ -74,3 +74,7 @@ Pending for the documentation stage: `docs/knowledge/features/conversation-cache
 ## Open Questions
 
 None.
+
+## Revisions
+
+- 2026-10-01: The KDocs of `BannerNoticeRow` and `ModelRefusalRow` also said the row "is never cached". Both are corrected to say the thread cache stores the row and a restored row renders through the same boundary. Comment-only; no behaviour or contract change.

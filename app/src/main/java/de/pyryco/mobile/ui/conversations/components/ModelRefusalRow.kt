@@ -50,7 +50,8 @@ private val RefusalExpandedGap = 8.dp
  *   span, so an identifier cannot pass itself off as the surrounding words; the banner's "<agent>: " is its
  *   own medium-weight span, as in [BannerNoticeRow], naming the conversation's [agent] (#1113). Keep both
  *   separate spans.
- * - **No logging, no persisting** — only the expand [Boolean] reaches saved state, and the row is never cached.
+ * - **No logging** — only the expand [Boolean] reaches saved state. The thread cache stores the row as held
+ *   (#1353), so a restored row renders through this same boundary.
  */
 @Composable
 fun ModelRefusalRow(

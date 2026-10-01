@@ -254,6 +254,50 @@ class CachingConversationRepositoryTest {
             job.cancel()
         }
 
+    // ---- #1353: banners, compaction dividers and refusals survive a restore ------------------------
+
+    private val banner = ThreadItem.Banner(BannerLevel.Warning, "hook said no", false, Instant.parse("2026-09-22T10:00:01Z"))
+    private val compaction = ThreadItem.CompactionBoundary(24000, 3000, true, Instant.parse("2026-09-22T10:00:02Z"))
+    private val refusal =
+        ThreadItem.ModelRefusal("claude-opus-5-5", "claude-sonnet-5", "refused", false, Instant.parse("2026-09-22T10:00:03Z"))
+
+    @Test
+    fun `a restored thread draws its banner compaction and refusal rows where they were`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val rows = listOf(message("m1"), banner, message("m2"), compaction, boundary, refusal, message("m3"))
+            val cache = fileCache()
+            cache.writeThread("server-a", "conv-1", rows).getOrThrow()
+
+            val drawn = CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").first()
+
+            assertEquals(rows, drawn)
+        }
+
+    @Test
+    fun `a cached banner the live page re-delivers draws once`() = assertRedeliveredRowDrawsOnce(banner)
+
+    @Test
+    fun `a cached compaction divider the live page re-delivers draws once`() = assertRedeliveredRowDrawsOnce(compaction)
+
+    @Test
+    fun `a cached model refusal the live page re-delivers draws once`() = assertRedeliveredRowDrawsOnce(refusal)
+
+    /** [row] sits between two messages in the cache; the reconnect's page re-delivers all three and one more. */
+    private fun assertRedeliveredRowDrawsOnce(row: ThreadItem) =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = RecordingCache(listOf(message("m1"), row, message("m2")))
+            val emissions = mutableListOf<List<ThreadItem>>()
+            val job =
+                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+
+            live.value = listOf(message("m1"), row, message("m2"), message("m3"))
+
+            val drawn = listOf(message("m1"), row, message("m2"), message("m3"))
+            assertEquals(drawn, emissions.last())
+            assertEquals(drawn, cache.writes.last())
+            job.cancel()
+        }
+
     @Test
     fun `an in-flight turn writes nothing until it settles`() =
         runTest(UnconfinedTestDispatcher()) {
