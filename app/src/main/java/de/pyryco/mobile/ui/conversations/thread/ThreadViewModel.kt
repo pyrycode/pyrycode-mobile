@@ -139,7 +139,8 @@ class ThreadViewModel(
     // #861: whether this thread's host has a live repository published — for a relay host, the
     // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
     // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
-    // restart. Defaulted to always-available, as the demo path's fake repository is.
+    // restart, the #1309 settings re-read and the #1410 context-usage ask. Defaulted to
+    // always-available, as the demo path's fake repository is.
     private val repositoryAvailable: Flow<Boolean> = flowOf(true),
     // #843: whether this thread's own host rejected the saved pairing — the relay leg's distinct state,
     // which [connectionStateSource]'s legacy four cases fold into Offline. Defaulted to never, as the

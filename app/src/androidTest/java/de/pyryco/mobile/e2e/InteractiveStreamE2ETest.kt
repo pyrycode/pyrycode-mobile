@@ -434,8 +434,14 @@ class InteractiveStreamE2ETest {
                 runBlocking { hostRepository(serverId).observeContextUsage(conversationId).first() },
             )
 
-            // 4. Open the chat and send nothing: the footer reaches a percentage.
+            // 4. Open the chat and send nothing: the open's ask fills the reading. Waiting on the reading itself,
+            // not only the footer, because the footer also renders a percentage from session_settings alone.
             openChatRow(chatName)
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    hostRepository(serverId).observeContextUsage(conversationId).filterNotNull().first()
+                }
+            }
             val reported = Regex("Cxt: \\d+%")
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->

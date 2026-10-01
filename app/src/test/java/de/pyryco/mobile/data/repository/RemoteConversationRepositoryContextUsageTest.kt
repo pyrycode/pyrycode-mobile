@@ -135,12 +135,16 @@ class RemoteConversationRepositoryContextUsageTest {
     @Test
     fun requestContextUsage_aRefusedOrThrowingSend_isAbsorbed() =
         runTest {
-            val pump = FakeSessionPump(sendThrows = true)
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+            val throwing = FakeSessionPump(sendThrows = true)
+            RemoteConversationRepository(throwing, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+                .requestContextUsage("c1")
+            assertEquals(1, throwing.sent.size)
 
-            repo.requestContextUsage("c1")
-
-            assertEquals(1, pump.sent.size)
+            // A send the transport refuses is dropped, not retried.
+            val refusing = FakeSessionPump(sendRefuses = true)
+            RemoteConversationRepository(refusing, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+                .requestContextUsage("c1")
+            assertEquals(1, refusing.sent.size)
         }
 
     @Test
@@ -395,6 +399,7 @@ class RemoteConversationRepositoryContextUsageTest {
     /** Channel-backed fake of the inbound surface: unlimited buffer so pushes pre-subscription survive. */
     private class FakeSessionPump(
         private val sendThrows: Boolean = false,
+        private val sendRefuses: Boolean = false,
     ) : SessionPump {
         private val inboundChannel = Channel<Envelope>(Channel.UNLIMITED)
 
@@ -405,7 +410,7 @@ class RemoteConversationRepositoryContextUsageTest {
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
             check(!sendThrows) { "transport closed" }
-            return true
+            return !sendRefuses
         }
 
         fun push(envelope: Envelope) {

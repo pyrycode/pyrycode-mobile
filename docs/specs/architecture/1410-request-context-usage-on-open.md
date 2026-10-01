@@ -124,6 +124,10 @@ Pending for the documentation stage: the thread / context-usage feature overview
 
 The planned `reason=open` log line ran inside `ThreadViewModel`'s construction, so every existing ViewModel test class that installs no `RelayLog.sink` (`ThreadViewModelContextUsageTest`, `ThreadViewModelRunningModelTest` and four more, 43 tests) hit the unmocked `android.util.Log` and failed. The open is already logged when the thread destination binds (`event=thread_destination_bound`), so the opening ask now logs nothing and only a repository return logs `event=context_usage_ask reason=reconnect`. Static code, never the id. The ViewModel log test asserts exactly that line.
 
+### 2026-10-02 — the live method waits on the reading, and the floor is counted
+
+Verifier MUST FIX on PR #1413: since #1411 the footer's `Cxt:` value falls back to `session_settings`' used and window tokens when no reading is held, so a `Cxt: N%` footer alone can render without any `request_context_usage`. After `openChatRow`, the rung-3 method now waits with `THREAD_TIMEOUT_MS` for `hostRepository(serverId).observeContextUsage(conversationId).filterNotNull().first()`. With step 3's `assertNull` before the open, only the open's ask can fill that reading, so the method fails if the ask is dropped. The footer check stays. Separately, the AC's `LIVE_MINIMUM` step is satisfied by the counted floor: on this base `LIVE_MINIMUM = len(curated_live_methods())` (#1440), so the `LIVE=1` list entry raises it by one and `scripts/android-test-gate.py` is not edited.
+
 ## Security review
 
 **Verdict:** PASS
