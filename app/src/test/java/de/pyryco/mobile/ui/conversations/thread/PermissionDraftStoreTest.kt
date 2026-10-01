@@ -140,14 +140,42 @@ class PermissionDraftStoreTest {
         assertNull(store.current("host", "other"))
     }
 
-    // #1337: a reconnect empties the host's prompts, which retires its drafts until a re-send would match.
+    // #1337: a reconnect empties the host's prompts; the daemon's unchanged re-send keeps the tick.
     @Test
-    fun a_reconnect_clear_retires_the_hosts_drafts() {
+    fun a_reconnect_clear_keeps_the_draft_for_an_unchanged_resend() {
         val modals = MutableStateFlow(held(open()))
         val store = PermissionDraftStore(Dispatchers.Unconfined)
         store.bind("host", owner = "coordinator", modals = modals)
         store.set("host", "chat", draft())
         modals.value = HostModalState()
-        assertNull(store.current("host", "chat"))
+        assertEquals(draft(), store.current("host", "chat"))
+        modals.value = HostModalState().reduce(shown(open()))
+        assertEquals(draft(), store.current("host", "chat"))
     }
+
+    // #1337: after a reconnect clear, a different request for the chat retires the old draft.
+    @Test
+    fun a_different_request_after_a_reconnect_clear_retires_the_draft() {
+        val modals = MutableStateFlow(held(open()))
+        val store = PermissionDraftStore(Dispatchers.Unconfined)
+        store.bind("host", owner = "coordinator", modals = modals)
+        store.set("host", "chat", draft())
+        store.set("host", "other", draft(modalId = "m2"))
+        modals.value = HostModalState()
+        modals.value = HostModalState().reduce(shown(open(modalId = "m3")))
+        assertNull(store.current("host", "chat"))
+        assertEquals("a chat holding no prompt keeps its draft", draft(modalId = "m2"), store.current("host", "other"))
+    }
+
+    private fun shown(modal: ModalUiState.Open) =
+        ModalEvent.Shown(
+            modal.modalId,
+            modal.modalClass,
+            modal.title,
+            modal.prompt,
+            modal.options,
+            modal.defaultOptionId,
+            modal.conversationId,
+            alwaysAllowRules = modal.alwaysAllowRules,
+        )
 }

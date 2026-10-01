@@ -4042,9 +4042,10 @@ class InteractiveStreamE2ETest {
      * permission prompt. The prompt surfaces while the phone is absent, so the daemon wakes the phone and
      * the wake posts the alert. The test then cuts and restores the host link, and the daemon shows the
      * still-outstanding prompt again. That repeat must not post again, so one notification stays, with
-     * the same post time. The source raises no second alert for a retained permission modal, and the
-     * notifier's ledger would drop one if it did. A second `notify` for the same tag would replace the
-     * notification and change its post time, which a count alone cannot see.
+     * the same post time. Since #1337 the new connection clears the host's held prompts, so the source
+     * re-emits the re-shown prompt's alert and the notifier's ledger drops the repeat. A second `notify`
+     * for the same tag would replace the notification and change its post time, which a count alone
+     * cannot see.
      *
      * LIVE only: the loopback relay cannot send FCM. **One real-claude turn**: the peer's held command.
      */
@@ -4075,8 +4076,8 @@ class InteractiveStreamE2ETest {
             val first = awaitAlert(string(R.string.notification_prompt), woke)
 
             // 4. AC-2: a second reconnect inside the wake window re-shows the prompt, and nothing is posted again.
-            // The retained permission modal emits no new alert for the re-show, so nothing observable marks its
-            // arrival: settle long enough for the daemon's `modal_shown` to reach the phone and the notifier.
+            // The source re-emits the re-shown prompt's alert (#1337) and the notifier's ledger drops it, so nothing
+            // observable marks its arrival: settle long enough for `modal_shown` to reach the phone and the notifier.
             cycleHostLink(serverId)
             SystemClock.sleep(RECONNECT_SETTLE_MS)
             val after = attentionAlerts()
@@ -7215,7 +7216,7 @@ class InteractiveStreamE2ETest {
         const val PUSH_TIMEOUT_MS = 60_000L
 
         // After a reconnect, the time for the daemon's re-shown `modal_shown` to reach the phone and the
-        // notifier. Nothing observable marks its arrival: the retained modal raises no second alert.
+        // notifier. Nothing observable marks its arrival: the notifier's ledger drops the re-emitted alert.
         const val RECONNECT_SETTLE_MS = 5_000L
         const val POLL_MS = 250L
 

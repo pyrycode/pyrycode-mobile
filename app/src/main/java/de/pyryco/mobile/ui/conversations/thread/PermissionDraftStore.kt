@@ -23,9 +23,9 @@ internal data class PermissionGrantDraft(
 
 /**
  * Process-only session-grant drafts (#1306), keyed by server and conversation, so leaving a chat through Back
- * keeps the checkbox for the same outstanding request. A bound host's collector retires a draft as soon as the
- * host no longer holds that request with that offer for the draft's conversation, including while no thread for
- * the conversation is open. Another conversation's prompt never retires it (#1337).
+ * keeps the checkbox for the same outstanding request. A bound host's collector retires a draft as soon as that
+ * request is resolved or the draft's conversation shows a different request or offer, including while no thread
+ * for the conversation is open. Another conversation's prompt and a reconnect clear never retire it (#1337).
  */
 class PermissionDraftStore(
     dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
@@ -60,19 +60,28 @@ class PermissionDraftStore(
         modals: HostModalState,
     ) {
         if (bindings[serverId]?.owner !== owner) return
-        val next =
-            drafts.value.filter { (key, draft) ->
-                key.first != serverId ||
-                    modals.outstanding.any { modal ->
-                        modal.offersAlwaysAllow &&
-                            modal.conversationId == key.second &&
-                            draft == PermissionGrantDraft(modal.modalId, modal.alwaysAllowRules)
-                    }
-            }
+        val next = drafts.value.filter { (key, draft) -> key.first != serverId || keeps(modals, key.second, draft) }
         if (next.size != drafts.value.size) {
             RelayLog.d { "event=permission_grant_draft action=retired" }
             drafts.value = next
         }
+    }
+
+    /**
+     * Whether [draft] survives [modals] for [conversationId]: retired once its request is resolved, or once the
+     * conversation holds prompts and none is that request with that offer. A conversation holding no prompt keeps
+     * it, so a reconnect clear does not untick a request the daemon re-sends unchanged; a stale draft stays
+     * invisible because [ThreadViewModel.alwaysAllowAccepted] matches it against the shown prompt.
+     */
+    private fun keeps(
+        modals: HostModalState,
+        conversationId: String,
+        draft: PermissionGrantDraft,
+    ): Boolean {
+        if (modals.resolved.any { it.modalId == draft.modalId }) return false
+        val held = modals.outstanding.filter { it.conversationId == conversationId }
+        return held.isEmpty() ||
+            held.any { it.offersAlwaysAllow && draft == PermissionGrantDraft(it.modalId, it.alwaysAllowRules) }
     }
 
     internal fun observe(
