@@ -79,8 +79,6 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1305 excludes the cross-host file method, failing on main since daemon #2699, until #1369 restores it.
 LIVE_MINIMUM -= 1
-# #1325 excludes five settings methods failing on main since #1320 until #1397 restores them.
-LIVE_MINIMUM -= 5
 # #1311 adds the status-band-never-empty method.
 LIVE_MINIMUM += 1
 
