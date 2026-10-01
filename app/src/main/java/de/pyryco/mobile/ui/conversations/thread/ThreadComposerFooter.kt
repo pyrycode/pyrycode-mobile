@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -396,26 +397,32 @@ private fun ContextSegment(
     percent: Int?,
     modifier: Modifier = Modifier,
 ) {
-    val step = percent?.let(::contextUsageStep)
     val text: String
     val description: String
+    val color: Color
     if (percent == null) {
         text = stringResource(R.string.thread_footer_context_unavailable)
         description = stringResource(R.string.cd_context_usage_unavailable)
-    } else if (step == ContextUsageStep.High) {
-        text = stringResource(R.string.thread_footer_context_high, percent)
-        description = stringResource(R.string.cd_context_usage_high, percent)
+        color = MaterialTheme.colorScheme.onSurfaceVariant
     } else {
-        text = stringResource(R.string.thread_footer_context, percent)
-        description = stringResource(R.string.cd_context_usage, percent)
-    }
-    val color =
-        when (step) {
-            null -> MaterialTheme.colorScheme.onSurfaceVariant
-            ContextUsageStep.Normal -> MaterialTheme.colorScheme.primary
-            ContextUsageStep.Warning -> MaterialTheme.colorScheme.warning
-            ContextUsageStep.High -> MaterialTheme.colorScheme.error
+        when (contextUsageStep(percent)) {
+            ContextUsageStep.Normal -> {
+                text = stringResource(R.string.thread_footer_context, percent)
+                description = stringResource(R.string.cd_context_usage, percent)
+                color = MaterialTheme.colorScheme.primary
+            }
+            ContextUsageStep.Warning -> {
+                text = stringResource(R.string.thread_footer_context, percent)
+                description = stringResource(R.string.cd_context_usage, percent)
+                color = MaterialTheme.colorScheme.warning
+            }
+            ContextUsageStep.High -> {
+                text = stringResource(R.string.thread_footer_context_high, percent)
+                description = stringResource(R.string.cd_context_usage_high, percent)
+                color = MaterialTheme.colorScheme.error
+            }
         }
+    }
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
@@ -497,7 +504,8 @@ private val previewRunConfig =
         savedEffort = "max",
         permissionMode = "plan",
         sessionId = "s1",
-        contextPercent = 84,
+        // An ordinary reading, as Figma 110:3497 draws it; 84 would now be the high step (#1412).
+        contextPercent = 42,
     )
 
 @Preview(name = "ComposerFooter — Dark", showBackground = true, widthDp = 372)
