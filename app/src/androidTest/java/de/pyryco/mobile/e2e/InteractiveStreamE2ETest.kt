@@ -3429,6 +3429,85 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * Two chats on one host each hold a real permission prompt at once, and each shows its own (#1337, rung 3),
+     * on the dedicated answer daemon of [interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation].
+     *  * **Both held.** A raises a prompt, then B raises one while A's is still outstanding. B shows its own, and
+     *    returning to A still shows A's: B's prompt no longer replaces it.
+     *  * **Answering A leaves B.** The phone allows A's prompt; the daemon dismisses A's id from the phone, never
+     *    B's, and B's thread still shows its prompt. The peer then allows B's and B's dialog closes.
+     *
+     * Both prompts carry the same command, so which prompt the phone answered is proven by the peer's frames:
+     * the phone's one answer, sent from A, resolves A's `modal_id` with source `remote`, and B's thread still
+     * shows a prompt afterwards, which the phone drops once the daemon dismisses B's id.
+     *
+     * A's turn end is not awaited. The daemon streams turn frames only for the conversation a message was last
+     * routed to (its follow-active cursor), which is B from step 2 on, so A's frames after the allow never reach
+     * any client. That A's allowed turn ends is proven by the sibling method, where no other chat is routed.
+     *
+     * **Two real-claude turns**: A's and B's commands.
+     */
+    @Test
+    fun interactiveTurn_permissionPrompts_heldPerConversation() {
+        val (serverId, peer) = answerHostPeer()
+        try {
+            pairAnswerHost()
+            val (chatA, nameA) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pa-")
+            val (chatB, nameB) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pb-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 1. A raises a prompt in A.
+            openChatRow(nameA)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            val shownA =
+                runBlocking {
+                    MobileJson.decodeFromJsonElement(
+                        ModalShownPayloadDto.serializer(),
+                        peer.awaitFrame(chatA, "modal_shown", REPLY_TIMEOUT_MS).payload,
+                    )
+                }
+            val promptA = shownA.modalId
+            awaitPromptDialog()
+
+            // 2. B raises its own prompt while A's is outstanding, and B shows it.
+            leaveThread()
+            openChatRow(nameB)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            val promptB = runBlocking { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) }
+            assertNotEquals("the two chats' prompts", promptA, promptB)
+            awaitPromptDialog()
+
+            // 3. Back in A, A's prompt is still shown: B's did not replace it.
+            leaveThread()
+            openChatRow(nameA)
+            awaitPromptDialog()
+
+            // 4. Allowing in A (a non-default option arms first) resolves A's prompt from the phone, not B's.
+            val allow = hasText(shownA.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
+            val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
+            tapInPrompt(allow)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
+            }
+            tapInPrompt(allow)
+            val dismissedA = runBlocking { peer.awaitModalDismissed(promptA, THREAD_TIMEOUT_MS) }
+            assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissedA, "source"))
+            assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissedA, "outcome"))
+            awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
+
+            // 5. B's prompt is still shown in B, so A's answer left it; the peer allows it and B's dialog closes untouched.
+            leaveThread()
+            openChatRow(nameB)
+            awaitPromptDialog()
+            runBlocking { peer.allowOnce(promptB, THREAD_TIMEOUT_MS) }
+            awaitNoPromptDialog("B's dialog stayed after the peer allowed it")
+            awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn")
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
      * A clarification answer from the phone reaches the conversation that asked (#966, rung 3), on the same
      * dedicated answer daemon as [interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation]; the
      * daemon gates a question answer on the same `--allow-remote-permissions` bit as a permission answer.
@@ -4032,9 +4111,10 @@ class InteractiveStreamE2ETest {
      * permission prompt. The prompt surfaces while the phone is absent, so the daemon wakes the phone and
      * the wake posts the alert. The test then cuts and restores the host link, and the daemon shows the
      * still-outstanding prompt again. That repeat must not post again, so one notification stays, with
-     * the same post time. The source raises no second alert for a retained permission modal, and the
-     * notifier's ledger would drop one if it did. A second `notify` for the same tag would replace the
-     * notification and change its post time, which a count alone cannot see.
+     * the same post time. Since #1337 the new connection clears the host's held prompts, so the source
+     * re-emits the re-shown prompt's alert and the notifier's ledger drops the repeat. A second `notify`
+     * for the same tag would replace the notification and change its post time, which a count alone
+     * cannot see.
      *
      * LIVE only: the loopback relay cannot send FCM. **One real-claude turn**: the peer's held command.
      */
@@ -4065,8 +4145,8 @@ class InteractiveStreamE2ETest {
             val first = awaitAlert(string(R.string.notification_prompt), woke)
 
             // 4. AC-2: a second reconnect inside the wake window re-shows the prompt, and nothing is posted again.
-            // The retained permission modal emits no new alert for the re-show, so nothing observable marks its
-            // arrival: settle long enough for the daemon's `modal_shown` to reach the phone and the notifier.
+            // The source re-emits the re-shown prompt's alert (#1337) and the notifier's ledger drops it, so nothing
+            // observable marks its arrival: settle long enough for `modal_shown` to reach the phone and the notifier.
             cycleHostLink(serverId)
             SystemClock.sleep(RECONNECT_SETTLE_MS)
             val after = attentionAlerts()
@@ -7221,7 +7301,7 @@ class InteractiveStreamE2ETest {
         const val PUSH_TIMEOUT_MS = 60_000L
 
         // After a reconnect, the time for the daemon's re-shown `modal_shown` to reach the phone and the
-        // notifier. Nothing observable marks its arrival: the retained modal raises no second alert.
+        // notifier. Nothing observable marks its arrival: the notifier's ledger drops the re-emitted alert.
         const val RECONNECT_SETTLE_MS = 5_000L
         const val POLL_MS = 250L
 

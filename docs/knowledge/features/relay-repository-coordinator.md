@@ -17,7 +17,11 @@ kept current for the life of an open connection since [#361](../codebase/361.md)
 rotation. Explicit [diagnostic archive requests](relay-debug-bundle-transfer.md)
 also enter through this owner so admission and teardown share a connection lifetime. It also
 switches the active connection's [held clarification-question batches](relay-repository-coordinator-seams-and-passthroughs.md#question-batch-projection-822)
-— unlike `currentModal`, that state resets on every reconnect instead of surviving it. It holds the
+— that state resets on every reconnect, including a plain teardown with no new connection yet. The
+sibling [`hostModals`](current-modal-state.md) fold is less eager about it: since
+[#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) it keeps every outstanding
+permission prompt through a teardown and clears only when a *new* connection is published, not on the
+drop itself. It holds the
 [background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677)
 the same reset way, except for which task ids have finished, which it retains across every reconnect so a
 completed task cannot come back as live when the daemon re-sends its retained roster. It owns one
