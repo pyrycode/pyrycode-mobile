@@ -457,6 +457,7 @@ internal fun PyryNavHost(
                 val draft by vm.draft.collectAsStateWithLifecycle()
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
                 val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
+                val attachmentUploadProgress by vm.attachmentUploadProgress.collectAsStateWithLifecycle()
                 val attachmentStates by vm.attachmentStates.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
                 val usageLimitDismissals = koinInject<UsageLimitDismissals>()
@@ -522,6 +523,7 @@ internal fun PyryNavHost(
                     // #933: the composer's attachment picker and strip, over the same per-chat draft store.
                     attachments = pendingAttachments,
                     attachmentsSending = attachmentsSending,
+                    attachmentUploadProgress = attachmentUploadProgress,
                     onAttachmentsPicked = vm::addPickedAttachments,
                     onRemoveAttachment = vm::removeAttachment,
                     attachmentRefusals = vm.attachmentRefusals,

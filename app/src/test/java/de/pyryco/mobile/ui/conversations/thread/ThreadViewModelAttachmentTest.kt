@@ -59,6 +59,7 @@ class ThreadViewModelAttachmentTest {
         private val sendFailure: Throwable? = null,
         private val whileSending: () -> Unit = {},
         private val beforeUpload: suspend () -> Unit = {},
+        private val duringUpload: suspend (filename: String, onProgress: (Int, Int) -> Unit) -> Unit = { _, _ -> },
         private val delegate: FakeConversationRepository = FakeConversationRepository(),
     ) : ConversationRepository by delegate {
         val uploads = mutableListOf<Pair<String, String>>() // filename to content
@@ -73,6 +74,7 @@ class ThreadViewModelAttachmentTest {
             onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
         ): AttachmentUploadResult {
             beforeUpload()
+            duringUpload(filename, onProgress)
             uploads += filename to bytes.decodeToString()
             return uploadOutcome(filename)
         }
@@ -441,6 +443,61 @@ class ThreadViewModelAttachmentTest {
 
                 assertFalse(vm.attachmentsSending.value)
                 assertEquals(listOf("a"), vm.pendingAttachments.value.map { it.displayName })
+            }
+        }
+
+    @Test
+    fun uploadProgress_namesTheUploadingEntry_fromEightChunks_andEachFileStartsFromItsOwn() =
+        runTest {
+            lateinit var vm: ThreadViewModel
+            val atStart = mutableListOf<AttachmentUploadProgress?>()
+            val reported = mutableListOf<AttachmentUploadProgress?>()
+            val repository =
+                RecordingRepository(duringUpload = { name, onProgress ->
+                    atStart += vm.attachmentUploadProgress.value
+                    when (name) {
+                        "small" -> onProgress(2, 7)
+                        "a" -> onProgress(4, 10)
+                        else -> onProgress(1, 8)
+                    }
+                    reported += vm.attachmentUploadProgress.value
+                })
+            vm = vm(repository, ComposerDraftStore())
+            vm.attach("a")
+            vm.attach("small")
+            vm.attach("b")
+            val keys = vm.pendingAttachments.value.associate { it.displayName to it.key }
+
+            vm.sendMessage("hi")
+            advanceUntilIdle()
+
+            assertEquals(listOf(null, null, null), atStart)
+            assertEquals(
+                listOf(AttachmentUploadProgress(keys.getValue("a"), 40), null, AttachmentUploadProgress(keys.getValue("b"), 12)),
+                reported,
+            )
+            assertEquals(null, vm.attachmentUploadProgress.value)
+        }
+
+    @Test
+    fun uploadProgress_clearsAfterAFailedUpload_orAThrownOne() =
+        runTest {
+            val report: suspend (String, (Int, Int) -> Unit) -> Unit = { _, onProgress -> onProgress(5, 10) }
+            val refused = RecordingRepository(uploadOutcome = { AttachmentUploadResult.ReconnectRequired }, duringUpload = report)
+            val thrown =
+                RecordingRepository(duringUpload = { name, onProgress ->
+                    report(name, onProgress)
+                    throw IllegalStateException("connection lost")
+                })
+            for (repository in listOf(refused, thrown)) {
+                val vm = vm(repository, ComposerDraftStore())
+                vm.attach("a")
+
+                vm.sendMessage("hi")
+                advanceUntilIdle()
+
+                assertEquals(null, vm.attachmentUploadProgress.value)
+                assertFalse(vm.attachmentsSending.value)
             }
         }
 

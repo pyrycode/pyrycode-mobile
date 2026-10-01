@@ -55,3 +55,7 @@ None.
 ## Documentation handoff
 
 Pending for the documentation stage: update `docs/knowledge/features/thread-screen-composer-drafts-and-attachments.md` under "Composer pending attachments" with the progress figure, its 8-chunk threshold and its lifetime.
+
+## Revisions
+
+- 2026-10-01, implementation: `ThreadScreen` mounts `ComposerAttachmentStrip` once, not at two call sites; the other `sending = attachmentsSending` there belongs to `ThreadInputBar` and is unchanged. The screen test drives the figure through `ThreadScreen`, so it also covers that pass-through.
