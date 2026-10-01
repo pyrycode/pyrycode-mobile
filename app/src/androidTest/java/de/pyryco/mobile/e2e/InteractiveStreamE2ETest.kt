@@ -3355,7 +3355,6 @@ class InteractiveStreamE2ETest {
      * **Three real-claude turns**: A's allowed command, its repeat, and B's command.
      */
     @Test
-    @Ignore("blocked on #1445 — reopening the asking chat times out in openChatRow; fails on main")
     fun interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation() {
         val (serverId, peer) = answerHostPeer()
         try {

@@ -1159,7 +1159,7 @@ elif [ -n "${LIVE}" ]; then
   # #981 originally restored the #687 operator-bypass method when the allowed Read's reply appeared.
   # #966: the permission-answer method (three turns) and the question-answer method (two) join on the answer
   # daemon, so the list holds 24 methods and 24 turns.
-  # #1312 excludes the permission-answer method while #1445 repairs reopening the asking chat.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_questionAnswer_reachesTheAskingConversation"
   # #967: the reconnect footer method (two turns), the reconnect slash-command and compaction method (two)
   # and the background-task method (one) join, so the list holds 27 methods and 29 turns.
