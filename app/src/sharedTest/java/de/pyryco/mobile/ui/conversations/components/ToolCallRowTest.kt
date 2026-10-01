@@ -4,13 +4,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -18,6 +21,8 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -289,6 +294,75 @@ class ToolCallRowTest {
         composeTestRule.onNodeWithText("Input").assertIsDisplayed()
         composeTestRule.onNodeWithText("Output").assertIsDisplayed()
         composeTestRule.onNodeWithText("built").assertIsDisplayed()
+    }
+
+    // ---- #1316: the result's count on the trailing status ---------------------------------------------
+
+    @Test
+    fun a_done_row_shows_its_count() {
+        setContent(doneToolCall().copy(resultDetail = "265 lines"))
+
+        composeTestRule.onNodeWithTag(TOOL_RESULT_DETAIL_TAG, useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("265 lines", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(doneDescription, useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun a_failed_row_shows_its_count() {
+        setContent(failedToolCall().copy(resultDetail = "110 of 1676 lines"))
+
+        composeTestRule.onNodeWithText("110 of 1676 lines", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(failedDescription, useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun a_denied_row_shows_its_count() {
+        setContent(deniedToolCall().copy(resultDetail = "3 lines"))
+
+        composeTestRule.onNodeWithText("3 lines", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(deniedDescription, useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun a_running_row_shows_no_count() {
+        setContent(runningToolCall().copy(resultDetail = "265 lines"))
+
+        composeTestRule.onNodeWithTag(TOOL_RESULT_DETAIL_TAG, useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun an_empty_or_missing_count_draws_nothing() {
+        var toolCall by mutableStateOf(doneToolCall().copy(resultDetail = ""))
+        composeTestRule.setContent { PyrycodeMobileTheme { ToolCallRow(toolCall = toolCall) } }
+
+        composeTestRule.onNodeWithTag(TOOL_RESULT_DETAIL_TAG, useUnmergedTree = true).assertDoesNotExist()
+        toolCall = doneToolCall().copy(resultDetail = null)
+        composeTestRule.onNodeWithTag(TOOL_RESULT_DETAIL_TAG, useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun a_huge_count_cannot_push_the_glyph_or_the_name_off_the_row() {
+        setContent(
+            ToolCall(
+                toolName = "Read",
+                input = "src/a.kt",
+                output = "x",
+                status = ToolCallStatus.Done,
+                inputFields = mapOf("file_path" to "src/a.kt"),
+                resultDetail = "1234567890 lines ".repeat(176).take(3000),
+            ),
+        )
+
+        val row = composeTestRule.onRoot().getBoundsInRoot()
+        val glyph = composeTestRule.onNodeWithContentDescription(doneDescription, useUnmergedTree = true).getBoundsInRoot()
+        val name = composeTestRule.onNodeWithText("Read", useUnmergedTree = true).getBoundsInRoot()
+        val count = composeTestRule.onNodeWithTag(TOOL_RESULT_DETAIL_TAG, useUnmergedTree = true).getBoundsInRoot()
+
+        assertEquals(16.dp.value, (glyph.right - glyph.left).value, 0.5f)
+        assertTrue(glyph.right <= row.right)
+        assertTrue(name.right > name.left)
+        assertTrue(name.right <= count.left)
+        assertTrue(count.right - count.left <= (row.right - row.left) / 2)
     }
 
     private fun deniedToolCall() =
