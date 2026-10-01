@@ -11,8 +11,6 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.E
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_REQUEST_MODEL_LIST
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
@@ -32,36 +30,42 @@ import java.util.concurrent.ConcurrentHashMap
  * [nextRequestId] its one request-id counter, so the ask takes its envelope id from the same sequence as
  * every other request and [modelListAsks] stays disjoint from the repository's pending requests.
  *
- * One instance per repository, and a fresh repository per connection (#351), so the state is
- * connection-scoped exactly as it was when it lived in the repository. Nothing here logs.
+ * One instance per repository, and a fresh repository per connection (#351), so the ask ledgers are
+ * connection-scoped: an ask belongs to the connection that sent it. The menus themselves are held in
+ * [readings], the host's [HostReadings] (#1320), so a reconnect still offers the menu heard before it.
+ * Nothing here logs.
  */
 internal class ModelMenuProjection(
     private val send: (Envelope) -> Boolean,
     private val negotiatedCapabilities: () -> Set<String>,
     private val nextRequestId: () -> Long,
+    private val readings: HostReadings,
 ) {
     /**
-     * `conversationId -> the model menu this connection heard for it` (#791) — the identifiers, labels,
-     * per-row effort levels and auto-mode support the daemon published. Written **only** from the
-     * repository's single inbound collector: each `model_list` frame is a full snapshot that **replaces** that
-     * conversation's entry, leaving every other conversation untouched. Single writer on the one
-     * collector coroutine, so snapshots never race; the atomic [MutableStateFlow.update] matches the
-     * sibling projections' memory-visibility posture. [observe] fans out from it.
+     * `conversationId -> the model menu heard for it` (#791) — the identifiers, labels, per-row effort levels
+     * and auto-mode support the daemon published. Written **only** from the repository's single inbound
+     * collector: each `model_list` frame is a full snapshot that **replaces** that conversation's entry,
+     * leaving every other conversation untouched. The atomic [MutableStateFlow.update] matches the sibling
+     * projections' memory-visibility posture. [observe] fans out from it.
      *
-     * **Nothing ever removes a key, and no connection edge clears the map.** Absence of a frame is the
-     * wire's only "no list" signal, so a blanket clear would manufacture an unavailable reading the
-     * daemon never stated. Connection-scoped in-memory state — a fresh repository per connection (#351)
-     * starts empty, which is the only reset this state has, and is also where "per host" comes from: the
-     * published vocabulary varies by machine and account rather than by conversation.
-     *
-     * Unlike [QueueProjection] this is **not** a transient "right now" condition — a published
-     * vocabulary is a standing fact about the host for as long as the connection lives.
+     * **Nothing ever removes a key, and no connection edge clears the map.** Absence of a frame is the wire's
+     * only "no list" signal, so a blanket clear would manufacture an unavailable reading the daemon never
+     * stated. Since #1320 the map is the host's, held in [readings] for its pairing rather than one
+     * connection, and dropped when the pairing ends. That is also where "per host" comes from: the published
+     * vocabulary varies by machine and account rather than by conversation.
      */
-    private val modelMenusByConversation = MutableStateFlow<Map<String, ModelMenu>>(emptyMap())
+    private val modelMenusByConversation = readings.modelMenus
+
+    /**
+     * The conversations this connection itself heard a `model_list` for (#1320). Guard 3 of [askForModelMenu]
+     * reads it rather than [modelMenusByConversation], so a menu held from an earlier connection does not stop
+     * this one asking: the held menu is offered meanwhile, and the answer replaces it.
+     */
+    private val heardModelMenus: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
      * The conversations this connection already sent a `request_model_list` for (#792) — the one-shot
-     * ledger behind [askForModelMenu]. Connection-scoped like [modelMenusByConversation], so "asked
+     * ledger behind [askForModelMenu]. Connection-scoped like [heardModelMenus], so "asked
      * once" means once per connection: a fresh repository (#351) starts empty and the new connection's
      * reconcile burst is what fills it, which is exactly the recovery path the no-retry rule names.
      *
@@ -136,6 +140,7 @@ internal class ModelMenuProjection(
         envelope.inReplyTo?.let(modelListAsks::remove)
         decodeModelList(envelope)?.let { (conversationId, menu) ->
             modelMenusByConversation.update { it + (conversationId to menu) }
+            heardModelMenus.add(conversationId)
         }
     }
 
@@ -152,22 +157,22 @@ internal class ModelMenuProjection(
     }
 
     /**
-     * The model menu this connection heard for [conversationId] (#791), a cold projection of the
-     * shared [modelMenusByConversation] `StateFlow` over the `model_list` frames the daemon publishes
-     * unasked. An absent key is `null`, which is **unavailable**: a normal,
+     * The model menu held for [conversationId] (#791), a cold projection of the host's shared
+     * [modelMenusByConversation] `StateFlow` over the `model_list` frames the daemon publishes, held across
+     * reconnects since #1320. An absent key is `null`, which is **unavailable**: a normal,
      * permanent resting state, never an error, never the `Model` / `Effort` device enums and — because
      * the lookup is by the caller's own id — never another conversation's rows.
      *
-     * [distinctUntilChanged] suppresses only value-*identical* re-emissions, so a `model_list` for
-     * **another** conversation does not re-emit this flow, and the reconnect burst's re-send of an
-     * unchanged menu costs a consumer nothing. A genuinely different menu is a different [ModelMenu]
+     * [HostReadings.observeModelMenu]'s `distinctUntilChanged` suppresses only value-*identical*
+     * re-emissions, so a `model_list` for **another** conversation does not re-emit this flow, and the
+     * reconnect burst's re-send of an unchanged menu costs a consumer nothing. A genuinely different menu is a different [ModelMenu]
      * value and does reach the collector — the [RemoteConversationRepository.observeApiRetry] property,
      * which a membership `Set` could not provide. A `StateFlow` always has a current value, so every
      * collector (including a `flatMapLatest` re-subscription through the facade) receives the current
      * reading (`null` until a frame lands) on subscription; the one inbound consumer fans out to unlimited
      * collectors.
      *
-     * Since #792 the subscription also **triggers the ask** for a conversation this connection holds no
+     * Since #792 the subscription also **triggers the ask** for a conversation this connection has heard no
      * menu for — see [askForModelMenu]. Subscribing to a conversation's menu is wanting it, and this is
      * the seam where the conversation to name is known, the desktop client's conversation-activation
      * decision transferred to the reading mobile actually has. The ask is non-suspending and
@@ -175,9 +180,8 @@ internal class ModelMenuProjection(
      * `null` immediately rather than stalling on a reply that may never come.
      */
     fun observe(conversationId: String): Flow<ModelMenu?> =
-        modelMenusByConversation
-            .map { it[conversationId] }
-            .distinctUntilChanged()
+        readings
+            .observeModelMenu(conversationId)
             .onStart { askForModelMenu(conversationId) }
 
     /**
@@ -201,10 +205,10 @@ internal class ModelMenuProjection(
      *     differently rather than a second case — not sending is the whole of that branch.
      *  2. **`interactive` was not negotiated.** The daemon leaves such a conn fully inert on this verb,
      *     so a send would buy nothing and could not even be refused.
-     *  3. **A menu is already retained** for it — "a conversation that already holds a menu is not asked
-     *     again". A plain snapshot read, deliberately not atomic with guard 4: the worst a race there
-     *     costs is one redundant ask for a menu that landed in the same instant, which the daemon
-     *     answers idempotently.
+     *  3. **This connection already heard a menu** for it — "a conversation that already holds a menu is
+     *     not asked again", per connection: a menu held from an earlier one (#1320) does not count. A plain
+     *     read, deliberately not atomic with guard 4: the worst a race there costs is one redundant ask for
+     *     a menu that landed in the same instant, which the daemon answers idempotently.
      *  4. **It was already asked** on this connection, via [askedModelMenus]'s atomic test-and-set.
      *
      * Past the guards, the correlation is registered **before** the send ([RelayRequests.sendAndAwaitReply]'s
@@ -220,7 +224,7 @@ internal class ModelMenuProjection(
     private fun askForModelMenu(conversationId: String) {
         if (conversationId.isEmpty()) return
         if (CAPABILITY_INTERACTIVE !in negotiatedCapabilities()) return
-        if (conversationId in modelMenusByConversation.value) return
+        if (conversationId in heardModelMenus) return
         if (!askedModelMenus.add(conversationId)) return
 
         val request =

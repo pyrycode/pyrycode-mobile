@@ -15,6 +15,8 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasScrollToIndexAction
@@ -22,6 +24,7 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onChild
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -423,6 +426,65 @@ class ThreadScreenModalTest {
 
         assertEquals(listOf("m1" to true), changes)
         assertTrue("accepting the offer must not answer the prompt", tapped.isEmpty())
+    }
+
+    // #1321: every control that would send waits for the host; the session grant is a local choice.
+    @Test
+    fun sending_controls_are_disabled_offline_and_re_enable_on_reconnect_while_the_grant_stays_usable() {
+        var connection by mutableStateOf<ConnectionState>(ConnectionState.Offline)
+        val tapped = mutableListOf<String>()
+        var cancelled = 0
+        val changes = mutableListOf<Pair<String, Boolean>>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = baseState(),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = connection,
+                    onRetry = {},
+                    modalState = openModal().copy(alwaysAllowRules = offeredRules),
+                    armedOptionId = "allow_once",
+                    onModalOption = { modalId, optionId -> tapped += "$modalId/$optionId" },
+                    onModalCancel = { cancelled++ },
+                    onAlwaysAllowChanged = { modalId, accepted -> changes += modalId to accepted },
+                )
+            }
+        }
+        val options = permissionOptions.map { it.label }
+
+        options.forEach { composeTestRule.onNodeWithText(it).performScrollTo().assertIsNotEnabled() }
+        composeTestRule.onNodeWithText("Allow once").performClick() // the armed second tap
+        composeTestRule.onNodeWithText("Allow always").performClick() // a first tap that would arm
+        composeTestRule
+            .onNodeWithTag("permission-request-cancel")
+            .onChild()
+            .assertIsNotEnabled()
+            .performClick()
+        composeTestRule
+            .onNode(
+                hasText(string(R.string.modal_always_allow_label)).and(SemanticsMatcher.keyIsDefined(SemanticsProperties.ToggleableState)),
+            ).performScrollTo()
+            .assertIsEnabled()
+            .performClick()
+        composeTestRule.runOnIdle {
+            assertTrue("no option may be forwarded while offline", tapped.isEmpty())
+            assertEquals(0, cancelled)
+            assertEquals(listOf("m1" to true), changes)
+        }
+
+        composeTestRule.runOnIdle { connection = ConnectionState.Connected }
+        options.forEach { composeTestRule.onNodeWithText(it).performScrollTo().assertIsEnabled() }
+        composeTestRule.onNodeWithText("Allow once").performClick()
+        composeTestRule
+            .onNodeWithTag("permission-request-cancel")
+            .onChild()
+            .assertIsEnabled()
+            .performClick()
+        composeTestRule.runOnIdle {
+            assertEquals(listOf("m1/allow_once"), tapped)
+            assertEquals(1, cancelled)
+        }
     }
 
     @Test

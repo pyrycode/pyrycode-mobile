@@ -107,6 +107,9 @@ internal class EffortRecall(
         if (decided || !loaded) return
         val config = config ?: return
         if (!config.settingsAvailable || !config.menuAvailable || config.pending) return
+        // #1320: a reading held across a reconnect may name a session or effort the daemon has since
+        // changed, and in the disconnected gap a write cannot be sent at all. Wait for the live reply.
+        if (config.settingsHeld) return
         // A reading for a session the conversation has already replaced waits for the live one, the
         // same rule `forLiveSession` applies to what is shown. An empty live id is the summary's
         // placeholder and proves nothing.

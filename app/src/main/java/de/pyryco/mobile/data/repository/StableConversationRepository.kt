@@ -43,7 +43,9 @@ import kotlinx.coroutines.flow.flowOf
  * **Held readings (#1317).** Given a host's [HostReadings], the five pushed readings it holds (announced model,
  * session facts, context usage, usage limit, slash-command menu) are read from it directly rather than
  * switched, so they stay on screen across a reconnect and the gap before it. The compatibility singleton
- * passes none and keeps the switched behaviour.
+ * passes none and keeps the switched behaviour. Since #1320 the settings reading and the model menu are held
+ * too, but still read through the live repository while one is connected, because that subscription is what
+ * asks the connection for them; the holder answers only in the gap between connections.
  *
  * Emits **no logs**, consistent with the coordinator/pump/supervisor posture: it moves only object
  * references and already-decoded domain values, and must not log repo contents or the not-connected
@@ -64,6 +66,16 @@ class StableConversationRepository(
         whenAbsent: T,
         select: (ConversationRepository) -> Flow<T>,
     ): Flow<T> = currentRepository.flatMapLatest { repo -> repo?.let(select) ?: flowOf(whenAbsent) }
+
+    /**
+     * [switchToLive] for a reading the host also holds (#1320): the live repository's [select] flow while a
+     * connection is live, [held] while none is.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun <T> switchToLiveOrHeld(
+        held: Flow<T>,
+        select: (ConversationRepository) -> Flow<T>,
+    ): Flow<T> = currentRepository.flatMapLatest { repo -> repo?.let(select) ?: held }
 
     /** The currently-live repository snapshot, or [IllegalStateException] if no connection is live. */
     private val live: ConversationRepository
@@ -149,9 +161,16 @@ class StableConversationRepository(
      * [flatMapLatest] drops the previous connection's read the instant the connection changes, and the
      * new repository issues a fresh one against the new host. `null` while none is live is the same
      * "reading unavailable" value a failed read produces, so a consumer has one absent case, not two.
+     *
+     * With [heldReadings] (#1320) the gap reports the host's held reading instead, invalidated as the next
+     * connection's head will be, so the footer keeps its model and effort while the permission mode waits for
+     * the new connection's reply. The holder is this host's alone and dropped with its pairing, so the
+     * isolation above still holds.
      */
     override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
-        switchToLive<SessionSettings?>(null) { it.observeSessionSettings(conversationId) }
+        heldReadings?.let { held ->
+            switchToLiveOrHeld(held.observeHeldSessionSettings(conversationId)) { it.observeSessionSettings(conversationId) }
+        } ?: switchToLive<SessionSettings?>(null) { it.observeSessionSettings(conversationId) }
 
     /**
      * The model menu for [conversationId] (#791), switched over the live connection like every other
@@ -160,9 +179,14 @@ class StableConversationRepository(
      * what stops one host's models being offered for another's conversation. `null` while none is live
      * is the same "unavailable" value an unheard conversation produces, so a consumer has one absent
      * case, not two.
+     *
+     * With [heldReadings] (#1320) the gap reports the host's held menu, and a new connection starts from it
+     * while it asks again; the holder is this host's alone and dropped with its pairing.
      */
     override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> =
-        switchToLive<ModelMenu?>(null) { it.observeModelMenu(conversationId) }
+        heldReadings?.let { held ->
+            switchToLiveOrHeld(held.observeModelMenu(conversationId)) { it.observeModelMenu(conversationId) }
+        } ?: switchToLive<ModelMenu?>(null) { it.observeModelMenu(conversationId) }
 
     /**
      * The slash-command menu for [conversationId] (#882), held or switched as [observeAnnouncedModel] is (#1317).
