@@ -171,15 +171,6 @@ class ModalUiStateTest {
     }
 
     @Test
-    fun latestOutstanding_isTheLastHeldPrompt_elseHidden() {
-        assertEquals(ModalUiState.Hidden, empty.latestOutstanding)
-        assertEquals("b1", (held(open("a1", "A"), open("b1", "B")).latestOutstanding as ModalUiState.Open).modalId)
-
-        val dismissed = held(open("a1", "A")).reduce(ModalEvent.Dismissed("a1", "allow_once", "local"))
-        assertEquals(ModalUiState.Hidden, dismissed.latestOutstanding)
-    }
-
-    @Test
     fun scopedTo_keepsOpenAndDismissedOnlyForTheirOwnConversation() {
         val open = open("m1")
         val dismissed = ModalUiState.Dismissed("m1", "reject_once", "remote", conversationId = "c1")

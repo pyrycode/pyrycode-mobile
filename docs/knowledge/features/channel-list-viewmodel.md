@@ -297,10 +297,16 @@ muted: Boolean? = null)` resolves
 `submitWorkspaceName` use, and sends only what changed, in the order **rename → mute → prompt** (#1021): a
 rename iff the trimmed name differs from `savedName`, then a `setMuted` write iff `muted` is non-null and
 differs from `savedMuted` (`muted == null` means the caller reported no value and writes nothing — the
-default keeps every existing call site compiling), then the prompt verbatim iff it differs from the
-reading's own `prompt.orEmpty()` **and** the
-caller ever showed the field (`systemPrompt != null`) — an unread or failed prompt can therefore never be
-overwritten, even when the operator typed a name change and pressed OK. A confirmed rename updates
+default keeps every existing call site compiling), then the prompt leg, which follows desktop's
+`promptWriteFor` (#1342): `draft = systemPrompt?.takeIf { read != null }` — an unread or failed prompt can
+therefore never be overwritten, even when the operator typed a name change and pressed OK — and
+`writesPrompt = draft != null && draft != read?.prompt.orEmpty()` gates the write on any difference from
+the last reading, exactly as before; what changed is **what gets sent**: `promptToWrite =
+draft?.takeIf { it.isNotEmpty() }`, so an emptied box over a stored prompt sends `null` (clearing it)
+rather than storing `""`, while an unchanged box still sends nothing and any other text still goes
+verbatim. `ChannelListViewModel` logs `prompt=$writesPrompt` on `channel_edited`, a boolean rather than the
+nullable value, since the thing worth recording is "did a prompt write happen", not what it sent. A
+confirmed rename updates
 `savedName`, and a confirmed mute write updates `savedMuted`, before the prompt leg runs — the prompt is
 the only write whose confirmation is never recorded, so it stays last and a retry after any failure sends
 only the writes the host has not yet confirmed. `archiveChannel` mirrors `archiveChat`'s shape exactly — no field condition, no

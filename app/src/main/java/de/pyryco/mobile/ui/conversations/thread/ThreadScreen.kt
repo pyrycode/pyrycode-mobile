@@ -96,6 +96,7 @@ import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
@@ -224,6 +225,9 @@ fun ThreadScreen(
     // bar owned its own text.
     draft: String = "",
     onDraftChange: (String) -> Unit = {},
+    // #1342: the open Channel info sheet's System prompt state (ThreadViewModel.systemPrompt); its edits,
+    // Save and Clear go through onOverflowEvent.
+    systemPrompt: SystemPromptEditorState? = null,
     // #843: this thread's host rejected the saved pairing (ThreadViewModel.rePairAvailable). Draws the
     // Top overlay's pairing pill (#1002) and withholds the connection banner, whose retry cannot succeed then.
     // The tap is bound by MainActivity to the code-pair route keyed by the destination's own server id.
@@ -842,6 +846,10 @@ fun ThreadScreen(
             onDelete = { onOverflowEvent(ThreadEvent.Delete) },
             onInstallMemoryPlugin = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) },
             onDismiss = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
+            systemPrompt = systemPrompt ?: SystemPromptEditorState.Loading,
+            onSystemPromptChange = { onOverflowEvent(ThreadEvent.SystemPromptEdit(it)) },
+            onSystemPromptSave = { onOverflowEvent(ThreadEvent.SystemPromptSave) },
+            onSystemPromptClear = { onOverflowEvent(ThreadEvent.SystemPromptClear) },
         )
     }
     if (state.deleteConfirmVisible) {
