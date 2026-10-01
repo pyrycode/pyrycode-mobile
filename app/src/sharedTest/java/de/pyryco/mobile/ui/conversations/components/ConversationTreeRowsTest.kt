@@ -1,11 +1,18 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.view.View
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
@@ -191,7 +198,6 @@ class ConversationTreeRowsTest {
             mapOf(
                 ConversationAttention.WaitingForAnswer to string(R.string.cd_conversation_attention_waiting),
                 ConversationAttention.Running to string(R.string.cd_conversation_attention_running),
-                ConversationAttention.Failed to string(R.string.cd_conversation_attention_failed),
                 ConversationAttention.Unread to string(R.string.cd_conversation_attention_unread),
                 ConversationAttention.Idle to string(R.string.cd_conversation_attention_idle),
             )
@@ -214,6 +220,48 @@ class ConversationTreeRowsTest {
                     .onAllNodes(hasContentDescription(description), useUnmergedTree = true)
                     .assertCountEquals(if (other == state) 1 else 0)
             }
+        }
+    }
+
+    // #1451: desktop has no failed state, so no dot state may paint the `error` fill.
+    @Test
+    fun conversationRow_noAttentionState_drawsTheErrorFill() {
+        assertEquals(
+            setOf(
+                ConversationAttention.WaitingForAnswer,
+                ConversationAttention.Running,
+                ConversationAttention.Unread,
+                ConversationAttention.Idle,
+            ),
+            ConversationAttention.entries.toSet(),
+        )
+        val attention = mutableStateOf(ConversationAttention.Idle)
+        var error = Color.Unspecified
+        var view: View? = null
+        setBoundedContent {
+            error = MaterialTheme.colorScheme.error
+            view = LocalView.current
+            TreeConversationRow(
+                conversationName = "rocd-thinking",
+                selected = false,
+                onClick = {},
+                attention = attention.value,
+            )
+        }
+
+        // `captureToImage` never finishes a redraw here, so the composition's view is drawn by hand.
+        ConversationAttention.entries.forEach { state ->
+            attention.value = state
+            val errorPixels =
+                composeTestRule.runOnIdle {
+                    val root = checkNotNull(view)
+                    val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+                    root.draw(Canvas(bitmap))
+                    val pixels = IntArray(bitmap.width * bitmap.height)
+                    bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                    pixels.count { it == error.toArgb() }
+                }
+            assertEquals("$state draws the error fill", 0, errorPixels)
         }
     }
 

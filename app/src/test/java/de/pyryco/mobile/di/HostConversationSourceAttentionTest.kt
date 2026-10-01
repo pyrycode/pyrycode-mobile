@@ -92,7 +92,7 @@ class HostConversationSourceAttentionTest {
         withSource { a, _, source ->
             a.events.emit(end("c", "t1", isError = true))
             runCurrent()
-            assertEquals(mapOf("c" to ConversationAttention.Failed), source.attention.value["a"])
+            assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
             source.markOpened("a", "c")
 
             a.repositories.value = null

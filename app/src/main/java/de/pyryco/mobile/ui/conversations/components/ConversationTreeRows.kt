@@ -629,7 +629,7 @@ private fun TreeRowControl(
 
 /**
  * The conversation row's leading dot (#878), after desktop's `ConversationStatusDot`: the design's idle
- * ring on every state, with the state's fill inside it. Failed has no desktop counterpart and takes `error`.
+ * ring on every state, with the state's fill inside it.
  *
  * The dot names its state, so the meaning never rests on colour; the row's `selectable` merges that name
  * with the conversation's. Only Running blinks, and the alpha is read in the layer, so the blink redraws
@@ -641,7 +641,6 @@ private fun ConversationStatusDot(attention: ConversationAttention) {
         when (attention) {
             ConversationAttention.WaitingForAnswer -> MaterialTheme.colorScheme.warning
             ConversationAttention.Running -> MaterialTheme.colorScheme.tertiary
-            ConversationAttention.Failed -> MaterialTheme.colorScheme.error
             ConversationAttention.Unread -> MaterialTheme.colorScheme.success
             ConversationAttention.Idle -> Color.Transparent
         }
@@ -676,7 +675,6 @@ private fun ConversationAttention.descriptionRes(): Int =
     when (this) {
         ConversationAttention.WaitingForAnswer -> R.string.cd_conversation_attention_waiting
         ConversationAttention.Running -> R.string.cd_conversation_attention_running
-        ConversationAttention.Failed -> R.string.cd_conversation_attention_failed
         ConversationAttention.Unread -> R.string.cd_conversation_attention_unread
         ConversationAttention.Idle -> R.string.cd_conversation_attention_idle
     }
