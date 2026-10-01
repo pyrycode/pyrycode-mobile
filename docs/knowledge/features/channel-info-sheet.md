@@ -1,6 +1,6 @@
 # ChannelInfoSheet
 
-Stateless M3 modal bottom sheet (#217) that surfaces channel-level metadata and entry points for channel actions. Aligns with the dark Figma `20:48` reference inspected on 2026-09-29: a title row, an **About** section with a read-only **Folder** path, a **Memory** section showing the current session's provider report, an **Actions** section, and a footer that long-press-copies the channel ID. The reference's Workspace row and Change workspace button conflict with the 2026-09-28 product decision and are omitted. The **thread-overflow** host landed in [#226](../codebase/226.md) (tap overflow → **Channel info** opens the populated sheet); the **Channel List long-press** entry point is still open. Memory search retrieves stored knowledge; provider detection does not mean the plugin captures this conversation or restores earlier context.
+Stateless M3 modal bottom sheet (#217) that surfaces channel-level metadata and entry points for channel actions. Aligns with the dark Figma `20:48` reference inspected on 2026-09-29: a title row, an **About** section with a read-only **Folder** path, a **Session** section (#1346) showing the agent's reported version, permission mode and Claude's own cost estimate, a **Memory** section showing the current session's provider report, an **Actions** section, and a footer that long-press-copies the channel ID. The reference's Workspace row and Change workspace button conflict with the 2026-09-28 product decision and are omitted. The **thread-overflow** host landed in [#226](../codebase/226.md) (tap overflow → **Channel info** opens the populated sheet); the **Channel List long-press** entry point is still open. Memory search retrieves stored knowledge; provider detection does not mean the plugin captures this conversation or restores earlier context.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `ChannelInfoSheet.kt`. Second **sheet** in that package alongside [`WorkspacePickerSheet`](./workspace-picker-sheet.md).
 
@@ -16,6 +16,9 @@ internal data class ChannelInfoUiModel(
     val messageCount: Int,
     val memorySearch: MemorySearchReport,
     val channelId: String,
+    val agent: ConversationAgent = ConversationAgent.Claude,
+    val sessionFacts: SessionFacts? = null,
+    val sessionCostUsd: Double? = null,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,10 +52,11 @@ Single scrollable `Column(fillMaxWidth)` inside the `ModalBottomSheet`:
 1. **`TitleRow(title = model.conversationName, onClose = onDismiss)`** — `Row(fillMaxWidth.padding(start = 16, end = 4, top = 4, bottom = 12))` with weighted `Text(titleLarge, onSurface)`, capped at two lines with ellipsis, + trailing `IconButton(Icons.Filled.Close, contentDescription = "Close", tint = onSurfaceVariant)`.
 2. **`SectionHeader("About")`** — `labelLarge` on `onSurfaceVariant`, `padding(start = 24, end = 16, top = 12, bottom = 4)`. Identical helper shape to `WorkspacePickerSheet.SectionHeader`; deliberately not extracted into a shared file in this ticket — touch only this file.
 3. **Five `AboutRow`s**: read-only `Folder` (with `valueIsPath = true`), `Created`, `Last activity`, `Total sessions`, `Total messages`. The model retains the `workspacePath` field name as its folder-path source. See "Row contracts" below.
-4. **`SectionHeader("Memory")`** then **`MemoryRow(model.memorySearch, onInstall)`**. See "Memory row" below.
-5. **`SectionHeader("Actions")`** then **`ActionsGrid`** — equal-width `Rename` and `Archive` cells above full-width `Delete`. Each cell is a `FilledTonalButton` with one-line text. The section is hidden when `mutationsSupported` is false; About, Memory and the Channel-ID footer remain visible. No workspace action or Settings storage section appears.
-6. **`Footer(channelId)`** — see "Footer + clipboard" below.
-7. **`Spacer(height = 24.dp)`** — bottom inner padding above the system-inset that `ModalBottomSheet` already applies. The body scrolls vertically so actions and footer remain reachable with enlarged text.
+4. **`SessionSection(model)`** (#1346) — `SectionHeader("Session")` then two or three rows. See "Session section" below.
+5. **`SectionHeader("Memory")`** then **`MemoryRow(model.memorySearch, onInstall)`**. See "Memory row" below.
+6. **`SectionHeader("Actions")`** then **`ActionsGrid`** — equal-width `Rename` and `Archive` cells above full-width `Delete`. Each cell is a `FilledTonalButton` with one-line text. The section is hidden when `mutationsSupported` is false; About, Session, Memory and the Channel-ID footer remain visible. No workspace action or Settings storage section appears.
+7. **`Footer(channelId)`** — see "Footer + clipboard" below.
+8. **`Spacer(height = 24.dp)`** — bottom inner padding above the system-inset that `ModalBottomSheet` already applies. The body scrolls vertically so actions and footer remain reachable with enlarged text.
 
 ### Row contracts
 
@@ -60,6 +64,20 @@ Single scrollable `Column(fillMaxWidth)` inside the `ModalBottomSheet`:
 |---|---|---|
 | `AboutRow(label, value)` | `Row(fillMaxWidth.padding(horizontal = 16, vertical = 8))` with equal weighted label and value; the value has 8 dp start padding | Right value right-aligns, wraps to two lines, then ellipsizes; numeric values render as `Int.toString()` at the call site |
 | `AboutRow(label, value, valueIsPath = true)` | Same row, with an intrinsic-width `Folder` label and a weighted value using the remaining width after 16 dp spacing | Right text is `bodyMedium.copy(FontFamily.Monospace, fontSize = 12.sp, lineHeight = 16.sp)` on `onSurfaceVariant`, `maxLines = 1`, `overflow = TextOverflow.StartEllipsis`, `TextAlign.End` — start-ellipsis keeps the leaf visible while the wider slot avoids truncating a path that fits |
+
+### Session section (#1346)
+
+Mirrors desktop's `ChannelInfoSheetView` Session block, drawn after About with the sheet's own `SectionHeader`/`AboutRow`-shaped `SessionRow` (no frame in Figma `20:48` draws it — the ticket says so, and the section reuses existing geometry and theme tokens only). It always renders, even with `model.sessionFacts == null` — only the cost row is conditional on `model.sessionCostUsd != null`. That asymmetry is why the section pushes Actions down by a fixed amount regardless of whether facts have arrived yet; see "A test that clicks below About scrolls first" below.
+
+- **Version row**, labelled `"Claude version"` or `"Codex version"` by `model.agent` (`ConversationAgent.Codex` vs. everything else).
+- **`"Reported permission mode"` row.** This is `SessionFacts.permissionMode` — Claude's own claim about what mode it is running under. It reaches this row only; `ThreadViewModel`'s `runningModel` flow (see [Thread composer footer](thread-composer-footer.md)) deliberately never reads it, and it is carried on `ThreadUiState.reportedSessionFacts`, **not** `ThreadRunConfig` — the Status sheet's permission control and the composer footer read `runConfig.permissionMode` (the settings reading) and can never see this claim. A `ThreadViewModel` test (`reportedFacts_reachTheStateButNotThePermissionReading`) pins the separation.
+- **`"Cost (Claude's estimate)"` row**, present only when `model.sessionCostUsd != null`, showing `formatSessionCost(cost)` → `"$0.42 est."` (`%.2f`, `Locale.ROOT` — desktop's `toFixed(2)`). The "est." wording and the parenthetical label are load-bearing: the figure is Claude's own unverified running-session total from `turn_end.cost_usd_total` (see [Live-session events § `TurnEnd`](live-session-events.md)), never summed, never the app's accounting.
+
+Both reported strings go through `internal fun reportedSessionValue(raw: String?, flaggedTruncated: Boolean): ReportedSessionValue` before reaching `Text`: ISO-control and Unicode-format code points (bidi overrides included) become spaces, the result is trimmed, then cut at 256 code points via `offsetByCodePoints` so a cut never splits a surrogate pair. An all-control or empty result reads as `text = null` → `SessionRow` shows `"Not reported"`. `truncated` is `true` when this cut fired *or* when `SessionFacts.truncatedFields` names the field (`claude_code_version` / `permission_mode`, matching the protocol's `session_facts` table) — either one shows a `"Truncated"` `labelSmall` line under the value. The cost row builds its `ReportedSessionValue` directly (`truncated = false`) since a formatted dollar figure is never cut. Same inert-rendering shape as [`UsageLimitIndicator`](usage-limit-indicator.md)'s `usageLimitStatusLabel`, independently implemented here because the cut length and format-character rule differ — `CHANNEL_INFO_AGENT_VERSION_TAG` / `CHANNEL_INFO_SESSION_COST_TAG` `testTag`s are the device suites' handles onto the two values.
+
+**A test that clicks below About in `ChannelInfoSheetContent` scrolls to it first.** At Robolectric's 320×731dp, the always-drawn Session header and its two "Not reported" rows push Actions' "Delete" off-viewport, and `performClick()` on an off-screen node misses. `ThreadScreenChannelInfoTest.tapping_delete_emits_delete` and step 7 of `InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread` both call `performScrollTo()` before the click now; the plan's `## Revisions` records this as the contract going forward. As of landing, the sheet's `Install`/`Rename`/`Archive` taps in `ThreadScreenChannelInfoTest` do **not** yet follow the contract — they still pass because nothing pushes them further down, but a later section inserted above them (desktop parity work tends to add one) would need the same `performScrollTo()` fix.
+
+`CLAUDE_CODE_VERSION_FIELD` is a private const duplicated between this file and `ThreadViewModel.kt` (its `runningModel`'s own `reportedText` cut uses the identical field name) — left unshared on purpose, since sharing it would add a dependency from the view model on this file for one string literal.
 
 ### Memory row
 
@@ -122,6 +140,8 @@ The [committed visual evidence](../../../app/src/androidTest/assets/channel-info
 
 `ThreadScreenChannelInfoTest` checks the populated Folder row, absence of retired workspace controls, memory availability and provider states, supported callbacks, and the `mutationsSupported` gate. The Actions-heading absence assertion is scoped to the sheet dialog because the composer also has an unrelated Actions control. At compact width and enlarged text, shared Compose tests check that bounded values remain readable and the close, install and action controls remain reachable.
 
+`ChannelInfoSessionSectionTest` (#1346, Robolectric, `app/src/sharedTest`) checks the Session section: the "Claude version" vs. "Codex version" label by agent; "Not reported" for absent facts and for an all-control-character value; a 300-code-point value cut to 256 with a surrogate pair intact at the boundary plus the "Truncated" tag; `truncatedFields` tagging each row independently of the local cut; the cost row rendering `"$0.42 est."` when present and absent when `null`; and that control characters render inert. `reportedSessionValue` / `formatSessionCost` are asserted directly as pure helpers in the same class. `TurnEndPayloadsTest` and `ThreadViewModelSessionReadingsTest` cover the decode and the lifetime of `sessionCostUsd` — see [Live-session events § `TurnEnd`](live-session-events.md).
+
 `ChannelInfoCaptureTest` renders the real sheet on the managed Android 13 emulator. Its [result XML](../../../app/src/androidTest/assets/channel-info-1266/device-results.xml) records three executed tests with no failures or skips. The [412 × 892 comparison](../../../app/src/androidTest/assets/channel-info-1266/channel-info-comparison.png) and 320 × 692 provider and enlarged-text captures provide visual checks for sheet geometry and clipping. The capture also exposed the default handle spacing and equal-width Folder truncation, both corrected in the implementation; content assertions alone did not reveal them.
 
 ## Edge cases / limitations
@@ -139,6 +159,7 @@ The [committed visual evidence](../../../app/src/androidTest/assets/channel-info
 - Parent: split from [#144](https://github.com/pyrycode/pyrycode-mobile/issues/144) (Channel Info bottom sheet — host + sheet bundle).
 - Sibling sheet: [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212) — same `ModalBottomSheet` shell + `*Content` body split, same `internal` visibility posture, same preview wrap. Worth reading first if you're picking up this file.
 - Sibling stateless-component conventions: [`ConversationRow`](./conversation-row.md) (precedent for the `combinedClickable` long-press shape used by `Footer`), [`ConnectionBanner`](./connection-banner.md), [`ToolCallRow`](./tool-call-row.md).
+- Session section ([#1346](https://github.com/pyrycode/pyrycode-mobile/issues/1346)): [Live-session events](live-session-events.md) (the `turn_end.cost_usd_total` decode `sessionCostUsd` is built from), [`UsageLimitIndicator`](usage-limit-indicator.md) (the inert-text precedent `reportedSessionValue` independently follows).
 - Downstream / open:
   - **Thread-overflow host ([#226](../codebase/226.md)) ✅** — wires this sheet into the thread overflow → **Channel info** entry point. [`ThreadScreen`](./thread-screen.md) owns visibility, assembles `ChannelInfoUiModel` from the conversation and current session report, and routes its actions. The absent-only `onInstallMemoryPlugin` opens the shared docs URL through `LocalUriHandler`.
   - **Channel List long-press host (open)** — the other channel-info entry point (long-press a channel row) is not yet wired.

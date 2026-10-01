@@ -30,7 +30,7 @@ fan-out. The five:
 | `assistant_delta` | `conversation_id`, `turn_id`, `seq`(int), `text` | incremental, coalesced assistant text |
 | `tool_use` | `conversation_id`, `turn_id`, `tool_use_id`, `name`, `input_summary`, plus `parent_tool_use_id` / `input` (lenient-defaulted, #810 — see below) | a tool invocation |
 | `tool_result` | `conversation_id`, `turn_id`, `tool_use_id`, `is_error`(bool), `result_summary`, plus `parent_tool_use_id` (lenient-defaulted, #810) | its result (matched to the call by `tool_use_id`) |
-| `turn_end` | `conversation_id`, `turn_id`, `stop_reason`, plus `outcome`/`is_error`/`terminal_reason`/`error_category` (lenient-defaulted, #805 — see below) | end of a turn |
+| `turn_end` | `conversation_id`, `turn_id`, `stop_reason`, plus `outcome`/`is_error`/`terminal_reason`/`error_category` (lenient-defaulted, #805) and `cost_usd_total` (lenient `JsonElement?`, #1346 — see below) | end of a turn |
 
 Field shapes are the server SSOT (`pyrycode internal/protocol` interactive structs +
 `docs/protocol-mobile.md § Interactive events (v2, capability-gated)`). Code review verified every
@@ -86,6 +86,26 @@ stop and cross this seam **unsanitized**, the same posture as `stopReason`/`text
 `resultSummary` below — the render trust boundary lives one layer up, in
 [`turnOutcomeReport`](turn-outcome-indicator.md#classification--sanitization), not here. See
 [Turn-outcome indicator](turn-outcome-indicator.md) for the consumer that classifies and renders them.
+
+`TurnEndPayloadDto.costUsdTotal` (#1346) widened the frame again, as an **optional `JsonElement?`**
+rather than a `Double?`. `MobileJson` has no `isLenient`, so a plain `Double?` slot throws — and drops
+the *whole* `turn_end`, including `stop_reason` and the other fields above — the moment the daemon sends
+a string, boolean, `null`, object or array there; the acceptance criterion requires the frame to keep
+decoding regardless. Reading a `JsonElement?` sidesteps that: a private
+`JsonElement?.jsonNumberOrNull(): Double?` narrows it — `(this as? JsonPrimitive)?.takeUnless {
+it.isString }?.content?.toDoubleOrNull()` — so any non-string primitive that parses as a double survives
+and everything else (including a string that merely *looks* numeric) becomes `null` without touching the
+rest of the frame. Decode is **verbatim**: zero, a negative value, and `1e999` (→ `Double.POSITIVE_INFINITY`)
+all pass the DTO unchanged — filtering to "a usable estimate" is the consumer's job, not the decode seam's.
+Code review's one caught slip: `jsonNumberOrNull`'s KDoc said "only when the wire carried a JSON number",
+but `toDoubleOrNull()` also accepts tokens a strict JSON parser would reject (`NaN`, `Infinity`,
+`0x1p3`) if `kotlinx.serialization`'s tree reader ever yields them as non-string primitives — harmless
+here because [`ThreadViewModel.sessionCostUsd`](channel-info-sheet.md#session-section-1346) drops anything
+non-finite, but worth knowing before reusing the helper somewhere less forgiving.
+`LiveSessionEvent.TurnEnd.costUsdTotal: Double? = null` carries the mapped value; `null` means "not
+reported or not a number," never "zero." [Channel info](channel-info-sheet.md#session-section-1346) is
+the only consumer, and it is the one place this value reaches `Text` — formatted, labelled as Claude's
+own estimate, and never logged.
 
 ### 2. Event family — `data/model/LiveSessionEvent.kt` (public, portable)
 
@@ -262,6 +282,22 @@ as the control-derived `ReplayGap` member — #417 — but via the resync arm, n
 > `turn_end`). The clearing hook is folded into the same gated demux arm, reading `conversationId` off
 > the already-decoded event (no second decode). See [Stall state](stall-state.md).
 
+> **`turn_end.cost_usd_total` landed in [#1346](https://github.com/pyrycode/pyrycode-mobile/issues/1346).**
+> [`ThreadViewModel.sessionCostUsd`](channel-info-sheet.md#session-section-1346) is the sole consumer: it
+> filters the gated demux's `TurnEnd` events to this conversation, keeps the value only when
+> `isFinite() && it > 0`, and holds the **latest** qualifying value (never summed, never a max) in a
+> `stateIn(viewModelScope, SharingStarted.Eagerly, null)`. `Eagerly`, not the screen's usual
+> `WhileSubscribed(5_000)`, is deliberate — desktop keeps the cost for as long as the chat's timeline is
+> retained, and mobile's analogue is the view model's own lifetime, not whether the thread screen happens
+> to be on top right now. A reopened thread (still the same view model instance) shows the row again only
+> after its *next* `turn_end` — the hot `replay = 0` flow above means a late subscriber gets no history,
+> so there is nothing to replay into a just-reopened screen. Testing `Eagerly` against `WhileSubscribed`
+> needs care: a test that merely cancels the collector and resubscribes still sees the stale value either
+> way, because `stateIn` always re-delivers its last-held value to a fresh subscriber. The distinguishing
+> behavior is what happens to an event **emitted while nothing collects** — `Eagerly` keeps it,
+> `WhileSubscribed` would have already torn the upstream collection down after five seconds — so the test
+> has to emit into that gap, not just resubscribe and check the value is still there.
+
 > **A sibling decode family — [Modal events](modal-events.md) (#437) — mirrors this seam on its own
 > flow.** The two `modal_shown`/`modal_dismissed` envelopes decode through the **same** three-layer
 > pattern (`internal` DTOs in `InteractivePayloads.kt` → `toEvent()` mappers → a portable sealed family),
@@ -329,6 +365,9 @@ is **not** one of the five render envelopes and does **not** flow through the de
 - [Streaming assistant turns](streaming-assistant-turns.md) ([#337](../codebase/337.md)) — the
   **`AssistantDelta`/`TurnEnd` consumer**: accumulates an in-flight turn into one growing `isStreaming`
   thread row (VM-layer fold with the #313 finished-message projection).
+- [Channel info sheet](channel-info-sheet.md#session-section-1346) ([#1346](https://github.com/pyrycode/pyrycode-mobile/issues/1346))
+  — the **`TurnEnd.costUsdTotal` consumer**: `ThreadViewModel.sessionCostUsd` keeps the latest positive
+  finite value `Eagerly` and the Session section renders it as Claude's own cost estimate.
 - [Replay cursor](replay-cursor.md) ([#417](../codebase/417.md)) — the **`ReplayGap` producer**: the
   `resync` arm `reset()`s the cursor and `tryEmit`s the control-derived `ReplayGap` onto this flow (no
   DTO, no decode). See [§ The `ReplayGap` member](#the-replaygap-member-417).
