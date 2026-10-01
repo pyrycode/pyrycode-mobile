@@ -93,6 +93,8 @@ if (state.deleteConfirmVisible) {
 
 **One-shot pop-back via `Channel` + `receiveAsFlow`, collected in `MainActivity`.** The VM gains `private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)` exposed as `val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()` (a new single-member `sealed interface ThreadNavigation { data object PopBack }`). The `Archive` and `DeleteConfirm` launches `send(ThreadNavigation.PopBack)` **after** the suspend repo call returns — mutation-before-`send` so the VM's `viewModelScope` cancellation (triggered when `popBackStack()` clears the destination) can't truncate the mutation; the same ordering `ChannelListViewModel.CreateDiscussionTapped` relies on. `MainActivity` collects it in the thread `composable` (the first edit to that block since the chrome):
 
+**#1399 routes `Archive`'s send through the shared `leaveForList()` latch, not a direct `navigationChannel.send`.** Its own confirmed archive reply folds into the list before `archive(...)` returns, racing the list-driven exit described in [Leaving for the list when the row turns archived from any source](thread-screen-how-it-works-state.md#leaving-for-the-list-when-the-row-turns-archived-from-any-source-1399) — the latch is what keeps that race to exactly one `PopBack`. `DeleteConfirm` keeps sending `PopBack` directly, since a deleted row never shows archived.
+
 ```kotlin
 LaunchedEffect(vm) {
     vm.navigationEvents.collect { event ->

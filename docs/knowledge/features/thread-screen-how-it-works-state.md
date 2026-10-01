@@ -171,3 +171,22 @@ installation. The report describes search access, not knowledge capture. No UI r
 the dependent UI must treat daemon display names as inert text. See [Conversation repository](conversation-repository.md)
 for the portable types and [Application payloads](mobile-protocol-v2-wire-layer-application-payloads.md#the-session-settings-read-exchange-590)
 for decode behavior.
+
+### Leaving for the list when the row turns archived from any source (#1399)
+
+The thread leaves for the list once, whichever path marks its own row archived. The `conversations` flow
+(the shared `observeConversations(ConversationFilter.All)` subscription backing both [`state`](#stateinviewmodelscope-whilesubscribed5_000-initialvalue--threaduistateidid) and `conversationAgent`) carries an `onEach`, placed
+**upstream of its `shareIn`** so it runs once per list emission no matter how many downstream collectors
+subscribe: when the emitted list holds this `conversationId` with `archived == true`, the VM calls a
+private `leaveForList()` and sends `ThreadNavigation.PopBack`. A row that disappears, or is only renamed
+or moved, does not pop — matching desktop's `conversationArchivedBridge.ts` (desktop #653).
+
+`leaveForList()` is the single gate: an `AtomicBoolean` latch means only the first caller's `PopBack`
+actually sends. This matters because `RemoteConversationRepository.onInbound` folds an archive reply into
+the list *before* the originating `archive(...)` call returns, so the thread's own Archive action
+(`ThreadEvent.Archive`, see [ChannelInfoSheet Archive/Delete + pop-back nav](thread-screen-how-it-works-sheets.md#channelinfosheet-archivedelete--pop-back-nav-post-227))
+races the list-driven `onEach` above — both paths want to pop, and the latch ensures exactly one `PopBack`
+reaches `MainActivity` regardless of which one wins the race. Delete is unaffected: a deleted row
+disappears from the list rather than showing archived, so `DeleteConfirm` keeps its own unconditional
+`PopBack` send outside `leaveForList()`. The list-driven exit logs one content-free `RelayLog.d` line,
+`event=thread_left_archived`.
