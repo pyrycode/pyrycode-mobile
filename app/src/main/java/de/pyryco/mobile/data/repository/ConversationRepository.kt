@@ -118,6 +118,17 @@ interface ConversationRepository {
     fun observeResetting(conversationId: String): Flow<ResetStatus?> = flowOf(null)
 
     /**
+     * Emits the ids of every conversation on this connection that is busy outside a running turn (#1452):
+     * stalled, retrying the API, compacting or resetting. Each fact rises and clears on exactly the edges of
+     * [observeStall], [observeApiRetry], [observeCompacting] and [observeResetting]. Cold flow; re-emits on
+     * every change. The host's list observes this to blink a busy chat's status dot, as desktop's `isWorking`.
+     *
+     * Default `flowOf(emptySet())` — implementations without an interactive wire (the fake, inline test
+     * doubles) inherit "nothing busy" and need no override, the same cascade-avoidance as [observeStall].
+     */
+    fun observeBusyConversations(): Flow<Set<String>> = flowOf(emptySet())
+
+    /**
      * Emits the model claude last announced for [conversationId]'s turn (#890), or **`null` until an
      * announcement arrives**. Cold flow; re-emits on every change. Each `model_announced` frame replaces the
      * reading, because claude announces on every turn and a `/model` turn still names the old model: a

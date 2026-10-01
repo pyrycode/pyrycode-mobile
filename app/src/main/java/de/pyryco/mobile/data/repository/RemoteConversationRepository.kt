@@ -42,6 +42,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
@@ -1138,6 +1140,14 @@ class RemoteConversationRepository(
         turnPhaseProjection.observe(conversationId)
 
     override fun observeResetting(conversationId: String): Flow<ResetStatus?> = resettingProjection.observe(conversationId)
+
+    override fun observeBusyConversations(): Flow<Set<String>> =
+        combine(
+            stallProjection.observeIds(),
+            apiRetryProjection.observeIds(),
+            compactingProjection.observeIds(),
+            resettingProjection.observeIds(),
+        ) { stalled, retrying, compacting, resetting -> stalled + retrying + compacting + resetting }.distinctUntilChanged()
 
     override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = announcedModelProjection.observe(conversationId)
 
