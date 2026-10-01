@@ -113,6 +113,12 @@ A test that measures text exactly, such as
 single-line truncation or overflow, adds `@GraphicsMode(GraphicsMode.Mode.NATIVE)`
 so Robolectric uses real fonts. The device ignores Robolectric annotations.
 
+`ForcedSize` applied under Robolectric's 320dp default window rescales the
+density, so the root does not measure at the exact dp passed in —
+`ForcedSize(412.dp, …)` measures as 411.61dp, not 412. A test asserting an exact
+forced width fails on that rounding; compare within a pixel instead
+([#1334](https://github.com/pyrycode/pyrycode-mobile/issues/1334)).
+
 A shared test class needs `@RunWith(AndroidJUnit4::class)`. The device runner
 does not require it, but without it the JVM runs the class outside Robolectric and
 every test fails on a null `Build.FINGERPRINT`.
