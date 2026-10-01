@@ -151,7 +151,7 @@ class ConversationTreeRowsTest {
     }
 
     @Test
-    fun hostRow_longName_staysOnOneLineAndLeavesTheIndicatorPairInsideTheRow() {
+    fun hostRow_longName_staysOnOneLineAndLeavesTheEditControlInsideTheRow() {
         setBoundedContent {
             TreeHostRow(
                 serverId = "pyrybox",
@@ -163,10 +163,9 @@ class ConversationTreeRowsTest {
             )
         }
 
-        val relayDot =
-            composeTestRule.onNode(hasContentDescription("Relay: connected"), useUnmergedTree = true)
-        relayDot.assertIsDisplayed()
-        assertRightEdgeWithinRow(relayDot.getUnclippedBoundsInRoot().right, "relay dot")
+        val edit = composeTestRule.onNodeWithTag(treeHostEditTestTag("pyrybox"))
+        edit.assertIsDisplayed()
+        assertRightEdgeWithinRow(edit.getUnclippedBoundsInRoot().right, "edit control")
 
         val bounds =
             composeTestRule.onNode(hasText(longName), useUnmergedTree = true).getUnclippedBoundsInRoot()
@@ -286,13 +285,28 @@ class ConversationTreeRowsTest {
     }
 
     @Test
-    fun hostRow_showsEachConnectionLegWithItsOwnDescription() {
+    fun hostRow_drawsNoConnectionDotInAnyState_andKeepsItsNameChevronAndControls() {
+        val relays =
+            listOf(
+                RelayLinkStatus.Connected,
+                RelayLinkStatus.Connecting,
+                RelayLinkStatus.Offline,
+                RelayLinkStatus.PairingRejected,
+                RelayLinkStatus.UpdateRequired("1.4.0"),
+            )
+        val pyrycodes = listOf(PyrycodeLinkStatus.Connected, PyrycodeLinkStatus.Handshaking, PyrycodeLinkStatus.Down)
+        // Every description a leg dot ever carried, including the retired update-required idle ring.
+        val legDescriptions =
+            relays.map { it.toLegVisual().contentDescription } +
+                pyrycodes.map { it.toLegVisual().contentDescription } +
+                "Pyrycode: idle"
+        val status = mutableStateOf(ConnectionStatus(relays.first(), pyrycodes.first()))
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 TreeHostRow(
                     serverId = "pyrybox",
                     hostName = "Pyrybox",
-                    connectionStatus = mixedStatus,
+                    connectionStatus = status.value,
                     expanded = true,
                     onToggleExpanded = {},
                     onEditTapped = {},
@@ -300,12 +314,39 @@ class ConversationTreeRowsTest {
             }
         }
 
-        composeTestRule
-            .onAllNodes(hasContentDescription("Relay: connected"), useUnmergedTree = true)
-            .assertCountEquals(1)
-        composeTestRule
-            .onAllNodes(hasContentDescription("Pyrycode: handshaking"), useUnmergedTree = true)
-            .assertCountEquals(1)
+        relays.forEach { relay ->
+            pyrycodes.forEach { pyrycode ->
+                status.value = ConnectionStatus(relay, pyrycode)
+                composeTestRule.waitForIdle()
+                legDescriptions.forEach { description ->
+                    composeTestRule
+                        .onAllNodes(hasContentDescription(description, substring = true), useUnmergedTree = true)
+                        .assertCountEquals(0)
+                }
+                composeTestRule.onNodeWithText("Pyrybox").assertIsDisplayed()
+                composeTestRule
+                    .onAllNodes(
+                        hasContentDescription(string(R.string.cd_tree_row_collapse, "Pyrybox")),
+                        useUnmergedTree = true,
+                    ).assertCountEquals(1)
+                composeTestRule
+                    .onNodeWithTag(treeHostEditTestTag("pyrybox"))
+                    .assert(hasContentDescription(string(R.string.cd_tree_host_edit, "Pyrybox")))
+                val plug = relay == RelayLinkStatus.Offline || relay == RelayLinkStatus.PairingRejected
+                composeTestRule
+                    .onAllNodes(
+                        hasTestTag(treeHostReconnectTestTag("pyrybox")) and
+                            hasContentDescription(string(R.string.cd_tree_host_reconnect, "Pyrybox")),
+                        useUnmergedTree = true,
+                    ).assertCountEquals(if (plug) 1 else 0)
+                composeTestRule
+                    .onAllNodes(
+                        hasTestTag(treeHostUpdateTestTag("pyrybox")) and
+                            hasContentDescription(string(R.string.cd_tree_host_update, "Pyrybox")),
+                        useUnmergedTree = true,
+                    ).assertCountEquals(if (relay is RelayLinkStatus.UpdateRequired) 1 else 0)
+            }
+        }
     }
 
     @Test
@@ -429,42 +470,6 @@ class ConversationTreeRowsTest {
         composeTestRule
             .onNodeWithText(string(R.string.tree_host_update_required_version, "1.4.0"))
             .assertIsDisplayed()
-    }
-
-    @Test
-    fun hostRow_updateRequired_drawsTheHostDotIdle_whileAnOfflineHostKeepsItsPyrycodeLeg() {
-        val status = mutableStateOf(ConnectionStatus(RelayLinkStatus.UpdateRequired("1.4.0"), PyrycodeLinkStatus.Down))
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                TreeHostRow(
-                    serverId = "pyrybox",
-                    hostName = "Pyrybox",
-                    connectionStatus = status.value,
-                    expanded = true,
-                    onToggleExpanded = {},
-                    onEditTapped = {},
-                )
-            }
-        }
-        val idle = hasContentDescription(string(R.string.cd_tree_host_leg_idle))
-        val down = hasContentDescription(PyrycodeLinkStatus.Down.toLegVisual().contentDescription)
-
-        composeTestRule.onAllNodes(idle, useUnmergedTree = true).assertCountEquals(1)
-        composeTestRule.onAllNodes(down, useUnmergedTree = true).assertCountEquals(0)
-        composeTestRule
-            .onAllNodes(
-                hasContentDescription(RelayLinkStatus.UpdateRequired(null).toLegVisual().contentDescription),
-                useUnmergedTree = true,
-            ).assertCountEquals(1)
-
-        status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
-        composeTestRule.waitForIdle()
-
-        composeTestRule.onAllNodes(idle, useUnmergedTree = true).assertCountEquals(0)
-        composeTestRule.onAllNodes(down, useUnmergedTree = true).assertCountEquals(1)
-        composeTestRule
-            .onAllNodes(hasText(string(R.string.tree_host_update_required)), useUnmergedTree = true)
-            .assertCountEquals(0)
     }
 
     @Test

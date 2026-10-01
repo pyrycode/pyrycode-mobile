@@ -32,11 +32,17 @@ sealed interface AttachmentUploadResult {
     /** Over [AttachmentUploadLimit.MAX_BYTES]; refused before any chunk was sent. Do not retry. */
     data object TooLarge : Failed
 
-    /**
-     * No live connection, the connection refused a chunk, or it dropped mid-upload. The daemon discards a
-     * partial upload with its connection, so retry after reconnecting and resend every chunk.
-     */
+    /** No live connection before the first chunk (#1325): nothing was sent. Retry after reconnecting. */
     data object ReconnectRequired : Failed
+
+    /**
+     * The connection ended while this upload was live (#1325). The daemon discards a partial upload with its
+     * connection, so retry after reconnecting and resend every chunk.
+     */
+    data object ConnectionLost : Failed
+
+    /** The socket would not take a chunk: its send returned `false` or threw (#1325). No further chunk was sent. */
+    data object SendFailed : Failed
 }
 
 /**

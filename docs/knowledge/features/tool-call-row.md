@@ -206,10 +206,19 @@ pins this). The row runs **no local timer**; every reading is a value already on
 the data layer handed it. The `Text` carries `Modifier.testTag(TOOL_ELAPSED_TAG)` so a test can assert
 its absence without matching against a specific formatted string.
 
-Figma's collapsed instance also shows a result count ("184 lines"); that slot is **not drawn** on
-mobile — the wire's `tool_result` carries only `result_summary`, with no count, and nothing derives
-one from the output text. Figma's component examples omit the mobile status slot, so a combined
-row is not a literal pixel match to any one component canvas.
+**Result count (#1316).** `ToolCall.resultDetail` — the daemon's `result_detail`, e.g. `"265 lines"` —
+draws as one-line, ellipsized `labelMedium`/`onSurfaceVariant` text before the status glyph, on any
+non-`Running` row, when it is non-null and non-empty (`Modifier.testTag(TOOL_RESULT_DETAIL_TAG)`). A
+`Running` row never shows it even if a stale value were present; a `null` or empty value draws nothing
+and leaves no gap, because `spacedBy` only places gaps between children. The whole trailing `Row` is
+wrapped in a private `Modifier.maxHalfWidth()` (a `layout` modifier that halves the incoming
+`constraints.maxWidth`) mirroring desktop's `.tool-row__right { max-width: 50% }`; the count `Text`
+takes `Modifier.weight(1f, fill = false)` so it is the group's only shrinkable child — however long the
+daemon's value is, it ellipsizes inside that half-row cap and can never push the status glyph or the
+tool name/headline off the row. `ToolCall.resultDetail` itself is set by `withToolResult`'s first fold
+(see [Live tool-call § First result wins](live-tool-call.md#first-result-wins-and-first-denial-wins-1316));
+a cache-restored row's `resultDetail` is `null` (not persisted, same posture as `denial` and
+`elapsedSeconds`), so a restored resolved row shows no count even though it is `Done`/`Failed`/`Denied`.
 
 ### Expanded body
 
@@ -324,7 +333,11 @@ rendering doesn't ripple into the data-layer fake.
   is: a `Bash` command alone leads with the command and shows no `Bash` text and no chevron; a
   non-`Bash` call (`Agent`) with a description keeps its name and subject with no chevron;
   `BashOutput` with both `command` and `description` is not treated as `Bash`; and a call with
-  neither field keeps the name and précis.
+  neither field keeps the name and précis. **Since #1316,** the same test file covers the result
+  count on `Done`/`Failed`/`Denied`; its absence on `Running` even with a `resultDetail` value set
+  (a case that cannot occur via the reducer but is still asserted at the row); `null` and empty both
+  drawing nothing with no gap; and a 3000-character `resultDetail` value keeping the status glyph and
+  tool name/headline displayed within the row's bounds, proving the `maxHalfWidth()` cap.
 - **Compose testing gotcha (#895 lesson):** `onNodeWithTag(TOOL_ELAPSED_TAG)` *finds* the elapsed
   `Text` node fine even though it sits inside the row's `clickable` `Column` (a merge-descendants
   semantics node), but `.assertIsDisplayed()` on that lookup fails with "not displayed" although the
@@ -365,7 +378,6 @@ rendering doesn't ripple into the data-layer fake.
 - **Expansion is local to the keyed row.** In-place updates preserve it; it is not repository state.
 - **Missing supplied data.** Empty input, output and denial values do not create sections. A simple
   row with an empty `toolName` still renders that empty text slot without crashing.
-- **No result count.** Figma shows one; the wire has none to show. Not derived from output length.
 - **No expand/collapse animation.** The conditional `if (expanded) ExpandedBody(toolCall)` still
   adds/removes the subtree directly; a future ticket could wrap it in `AnimatedVisibility` without
   touching the public API.
@@ -392,11 +404,12 @@ rendering doesn't ripple into the data-layer fake.
   `docs/specs/architecture/896-nest-subagent-tool-rows.md`
 - Upstream:
   - [Data model](./data-model.md) — `ToolCall(toolName, input, inputFields, output, status,
-    denial, elapsedSeconds, parentToolUseId)` and the `Message.toolCall` non-null-iff-`Role.Tool`
-    invariant
+    denial, elapsedSeconds, parentToolUseId, resultDetail)` and the `Message.toolCall`
+    non-null-iff-`Role.Tool` invariant
   - [Live tool-call](./live-tool-call.md) — the data layer that produces `status`, `inputFields`,
-    `denial` and `elapsedSeconds` on the same `ToolCall`; `Denied`'s "no `denial` on cache restore"
-    rule and the `tool_progress`/`tool_denied` fold rules live there, not here
+    `denial`, `elapsedSeconds` and `resultDetail` on the same `ToolCall`; `Denied`'s "no `denial` on
+    cache restore" rule, the `tool_progress`/`tool_denied` fold rules and the #1316 first-result/
+    first-denial-wins rules live there, not here
   - [`MessageBubble`](./message-bubble.md) — `Role.Tool` arm routes here via `?.let`, applies the
     content gutter
   - [`MarkdownText`](./markdown-text.md) — `internal CodeBlock(content, language, copyable = false,
@@ -411,6 +424,8 @@ rendering doesn't ripple into the data-layer fake.
   - **#897** — naming the open tool in the composer's status area (split from #658): calls
     `formatToolElapsed` directly from [`ThinkingIndicator`](thinking-indicator.md#the-running-tool-897);
     nothing in this file changed for it.
+  - **#1316** — added the result count (`ToolCall.resultDetail`) to `TrailingStatus` and the
+    `maxHalfWidth()` cap on the trailing group. See [Result count](#trailing-status) above.
 - Still open:
   - Language inference from path extension for `Read`/`Edit` code blocks
   - `AnimatedVisibility` around the expanded body

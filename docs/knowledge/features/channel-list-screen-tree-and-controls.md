@@ -18,6 +18,10 @@ The first host has zero extra top padding; subsequent hosts use `TreeHostGap = 1
 [toolbar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) supplies the 24dp gap from its
 divider to the first row. With the old tier divider gone, the toolbar rule is the only full-width rule.
 The section content begins 4dp and conversation content 12dp from the list's 20dp content edge.
+A conversation row's `Box` pads that 12dp on the start only; it ends flush at the tree gutter
+like `TreeHostRow` does, so the Channels/Chats row pens share one horizontal centre with the
+Edit host pen ([#1334](https://github.com/pyrycode/pyrycode-mobile/issues/1334) — the row used
+to pad both sides, which put its pen 12dp left of the host pen's column).
 Each section uses a closed/open folder glyph and right/down chevron to match its fold state. Its fold
 and both section plus controls retain separate 48dp touch targets and host-qualified TalkBack names.
 
@@ -79,6 +83,32 @@ daemon text amplifies instead of truncating (flagged in the ticket's security re
 well-formed input is unaffected: a collision needs two ids sharing both a 256-character prefix and an
 identical length.
 
+**Host section sort order (\#1331).** Each host's Channels and Chats sections sort alphabetically,
+independently of each other; archived rows are not in either section. The sort key comes from
+`HostWorkspaceGroup.kt`'s `conversationSortKey(label)`: trim, `Normalizer.normalize(_, NFKD)`, strip
+every combining mark (`Regex("\\p{Mn}+")`), then `lowercase()` under `Locale.ROOT`. The label itself —
+fed to both the key function and the row's own text — is the conversation's non-blank `name`, otherwise
+the same `R.string.untitled_discussion` placeholder `treeHost` draws, so sorted and drawn text can never
+diverge. `conversationLabelComparator(placeholder)` in the same file orders ascending by that key, then
+by the trimmed label, then by conversation id, all three compared as UTF-16 code units via
+`String.compareTo` — no locale collation and no natural-number order, so "Chat 10" sorts before "Chat 2",
+and "Alpha" sorts before "alpha" on a key tie. `ConversationTree` resolves the placeholder string once via
+`stringResource`, then sorts under `remember(hostState.hosts, untitled)` and hands the sorted lists to
+`treeHost`, which takes them as parameters rather than reading `host.channels` / `host.chats` directly —
+`treeHost` is a `LazyListScope` extension and cannot call `stringResource` or `remember` itself. Because
+the sort is a pure, synchronous derivation keyed on every `hostState.hosts` emission, a rename, an
+auto-named chat or a new chat moves to its sorted position on the very next emission, with no
+pull-to-refresh. `ConversationListProjection.project`'s own `sortedByDescending { it.lastUsedAt }` is
+untouched — it still feeds other readers — and `HostWorkspaceGroup`'s `groupConversationsByWorkspace`
+keeps its own first-encounter group order; only the per-section row order changes. Row keys, selection
+(`HostConversationTarget`) and fold keys (`TreeFoldKey`) already address a row by host id and conversation
+id or by host id and section, so a re-sort moves a row without breaking its selection, fold state or edit
+target. Desktop's `channelListViewModel.ts` implements the identical rule as `compareByTitle`; keep the
+two texts in sync if either is refined. Known residual gaps, not yet observed in practice: the sort key is
+recomputed per comparison rather than cached per row (negligible at realistic list sizes), and Kotlin's
+`trim()` does not strip a leading/trailing U+FEFF the way JavaScript's `trim()` does, so a name framed by
+a BOM could sort differently between the two apps.
+
 ## Add controls (#738)
 
 The fixed toolbar plus pairs another host. Each host has a Channels-section plus (#1189) and a
@@ -132,7 +162,11 @@ the host; the section fold and plus have separate targets, and the plus does not
 
 ## Host row edit control (#744)
 
-`TreeHostRow` draws a persistent `TreeRowControl` pencil beside `ConnectionLegPair`. Tap emits
+Host rows drew the two connection dots beside this pencil (`ConnectionLegPair`) from #744 through #1009;
+\#1333 removed them, and the paragraphs below describe the current, dot-free row. The thread's
+`ConnectionStatusLine` still shows both legs.
+
+`TreeHostRow` draws a persistent `TreeRowControl` pencil. Tap emits
 `TreeHostEditTapped(serverId)` (the route calls `vm.openHostEditor(serverId)`) for that row's host. The
 former trailing plus is gone; the pencil has one click action and no long press.
 
@@ -169,7 +203,7 @@ branches on `host.connectionStatus.relay == RelayLinkStatus.PairingRejected` and
 than retrying. The row's visual treatment and classification are unchanged — only the tap target differs.
 See [pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-842).
 
-**`UpdateRequired` gets its own control, dot and caption (#1009).** The row-level Play Store action
+**`UpdateRequired` gets its own control and caption (#1009).** The row-level Play Store action
 \#1008 deferred has landed, the way #842 changed the target for `PairingRejected`. `TreeHostRow` computes
 `val update = connectionStatus.relay as? RelayLinkStatus.UpdateRequired` and, when non-null, swaps the
 plug for `TreeRowControl(icon = Icons.Filled.Download, …)` tagged `treeHostUpdateTestTag(serverId)`
@@ -186,12 +220,6 @@ a log line), else `TreeHostReconnectTapped`. `PyryNavHost` maps the new event to
 debug build sets no such suffix, but the constant stays a literal on principle, not because of that build
 detail). It never calls `reconnectHost`/`retry()`.
 
-`ConnectionLegPair` gained `hostIdle: Boolean = false`, true only for `UpdateRequired`: the inboard
-(host) dot then draws as a private `IdleLegDot` — `ConversationStatusDot`'s idle drawing (transparent
-fill, 1dp `primary` ring), described "Pyrycode: idle" (`cd_tree_host_leg_idle`) — instead of the shared
-`LegDot`/`toLegVisual` mapping. The outboard relay dot is untouched and keeps the mapping it shares with
-the Settings status line.
-
 A caption `Text` (`bodySmall`/`onSurfaceVariant`, start-aligned with the host name) sits below the row,
 inside the host's own lazy item — folding the host only drops the rows below it, so the caption stays
 visible while folded. It reads `tree_host_update_required_version` when `update.minClientVersion` is
@@ -204,8 +232,8 @@ disconnected state, and dropping that affordance for one state was left out of s
 `TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
 today's `onSurfaceVariant`/`onSurface` tints); the host row passes `colorScheme.error` for both the glyph
-and the name when disconnected. A `TreeRowControl` with `Icons.Filled.Power` is drawn inboard of
-`ConnectionLegPair`, tagged `treeHostReconnectTestTag(serverId)` (sharing `boundedTagId`'s clamp with
+and the name when disconnected. A `TreeRowControl` with `Icons.Filled.Power` is drawn before the pencil,
+tagged `treeHostReconnectTestTag(serverId)` (sharing `boundedTagId`'s clamp with
 the edit tag). Tap emits `TreeHostReconnectTapped(serverId)` for the row's own host. There is no long press.
 
 Its content description is `R.string.cd_tree_host_reconnect` ("Reconnect %1$s") formatted with the row's
@@ -362,7 +390,8 @@ the dot's layer and never recomposes `TreeConversationRow` or its `Text`.
 **The state names itself.** `ConversationStatusDot` sets `Modifier.clearAndSetSemantics { contentDescription
 = … }` from an exhaustive `ConversationAttention` → string-resource map (`cd_conversation_attention_idle` /
 `_running` / `_unread` / `_waiting` / `_failed`, `strings.xml`) — the same self-describing-dot-in-a-merging-row
-shape `LegDot` already used. The row's own `selectable` merges that description with the conversation name,
+shape the host row's connection legs used before #1333 removed them. The row's own `selectable` merges
+that description with the conversation name,
 so TalkBack reads e.g. "Running, kitchenclaw refactor" — the meaning never rests on colour alone.
 
 **Wiring.** `treeHost` passes `attention = entry.attentionFor(conversation.id)` —

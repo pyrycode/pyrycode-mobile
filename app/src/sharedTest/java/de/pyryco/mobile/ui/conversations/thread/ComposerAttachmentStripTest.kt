@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -132,6 +133,25 @@ class ComposerAttachmentStripTest {
     }
 
     @Test
+    fun whileALargeFileUploads_itsTileFillsToTheFigure_andTheStripSaysUploading() {
+        setScreen(
+            attachments = listOf(entry(1, "big.bin"), entry(2, "next.bin")),
+            sending = true,
+            uploadProgress = AttachmentUploadProgress(key = 1, percent = 40),
+        )
+
+        composeRule
+            .onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG)
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Uploading… 40%"))
+        val indicators =
+            composeRule
+                .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo))
+                .fetchSemanticsNodes()
+                .map { it.config[SemanticsProperties.ProgressBarRangeInfo] }
+        assertEquals(listOf(ProgressBarRangeInfo(0.4f, 0f..1f), ProgressBarRangeInfo.Indeterminate), indicators)
+    }
+
+    @Test
     fun attachmentsWithBlankText_keepSendDisabled_untilTextIsTyped() {
         val sent = mutableListOf<String>()
         setScreen(attachments = listOf(entry(1, "one.txt")), onSend = { sent += it })
@@ -195,6 +215,21 @@ class ComposerAttachmentStripTest {
     }
 
     @Test
+    fun aFailedSend_saysWhyInOneSnackbar_withTheLimitDerivedFromTheConstant() {
+        val failures = Channel<AttachmentSendFailure>(Channel.BUFFERED)
+        setScreen(attachments = emptyList(), sendFailures = failures.receiveAsFlow())
+
+        failures.trySend(AttachmentSendFailure.TOO_LARGE)
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule
+                .onAllNodesWithText("Too large to attach — this app sends files up to 8 MB.")
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+    }
+
+    @Test
     fun switchingChats_showsEachChatsOwnStrip() {
         val store = ComposerDraftStore()
         store.addAttachment(HOST, "chat-a", docUri("only-in-a.txt").toString(), "only-in-a.txt", "text/plain", 1L)
@@ -238,11 +273,13 @@ class ComposerAttachmentStripTest {
     private fun setScreen(
         attachments: List<PendingAttachment>,
         sending: Boolean = false,
+        uploadProgress: AttachmentUploadProgress? = null,
         onRemove: (Long) -> Unit = {},
         onSend: (String) -> Unit = {},
         registry: ActivityResultRegistry? = null,
         onPicked: (List<PickedAttachment>) -> Unit = {},
         refusals: Flow<AttachmentRefusal> = emptyFlow(),
+        sendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     ) {
         composeRule.setContent {
             PyrycodeMobileTheme {
@@ -252,10 +289,10 @@ class ComposerAttachmentStripTest {
                             override val activityResultRegistry: ActivityResultRegistry = registry
                         }
                     CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-                        Screen(attachments, sending, onRemove, onSend, onPicked, refusals)
+                        Screen(attachments, sending, onRemove, onSend, onPicked, refusals, uploadProgress, sendFailures)
                     }
                 } else {
-                    Screen(attachments, sending, onRemove, onSend, onPicked, refusals)
+                    Screen(attachments, sending, onRemove, onSend, onPicked, refusals, uploadProgress, sendFailures)
                 }
             }
         }
@@ -269,6 +306,8 @@ class ComposerAttachmentStripTest {
         onSend: (String) -> Unit,
         onPicked: (List<PickedAttachment>) -> Unit,
         refusals: Flow<AttachmentRefusal>,
+        uploadProgress: AttachmentUploadProgress? = null,
+        sendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     ) {
         var draft by remember { mutableStateOf("") }
         ThreadScreen(
@@ -281,9 +320,11 @@ class ComposerAttachmentStripTest {
             onRetry = {},
             attachments = attachments,
             attachmentsSending = sending,
+            attachmentUploadProgress = uploadProgress,
             onAttachmentsPicked = onPicked,
             onRemoveAttachment = onRemove,
             attachmentRefusals = refusals,
+            attachmentSendFailures = sendFailures,
         )
     }
 
