@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.LiveSessionEvent.TurnState.Phase
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -515,6 +517,53 @@ class StableConversationRepositoryTest {
             current.value = repoB
             runCurrent()
             assertEquals(listOf(false, true, false), compacting)
+        }
+
+    // ---- #1313: observeTurnPhase delegates and resets on a new connection --------------------------
+
+    @Test
+    fun observeTurnPhase_whileAbsent_emitsIdle() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            val phases = mutableListOf<Phase>()
+            backgroundScope.launch { facade.observeTurnPhase("c1").collect { phases += it } }
+            runCurrent()
+
+            assertEquals(listOf(Phase.Idle), phases)
+        }
+
+    @Test
+    fun observeTurnPhase_afterAReconnect_everyConversationReadsIdleUntilTheDaemonReportsAgain() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+            val c1 = mutableListOf<Phase>()
+            val c2 = mutableListOf<Phase>()
+            backgroundScope.launch { facade.observeTurnPhase("c1").collect { c1 += it } }
+            backgroundScope.launch { facade.observeTurnPhase("c2").collect { c2 += it } }
+            repoA.pushTurnPhase("c1", Phase.Thinking)
+            repoA.pushTurnPhase("c2", Phase.Responding)
+            runCurrent()
+            assertEquals(Phase.Thinking, c1.last())
+            assertEquals(Phase.Responding, c2.last())
+
+            current.value = null
+            runCurrent()
+            assertEquals(Phase.Idle, c1.last())
+            assertEquals(Phase.Idle, c2.last())
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(Phase.Idle, c1.last())
+            assertEquals(Phase.Idle, c2.last())
+
+            repoB.pushTurnPhase("c2", Phase.Thinking)
+            runCurrent()
+            assertEquals(Phase.Idle, c1.last())
+            assertEquals(Phase.Thinking, c2.last())
         }
 
     // ---- #871: observeResetting delegates and tracks connection churn ----------------------------
@@ -1090,6 +1139,17 @@ class StableConversationRepositoryTest {
         }
 
         override fun observeResetting(conversationId: String): Flow<ResetStatus?> = resetting
+
+        private val turnPhases = MutableStateFlow<Map<String, Phase>>(emptyMap())
+
+        fun pushTurnPhase(
+            conversationId: String,
+            phase: Phase,
+        ) {
+            turnPhases.value += conversationId to phase
+        }
+
+        override fun observeTurnPhase(conversationId: String): Flow<Phase> = turnPhases.map { it[conversationId] ?: Phase.Idle }
 
         private val announcedModel = MutableStateFlow<AnnouncedModel?>(null)
 

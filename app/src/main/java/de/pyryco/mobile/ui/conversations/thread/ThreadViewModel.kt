@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
@@ -63,7 +64,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
@@ -96,14 +96,15 @@ class ThreadViewModel(
     // defaults below: a default would hand every ViewModel its own store, which is exactly the
     // destination-scoped ownership this ticket removes — and a miswire would reproduce it invisibly.
     private val draftStore: ComposerDraftStore,
-    // #406: the coordinator's reconnection-surviving live-event seam, reduced to [isThinking]. Defaulted
-    // to an empty flow so the fake-backed graph + existing tests stay inert (the flag holds `false`).
+    // #406: the coordinator's reconnection-surviving live-event seam, folded into the thread rows and
+    // [turnOutcome]; the turn flags read the repository's held phase instead (#1313). Defaulted
+    // to an empty flow so the fake-backed graph + existing tests stay inert.
     liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
-    // #492: the host coordinator's process-scoped, reconnection-surviving "current modal" projection
-    // (#437/#445), folded once at the coordinator layer. It holds the host's single modal whichever
-    // conversation raised it; #816 scopes it to this thread as [currentModal]. Defaulted to a fresh
-    // MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal tests stay inert.
-    private val hostModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    // #492: the host coordinator's process-scoped modal fold (#437/#445), folded once at the coordinator
+    // layer. Since #1337 it holds every prompt outstanding on the host, whichever conversation raised it;
+    // #816 scopes it to this thread as [currentModal]. Defaulted to an empty host so the fake-backed Koin
+    // graph + non-modal tests stay inert.
+    private val hostModal: StateFlow<HostModalState> = MutableStateFlow(HostModalState()),
     // #451: the outbound modal-send path → the coordinator's passthrough to the connection-scoped concrete
     // repo (RelayRepositoryCoordinator.answerModal / cancelModal). Defaulted no-ops so the fake-backed Koin
     // graph + existing ThreadViewModel tests stay inert. The VM holds only these two suspend lambdas, never
@@ -153,9 +154,10 @@ class ThreadViewModel(
         savedStateHandle.get<String>("conversationId").orEmpty()
 
     /**
-     * The host's modal as this thread sees it (#816): shown only when the conversation that raised it is
-     * this thread's own, else [ModalUiState.Hidden] (see [scopedTo]). Seeded from the host's current value
-     * and collected `Eagerly`, so `.value` is right from construction.
+     * The host's prompts as this thread sees them (#816, #1337): this conversation's first outstanding
+     * prompt, else its latest dismissal, else [ModalUiState.Hidden] (see [HostModalState.scopedTo]). Another
+     * conversation's prompt never shows here. Seeded from the host's current value and collected `Eagerly`,
+     * so `.value` is right from construction.
      */
     val currentModal: StateFlow<ModalUiState> =
         hostModal
@@ -234,6 +236,14 @@ class ThreadViewModel(
      * name, URI or the daemon's code, so the snackbar it drives shows fixed local text.
      */
     val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
+
+    private val sentMessageChannel = Channel<Unit>(capacity = Channel.CONFLATED)
+
+    /**
+     * One signal per send the daemon accepted, of text or attachments (#1314), desktop's `onMessageSent`. The
+     * screen follows the newest end on it. Conflated: sends accepted before the screen collects follow once.
+     */
+    val sentMessages: Flow<Unit> = sentMessageChannel.receiveAsFlow()
 
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
@@ -588,17 +598,23 @@ class ThreadViewModel(
             )
 
     /**
+     * This conversation's turn phase as the repository holds it (#1313): the latest `turn_state`, back to
+     * idle on `turn_end`, kept per conversation for the connection rather than folded here. A thread
+     * opened mid-turn or resubscribing after [SharingStarted.WhileSubscribed] lapsed reads the current
+     * phase at once, and a new connection reads idle until the daemon reports again.
+     */
+    private val turnPhase = repository.observeTurnPhase(conversationId)
+
+    /**
      * Whether this conversation's agent is currently in its `thinking` phase (#406) — `true` only while
-     * the latest `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking],
-     * `false` for `responding` / `idle` / `turn_end` or before any event. A sibling [StateFlow] beside
+     * the held phase is [LiveSessionEvent.TurnState.Phase.Thinking]. A sibling [StateFlow] beside
      * [connectionState] (not a [ThreadUiState] field): like the connection signal it is a transient,
-     * connection-scoped cross-cutting signal the stateless screen takes as a separate parameter. The
-     * reduction emits only on a phase transition, so [stateIn]'s last value is retained for events that
-     * leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow default.
+     * connection-scoped cross-cutting signal the stateless screen takes as a separate parameter. `false`
+     * covers idle, `responding` and the fake's idle default.
      */
     val isThinking: StateFlow<Boolean> =
-        liveSessionEvents
-            .mapNotNull { event -> thinkingTransition(event) }
+        turnPhase
+            .map { it == LiveSessionEvent.TurnState.Phase.Thinking }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -606,21 +622,14 @@ class ThreadViewModel(
             )
 
     /**
-     * Whether this conversation's agent is currently **running a turn** (#459) — `true` while the latest
-     * `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking] **or**
-     * [LiveSessionEvent.TurnState.Phase.Responding], `false` for `idle` / `turn_end` or before any event.
-     * The broader sibling of [isThinking] (which is `true` for `thinking` only): the interrupt affordance
-     * (#459) must stay visible across the whole in-flight turn, not just the thinking phase. Same posture
-     * and lifecycle as [isThinking] — a hoisted [StateFlow] beside [connectionState] the stateless screen
-     * takes as a separate parameter, backed by its own [busyTransition] reducer (a dedicated reducer is
-     * simpler than combining [isThinking] with a second flow and matches the established sibling pattern).
-     * The reduction emits only on a busy/not-busy transition, so [stateIn]'s last value is retained for
-     * events that leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow
-     * default.
+     * Whether this conversation's agent is currently **running a turn** (#459) — `true` while the held
+     * phase is [LiveSessionEvent.TurnState.Phase.Thinking] **or** [LiveSessionEvent.TurnState.Phase.Responding].
+     * The broader sibling of [isThinking]: the interrupt affordance must stay visible across the whole
+     * in-flight turn, not just the thinking phase. Same posture and lifecycle as [isThinking].
      */
     val isBusy: StateFlow<Boolean> =
-        liveSessionEvents
-            .mapNotNull { event -> busyTransition(event) }
+        turnPhase
+            .map { it == LiveSessionEvent.TurnState.Phase.Thinking || it == LiveSessionEvent.TurnState.Phase.Responding }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -1034,48 +1043,6 @@ class ThreadViewModel(
      */
     val sessionSettingsErrors: Flow<Unit> = sessionSettingsErrorChannel.receiveAsFlow()
 
-    /**
-     * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
-     * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
-     * phase: `thinking` ⇒ `true`; `responding` / `idle` / `turn_end` ⇒ `false`; the non-phase events
-     * (`assistant_delta` / `tool_use` / `tool_result`) are not transitions ⇒ `null`.
-     */
-    private fun thinkingTransition(event: LiveSessionEvent): Boolean? {
-        if (event.conversationId != conversationId) return null
-        return when (event) {
-            is LiveSessionEvent.TurnState -> event.phase == LiveSessionEvent.TurnState.Phase.Thinking
-            is LiveSessionEvent.TurnEnd -> false
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> null
-        }
-    }
-
-    /**
-     * Folds one live event to the next [isBusy] value, or `null` to leave the flag unchanged. Mirrors
-     * [thinkingTransition] exactly; the **only** difference is the phase predicate — a turn is "running"
-     * across the `thinking` **and** `responding` phases. Routes by [conversationId] first (other
-     * conversations never move the flag), then maps the turn phase: `thinking` / `responding` ⇒ `true`;
-     * `idle` / `turn_end` ⇒ `false`; the non-phase events (`assistant_delta` / `tool_use` / `tool_result`
-     * / replay-gap) are not transitions ⇒ `null`.
-     */
-    private fun busyTransition(event: LiveSessionEvent): Boolean? {
-        if (event.conversationId != conversationId) return null
-        return when (event) {
-            is LiveSessionEvent.TurnState ->
-                event.phase == LiveSessionEvent.TurnState.Phase.Thinking ||
-                    event.phase == LiveSessionEvent.TurnState.Phase.Responding
-            is LiveSessionEvent.TurnEnd -> false
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> null
-        }
-    }
-
     /** Folds one live event into [turnOutcome]; events for other conversations leave it unchanged. */
     private fun nextTurnOutcome(
         current: TurnOutcomeReport?,
@@ -1168,15 +1135,22 @@ class ThreadViewModel(
         _localSendPending.value = false
     }
 
-    /** Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. */
+    /**
+     * Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. A send
+     * that returns was accepted, and tells the screen to follow the newest end again (#1314).
+     */
     private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
         openLocalSendWindow()
-        try {
-            return send()
-        } catch (e: Throwable) {
-            closeLocalSendWindow("send_failed")
-            throw e
-        }
+        val sent =
+            try {
+                send()
+            } catch (e: Throwable) {
+                closeLocalSendWindow("send_failed")
+                throw e
+            }
+        RelayLog.d { "event=thread_send_accepted" }
+        sentMessageChannel.trySend(Unit)
+        return sent
     }
 
     /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */

@@ -961,11 +961,13 @@ lifecycle. They reuse #545's settings helpers and #850's `setHostLink` / `cycleH
 `SecondClientPeer` approval path, rather than repeating those scenarios.
 
 `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` runs a ping, cuts and restores the link,
-and confirms the footer's `Cxt:` segment reads `n/a` on the new connection — the reading belongs to the
-connection and nothing asks for it again since #946's Rework 1 — while model, effort and permission settle
-on what a fresh reading taken on the new connection reports. A second ping brings the context percentage
-back, proving the post-turn push is the fresh reading, and a model picked from the footer after that turn
-is confirmed by a further fresh reading. The #545 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
+and confirms that the footer keeps its context percentage across the reconnect, matching #1317. The
+inherited model's selected row follows the held model announcement. Effort and permission settle on a
+live settings reply. Since #1397, `freshSettings` skips the held reply that #1320 emits first. The second
+ping must finish and deliver a context reading with a token count greater than the held reading. A saved
+percentage alone cannot prove freshness, because both turns can round to the same percentage. A model
+picked from the footer after that turn is confirmed by another live settings reply.
+The #545 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
 method's effort-label mapping moved into a shared `appliedEffortFooter` helper both methods call, with no
 behaviour change. Two real claude turns: the ping before the cut and the ping after it.
 
@@ -1929,6 +1931,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
+| `tool-then-text` (#1417) | reply text after a tool step renders below it | `tool-then-text.jsonl` | one |
 | `tool-progress` (#950) | the status area's running-tool label adds claude's elapsed reading after a `tool_progress` heartbeat, then clears once the call's `tool_result` lands while the turn stays busy | `tool-progress-open.jsonl` + `tool-progress-result.jsonl` | **two** |
 | `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
 | `offline-retry` (#1286) | actual Offline pill retries the same host and a new reply renders | `ping.jsonl` | one |
@@ -1948,6 +1951,7 @@ DETERMINISTIC=1 SCENARIO=stream      PYRYCODE_SRC=~/Workspace/Projects/pyrycode 
 DETERMINISTIC=1 SCENARIO=spinner     PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # spinner
 DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool running→done
 DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool failed
+DETERMINISTIC=1 SCENARIO=tool-then-text PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reply text below its tool step
 DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # running-tool label elapsed → gone
 DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
 DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
@@ -2020,6 +2024,17 @@ fold renders the row `Running` (briefly) → `Failed`; the test asserts only the
 content-description (tolerant, stable). The `tool_use` line must precede the `tool_result` line so they
 correlate. Assertions never depend on the producer-derived `input_summary`/`result_summary` text — only
 the status CDs and the verbatim tool name.
+
+**`tool-then-text` (#1417)** — reply text written after a tool step must render **below** that step, proving
+the per-segment reply order from #1350 through the real daemon, relay and app. `tool-then-text.jsonl` is a
+single raw fragment: an `assistant` line (id `ttt-1`) holding text with the marker `foxtrot`, an `assistant`
+line sharing id `ttt-1` with a `Bash` `tool_use` whose input is `{}` (empty input keeps the collapsed row's
+lead on the tool name rather than a `command`, #1315), the correlated non-error `tool_result`, then an
+`assistant` line with a new id `ttt-2` and `stop_reason: end_turn` holding text with the marker `zulu`. The
+two markers don't occur in the seeded channel name, the prompt, `Bash` or each other (the #431 false-green
+lesson). The test waits for both markers and the `Bash` row to render and the running-tool/thinking CDs to
+clear, then asserts by `boundsInRoot` that the `foxtrot` node sits above the tool row and the `zulu` node
+sits below it, and that the two markers land in different nodes.
 
 **`reconnect` (#476, Layer 2b)** — an in-flight reply must survive a mid-turn relay-link drop. It reuses
 the spinner's **two-fragment causal release** with a sever/restore inserted in the gap:
@@ -2103,7 +2118,20 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-01 (#1332).** The dispatcher ran
+**Current live verification — 2026-10-01 (#1337).** The dispatcher ran a focused
+`python3 scripts/android-test-gate.py live --tests ...` selection against `feature/1337` at
+`62ed2d1072`, merged with `origin/main` at `a8bb98ca56` (0 commits behind before the merge): **7
+executed, 7 passed, 0 failed, 0 skipped**, exit 0, wall clock 404.8s. The selection named the four
+methods in PR #1406's `## Live tests` (`interactiveTurn_permissionPrompts_heldPerConversation`,
+`interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`,
+`interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`,
+`interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`) plus three always-run methods — not a
+full-suite run. The fresh XML has a passing testcase for
+`interactiveTurn_permissionPrompts_heldPerConversation`, closing AC-4 of
+[#1337](specs/architecture/1337-hold-every-outstanding-prompt.md). See the [dispatcher
+evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1337#issuecomment-5938993775).
+
+**Previous live verification — 2026-10-01 (#1332).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1332` at
 `cc94a05bbc`, merged with `origin/main` at `18ea26526a` (0 commits behind before the merge):
 **41 executed, 41 passed, 0 failed, 0 skipped**, exit 0, wall clock 518.8s. This is full-suite evidence;
@@ -2796,6 +2824,29 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — added:** [#1337](https://github.com/pyrycode/pyrycode-mobile/issues/1337) adds
+  `InteractiveStreamE2ETest.interactiveTurn_permissionPrompts_heldPerConversation` to the curated LIVE
+  `TEST_TARGET` selector in `scripts/e2e-emulator.sh`, raising `LIVE_MINIMUM` to 41 in
+  `scripts/android-test-gate.py` and pinned by `test_live_floor_matches_the_curated_list`. Chats A and
+  B each raise a real prompt at once; both show in their own chat; answering A from the phone resolves
+  only A's id while B's card stays mounted — proving the `HostModalState` hold-all fold (see
+  [Current-modal state](knowledge/features/current-modal-state.md)) against a real daemon, not just the
+  single-prompt-replacement case its sibling
+  `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` covers. The method proves the
+  phone's answer through the peer's `modal_dismissed` for A's id (source `remote`, outcome
+  `allow_once`) and the dialog leaving A, and does **not** await A's `turn_end`: the daemon streams
+  turn frames only for the conversation a message was last routed to (its `activeConversation`
+  follow-active cursor), and B's send in the method moves that cursor to B, so A's `tool_use` /
+  `turn_end` after the allow never reach any client — B's `turn_end` is still awaited, since B holds
+  the cursor. No rung-4 twin: the ticket's acceptance criteria require only the rung-3 proof. PR
+  #1406's `## Live tests` also names `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+  and `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` as the live guards whose input this
+  ticket changes (the former's input now goes `Open` → `Hidden` → `Open` across a reconnect, deduped only by
+  `AttentionNotifier`'s ledger). The dispatcher's post-verifier focused `python3
+  scripts/android-test-gate.py live --tests ...` run (branch `feature/1337` at `62ed2d1072`, merged with
+  `origin/main` at `a8bb98ca56`) executed 7, passed 7, failed 0 and skipped 0, including all four named
+  methods passing — see [Verification status](#verification-status).
 
 - **Coverage — updated:** [#1309](https://github.com/pyrycode/pyrycode-mobile/issues/1309) rewrote
   `InteractiveStreamE2ETest.interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` to drop

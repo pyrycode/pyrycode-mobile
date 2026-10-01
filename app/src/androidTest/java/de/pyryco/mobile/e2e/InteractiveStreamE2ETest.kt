@@ -2893,7 +2893,6 @@ class InteractiveStreamE2ETest {
      * **One real-claude turn.**
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_modelChange_roundTripsAndStaysPerConversation() {
         val originals = mutableMapOf<String, SessionSettings>()
         try {
@@ -3022,7 +3021,6 @@ class InteractiveStreamE2ETest {
      * **One real-claude turn.**
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn() {
         val originals = mutableMapOf<String, SessionSettings>()
         try {
@@ -3118,7 +3116,6 @@ class InteractiveStreamE2ETest {
      * **Two real-claude turns**: one in the fresh chat and one in the fresh channel.
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val originals = mutableMapOf<String, SessionSettings>()
@@ -3216,7 +3213,6 @@ class InteractiveStreamE2ETest {
      * **Two real-claude turns**: the tool-free ping and the Read.
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
@@ -3467,6 +3463,85 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * Two chats on one host each hold a real permission prompt at once, and each shows its own (#1337, rung 3),
+     * on the dedicated answer daemon of [interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation].
+     *  * **Both held.** A raises a prompt, then B raises one while A's is still outstanding. B shows its own, and
+     *    returning to A still shows A's: B's prompt no longer replaces it.
+     *  * **Answering A leaves B.** The phone allows A's prompt; the daemon dismisses A's id from the phone, never
+     *    B's, and B's thread still shows its prompt. The peer then allows B's and B's dialog closes.
+     *
+     * Both prompts carry the same command, so which prompt the phone answered is proven by the peer's frames:
+     * the phone's one answer, sent from A, resolves A's `modal_id` with source `remote`, and B's thread still
+     * shows a prompt afterwards, which the phone drops once the daemon dismisses B's id.
+     *
+     * A's turn end is not awaited. The daemon streams turn frames only for the conversation a message was last
+     * routed to (its follow-active cursor), which is B from step 2 on, so A's frames after the allow never reach
+     * any client. That A's allowed turn ends is proven by the sibling method, where no other chat is routed.
+     *
+     * **Two real-claude turns**: A's and B's commands.
+     */
+    @Test
+    fun interactiveTurn_permissionPrompts_heldPerConversation() {
+        val (serverId, peer) = answerHostPeer()
+        try {
+            pairAnswerHost()
+            val (chatA, nameA) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pa-")
+            val (chatB, nameB) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pb-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 1. A raises a prompt in A.
+            openChatRow(nameA)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            val shownA =
+                runBlocking {
+                    MobileJson.decodeFromJsonElement(
+                        ModalShownPayloadDto.serializer(),
+                        peer.awaitFrame(chatA, "modal_shown", REPLY_TIMEOUT_MS).payload,
+                    )
+                }
+            val promptA = shownA.modalId
+            awaitPromptDialog()
+
+            // 2. B raises its own prompt while A's is outstanding, and B shows it.
+            leaveThread()
+            openChatRow(nameB)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            val promptB = runBlocking { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) }
+            assertNotEquals("the two chats' prompts", promptA, promptB)
+            awaitPromptDialog()
+
+            // 3. Back in A, A's prompt is still shown: B's did not replace it.
+            leaveThread()
+            openChatRow(nameA)
+            awaitPromptDialog()
+
+            // 4. Allowing in A (a non-default option arms first) resolves A's prompt from the phone, not B's.
+            val allow = hasText(shownA.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
+            val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
+            tapInPrompt(allow)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
+            }
+            tapInPrompt(allow)
+            val dismissedA = runBlocking { peer.awaitModalDismissed(promptA, THREAD_TIMEOUT_MS) }
+            assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissedA, "source"))
+            assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissedA, "outcome"))
+            awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
+
+            // 5. B's prompt is still shown in B, so A's answer left it; the peer allows it and B's dialog closes untouched.
+            leaveThread()
+            openChatRow(nameB)
+            awaitPromptDialog()
+            runBlocking { peer.allowOnce(promptB, THREAD_TIMEOUT_MS) }
+            awaitNoPromptDialog("B's dialog stayed after the peer allowed it")
+            awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn")
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
      * A clarification answer from the phone reaches the conversation that asked (#966, rung 3), on the same
      * dedicated answer daemon as [interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation]; the
      * daemon gates a question answer on the same `--allow-remote-permissions` bit as a permission answer.
@@ -3602,18 +3677,19 @@ class InteractiveStreamE2ETest {
     /**
      * The composer footer's readings and a model change survive a cut-and-restore of the phone's link (#967).
      * The chat is prepared as #545's are: nothing remembered and no saved model.
-     *  * **The context reading goes with the link.** After a real turn the footer shows `Cxt: N%`. The reading
-     *    belongs to the connection and nothing asks for it (#946), so after the reconnect it shows `Cxt: n/a`.
-     *  * **The readings come back.** Model, effort and permission settle, none pending, on what a fresh
-     *    reading taken on the new connection reports.
-     *  * **A fresh context reading.** A turn on the new connection brings `Cxt: N%` back.
+     *  * **The context reading is held.** After a real turn the footer shows `Cxt: N%`. The host's readings are
+     *    kept for the life of its pairing (#1317), so after the reconnect it still shows that same reading.
+     *  * **The readings come back.** Effort and permission settle, none pending, on what a fresh reading
+     *    taken on the new connection reports. The model is inherited, and the first turn's announcement is
+     *    held too (#1317), so the mark follows that announcement (#1308) rather than the default row.
+     *  * **A context reading after a turn.** A turn on the new connection pushes a reading newer than the held
+     *    one, its token count grown past the held reading's, and the footer shows `Cxt: N%`.
      *  * **A change is confirmed.** A published model picked from the footer is the saved model a fresh
      *    reading reports. It is picked after the last turn, so no turn runs on a model the account may not serve.
      *
      * **Two real-claude turns**: the ping before the cut and the ping after it.
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive() {
         val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
         val originals = mutableMapOf<String, SessionSettings>()
@@ -3627,13 +3703,12 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
+            val held = awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
 
-            // 2. Cut and restore the link. The old connection's context reading goes with it.
+            // 2. Cut and restore the link. The host's context reading is held across it (#1317).
             setHostLink(serverId, up = false)
             setHostLink(serverId, up = true)
-            val unavailable = string(R.string.thread_footer_context_unavailable)
-            awaitContextSegment(THREAD_TIMEOUT_MS, "'$unavailable' after the reconnect") { it == unavailable }
+            awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' after the reconnect") { it == held }
 
             // 3. Model, effort and permission settle on a fresh reading taken on the new connection.
             val fresh = freshSettings(chat.id)
@@ -3641,20 +3716,59 @@ class InteractiveStreamE2ETest {
             val (effortLabel, effortNote) = appliedEffortFooter(fresh.effectiveEffort)
             val mode = fresh.permissionMode
             assertTrue("the fresh reading after a real turn confirms no permission mode", mode.isNotEmpty())
-            awaitFooter(changeModelLabel, inheritedModelLabel(publishedMenu(chat.id)))
+            // The first turn's announcement is held across the reconnect too (#1317), so the inherited chat
+            // marks the row it maps to rather than the default row's resolution (#1308).
+            val announced = announcedModel(chat.id)
+            check(announced.isNotEmpty()) { "claude's announced model was cut" }
+            val menu = publishedMenu(chat.id)
+            val marked = announcedRow(menu, announced)
+            awaitAnnouncedMark(menu, marked, claudeFamily(announced).ifEmpty { UNAVAILABLE_MODEL_LABEL })
+            if (marked != null) awaitFooter(changeModelLabel, marked.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeEffortLabel, effortLabel) { it == effortNote }
             awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
 
-            // 4. A turn on the new connection brings a fresh context reading, pushed when the turn ends.
+            // 4. A turn on the new connection leaves a context reading, pushed when the turn ends. The held
+            //    reading already shows a percentage, so the wait is on the turn itself: its reply is drawn and
+            //    the Stop control has gone. Two ping replies in a two-ping thread are both composed in the list.
+            //    Then the reading must be newer than the held one: the footer's percentage can round to the same
+            //    text, so freshness is the repository's token count growing past the held reading's.
+            val heldUsage =
+                hostRepository().let { repository ->
+                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first() } }
+                }
             sendFromPhone(PING_PROMPT)
+            val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
+            try {
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).fetchSemanticsNodes().size >= 2 &&
+                        composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the turn on the new connection never ended with its reply drawn", e)
+            }
+            try {
+                val repository = hostRepository()
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        repository.observeContextUsage(chat.id).filterNotNull().first { it.totalTokens > heldUsage.totalTokens }
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw AssertionError(
+                    "no context reading newer than the held one (${heldUsage.totalTokens} tokens) after the turn on the new connection",
+                    e,
+                )
+            }
             awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the turn on the new connection") { CONTEXT_REPORTED.matches(it) }
 
             // 5. A model picked from the published menu is confirmed by a fresh reading.
             val target =
                 checkNotNull(
-                    usableRows(publishedMenu(chat.id)).firstOrNull { it.value != INHERITED_MODEL_VALUE && it.value != fresh.model },
+                    usableRows(publishedMenu(chat.id)).firstOrNull {
+                        it.value != INHERITED_MODEL_VALUE && it.value != fresh.model && it.value != marked?.value
+                    },
                 ) {
-                    "the menu publishes no usable model besides the inherited default"
+                    "the menu publishes no usable model besides the inherited default and the marked row"
                 }
             pickFooterOption(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
@@ -4031,9 +4145,10 @@ class InteractiveStreamE2ETest {
      * permission prompt. The prompt surfaces while the phone is absent, so the daemon wakes the phone and
      * the wake posts the alert. The test then cuts and restores the host link, and the daemon shows the
      * still-outstanding prompt again. That repeat must not post again, so one notification stays, with
-     * the same post time. The source raises no second alert for a retained permission modal, and the
-     * notifier's ledger would drop one if it did. A second `notify` for the same tag would replace the
-     * notification and change its post time, which a count alone cannot see.
+     * the same post time. Since #1337 the new connection clears the host's held prompts, so the source
+     * re-emits the re-shown prompt's alert and the notifier's ledger drops the repeat. A second `notify`
+     * for the same tag would replace the notification and change its post time, which a count alone
+     * cannot see.
      *
      * LIVE only: the loopback relay cannot send FCM. **One real-claude turn**: the peer's held command.
      */
@@ -4064,8 +4179,8 @@ class InteractiveStreamE2ETest {
             val first = awaitAlert(string(R.string.notification_prompt), woke)
 
             // 4. AC-2: a second reconnect inside the wake window re-shows the prompt, and nothing is posted again.
-            // The retained permission modal emits no new alert for the re-show, so nothing observable marks its
-            // arrival: settle long enough for the daemon's `modal_shown` to reach the phone and the notifier.
+            // The source re-emits the re-shown prompt's alert (#1337) and the notifier's ledger drops it, so nothing
+            // observable marks its arrival: settle long enough for `modal_shown` to reach the phone and the notifier.
             cycleHostLink(serverId)
             SystemClock.sleep(RECONNECT_SETTLE_MS)
             val after = attentionAlerts()
@@ -5173,14 +5288,14 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Wait until the footer's `Cxt:` segment shows text that passes [shows]. The failure names [what] was
-     * expected and what the segment showed; the text is the app's own, never claude's.
+     * Wait until the footer's `Cxt:` segment shows text that passes [shows], and return that text. The failure
+     * names [what] was expected and what the segment showed; the text is the app's own, never claude's.
      */
     private fun awaitContextSegment(
         timeoutMs: Long,
         what: String,
         shows: (String) -> Boolean,
-    ) {
+    ): String {
         fun shown(): List<String> =
             composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().map { node ->
                 node.config
@@ -5188,11 +5303,16 @@ class InteractiveStreamE2ETest {
                     .orEmpty()
                     .joinToString("") { it.text }
             }
+        var matched: String? = null
         try {
-            composeTestRule.waitUntil(timeoutMs) { shown().any(shows) }
+            composeTestRule.waitUntil(timeoutMs) {
+                matched = shown().firstOrNull(shows)
+                matched != null
+            }
         } catch (e: ComposeTimeoutException) {
             throw AssertionError("the footer's context segment never showed $what; it shows ${shown()}", e)
         }
+        return checkNotNull(matched)
     }
 
     /** A slash-command suggestion labelled [label]; the composer, whose text a pick can equal, is excluded. */
@@ -5826,14 +5946,18 @@ class InteractiveStreamE2ETest {
 
     /**
      * A new `request_session_settings` for [conversationId] and its reply: each collection sends its own read.
-     * [serverId] is the host that holds the conversation, by default the harness's first host.
+     * The subscription starts with the host's held reading (#1320), which is skipped, so only the live
+     * connection's reply is returned. [serverId] is the host that holds the conversation, by default the
+     * harness's first host.
      */
     private fun freshSettings(
         conversationId: String,
         serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
     ): SessionSettings {
         val repository = hostRepository(serverId)
-        return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeSessionSettings(conversationId).filterNotNull().first() } }
+        return runBlocking {
+            withTimeout(THREAD_TIMEOUT_MS) { repository.observeSessionSettings(conversationId).filterNotNull().first { !it.held } }
+        }
     }
 
     /** The model menu the host publishes for [conversationId]; the first collection asks for it. */
@@ -6166,8 +6290,11 @@ class InteractiveStreamE2ETest {
         val row = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(row) }.isSuccess }
         composeTestRule.onAllNodes(row).onFirst().performClick()
+        // A reopened chat can already be running (#1313), including while it awaits permission. Its
+        // empty composer shows Stop rather than Send, so either control proves the thread arrived.
+        val composerControl = hasContentDescription(CD_SEND_MESSAGE) or hasContentDescription(string(R.string.cd_thread_interrupt))
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
+            composeTestRule.onAllNodes(composerControl).fetchSemanticsNodes().isNotEmpty() &&
                 composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
         }
     }
@@ -7207,7 +7334,7 @@ class InteractiveStreamE2ETest {
         const val PUSH_TIMEOUT_MS = 60_000L
 
         // After a reconnect, the time for the daemon's re-shown `modal_shown` to reach the phone and the
-        // notifier. Nothing observable marks its arrival: the retained modal raises no second alert.
+        // notifier. Nothing observable marks its arrival: the notifier's ledger drops the re-emitted alert.
         const val RECONNECT_SETTLE_MS = 5_000L
         const val POLL_MS = 250L
 

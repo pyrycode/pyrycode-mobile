@@ -32,7 +32,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -52,9 +51,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -104,13 +100,9 @@ import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.theme.threadColors
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -249,6 +241,8 @@ fun ThreadScreen(
     onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
     onRemoveAttachment: (Long) -> Unit = {},
     attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
+    // #1314: one signal per send the daemon accepted (ThreadViewModel.sentMessages); the list follows again.
+    sentMessages: Flow<Unit> = emptyFlow(),
     // #1325: the one-shot notice of why a send stopped at a file (ThreadViewModel.attachmentSendFailures).
     attachmentSendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
@@ -268,6 +262,9 @@ fun ThreadScreen(
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val openRequest = modalState as? ModalUiState.Open
+    // #1341: an open permission request goes first, as desktop's ComposerSlot hides QuestionPanelSlot. The
+    // question's picks live in the hoisted state (#1305's draft store), so it returns intact on resolution.
+    val shownQuestion = questionState.takeIf { openRequest == null }
     // #1306: one call site for both prompt kinds, so a question → permission hand-over keeps one owner.
     if (questionState != null || openRequest != null) QuestionPromptProtection()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -444,7 +441,7 @@ fun ThreadScreen(
                         localSendPending = localSendPending,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
-                        waitingForAnswers = questionState != null && connectionState == ConnectionState.Connected,
+                        waitingForAnswers = shownQuestion != null && connectionState == ConnectionState.Connected,
                         connectionState = connectionState,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
@@ -526,7 +523,7 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
-                    if (!state.hasMessages && state.queuedMessages.isEmpty() && questionState == null && openRequest == null) {
+                    if (!state.hasMessages && state.queuedMessages.isEmpty() && shownQuestion == null && openRequest == null) {
                         EmptyThreadState(
                             modifier =
                                 Modifier
@@ -543,34 +540,6 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                         val listState = rememberLazyListState()
-                        val hasStreamingMessage by remember(state.items) {
-                            derivedStateOf {
-                                state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming }
-                            }
-                        }
-                        var userScrolledAway by remember { mutableStateOf(false) }
-                        val autoScrollNestedScroll =
-                            remember {
-                                object : NestedScrollConnection {
-                                    override fun onPreScroll(
-                                        available: Offset,
-                                        source: NestedScrollSource,
-                                    ): Offset {
-                                        if (source == NestedScrollSource.UserInput && available.y != 0f) {
-                                            userScrolledAway = true
-                                        }
-                                        return Offset.Zero
-                                    }
-                                }
-                            }
-                        LaunchedEffect(listState) {
-                            snapshotFlow {
-                                listState.firstVisibleItemIndex == 0 &&
-                                    listState.firstVisibleItemScrollOffset == 0
-                            }.collect { atBottom ->
-                                if (atBottom) userScrolledAway = false
-                            }
-                        }
                         // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
                         // visible index, not the first.
                         //
@@ -583,7 +552,7 @@ fun ThreadScreen(
                         // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
                         // so distinctUntilChanged sees no edge and no second demand is issued.
                         val promptRowCount =
-                            (questionState?.let { it.batch.questions.size + 2 } ?: 0) +
+                            (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0)
                         val historyRowCount by rememberUpdatedState(rows.size + promptRowCount)
                         val hasHistoryRows by rememberUpdatedState(rows.isNotEmpty())
@@ -598,75 +567,22 @@ fun ThreadScreen(
                             }.distinctUntilChanged()
                                 .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
                         }
-                        val promptPresent = questionState != null || openRequest != null
-                        LaunchedEffect(hasStreamingMessage, promptPresent, listState) {
-                            if (!hasStreamingMessage || promptPresent) return@LaunchedEffect
-                            snapshotFlow {
-                                listState.layoutInfo.visibleItemsInfo
-                                    .firstOrNull { it.index == 0 }
-                                    ?.size ?: 0
-                            }.distinctUntilChanged()
-                                .collect {
-                                    if (!userScrolledAway) {
-                                        listState.scrollToItem(0)
-                                    }
-                                }
-                        }
-                        // #981: the list keeps its first visible row anchored by key, so under reverseLayout a new
-                        // newest row lands at index 0 below the viewport. The streaming pin above only covers a
-                        // row that is still streaming when it collects; a reply that arrives whole, a tool row or
-                        // the operator's own echo needs this one. A streaming row that grows keeps its key and is
-                        // left to the pin. drop(1) skips the first value, because userScrolledAway is not saved
-                        // and a recreation must not pull a reader who had scrolled away back to the newest end.
-                        val newestRowKey by rememberUpdatedState(rows.lastOrNull()?.listKey(rows.lastIndex))
-                        LaunchedEffect(listState) {
-                            snapshotFlow { newestRowKey }
-                                .drop(1)
-                                .collect {
-                                    if (!userScrolledAway) {
-                                        // A finger resting at the newest end holds the list at UserInput priority,
-                                        // which refuses this scroll with a CancellationException. Unlike the
-                                        // streaming pin, this effect never relaunches, so the refusal costs this one
-                                        // scroll only; a real cancellation of the effect still ends it.
-                                        try {
-                                            listState.scrollToItem(0)
-                                        } catch (e: CancellationException) {
-                                            ensureActive()
-                                        }
-                                    }
-                                }
-                        }
-                        // #1305: prompt rows insert at index 0 below the anchored newest row, so a batch arriving
-                        // while the reader sits at the newest end would land offscreen. Reveal it from its
-                        // actions upward, but only for that reader: userScrolledAway misses a programmatic scroll
-                        // into history, so the newest row must also still be the first visible item. drop(1)
-                        // keeps a recreation from moving a restored position, as in the #981 effect. #1306: a
-                        // permission request inserts at the same end, so either prompt's new identity reveals.
-                        val promptIdentity by rememberUpdatedState(questionState?.generation to openRequest?.modalId)
-                        LaunchedEffect(listState) {
-                            snapshotFlow { promptIdentity }
-                                .drop(1)
-                                .filter { (generation, modalId) -> generation != null || modalId != null }
-                                .collect {
-                                    val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
-                                    val atNewestEnd =
-                                        listState.firstVisibleItemScrollOffset == 0 &&
-                                            (listState.firstVisibleItemIndex == 0 || first?.key == newestRowKey)
-                                    if (!userScrolledAway && atNewestEnd) {
-                                        try {
-                                            listState.scrollToItem(0)
-                                        } catch (e: CancellationException) {
-                                            ensureActive()
-                                        }
-                                    }
-                                }
-                        }
+                        // #1314: one following state, derived from position on every scroll as desktop's
+                        // useThreadScrollPin does, replaces the #185 streaming pin, the #981 newest-row pin and
+                        // the #1305/#1306 prompt reveal. New rows, streamed growth and a new prompt pin a reader
+                        // who is following; an accepted send follows again.
+                        val promptIdentity by rememberUpdatedState(shownQuestion?.generation to openRequest?.modalId)
+                        FollowNewestEnd(
+                            listState = listState,
+                            newestRowKey = rows.lastOrNull()?.listKey(rows.lastIndex),
+                            newestRow = rows.lastOrNull(),
+                            promptIdentity = promptIdentity,
+                            promptPresent = questionState != null || openRequest != null,
+                            sentMessages = sentMessages,
+                        )
                         LazyColumn(
                             state = listState,
-                            modifier =
-                                Modifier
-                                    .fillMaxSize()
-                                    .nestedScroll(autoScrollNestedScroll),
+                            modifier = Modifier.fillMaxSize(),
                             reverseLayout = true,
                         ) {
                             openRequest?.let { open ->
@@ -681,7 +597,7 @@ fun ThreadScreen(
                                     gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp),
                                 )
                             }
-                            questionState?.let { pending ->
+                            shownQuestion?.let { pending ->
                                 val dispatch: (QuestionModalEvent) -> Unit = { onQuestionEvent(it, pending.generation) }
                                 val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp)
                                 item(key = "question-actions:${pending.generation}") {
@@ -928,13 +844,13 @@ fun ThreadScreen(
     }
     // Permission/choice request (#446). Hoisted single source = ThreadViewModel.currentModal (#445), already
     // scoped to this thread's conversation (#816): another conversation's modal arrives as Hidden. Since #1306
-    // Open renders inside the message list above; Dismissed surfaces the resolution reason once.
+    // Open renders inside the message list above; Dismissed surfaces the resolution reason.
     when (modalState) {
         is ModalUiState.Open -> Unit
         is ModalUiState.Dismissed -> {
             val reason = dismissReasonText(modalState.source)
-            // Keyed on modalId: Dismissed is a sticky terminal state (#445's fold), so this fires exactly
-            // once per resolution and never re-fires on unrelated recomposition.
+            // Keyed on modalId, so it never re-fires on unrelated recomposition. The host fold keeps this
+            // conversation's latest dismissal until the next reconnect (#1337), so reopening the chat shows it again.
             LaunchedEffect(modalState.modalId) {
                 snackbarHostState.showSnackbar(reason)
             }
