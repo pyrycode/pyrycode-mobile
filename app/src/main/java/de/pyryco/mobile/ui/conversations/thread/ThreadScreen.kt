@@ -851,6 +851,8 @@ fun ThreadScreen(
             onSystemPromptChange = { onOverflowEvent(ThreadEvent.SystemPromptEdit(it)) },
             onSystemPromptSave = { onOverflowEvent(ThreadEvent.SystemPromptSave) },
             onSystemPromptClear = { onOverflowEvent(ThreadEvent.SystemPromptClear) },
+            onMcpReconnect = { name -> onOverflowEvent(ThreadEvent.McpReconnect(name)) },
+            onMcpToggle = { name, enabled -> onOverflowEvent(ThreadEvent.McpToggle(name, enabled)) },
         )
     }
     if (state.deleteConfirmVisible) {
@@ -1129,6 +1131,7 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         messageCount = items.count { it is ThreadItem.MessageItem },
         memorySearch = runConfig.memorySearch,
         channelId = conversationId,
+        mcpServers = mcpStatus.takeIf { runConfig.mcpServersSupported },
     )
 
 /**

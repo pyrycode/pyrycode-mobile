@@ -10,12 +10,20 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
+import de.pyryco.mobile.data.repository.SessionPump
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -92,7 +100,7 @@ class HostConversationSourceAttentionTest {
         withSource { a, _, source ->
             a.events.emit(end("c", "t1", isError = true))
             runCurrent()
-            assertEquals(mapOf("c" to ConversationAttention.Failed), source.attention.value["a"])
+            assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
             source.markOpened("a", "c")
 
             a.repositories.value = null
@@ -264,6 +272,128 @@ class HostConversationSourceAttentionTest {
             )
         }
 
+    // #1452: each busy fact blinks only its own conversation on its own host, until that fact's clear edge.
+    @Test
+    fun eachBusyFactRunsOnlyItsConversationUntilItsOwnClearEdge() =
+        withRemoteSource { a, b, source, _ ->
+            val facts =
+                listOf(
+                    "stall" to listOf(::stall to ::liveEvent),
+                    "api_retry" to listOf(::apiRetry to ::apiRetryEnd),
+                    "compacting" to listOf(::compacting to ::compactingEnd),
+                    "resetting" to listOf(::resetting to ::resettingEnd, ::resetting to ::sessionTransition),
+                )
+            facts.forEach { (fact, edges) ->
+                edges.forEach { (on, off) ->
+                    listOf(Triple(a, "a", "c1"), Triple(b, "b", "c2")).forEach { (pump, host, id) ->
+                        pump.push(on(id))
+                        runCurrent()
+                        val other = if (host == "a") "b" else "a"
+                        assertEquals(
+                            fact,
+                            mapOf(host to mapOf(id to ConversationAttention.Running), other to emptyMap()),
+                            source.attention.value,
+                        )
+
+                        pump.push(off(id))
+                        runCurrent()
+                        assertEquals(
+                            fact,
+                            mapOf("a" to emptyMap<String, ConversationAttention>(), "b" to emptyMap()),
+                            source.attention.value,
+                        )
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun disconnectingAHostClearsOnlyItsBusyBlinks() =
+        withRemoteSource { a, b, source, hostA ->
+            a.push(stall("c1"))
+            a.push(compacting("c2"))
+            b.push(apiRetry("c1"))
+            runCurrent()
+            assertEquals(
+                mapOf(
+                    "a" to mapOf("c1" to ConversationAttention.Running, "c2" to ConversationAttention.Running),
+                    "b" to mapOf("c1" to ConversationAttention.Running),
+                ),
+                source.attention.value,
+            )
+
+            hostA.repositories.value = null
+            runCurrent()
+            assertEquals(mapOf("a" to emptyMap(), "b" to mapOf("c1" to ConversationAttention.Running)), source.attention.value)
+
+            // A new connection's repository starts with nothing busy.
+            hostA.repositories.value =
+                RemoteConversationRepository(BusyPump(), backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+            runCurrent()
+            assertEquals(mapOf("a" to emptyMap(), "b" to mapOf("c1" to ConversationAttention.Running)), source.attention.value)
+        }
+
+    /** Two hosts, each over a real [RemoteConversationRepository] whose frames the pumps deliver; host `a` last. */
+    private fun withRemoteSource(block: suspend TestScope.(BusyPump, BusyPump, HostConversationSource, Host) -> Unit) =
+        runTest {
+            val pumps = listOf(BusyPump(), BusyPump())
+            val hosts = listOf(Host("a"), Host("b"))
+            hosts.zip(pumps).forEach { (host, pump) ->
+                host.repositories.value =
+                    RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+            }
+            val source =
+                HostConversationSource(
+                    MutableStateFlow(hosts.map { it.entry }),
+                    { null },
+                    StandardTestDispatcher(testScheduler),
+                    viewing = viewing,
+                )
+            try {
+                runCurrent()
+                block(pumps[0], pumps[1], source, hosts[0])
+            } finally {
+                source.dispose()
+            }
+        }
+
+    /** Channel-backed inbound surface: unlimited buffer so a frame pushed before collection survives. */
+    private class BusyPump : SessionPump {
+        private val inboundChannel = Channel<Envelope>(Channel.UNLIMITED)
+        private var nextId = 1L
+
+        override val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
+
+        override fun send(envelope: Envelope): Boolean = true
+
+        fun push(frame: Pair<String, String>) {
+            inboundChannel.trySend(
+                Envelope(id = nextId++, type = frame.first, ts = TS, payload = MobileJson.parseToJsonElement(frame.second)),
+            )
+        }
+    }
+
+    private fun stall(id: String) = "stall" to """{"conversation_id":"$id"}"""
+
+    private fun liveEvent(id: String) = "turn_state" to """{"conversation_id":"$id","state":"idle"}"""
+
+    private fun apiRetry(id: String) = "api_retry" to """{"conversation_id":"$id","active":true,"current":2,"total":10}"""
+
+    private fun apiRetryEnd(id: String) = "api_retry" to """{"conversation_id":"$id","active":false,"current":2,"total":10}"""
+
+    private fun compacting(id: String) = "compacting" to """{"conversation_id":"$id","active":true}"""
+
+    private fun compactingEnd(id: String) = "compacting" to """{"conversation_id":"$id","active":false}"""
+
+    private fun resetting(id: String) =
+        "resetting" to """{"conversation_id":"$id","active":true,"phase":"wrapping_up","handoff":"pending"}"""
+
+    private fun resettingEnd(id: String) = "resetting" to """{"conversation_id":"$id","active":false,"phase":"","handoff":""}"""
+
+    private fun sessionTransition(id: String) =
+        "session_transition" to
+            """{"conversation_id":"$id","previous_session_id":"s1","new_session_id":"s2","reason":"clear","occurred_at":"$TS","workspace_cwd":null}"""
+
     private fun TestScope.collectAlerts(source: HostConversationSource): List<AttentionAlert> {
         val alerts = mutableListOf<AttentionAlert>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { source.alerts.toList(alerts) }
@@ -348,5 +478,6 @@ class HostConversationSourceAttentionTest {
 
     private companion object {
         val LIVE = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+        const val TS = "2026-10-02T10:00:00Z"
     }
 }
