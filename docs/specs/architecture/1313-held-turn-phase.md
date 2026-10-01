@@ -70,3 +70,7 @@ No device-only test: Robolectric covers the render. No rung-3 scenario: this is 
 ## Documentation handoff
 
 - Pending for the documentation stage: update `docs/knowledge/features/turn-state-thinking-flag.md` with the held `TurnPhaseProjection`, `observeTurnPhase` through `StableConversationRepository.switchToLive`, its reset on a new connection, and the removal of the "stale `true` on resume" caveat and of the `thinkingTransition` / `busyTransition` table.
+
+## Revisions
+
+- 2026-10-01 — Open Question resolved: `isThinking` / `isBusy` keep the sibling `WhileSubscribed(5_000)` default with no `replayExpirationMillis`. `ThreadViewModelTurnPhaseTest` shows the held upstream replaces the cached value as soon as the thread resubscribes, so a reset-to-false on expiry would only trade one stale frame for another. `ThreadViewModelTest` also gained `turnFlags_ignoreLiveEvents`, which pins that a live `turn_state` alone no longer moves the flags, so the per-ViewModel fold cannot come back as a second source.
