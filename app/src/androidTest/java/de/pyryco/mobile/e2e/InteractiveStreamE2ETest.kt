@@ -1207,13 +1207,17 @@ class InteractiveStreamE2ETest {
         val stamp = System.currentTimeMillis()
         val nameA = "${ARCHIVE_ORDER_PREFIX}a-$stamp"
         val nameB = "${ARCHIVE_ORDER_PREFIX}b-$stamp"
+        var beforeA: Set<String>? = null
+        var beforeB: Set<String>? = null
         var idA: String? = null
         var idB: String? = null
         try {
             // 1. A, then B: B is the newer by last use.
+            beforeA = hostConversationIds(serverId)
             idA = createChatOn(serverId)
             renameOpenThread(nameA)
             leaveThread()
+            beforeB = hostConversationIds(serverId)
             idB = createChatOn(serverId)
             renameOpenThread(nameB)
 
@@ -1250,11 +1254,8 @@ class InteractiveStreamE2ETest {
             val topmost = composeTestRule.onAllNodes(anyRestore).fetchSemanticsNodes().minOf { it.boundsInRoot.top }
             assertEquals("the second-archived chat is not the Archive's first row", topmost, topOf(restoreA))
         } finally {
-            listOfNotNull(idA, idB).forEach { id ->
-                runCatching {
-                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).delete(id) } }
-                }.onFailure { Log.w("E2E", "archive order cleanup failed: ${it::class.simpleName}") }
-            }
+            beforeA?.let { cleanupCreatedConversation(serverId, it, idA, "archive order cleanup failed") }
+            beforeB?.let { cleanupCreatedConversation(serverId, it, idB, "archive order cleanup failed") }
         }
     }
 
