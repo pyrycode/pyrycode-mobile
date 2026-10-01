@@ -42,6 +42,7 @@ import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.notifications.AttentionNotifier
 import de.pyryco.mobile.notifications.agentOf
 import de.pyryco.mobile.notifications.isMuted
+import de.pyryco.mobile.notifications.nameOf
 import de.pyryco.mobile.push.FirebasePushTokenSource
 import de.pyryco.mobile.push.PushTokenRefresher
 import de.pyryco.mobile.push.PushTokenSink
@@ -160,6 +161,7 @@ val appModule =
                 notificationsEnabled = get<AppPreferences>().notificationsEnabled,
                 isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
                 agentOf = { serverId, conversationId -> source.snapshots.value.agentOf(serverId, conversationId) },
+                nameOf = { serverId, conversationId -> source.snapshots.value.nameOf(serverId, conversationId) },
                 isForeground = {
                     ProcessLifecycleOwner
                         .get()
@@ -199,7 +201,11 @@ val appModule =
         single { UsageLimitDismissals() }
         // #932: reads a pending attachment's bytes through its content URI when the thread sends it.
         single<AttachmentReader> { ContentResolverAttachmentReader(androidContext().contentResolver, androidContext().packageName) }
-        viewModel { ScannerViewModel() }
+        viewModel {
+            val registry = get<RelayConnectionRegistry>()
+            // #1386: Confirm waits on the saved record's status before the scanner reports it paired.
+            ScannerViewModel(get(), registry, registry::pairingStatus)
+        }
         viewModel {
             val registry = get<RelayConnectionRegistry>()
             // #842: the route's optional target host; blank is the unrouted add-host entry.

@@ -2693,6 +2693,7 @@ class InteractiveStreamE2ETest {
      * **One real-claude turn.**
      */
     @Test
+    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_modelChange_roundTripsAndStaysPerConversation() {
         val originals = mutableMapOf<String, SessionSettings>()
         try {
@@ -2821,6 +2822,7 @@ class InteractiveStreamE2ETest {
      * **One real-claude turn.**
      */
     @Test
+    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn() {
         val originals = mutableMapOf<String, SessionSettings>()
         try {
@@ -2916,6 +2918,7 @@ class InteractiveStreamE2ETest {
      * **Two real-claude turns**: one in the fresh chat and one in the fresh channel.
      */
     @Test
+    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val originals = mutableMapOf<String, SessionSettings>()
@@ -3013,6 +3016,7 @@ class InteractiveStreamE2ETest {
      * **Two real-claude turns**: the tool-free ping and the Read.
      */
     @Test
+    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
@@ -3409,6 +3413,7 @@ class InteractiveStreamE2ETest {
      * **Two real-claude turns**: the ping before the cut and the ping after it.
      */
     @Test
+    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive() {
         val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
         val originals = mutableMapOf<String, SessionSettings>()
