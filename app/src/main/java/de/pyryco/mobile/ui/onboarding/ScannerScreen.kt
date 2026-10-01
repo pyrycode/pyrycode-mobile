@@ -66,12 +66,17 @@ fun ScannerScreen(
     modifier: Modifier = Modifier,
     onConfirmPairing: () -> Unit = {},
     onDeclinePairing: () -> Unit = {},
+    onRetryPairing: () -> Unit = {},
+    onCancelPairing: () -> Unit = {},
     cameraPreview: @Composable () -> Unit = {},
 ) {
     when (state) {
         ScannerUiState.PermissionRequesting,
         ScannerUiState.ReadyToScan,
         is ScannerUiState.Decoded,
+        // Shown only for the frame before the route navigates; the camera stays gated on ReadyToScan.
+        ScannerUiState.Paired,
+        ScannerUiState.Cancelled,
         ->
             ScannerViewport(
                 onNavigateBack = onNavigateBack,
@@ -98,6 +103,26 @@ fun ScannerScreen(
                 onConfirm = onConfirmPairing,
                 onDecline = onDeclinePairing,
                 modifier = modifier,
+            )
+        // #1386: the same modal stays up while the saved host is verified; Cancel stops the wait.
+        is ScannerUiState.Verifying ->
+            PairingConfirmContent(
+                fingerprint = state.fingerprint,
+                onConfirm = {},
+                onDecline = onCancelPairing,
+                modifier = modifier,
+                cancelLabel = "Cancel",
+                loading = true,
+            )
+        is ScannerUiState.VerificationFailed ->
+            PairingConfirmContent(
+                fingerprint = state.fingerprint,
+                onConfirm = onRetryPairing,
+                onDecline = onCancelPairing,
+                modifier = modifier,
+                cancelLabel = "Cancel",
+                submitLabel = if (state.retryable) "Retry" else null,
+                error = state.message,
             )
     }
 }
@@ -411,14 +436,20 @@ private fun PairingConfirmContent(
     onConfirm: () -> Unit,
     onDecline: () -> Unit,
     modifier: Modifier = Modifier,
+    cancelLabel: String = "Don't pair",
+    submitLabel: String? = "Confirm pairing",
+    loading: Boolean = false,
+    error: String? = null,
 ) {
     MobileModal(
         title = "Pair",
         onDismissRequest = onDecline,
         onSubmit = onConfirm,
         modifier = modifier,
-        cancelLabel = "Don't pair",
-        submitLabel = "Confirm pairing",
+        loading = loading,
+        error = error,
+        cancelLabel = cancelLabel,
+        submitLabel = submitLabel,
     ) {
         // The desktop's fingerprint is colon-hex, not the older Figma mock code. Keep it verbatim.
         SelectionContainer {

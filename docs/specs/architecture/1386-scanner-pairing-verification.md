@@ -159,3 +159,12 @@ Pending for the documentation stage: `docs/knowledge/features/scanner-screen.md`
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-01
+
+## Revisions
+
+### 2026-10-01 — during implementation
+
+- **`VerificationFailed` carries `message: String` and `retryable: Boolean`, not the `PairingVerification.Failure`.** Kotlin rejects an `internal` member inside the public `ScannerUiState` interface, and a public case cannot expose the internal `Failure`. The VM copies both fields from the step's failure, so the step still owns the text and the retry rule; the modal renders `message` in the error slot and offers Retry only when `retryable`. The failure `code` is logged by the VM at the moment of failure and is not kept in state.
+- **Redaction assertion scoped.** The security review said the JVM test would assert the fingerprint is absent from state `toString`. The fingerprint is public (on screen, no custom `toString` on `AwaitingConfirm`), so the test asserts it is absent from every log line and asserts only the token is absent from the state's `toString`.
+- **Save-failure constant** is `SAVE_FAILED_MESSAGE` in `ScannerViewModel.kt` (same copy as the removed `SAVE_FAILED_MSG`).
+- **Open question resolved** as written: Retry never returns to `AwaitingConfirm`; the modal keeps its fingerprint content as the "stays up" requirement reads.

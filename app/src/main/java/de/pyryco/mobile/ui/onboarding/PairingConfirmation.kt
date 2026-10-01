@@ -20,10 +20,10 @@ import de.pyryco.mobile.data.network.RelayConnectionController
  * - [controller].connect() runs **only after** [store].save returns, so a persist that throws never
  *   dials a record that did not persist (AC 1 fail-closed): the connection always tracks a record that
  *   is actually on disk and re-loadable after process death.
- * - connect() is called **before** [onPersisted] because [onPersisted] navigates away from the Scanner,
- *   cancelling this coroutine's scope. connect() launches the loop on the supervisor's own scope, so
- *   that cancellation does not race the loop start; it is idempotent, so a re-pair while a loop is
- *   already running is a no-op (the reload-per-dial change switches servers on the next dial instead).
+ * - connect() is called **before** [onPersisted] because both callers then wait for the saved record's
+ *   status (#1385, #1386), which needs a started loop. connect() launches the loop on the supervisor's own
+ *   scope, so a cancelled caller does not race the loop start; it is idempotent, so a re-pair while a loop
+ *   is already running is a no-op (the reload-per-dial change switches servers on the next dial instead).
  *
  * The `catch` is narrow ([PairedServerStoreException] only) so a `CancellationException` from a
  * cancelled save propagates rather than being swallowed. Logging stays in the caller's [onFailed] so
