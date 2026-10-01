@@ -103,7 +103,7 @@ for what still reaches the old `Scaffold`-sibling `when` block (`Dismissed` only
 ## The render path
 
 ```
-ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (host-level, modalId-keyed), scoped to this thread's own conversation since #816
+ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (host-level, modalId-keyed; #1337 holds every outstanding prompt, not one), scoped to this thread's own conversation since #816
 ThreadViewModel.armedOptionId : StateFlow<String?>          ◀── #451 arm projection (VM-scoped)
 ThreadViewModel.alwaysAllowAccepted : StateFlow<Boolean>    ◀── #818 offer-acceptance projection, now backed by PermissionDraftStore (#1306)
 ThreadViewModel.modalSendErrors : Flow<Unit>                ◀── #451 payload-free one-shot
@@ -140,11 +140,15 @@ taps](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306)). `ThreadScr
 while `navigationEvents` stays in `MainActivity` because navigation is a host concern. `modalSendErrors` is a
 single-consumer `Channel.receiveAsFlow()`, so `MainActivity` only forwards the reference.
 
-Host-level by construction: the coordinator's fold holds **one** modal per host, keyed on `modalId`, not a
-per-conversation map. Since [#816](current-modal-state.md), `ThreadViewModel` filters that single modal
-down to its own conversation (`ModalUiState.scopedTo`, driven by `Shown.conversationId` — see [Modal
-events](modal-events.md)) before this overlay ever sees it, so the overlay only draws in the thread whose
-conversation raised the modal — never in a second open thread for another conversation on the same host.
+Host-level by construction: the coordinator's fold holds **every outstanding prompt** on a host in one
+[`HostModalState`](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure), keyed on `modalId`
+([#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) — before it, the fold held a single
+modal and a second chat's prompt replaced the first's). `ThreadViewModel` filters the host's prompts down to
+its own conversation (`HostModalState.scopedTo`, driven by `Shown.conversationId` — see [Modal
+events](modal-events.md)) before this overlay ever sees them, so the overlay only draws in the thread whose
+conversation raised a given prompt — never in a second open thread for another conversation on the same
+host, and (since #1337) never pre-empted by a second chat's prompt arriving: chat A's card stays mounted
+while chat B raises and even resolves its own.
 
 ## The inline request (`Open`)
 
@@ -314,10 +318,16 @@ rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyM
 
 When `currentModal` transitions to `Dismissed`, **no overlay renders** (it is removed — AC #3) and a
 snackbar surfaces the resolution reason via a `LaunchedEffect(modalState.modalId)`. Keying on `modalId`
-fires it **exactly once** per resolution (`Dismissed` is a sticky terminal state in #445's fold) and never
-re-fires on unrelated recomposition. The Scaffold gains a `snackbarHostState = remember {
-SnackbarHostState() }` + `snackbarHost`, mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md)
-dismiss-reason precedent.
+fires it **exactly once per composition of that `LaunchedEffect`** — not once per resolution overall.
+Through #1337, `Dismissed` was a sticky terminal state that a thread, once scoped onto it, never left until
+superseded by a new `Open`; since #1337, `HostModalState.scopedTo` keeps returning that conversation's most
+recent `Dismissed` from `resolved` (see [Current-modal state § the `HostModalState`
+fold](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure)) for as long as the **current connection** lasts,
+so **leaving the thread and reopening it re-runs `LaunchedEffect(modalId)` with the same id and the snackbar
+fires again.** This is a deliberate consequence of #1337's reconnect-only clear, not a regression: the
+snackbar is a one-shot *per view*, not a one-shot *per device*, and it stops the moment a reconnect empties
+`resolved`. The Scaffold gains a `snackbarHostState = remember { SnackbarHostState() }` + `snackbarHost`,
+mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent.
 
 `dismissReasonText(source)` maps the verbatim wire token to a **local** string resource:
 
@@ -430,77 +440,25 @@ same outstanding request. See [Modal answer flow § Leaving the conversation cle
 grant](modal-answer-flow.md#leaving-the-conversation-clears-the-arm-not-the-grant-1306).
 
 The [#445 open question](current-modal-state.md#lifecycle-errors-edge-cases) — should a connection drop clear
-a stale `Open`? — is **not** built here, nor in #451/#452/#1306: the daemon validates `modalId` server-side so a
-stale answer is rejected (surfacing via #451's error signal), so a proactive stale-clear is a UX nicety
-deferred to **#440** + the connection signal.
+a stale `Open`? — stayed unbuilt through #451/#452/#1306: the daemon validates `modalId` server-side so a
+stale answer is rejected (surfacing via #451's error signal). [#1337](current-modal-state.md#lifecycle-errors-edge-cases)
+answers the related question for a **new connection** (not a drop): the daemon's guaranteed connect-time
+re-send of every still-outstanding prompt means a held prompt can be safely cleared the moment a fresh
+connection is published, so it is cleared then — but a plain teardown with no new connection yet still
+retains, exactly as #445/#492 left it. The session-grant checkbox survives this clear for the same request:
+`PermissionDraftStore`'s `keeps` rule (see [Modal answer flow § The session-grant
+draft](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)) retires a draft
+only once its request is resolved or its conversation shows a different one, never merely because a
+reconnect emptied `hostModals` — so a daemon re-send of the same `modal_id` with the same rules after a
+background/foreground cycle finds the checkbox still ticked.
 
 ## Testing
 
-Shared screen test `app/src/sharedTest/.../thread/ThreadScreenModalTest.kt`, available to both unit and
-device suites, mirrors `ThreadScreenOverflowTest`'s idiom — the #446 set
-(render array-order, exactly-one-default-highlight, dismissed × {remote, local, timeout}, forward-compat
-fallback, hidden), extended by #452 with the armed/two-tap/send-error cases, and **adapted by
-[#1306](../../specs/architecture/1306-inline-permissions.md) to the inline surface (31/31)**:
-
-- **armed affordance** — `armedOptionId = "allow_once"`: **exactly one** option carries the
-  `modal_armed_option_desc` marker and it is `allow_once`; with `armedOptionId = null` **none** does; the
-  fail-safe-deny default (`reject_once`) **never** carries it even when a non-default is armed.
-- **tap forwarding carries the rendered `modalId`** — tapping the default forwards
-  `onModalOption("m1", "reject_once")`; tapping the explicit Cancel button invokes `onModalCancel("m1")`.
-- **two-tap confirm (the AC#4 core)** — driven through a small **stateful VM-mimicking stand-in** (a
-  `var armed by remember { mutableStateOf<String?>(null) }` whose `onModalOption` mimics #451's branch order),
-  recomposing `armedOptionId = armed`: the **first** tap of a non-default arms it (no send recorded) **and**
-  renders the armed affordance; the **second** tap of the same option confirms (send recorded).
-- **send-error confidentiality** — a `Channel<Unit>` fed into `modalSendErrors` emits once: `modal_send_failed`
-  is displayed and no payload substring (`rm -rf`) appears in the snackbar.
-- **decision context** (#817) and **always-allow offer** (#818) — unchanged from the pre-#1306 assertions,
-  now driven over the inline card: the reason/description/blocked-path labels, the `classifier` / `rule`
-  sentence labels and the raw-category fallback; the offer's label and rules render between the context and
-  the options, and tapping the row calls `onAlwaysAllowChanged("m1", true)` and **not** `onOption`.
-- **#1306's new cases** — no dialog anywhere in the tree; the request renders in an **empty thread**; Back
-  invokes the screen's own `onBack` without answering or cancelling; a history reader's scroll position is
-  unmoved by request arrival or a grant toggle, and neither raises a second history demand; a new request
-  reveals at the newest end (mirroring the #1305 reveal effect); Cancel renders below the card; and 320×700
-  at 150% text keeps every decision reachable, wrapped and unclipped.
-
-The compact-width case scrolls to every decision at 1.5× text and checks long labels for wrapping, overflow
-and ellipsis. The fold logic remains unit-tested in #445, the decision logic in #451/#818/#1306 (see [Modal
-answer flow § Testing](modal-answer-flow.md#testing)), and decode in [Modal
-events](modal-events.md#the-four-decision-context-fields-817).
-
-**Device-only `ThreadPermissionCaptureTest`, adapted to assert the activity window instead of the retired
-dialog window.** Screen capture and obscured-touch hardening had a Compose dialog's own window to reach
-through `(LocalView.current.parent as DialogWindowProvider).window` before #1306; with no dialog, the
-device test now reaches `LocalView.current.context` as an `Activity` directly, asserting `FLAG_SECURE` and
-the decor `filterTouchesWhenObscured` filter on the **activity** window while a request is present, that an
-obscured `MotionEvent` on the default option and on the grant row is dropped while an unobscured one at the
-same point acts, and that the prior window policy is restored once the request is removed. A focused
-managed-device run (API 33) recorded 3 executed, 0 failed, 0 skipped; the affected
-`QuestionBatchModalTest#inline_prompt_protects_capture_rejects_obscured_touches_and_restores_window_policy`
-(the shared-owner counterpart) also passed, 1/1. Static-fixture screenshots of the normal, checked, armed
-(412 × 892) and compact (320 × 700, 1.5×) states live under `app/src/androidTest/assets/permission-1306/`,
-for the app-wide comparison in #1220.
-
-> **Known test-strength NIT (code review, optional, predates #1306):** the send-error confidentiality test
-> drives the error over a `Hidden` modal, so the `prompt` (`rm -rf …`) is never composed and the
-> `assertDoesNotExist("rm -rf")` passes **vacuously**. The contract is enforced structurally (the event is
-> `Unit` + a fixed local string), so not a real gap — but the assertion would be stronger driven over an
-> **`Open`** request where the payload is actually on screen.
-
-**Rung 3 (live end-to-end).** `InteractiveStreamE2ETest.interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`
-was adapted to the inline card's selectors (`awaitReadPrompt` now scopes to the request card, not an
-ancestor holding Cancel — a plain "holds Cancel" ancestor would also match the phone's own message naming
-the same file inline). It ticks the grant and arms Allow in conversation A, leaves for B (no card, no A
-prompt text), returns to A (grant still checked, arm cleared), and then needs two new taps — proving the
-phone's answer, A's session grant and B's peer resolution survive the inline move. The dispatcher's
-post-verifier live run recorded **43 executed, 43 passed, 0 failed, 0 skipped** for the full
-`InteractiveStreamE2ETest` suite on 2026-09-30, with this method present and passing among them. See [Real-claude e2e coverage](../../e2e-interactive-stream.md).
-
-> **Known test-strength NIT (code review, optional):** the send-error confidentiality test drives the error
-> over a `Hidden` modal, so the `prompt` (`rm -rf …`) is never composed and the `assertDoesNotExist("rm -rf")`
-> passes **vacuously**. The contract is enforced structurally (the event is `Unit` + a fixed local string), so
-> not a real gap — but the assertion would be stronger driven over an **`Open`** modal where the payload is
-> actually on screen. A candidate strengthening when **#440** next touches this test.
+Split into [Permission-modal overlay — testing](permission-modal-overlay-testing.md) (2026-10-01, to stay
+under the docs-guard size cap): the shared `ThreadScreenModalTest` coverage, the device-only capture test,
+and the rung-3 live scenarios (`interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` and
+[#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)'s
+`interactiveTurn_permissionPrompts_heldPerConversation`).
 
 ## Visual spec status
 
@@ -531,6 +489,9 @@ design gap, not an exact component match.
 
 ## Related
 
+- [Permission-modal overlay — testing](permission-modal-overlay-testing.md) — the shared screen test, the
+  device-only capture test, and the rung-3 live scenarios, split out on 2026-10-01 to stay under the
+  docs-guard size cap.
 - [#446 implementation notes](../codebase/446.md) — the base overlay: files, line refs, lessons, NITs.
 - [#452 implementation notes](../codebase/452.md) — the live armed affordance + Cancel + send-error +
   tapjacking + route-host wiring: files, line refs, the tapjacking pattern, lessons.

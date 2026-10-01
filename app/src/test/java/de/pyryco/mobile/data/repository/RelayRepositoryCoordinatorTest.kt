@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.model.scopedTo
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
@@ -915,6 +916,92 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
+    // ---- #1337: the host holds every prompt and drops them on each new connection ----------------
+
+    // AC-2: prompts held across a teardown stay until the next connection is published, which drops them; the
+    // daemon's connect-time re-send is the only way one returns.
+    @Test
+    fun hostModals_holdEveryChatsPrompt_andANewConnectionDropsThemUntilReSent() =
+        runTest {
+            val env = newEnv()
+            val pump1 = openInteractiveConnection(env)
+            pump1.push(modalShownEnvelope("m1", conversationId = "conv-a"))
+            pump1.push(modalShownEnvelope("m2", conversationId = "conv-b"))
+            runCurrent()
+            assertEquals(listOf("m1", "m2"), env.coordinator.heldIds())
+            assertEquals("m2", (env.coordinator.currentModal.value as ModalUiState.Open).modalId)
+
+            env.connections.value = null
+            runCurrent()
+            assertEquals("held while disconnected", listOf("m1", "m2"), env.coordinator.heldIds())
+
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            assertEquals("dropped when the next connection is published", emptyList<String>(), env.coordinator.heldIds())
+            assertEquals(ModalUiState.Hidden, env.coordinator.currentModal.value)
+
+            val pump2 = env.pumps.last()
+            pump2.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+            pump2.push(modalShownEnvelope("m2", conversationId = "conv-b"))
+            runCurrent()
+            assertEquals("only the re-sent prompt returns", listOf("m2"), env.coordinator.heldIds())
+            assertEquals(
+                ModalUiState.Hidden,
+                env.coordinator.hostModals.value
+                    .scopedTo("conv-a"),
+            )
+
+            env.coordinator.close()
+        }
+
+    // AC-3: a dismissed id is not shown again on the same connection, and is when the daemon re-sends it after a
+    // reconnect. The reconnect here switches transports directly, with no null between them.
+    @Test
+    fun hostModals_aDismissedIdStaysGoneOnItsConnection_andReturnsWhenReSentAfterReconnect() =
+        runTest {
+            val env = newEnv()
+            val pump1 = openInteractiveConnection(env)
+            pump1.push(modalShownEnvelope("m1", conversationId = "conv-a"))
+            pump1.push(modalDismissedEnvelope("m1"))
+            pump1.push(modalShownEnvelope("m1", conversationId = "conv-a"))
+            runCurrent()
+            assertEquals(emptyList<String>(), env.coordinator.heldIds())
+            assertTrue(
+                env.coordinator.hostModals.value
+                    .scopedTo("conv-a") is ModalUiState.Dismissed,
+            )
+
+            val pump2 = openInteractiveConnection(env)
+            assertTrue(pump1.closed)
+            pump2.push(modalShownEnvelope("m1", conversationId = "conv-a"))
+            runCurrent()
+            assertEquals(listOf("m1"), env.coordinator.heldIds())
+
+            env.coordinator.close()
+        }
+
+    // AC-2: one coordinator per host, so a reconnect clears only its own host's prompts.
+    @Test
+    fun hostModals_anotherHostsReconnectLeavesThisHostsPrompts() =
+        runTest {
+            val hostA = newEnv()
+            val hostB = newEnv()
+            openInteractiveConnection(hostA).push(modalShownEnvelope("a1", conversationId = "conv-a"))
+            openInteractiveConnection(hostB).push(modalShownEnvelope("b1", conversationId = "conv-b"))
+            runCurrent()
+            assertEquals(listOf("a1"), hostA.coordinator.heldIds())
+
+            hostA.connections.value = null
+            runCurrent()
+            openInteractiveConnection(hostA)
+
+            assertEquals(emptyList<String>(), hostA.coordinator.heldIds())
+            assertEquals(listOf("b1"), hostB.coordinator.heldIds())
+
+            hostA.coordinator.close()
+            hostB.coordinator.close()
+        }
+
     // #822: the question fold lives on the connection's repository and the coordinator projects it
     // Eagerly, so a batch that arrives before any thread screen subscribes is still held.
     @Test
@@ -957,7 +1044,7 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
-    // Unlike currentModal, question state resets on reconnect: the daemon's connect-time reconcile re-sends
+    // Like hostModals, question state resets on reconnect: the daemon's connect-time reconcile re-sends
     // every outstanding batch under its original id, and one resolved while mobile was away is absent.
     @Test
     fun questionBatches_resetOnReconnectAndHoldReconciledBatchOnce() =
@@ -1766,18 +1853,30 @@ class RelayRepositoryCoordinatorTest {
         prompt: String = "Run rm -rf build/?",
         options: List<Pair<String, String>> = listOf("allow" to "Allow", "deny" to "Deny"),
         defaultOptionId: String = "deny",
+        conversationId: String = "",
     ): Envelope {
         val optionsJson = options.joinToString(",") { (id, label) -> """{"id":"$id","label":"$label"}""" }
+        val conversation = if (conversationId.isEmpty()) "" else ""","conversation_id":"$conversationId""""
         return Envelope(
             id = 1L,
             type = "modal_shown",
             ts = TS,
             payload =
                 MobileJson.parseToJsonElement(
-                    """{"modal_id":"$modalId","class":"$modalClass","title":"$title","prompt":"$prompt","options":[$optionsJson],"default_option_id":"$defaultOptionId"}""",
+                    """{"modal_id":"$modalId","class":"$modalClass","title":"$title","prompt":"$prompt","options":[$optionsJson],"default_option_id":"$defaultOptionId"$conversation}""",
                 ),
         )
     }
+
+    private fun modalDismissedEnvelope(modalId: String): Envelope =
+        Envelope(
+            id = 1L,
+            type = "modal_dismissed",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"modal_id":"$modalId","outcome":"allow","source":"remote"}"""),
+        )
+
+    private fun RelayRepositoryCoordinator.heldIds(): List<String> = hostModals.value.outstanding.map { it.modalId }
 
     /** Publishes a new connection, drives its pump to Open with `interactive`, and returns the pump. */
     private fun TestScope.openInteractiveConnection(env: Env): FakeManagedPump {

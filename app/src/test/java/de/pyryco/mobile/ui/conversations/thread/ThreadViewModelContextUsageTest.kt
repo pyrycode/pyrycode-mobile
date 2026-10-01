@@ -28,8 +28,9 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * #946: the footer and the Status sheet read Claude's reported context percentage from one run-config field.
- * It is shown as sent, never derived, and `null` whenever the repository holds no reading for this conversation.
+ * #946 / #1411: the footer and the Status sheet read the context percentage from one run-config field. A
+ * reported reading's `totalTokens` / `maxTokens` give it; with no reading, the session settings' token pair does;
+ * with neither it is `null`.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModelContextUsageTest {
@@ -44,7 +45,7 @@ class ThreadViewModelContextUsageTest {
     }
 
     @Test
-    fun beforeAnyReading_theContextUsageIsUnavailable() =
+    fun beforeAnyReadingOrSettings_theContextUsageIsUnavailable() =
         runTest {
             val vm = collectedVm(ScriptedRepo())
 
@@ -52,39 +53,75 @@ class ThreadViewModelContextUsageTest {
         }
 
     @Test
-    fun aReading_isShownAsClaudeReportedIt_notDerivedFromTheTokenTotals() =
+    fun aReading_isComputedFromItsTokenTotals_notItsReportedPercentage() =
         runTest {
             val repo = ScriptedRepo()
-            // 84% as reported, although 50_000 / 200_000 would be 25%.
+            // 50_000 / 200_000 is 25%, although the reading says 84.
             repo.report(CONV, usage(total = 50_000, max = 200_000, percentage = 84))
             val vm = collectedVm(repo)
 
-            assertEquals(84, vm.state.value.runConfig.contextPercent)
+            assertEquals(25, vm.state.value.runConfig.contextPercent)
         }
 
     @Test
     fun aReplacedReading_isShownInPlaceOfTheOldOne() =
         runTest {
             val repo = ScriptedRepo()
-            repo.report(CONV, usage(percentage = 12))
+            repo.report(CONV, usage(total = 24_000))
             val vm = collectedVm(repo)
             assertEquals(12, vm.state.value.runConfig.contextPercent)
 
-            repo.report(CONV, usage(percentage = 37))
+            repo.report(CONV, usage(total = 74_000))
 
             assertEquals(37, vm.state.value.runConfig.contextPercent)
         }
 
     @Test
-    fun aClearedReading_returnsToUnavailable() =
+    fun withNoReading_theSettingsTokenPairFillsIn() =
         runTest {
             val repo = ScriptedRepo()
-            repo.report(CONV, usage(percentage = 12))
+            repo.settings.value = settings(usedTokens = 150_000, windowTokens = 200_000)
             val vm = collectedVm(repo)
+
+            assertEquals(75, vm.state.value.runConfig.contextPercent)
+        }
+
+    @Test
+    fun aReading_outranksTheSettings_andClearingItFallsBackToThem() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.settings.value = settings(usedTokens = 150_000, windowTokens = 200_000)
+            val vm = collectedVm(repo)
+
+            repo.report(CONV, usage(total = 24_000))
+            assertEquals(12, vm.state.value.runConfig.contextPercent)
 
             // What the repository does on a session transition or a reconnect.
             repo.readings.update { it - CONV }
 
+            assertEquals(75, vm.state.value.runConfig.contextPercent)
+        }
+
+    @Test
+    fun aClearedReadingWithNoSettings_returnsToUnavailable() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.report(CONV, usage(total = 24_000))
+            val vm = collectedVm(repo)
+
+            repo.readings.update { it - CONV }
+
+            assertNull(vm.state.value.runConfig.contextPercent)
+        }
+
+    @Test
+    fun aSettingsZeroWindow_isUnavailable() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.settings.value = settings(usedTokens = 0, windowTokens = 0)
+            val vm = collectedVm(repo)
+
+            assertEquals(true, vm.state.value.runConfig.settingsAvailable)
             assertNull(vm.state.value.runConfig.contextPercent)
         }
 
@@ -92,23 +129,12 @@ class ThreadViewModelContextUsageTest {
     fun aReadingForAnotherConversation_doesNotAppear() =
         runTest {
             val repo = ScriptedRepo()
-            repo.report(OTHER_CONV, usage(percentage = 64))
+            repo.report(OTHER_CONV, usage(total = 128_000))
             val vm = collectedVm(repo)
             assertNull(vm.state.value.runConfig.contextPercent)
 
-            repo.report(OTHER_CONV, usage(percentage = 65))
+            repo.report(OTHER_CONV, usage(total = 130_000))
 
-            assertNull(vm.state.value.runConfig.contextPercent)
-        }
-
-    @Test
-    fun theTranscriptDerivedSettingsFigures_neverFillTheUnavailableState() =
-        runTest {
-            val repo = ScriptedRepo()
-            repo.settings.value = settings(usedTokens = 150_000, windowTokens = 200_000)
-            val vm = collectedVm(repo)
-
-            assertEquals(true, vm.state.value.runConfig.settingsAvailable)
             assertNull(vm.state.value.runConfig.contextPercent)
         }
 
@@ -128,7 +154,7 @@ class ThreadViewModelContextUsageTest {
     private fun usage(
         total: Long = 10_000,
         max: Long = 200_000,
-        percentage: Int,
+        percentage: Int = 0,
     ) = ContextUsage(totalTokens = total, maxTokens = max, percentage = percentage, asOf = null)
 
     private fun settings(

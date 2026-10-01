@@ -49,8 +49,8 @@ internal class QuestionBatchProjection(
      * stream: the daemon's connect-time reconcile re-sends every outstanding batch in one burst, and an
      * event stream folded downstream could lose part of it to a late subscriber. A new connection builds a
      * new repository, so this starts empty and the reconcile rebuilds it — the protocol's reset-on-reconnect
-     * rule, the opposite of `currentModal`'s retain. On the concrete repository only, like
-     * [RemoteConversationRepository.modalEvents].
+     * rule, which the coordinator's modal fold also applies once the next connection is published. On the
+     * concrete repository only, like [RemoteConversationRepository.modalEvents].
      */
     private val mutableQuestionBatches = MutableStateFlow<List<QuestionBatch>>(emptyList())
     val batches: StateFlow<List<QuestionBatch>> = mutableQuestionBatches.asStateFlow()

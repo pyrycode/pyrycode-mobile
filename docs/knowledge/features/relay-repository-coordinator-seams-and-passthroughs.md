@@ -152,42 +152,64 @@ The decoded [`ModalEvent`](modal-events.md) stream ([#437](../codebase/437.md)) 
 the same posture as `liveSessionEvents`, so a UI ViewModel cannot reach it directly. The coordinator
 threads it up as a **byte-for-byte mirror** of the live-session seam — switching off the same single
 `activeConnection` source (`conn?.repo`) — and, as of [#492](../codebase/492.md), **folds it here** into
-one "which modal is open" projection per retained host bundle:
+a host-level projection. **[#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) widened
+that projection from one modal to [`HostModalState`](current-modal-state.md), holding every outstanding
+prompt on the host, keyed on `modalId`** — see [Current-modal state](current-modal-state.md) for the full
+design; this section only covers the seam shape:
 
 ```kotlin
-// #492: PRIVATE — its sole consumer is currentModal below.
+// #492: PRIVATE — its sole consumer is hostModals below. #1337 widens the element type to ModalEvent? and
+// prefixes each connection's inner flow with a null "this connection just started" marker.
 @OptIn(ExperimentalCoroutinesApi::class)
-private val modalEvents: Flow<ModalEvent> =
-    activeConnection.flatMapLatest { conn -> conn?.repo?.modalEvents ?: emptyFlow() }
+private val modalEvents: Flow<ModalEvent?> =
+    activeConnection.flatMapLatest { conn -> conn?.repo?.modalEvents?.onStart<ModalEvent?> { emit(null) } ?: emptyFlow() }
 
-// #492: the hoisted projection, folded once per coordinator.
-val currentModal: StateFlow<ModalUiState> =
+// #1337: every outstanding prompt + this connection's resolved ids, folded once per coordinator. A null
+// input (the reconnect marker) resets to an empty HostModalState.
+val hostModals: StateFlow<HostModalState> =
     modalEvents
-        .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
-        .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
+        .scan(HostModalState()) { state, event -> if (event == null) HostModalState() else state.reduce(event) }
+        .stateIn(scope, SharingStarted.Eagerly, HostModalState())
+
+// #1337: the single-value view kept for the conversation-list attention readers until #1338.
+val currentModal: StateFlow<ModalUiState> =
+    hostModals.map { it.latestOutstanding }.stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 ```
 
-- **`modalEvents` is cold and now `private`** — events, no current value. The fold that holds "which modal
-  is currently open" moved here in #492 from [`ThreadViewModel`](current-modal-state.md): folding it at a
-  screen-scoped VM dropped any `modal_shown` fired before a thread screen subscribed (the source is
+- **`modalEvents` is cold and now `private`** — events, no current value. The fold that holds "which
+  prompts are currently open" moved here in #492 from [`ThreadViewModel`](current-modal-state.md): folding
+  it at a screen-scoped VM dropped any `modal_shown` fired before a thread screen subscribed (the source is
   `replay = 0`), so an outstanding prompt stayed stuck daemon-side while the phone rendered nothing. After
-  the hoist nothing outside the coordinator reads the raw event stream, so it was demoted to `private`.
-- **`currentModal` mirrors `currentRepository` / `connectionStatus`** — accumulate a `replay = 0`-derived
+  the hoist nothing outside the coordinator reads the raw event stream, so it was demoted to `private`; its
+  element type widened to `ModalEvent?` in #1337 for the reconnect marker is invisible past `hostModals`.
+- **`hostModals` mirrors `currentRepository` / `connectionStatus`** — accumulate a `replay = 0`-derived
   stream `Eagerly` on the coordinator `scope` so `.value` is always the true current projection. Started
   `Eagerly` (not `WhileSubscribed`) is load-bearing: `scan` re-emits its seed on every fresh collection, so
-  a resubscribe past a stop window would overwrite a retained `Open` with `Hidden`, and the `replay = 0`
-  source won't replay to rebuild it (full rationale in [Current-modal state](current-modal-state.md#why-eagerly-not-whilesubscribed)).
-  The pure `ModalUiState.reduce` lives in `data/model` (moved there in #492 so this `data`-layer coordinator
-  can see it) and emits **no log** (modal fields may name a sensitive command/path).
-- **Reconnection-surviving; retains across teardown.** `flatMapLatest` switches to the fresh repo's
-  `modalEvents` on each new connection and cancels the prior; `emptyFlow()` between connections. The `.scan`
-  sits **downstream** of `flatMapLatest`, so a connection drop does **not** restart it — a still-`Open`
-  modal is **retained**, not reset to `Hidden` (the #492 teardown decision: the answer path is guarded by
-  the deterministic `answerModal`/`cancelModal` null-guard, never by this UI projection, so retaining a
-  stale `Open` can't send an answer on a dead connection).
-- `AppModule` passes the registry's selected-host `currentModal` projection into
-  `ThreadViewModel`. Every retained coordinator keeps folding its own modals even
-  while another host is selected; overlapping modal ids never share an accumulator.
+  a resubscribe past a stop window would overwrite retained prompts with an empty `HostModalState`, and the
+  `replay = 0` source won't replay to rebuild it (full rationale in [Current-modal
+  state](current-modal-state.md#why-eagerly-not-whilesubscribed)). `currentModal` is a derived `Eagerly`
+  `stateIn` on top, for the three single-value readers that only test the `Open` case (§ below). The pure
+  `HostModalState.reduce` lives in `data/model` (moved there in #492, before the #1337 widening, so this
+  `data`-layer coordinator can see it) and emits **no log** (modal fields may name a sensitive
+  command/path).
+- **Reconnection-surviving; retains across a plain teardown; clears on a *new* connection (revised by
+  #1337).** `flatMapLatest` switches to the fresh repo's `modalEvents` (prefixed with the `onStart { emit(null) }`
+  marker) on each new connection and cancels the prior; `emptyFlow()` between connections. The `.scan` sits
+  **downstream** of `flatMapLatest`, so a connection drop alone does **not** restart it — every held prompt
+  is **retained**, not reset (the #492 teardown decision, unchanged: the answer path is guarded by the
+  deterministic `answerModal`/`cancelModal` null-guard, never by this UI projection, so retaining a stale
+  prompt can't send an answer on a dead connection). What #1337 adds: when `activeConnection` switches to a
+  *fresh* `Connection`, the reconnect marker is the first emission of that connection's inner flow, so it
+  folds to an empty `HostModalState` strictly before that connection's first `modal_shown` is collected.
+  This is safe because the daemon guarantees a connect-time re-send of every still-outstanding prompt
+  (`protocol-mobile.md` § Reconcile on (re)connect) — see [Current-modal state §
+  Lifecycle](current-modal-state.md#lifecycle-errors-edge-cases) for the full ordering proof.
+- `AppModule` passes the registry's selected-host `hostModals` projection into `ThreadViewModel` and
+  `PermissionDraftStore.bind` (the single-value `currentModal` stays for the conversation-list attention
+  readers — `HostAttentionState.resolve`, `HostConversationSource.promptKeys`,
+  `RelayConnectionRegistry.currentModal` — until [#1338](current-modal-state.md#related)). Every retained
+  coordinator keeps folding its own host's prompts even while another host is selected; overlapping modal
+  ids on different hosts never share an accumulator.
 
 ## Question-batch projection (#822)
 
@@ -216,18 +238,25 @@ fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
   switched `StateFlow` just republishes the source's current value on each subscription — but `Eagerly`
   is still required so the projection itself exists (and starts collecting the active connection's
   batches) before any consumer subscribes.
-- **Resets on reconnect — the deliberate inverse of `currentModal`'s retain (#492).** `flatMapLatest`
-  switches to the new connection's `questionBatches`, and that `StateFlow` starts at `emptyList()` because
-  each connection builds a **fresh** `RemoteConversationRepository` (§ How it works, above). So a batch
-  held from the old connection is gone before any frame from the new connection folds — no manual clear
-  needed, it falls out of "fresh repository per connection" structurally. This is correct here for the
-  opposite reason `currentModal` retains: the protocol's § Reconnect / Backfill semantics **resets**
-  question state on reconnect by contract and rebuilds it from the daemon's connect-time reconcile, so a
-  batch resolved while the phone was disconnected is simply absent from that reconcile and must not come
-  back. `currentModal` retains because modal resolution has no equivalent reconcile-on-reconnect signal —
-  see [Current-modal state § Connection teardown = RETAIN, not reset](current-modal-state.md#lifecycle-errors-edge-cases).
-  **Do not copy the retain rule here** if this seam is ever refactored to look more like `currentModal`'s;
-  the two are opposite by design, not by oversight.
+- **Resets on every reconnect, including a plain teardown — unlike `hostModals`' retain-through-teardown
+  (#492, revised by #1337).** `flatMapLatest` switches to the new connection's `questionBatches`, and that
+  `StateFlow` starts at `emptyList()` **immediately on a disconnect** because `conn` itself goes `null` and
+  the switched flow becomes `flowOf(emptyList())` right then — it does not wait for a replacement
+  connection the way `hostModals`' reconnect marker does. So a batch held from the old connection is gone
+  the instant the connection drops, not merely once a new one arrives — no manual clear needed, it falls
+  out of "fresh repository per connection" structurally. This is correct here because the protocol's §
+  Reconnect / Backfill semantics **resets** question state on reconnect by contract and rebuilds it from
+  the daemon's connect-time reconcile, so a batch resolved while the phone was disconnected is simply
+  absent from that reconcile and must not come back — a batch outstanding when the phone went offline is
+  equally absent until a fresh connection's reconcile re-raises it, so there is no window where UI state
+  disagrees with "offline means hidden." `hostModals` (since #1337 the daemon's `modal_shown` reconcile has
+  the **same** guarantee) still differs in *when* it clears: it keeps a prompt visible through the
+  disconnected gap itself and only clears at the next connection's first frame, because the deterministic
+  `answerModal`/`cancelModal` null-guard (not this projection) is what keeps a tap from reaching a dead
+  connection, so there is no safety reason to hide a still-possibly-true prompt the moment the link drops —
+  see [Current-modal state § Lifecycle](current-modal-state.md#lifecycle-errors-edge-cases). **Do not copy
+  `questionBatches`' immediate-on-drop reset onto `hostModals`** if this seam is ever refactored to look
+  more alike; the two clear at different points in the reconnect sequence by design, not by oversight.
 - **`observeQuestionBatch` is the per-conversation read, and the only one #661's panel should use.**
   `questionBatches` is the whole host's set across every conversation; reading it directly and rendering
   the first match, or filtering client-side without going through `batchFor`, risks showing one

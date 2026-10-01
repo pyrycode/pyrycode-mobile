@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
@@ -20,6 +21,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
@@ -77,6 +79,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.floor
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
@@ -101,11 +104,11 @@ class ThreadViewModel(
     // [turnOutcome]; the turn flags read the repository's held phase instead (#1313). Defaulted
     // to an empty flow so the fake-backed graph + existing tests stay inert.
     liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
-    // #492: the host coordinator's process-scoped, reconnection-surviving "current modal" projection
-    // (#437/#445), folded once at the coordinator layer. It holds the host's single modal whichever
-    // conversation raised it; #816 scopes it to this thread as [currentModal]. Defaulted to a fresh
-    // MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal tests stay inert.
-    private val hostModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    // #492: the host coordinator's process-scoped modal fold (#437/#445), folded once at the coordinator
+    // layer. Since #1337 it holds every prompt outstanding on the host, whichever conversation raised it;
+    // #816 scopes it to this thread as [currentModal]. Defaulted to an empty host so the fake-backed Koin
+    // graph + non-modal tests stay inert.
+    private val hostModal: StateFlow<HostModalState> = MutableStateFlow(HostModalState()),
     // #451: the outbound modal-send path → the coordinator's passthrough to the connection-scoped concrete
     // repo (RelayRepositoryCoordinator.answerModal / cancelModal). Defaulted no-ops so the fake-backed Koin
     // graph + existing ThreadViewModel tests stay inert. The VM holds only these two suspend lambdas, never
@@ -155,9 +158,10 @@ class ThreadViewModel(
         savedStateHandle.get<String>("conversationId").orEmpty()
 
     /**
-     * The host's modal as this thread sees it (#816): shown only when the conversation that raised it is
-     * this thread's own, else [ModalUiState.Hidden] (see [scopedTo]). Seeded from the host's current value
-     * and collected `Eagerly`, so `.value` is right from construction.
+     * The host's prompts as this thread sees them (#816, #1337): this conversation's first outstanding
+     * prompt, else its latest dismissal, else [ModalUiState.Hidden] (see [HostModalState.scopedTo]). Another
+     * conversation's prompt never shows here. Seeded from the host's current value and collected `Eagerly`,
+     * so `.value` is right from construction.
      */
     val currentModal: StateFlow<ModalUiState> =
         hostModal
@@ -236,6 +240,14 @@ class ThreadViewModel(
      * name, URI or the daemon's code, so the snackbar it drives shows fixed local text.
      */
     val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
+
+    private val sentMessageChannel = Channel<Unit>(capacity = Channel.CONFLATED)
+
+    /**
+     * One signal per send the daemon accepted, of text or attachments (#1314), desktop's `onMessageSent`. The
+     * screen follows the newest end on it. Conflated: sends accepted before the screen collects follow once.
+     */
+    val sentMessages: Flow<Unit> = sentMessageChannel.receiveAsFlow()
 
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
@@ -388,7 +400,8 @@ class ThreadViewModel(
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
      * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine, and
-     * Claude's reported context usage (#946) by a third; the repository clears that reading itself.
+     * Claude's reported context usage (#946) by a third, where [contextPercent] computes the one value the footer
+     * and the Status sheet both show (#1411); the repository clears that reading itself.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -402,11 +415,13 @@ class ThreadViewModel(
             pendingEffort,
             pendingPermission,
         ) { settings, menuAndAgent, model, effort, permission ->
-            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission)
-        }.combine(runningModel) { config, (running, announced) -> config.copy(running = running, announcedModel = announced) }
-            .combine(repository.observeContextUsage(conversationId)) { config, usage ->
-                config.copy(contextPercent = usage?.percentage)
-            }
+            // #1411: the settings ride along to the context-usage combine, which falls back to their token pair.
+            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission) to settings
+        }.combine(runningModel) { (config, settings), (running, announced) ->
+            config.copy(running = running, announcedModel = announced) to settings
+        }.combine(repository.observeContextUsage(conversationId)) { (config, settings), usage ->
+            config.copy(contextPercent = contextPercent(usage, settings))
+        }
 
     /**
      * This conversation's published slash-command menu (#882), feeding both the Actions menu's absent
@@ -1125,15 +1140,22 @@ class ThreadViewModel(
         _localSendPending.value = false
     }
 
-    /** Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. */
+    /**
+     * Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. A send
+     * that returns was accepted, and tells the screen to follow the newest end again (#1314).
+     */
     private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
         openLocalSendWindow()
-        try {
-            return send()
-        } catch (e: Throwable) {
-            closeLocalSendWindow("send_failed")
-            throw e
-        }
+        val sent =
+            try {
+                send()
+            } catch (e: Throwable) {
+                closeLocalSendWindow("send_failed")
+                throw e
+            }
+        RelayLog.d { "event=thread_send_accepted" }
+        sentMessageChannel.trySend(Unit)
+        return sent
     }
 
     /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */
@@ -2494,6 +2516,27 @@ internal fun String.modelFamily(): String {
     val bare = removePrefix("claude-")
     val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
     return head.replaceFirstChar { it.uppercaseChar() }.inert()
+}
+
+/**
+ * How full the context window is, as a whole percent in 0..100, or `null` when unavailable (#1411, desktop's
+ * `contextTokenSource` + `contextUsagePercent`). A present [usage] always supplies the pair, its `totalTokens`
+ * over `maxTokens`, whatever it holds; only an absent one falls back to [settings]' `usedTokens` over
+ * `windowTokens`. A window of `0` or less in the pair used is unavailable, never a fallback. Claude's own
+ * `percentage` is not read, so the footer and the Status sheet share one clamp. Rounds half up, as `Math.round`.
+ */
+internal fun contextPercent(
+    usage: ContextUsage?,
+    settings: SessionSettings?,
+): Int? {
+    val (used, window) =
+        when {
+            usage != null -> usage.totalTokens to usage.maxTokens
+            settings != null -> settings.usedTokens to settings.windowTokens
+            else -> return null
+        }
+    if (window <= 0) return null
+    return floor(used.toDouble() / window.toDouble() * 100 + 0.5).coerceIn(0.0, 100.0).toInt()
 }
 
 private fun Conversation.displayName(): String =
