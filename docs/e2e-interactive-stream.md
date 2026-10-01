@@ -370,10 +370,11 @@ usage segment](knowledge/features/thread-composer-footer.md#context-usage-segmen
 **status-band-never-empty** scenario ([#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) —
 `interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`: a prompt that makes real claude run a
 read-only `echo` and then answer in one sentence, sampled continuously from the tap on Send until the turn
-goes idle, asserting that every busy sample (the Stop control present) shows a reading — the status glyph
-or a compaction/api-retry reading — proving the band never goes dark across thinking, a running tool, and
-the `responding` text that used to leave it empty; **one** claude turn — the scenario's own tool-then-text
-reply). The tool-use
+goes idle, asserting that every sample busy both before and after its reading checks (the Stop control
+present on both reads, which closes the race at the turn's falling edge) shows a reading — the status
+glyph, or a Reset-session, connection or "waiting for answers" reading — proving the band never goes dark
+across thinking, a running tool, and the `responding` text that used to leave it empty; **one** claude
+turn: the scenario's own tool-then-text reply). The tool-use
 test asserts the **durable** terminal signal — the resolved row's accessible Done status —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
@@ -1277,21 +1278,23 @@ dark for most of its length. From the tap on Send the test samples the band insi
 the composer's Stop control (`cd_thread_interrupt`) as the busy proxy — the same control `stopping` in
 [Thread input bar](knowledge/features/thread-input-bar.md) shows exactly while `isBusy` holds and the draft
 is blank, so there is no second flaky "is the turn running" signal to keep in sync with the band's own. A
-reading is either the status glyph (`STATUS_GLYPH_TEST_TAG`, present for thinking, working, a running tool
-or a stall) or a compaction/api-retry reading (matched by content description, so a Reset-session or
-api-retry label accidentally live at the same time is not mistaken for an empty band). Any busy sample with
-neither is recorded, and the assertion is that the recorded list is empty; a non-vacuity check requires at
-least one busy sample to have been taken, so the scenario cannot pass by never catching the turn busy. One
-real claude turn: the scenario's own tool-then-text reply. No rung-4 twin: `ScriptedStatusLineTest`
-(`app/src/sharedTest/.../thread/`) already proves the identical sequence deterministically against the real
-repository fold — see [Thinking indicator § Edge cases](knowledge/features/thinking-indicator.md#edge-cases--limitations).
-**Not yet in the curated live selector (open gap, #1311):** unlike every other always-on method in § Pre-ship
-gate, this one was never added to `scripts/e2e-emulator.sh`'s `TEST_TARGET` list or counted into
-`android-test-gate.py`'s `LIVE_MINIMUM` floor, so `python3 scripts/android-test-gate.py live` does not run
-it — the method compiles and ships in `InteractiveStreamE2ETest.kt`, but no live run has executed it, and
-the floor mechanism (designed to catch a method *dropped* from an existing list) cannot catch a method that
-was never *added* to one. See [Verification status](#verification-status) — the ticket's live-gate PASS
-predates this gap being found and does not cover this method.
+sample is recorded as dark only when the Stop control is present on **both** a read taken before and a
+read taken after the reading checks — closing a race where `turn_state{idle}` lands between the two and a
+genuinely busy sample is misread as dark at the turn's falling edge. A reading is either the status glyph
+(`STATUS_GLYPH_TEST_TAG`, present for thinking, working, a running tool or a stall) or a matched content
+description or text for a Reset-session reading, the connection arm's "Connecting"/"Reconnecting" copy (the
+unformatted template, so a live countdown does not break the match), a compaction or api-retry reading, or
+"waiting for answers" — so a higher-ranked arm shown instead of the glyph is never mistaken for an empty
+band. Any busy sample with neither is recorded, and the assertion is that the recorded list is empty; a
+non-vacuity check requires at least one busy sample to have been taken, so the scenario cannot pass by never
+catching the turn busy. One real claude turn: the scenario's own tool-then-text reply. No rung-4 twin:
+`ScriptedStatusLineTest` (`app/src/sharedTest/.../thread/`) already proves the identical sequence
+deterministically against the real repository fold — see [Thinking indicator §
+Edge cases](knowledge/features/thinking-indicator.md#edge-cases--limitations). The method is in the curated
+live selector: `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` lists it after
+`#interactiveTurn_toolPrompt_rendersToolStepInThread`, and `android-test-gate.py`'s `LIVE_MINIMUM` counts it
+(see [Pre-ship gate](#pre-ship-gate)). Its first live pass is recorded in [Verification
+status](#verification-status).
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -1598,7 +1601,10 @@ to 40, adding the two-host default-workspace and Archive method, #1087 raised it
 to 41, adding the workspace add-rename-archive method, #1088 raised it again, from 41 to 42,
 adding the channel create-edit-archive method, #1089 raised it again, from 42 to 43, adding the
 peer-set workspace label method, and #1090 raised it again, from 43 to 44, adding the attention-dot
-method. Shell cleanup
+method. Later tickets moved it further still, each change recorded as a `LIVE_MINIMUM += N` / `-= N` line
+with its own comment in `scripts/android-test-gate.py` — that file's comment trail, not this prose, is the
+authoritative running total. Most recently, #1311 added one, for the status-band-never-empty method (§
+*What rung 3 is made of* above). Shell cleanup
 preserves the original result and retains failure artifacts; a clean XML report with a failing process
 status is not a passing gate.
 
@@ -2111,7 +2117,22 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-09-30 (#1286).** The dispatcher ran the full
+**Current live verification — 2026-10-01 (#1311).** The dispatcher ran the full
+`python3 scripts/android-test-gate.py live` suite against `feature/1311` at `3fae3a6dc2`,
+merged with `origin/main` at `a61c5eb4b1`: **39 executed, 39 passed, 0 failed, 0 skipped**,
+exit 0, wall clock 520.7s. The fresh XML contains a passing, unskipped
+`InteractiveStreamE2ETest.interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy` testcase —
+this is the method's first live run, and `LIVE_MINIMUM` rose from 38 to 39 with its addition to the
+curated selector (see [Pre-ship gate](#pre-ship-gate)). This is full-suite evidence; no separate
+focused live run is claimed. An earlier attempt on this branch (`32609a7535` merged with
+`01d81756d9`) executed 38 and did not include this method, because the curated selector and
+`LIVE_MINIMUM` had not yet been updated for it; that gap was found and fixed before this run. See the
+[earlier-run evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1311#issuecomment-5928693537)
+(38 executed, the gap not yet fixed) and the
+[fresh dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1311#issuecomment-5929813330)
+for this 39/39 PASS.
+
+**Previous live verification — 2026-09-30 (#1286).** The dispatcher ran the full
 `python3 scripts/android-test-gate.py live` suite against `feature/1286` at
 `a6fec3f720`, merged with `origin/main` at `1119eb051d`: **44 executed, 44 passed,
 0 failed, 0 skipped**, exit 0. The fresh XML contains a passing, unskipped

@@ -8,14 +8,14 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 [Offline](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4910) shows Retry in [`ThreadTopOverlay`](thread-top-overlay.md), using the existing `onRetry = vm::retry` route. A rejected pairing also derives Offline, but `showRePair` takes precedence: Re-pair navigates to pairing because network retry cannot repair rejected credentials. Neither action changes message-list height. The older `ConnectionBanner` and its structural placement above the list were removed.
 
-### Thinking-indicator placement (post-#407, moved in #643)
+### Thinking-indicator placement (post-#407, moved in #643, re-expressed as `statusArm` in #1311)
 
-[#407](../codebase/407.md) originally mounted the stateless [`ThinkingIndicator`](thinking-indicator.md) as the final child of the content `Column`, at the foot of the list above the `bottomBar`. [#643](../codebase/643.md) moved it — along with the retry and compaction arms it shares a slot with — into the composer itself, as the **`Status area`** band of the Figma `16:8` `Input area` (`533:1957`). It is now the first child of the `bottomBar` `Column`, rendered by a private `ThreadStatusArea` composable (`ThreadScreen.kt:471`) that exists purely so the `bottomBar` lambda stays readable:
+[#407](../codebase/407.md) originally mounted the stateless [`ThinkingIndicator`](thinking-indicator.md) as the final child of the content `Column`, at the foot of the list above the `bottomBar`. [#643](../codebase/643.md) moved it — along with the retry and compaction arms it shares a slot with — into the composer itself, as the **`Status area`** band of the Figma `16:8` `Input area` (`533:1957`). It is now the first child of the `bottomBar` `Column`, rendered by a private `ThreadStatusArea` composable (`ThreadScreen.kt`) that exists purely so the `bottomBar` lambda stays readable. [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) is the most recent change to this slot: it added `isStalled`, `isBusy` and `localSendPending` parameters, moved the arm-selection logic out of an inline `when` into the named `statusArm` function, and added the `waitingForAnswers` branch (#1305/#1306, below) beside the ladder dispatch rather than inside it:
 
 ```kotlin
 bottomBar = {
     Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true }, agent = state.agent)
+        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, isStalled = isStalled, turnOutcome = turnOutcome, isThinking = isThinking, isBusy = isBusy, localSendPending = localSendPending, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, waitingForAnswers = …, connectionState = connectionState, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true }, agent = state.agent)
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
     }
@@ -26,16 +26,28 @@ private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?, // #872
     isCompacting: Boolean,
+    isStalled: Boolean, // #1311
     turnOutcome: TurnOutcomeReport?, // #805
     isThinking: Boolean,
+    isBusy: Boolean, // #1311
+    localSendPending: Boolean, // #1311
     thinkingProgress: ThinkingProgress?, // #803
     runningTool: ToolCall?, // #897
+    waitingForAnswers: Boolean, // #1305
+    connectionState: ConnectionState,
     taskCount: Int, // #1043
     onTasksClick: () -> Unit, // #1043
     agent: ConversationAgent, // #1114
 ) {
     val reading: @Composable (Modifier) -> Unit = { modifier ->
-        StatusReading(apiRetry, resetting, isCompacting, turnOutcome, isThinking, thinkingProgress, runningTool, agent, modifier)
+        if (waitingForAnswers) {
+            // the fixed "Waiting for answers" row (#1305) — see § Inline question rows below
+        } else {
+            StatusReading(
+                arm = statusArm(connectionState, resetting != null, apiRetry != ApiRetryStatus.NotRetrying, isCompacting, isStalled, turnOutcome != null, isThinking, isBusy, localSendPending, runningTool != null),
+                apiRetry, resetting, turnOutcome, isThinking, thinkingProgress, runningTool, connectionState, agent, modifier,
+            )
+        }
     }
     if (taskCount <= 0) {
         reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
@@ -53,40 +65,50 @@ private fun ThreadStatusArea(
     }
 }
 
-/** The one live reading; unchanged since #643 except for its extraction into its own function. */
+/** Which one reading the band shows, decided once by [statusArm] (#1311); see [Thread screen § The arm
+ * order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for the full enum and
+ * precedence table. [StatusReading] below only switches on the already-decided arm. */
 @Composable
 private fun StatusReading(
+    arm: StatusArm,
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
+    connectionState: ConnectionState,
     agent: ConversationAgent, // #1114
     modifier: Modifier = Modifier,
 ) {
-    when {
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
-        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent) // agent: #1112
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = modifier)
-        else ->
+    when (arm) {
+        StatusArm.None -> Unit
+        StatusArm.Connection -> ConnectionStatusIndicator(state = connectionState, modifier = modifier)
+        StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent) // agent: #1112
+        StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
+        StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
+        StatusArm.TurnOutcome -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
+        // One branch, so the glyph keeps its composition identity, and its pulse, across these readings (#1311).
+        StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
-                isThinking = isThinking,
+                isThinking = arm == StatusArm.Thinking,
                 modifier = modifier,
-                progress = thinkingProgress,
-                runningTool = runningTool,
+                progress = thinkingProgress.takeIf { isThinking },
+                runningTool = runningTool.takeIf { arm == StatusArm.RunningTool },
                 agent = agent,
+                isWorking = arm == StatusArm.Working, // #1311
+                isStalled = arm == StatusArm.Stalled, // #1311
             )
     }
 }
 ```
 
 `agent` reaches both functions from `ThreadScreen`'s own `state.agent` (see [Thinking indicator § The agent
-name](thinking-indicator.md#the-agent-name-1114)); `resetting`'s branch is the only one of the five that
+name](thinking-indicator.md#the-agent-name-1114)); `resetting`'s branch is the only one of the arms that
 picked up `agent` after #1114 shipped, closed by #1112 — see [Resetting indicator § The agent
-name](resetting-indicator.md#the-agent-name-1112). The turn-outcome lead stays client-owned and its daemon detail stays bounded by `turnOutcomeReport`.
+name](resetting-indicator.md#the-agent-name-1112). The turn-outcome lead stays client-owned and its daemon detail stays bounded by `turnOutcomeReport`. See [Thread screen § The arm
+order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for `statusArm`'s full
+signature, the precedence table and the local-send window that feeds `localSendPending`.
 
 **[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count pill at the band's
 right end, and split the `when` out into `StatusReading` to make room for it.** Above zero,

@@ -244,8 +244,9 @@ daemon's `thinking` phase can never leak onto "Working…". It loses to a runnin
 
 **`isStalled` rides [`StallProjection`](stall-state.md)**, not a new upstream signal: `statusArm` treats
 `ThreadViewModel.isStalled` as the top turn-level arm (above thinking, working and a running tool) and
-below only connection, Reset session, api-retry, compaction and a turn outcome — the client-owned "The turn
-seems to have stalled…" (`thread_stalled_label`, `cd_thread_stalled`) never names or interpolates a
+below only connection, Reset session, api-retry and compaction — **above the turn outcome**, not below
+it: a stalled turn has no settled outcome yet, so the stall reading must win over a lingering one from the
+previous turn — the client-owned "The turn seems to have stalled…" (`thread_stalled_label`, `cd_thread_stalled`) never names or interpolates a
 daemon string. It draws in `colorScheme.error`, the color [`TurnOutcomeIndicator`](turn-outcome-indicator.md)'s
 text already uses for a failed turn, rather than a new color token. It clears the instant `StallProjection`
 clears — any further live session event for the conversation — with no new clearing rule introduced here.
@@ -518,8 +519,8 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   `docs/specs/architecture/803-thinking-progress-status-render.md` ·
   `docs/specs/architecture/897-running-tool-status-label.md` ·
   `docs/specs/architecture/1114-agent-status-screen-reader-labels.md` (§ The agent name) ·
-  `docs/specs/architecture/1311-status-line-whole-turn.md` (§ Working and stalled, § Placement in the
-  thread).
+  `docs/specs/architecture/1311-status-line-whole-turn.md` (§ `ThinkingIndicator`, § One order, one pure
+  function).
 - Upstream signals: [Turn-state thinking flag](turn-state-thinking-flag.md) — `ThreadViewModel.isThinking`,
   the `turn_state` → flag reduction that governs visibility — and
   [Thinking-progress state](thinking-progress-state.md) — `ThreadViewModel.thinkingProgress` /
