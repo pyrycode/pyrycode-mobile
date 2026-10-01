@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonElement
@@ -119,6 +120,15 @@ interface ConversationRepository {
      * inherit "nothing announced" and need no override.
      */
     fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = flowOf(null)
+
+    /**
+     * Emits [conversationId]'s live refusal frames and session transitions (#1360), in wire order, as they
+     * arrive. Hot, nothing replayed: history pages, the cache and a reopened thread never emit here, which is
+     * what lets a consumer tell a refusal that just happened from a restored row.
+     *
+     * Default `emptyFlow()`, the same cascade-avoidance as [observeAnnouncedModel].
+     */
+    fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = emptyFlow()
 
     /**
      * Emits the facts claude last reported about its own run for [conversationId] (#890): its build and the
@@ -1366,6 +1376,25 @@ data class AnnouncedModel(
     val model: String,
     val truncated: Boolean,
 )
+
+/**
+ * One live event of [ConversationRepository.observeLiveRefusalEvents] (#1360): what arms or clears a thread's
+ * switch-back offer. Wire SSOT: pyrycode `docs/protocol-mobile.md` § `model_refusal_fallback`.
+ */
+sealed interface LiveRefusalEvent {
+    /**
+     * A refusal frame as it arrived: the row it folded and, for a fallback frame, its `scope`, verbatim
+     * (`null` for `model_refusal_no_fallback`, which has none). `scope` is claude's open string; compare it,
+     * never render or log it.
+     */
+    data class Refused(
+        val refusal: ThreadItem.ModelRefusal,
+        val scope: String?,
+    ) : LiveRefusalEvent
+
+    /** The conversation's session was replaced (`session_transition`), which ends a Reset too. */
+    data object SessionReplaced : LiveRefusalEvent
+}
 
 /**
  * What claude reported about its own run for a conversation's latest turn (#890, pyrycode#2253/#2254) — the
