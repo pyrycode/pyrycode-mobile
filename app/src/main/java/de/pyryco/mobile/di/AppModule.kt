@@ -407,6 +407,8 @@ internal class ThreadDestinationFactory(
             hostModal = bundle?.coordinator?.hostModals ?: MutableStateFlow(HostModalState()),
             answerModal = { modal, option, grant -> checkNotNull(bundle).coordinator.answerModal(modal, option, grant) },
             cancelModal = { modal -> checkNotNull(bundle).coordinator.cancelModal(modal) },
+            // #1340: the phone's own answers and refusals fold into the same host state the thread reads.
+            recordModalAction = { action -> bundle?.coordinator?.recordModalAction(action) },
             interrupt = { id -> checkNotNull(bundle).coordinator.interrupt(id) },
             questionDraftStore = questionDrafts,
             permissionDraftStore = permissionDrafts,

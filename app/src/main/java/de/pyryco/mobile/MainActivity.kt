@@ -449,6 +449,7 @@ internal fun PyryNavHost(
                 val modalState by vm.currentModal.collectAsStateWithLifecycle()
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
                 val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
+                val answerRejected by vm.answerRejected.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
                 val systemPrompt by vm.systemPrompt.collectAsStateWithLifecycle()
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
@@ -496,7 +497,6 @@ internal fun PyryNavHost(
                     onInterrupt = vm::onInterrupt,
                     modalState = modalState,
                     armedOptionId = armedOptionId,
-                    modalSendErrors = vm.modalSendErrors,
                     newSessionErrors = vm.newSessionErrors,
                     archiveErrors = vm.archiveErrors,
                     changeWorkspaceErrors = vm.changeWorkspaceErrors,
@@ -505,6 +505,8 @@ internal fun PyryNavHost(
                     onModalCancel = { modalId -> vm.onModalCancel(modalId) },
                     alwaysAllowAccepted = alwaysAllowAccepted,
                     onAlwaysAllowChanged = vm::onAlwaysAllowChanged,
+                    answerRejected = answerRejected,
+                    onDismissAnswerRejection = vm::onAnswerRejectionDismissed,
                     onDropQueued = vm::onDropQueued,
                     onOverflowEvent = vm::onOverflowEvent,
                     onModelSelected = vm::onModelSelected,

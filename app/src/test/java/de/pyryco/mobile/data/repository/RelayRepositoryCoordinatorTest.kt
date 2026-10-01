@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
@@ -976,6 +977,31 @@ class RelayRepositoryCoordinatorTest {
             pump2.push(modalShownEnvelope("m1", conversationId = "conv-a"))
             runCurrent()
             assertEquals(listOf("m1"), env.coordinator.heldIds())
+
+            env.coordinator.close()
+        }
+
+    // #1340: the phone's own answer closes the prompt at once; a refusal outlives the reconnect, the answer does not.
+    @Test
+    fun recordModalAction_foldsAtOnce_andARejectionSurvivesAReconnectThatBringsTheAnsweredPromptBack() =
+        runTest {
+            val env = newEnv()
+            val pump1 = openInteractiveConnection(env)
+            pump1.push(modalShownEnvelope("m1", conversationId = "conv-a"))
+            runCurrent()
+
+            env.coordinator.recordModalAction(ModalAction.AnsweredHere("m1"))
+            assertEquals("folded before any dispatch", emptyList<String>(), env.coordinator.heldIds())
+            env.coordinator.recordModalAction(ModalAction.Rejected("conv-a"))
+            pump1.push(modalShownEnvelope("m1", conversationId = "conv-a"))
+            runCurrent()
+            assertEquals("a repeat on the same connection stays gone", emptyList<String>(), env.coordinator.heldIds())
+
+            val pump2 = openInteractiveConnection(env)
+            pump2.push(modalShownEnvelope("m1", conversationId = "conv-a"))
+            runCurrent()
+            assertEquals("the re-sent prompt returns", listOf("m1"), env.coordinator.heldIds())
+            assertEquals(setOf("conv-a"), env.coordinator.hostModals.value.rejectedConversations)
 
             env.coordinator.close()
         }

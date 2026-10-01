@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
+import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
@@ -155,6 +156,9 @@ class ThreadViewModel(
     private val rememberModel: suspend (String) -> Unit = {},
     // #1027: where a markdown attachment's kept file is read before the reader opens.
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    // #1340: folds this phone's own prompt actions into [hostModal] at once (the coordinator's
+    // recordModalAction). Defaulted inert, so the fake-backed graph and existing tests keep their prompts.
+    private val recordModalAction: (ModalAction) -> Unit = {},
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -876,16 +880,15 @@ class ThreadViewModel(
             modal is ModalUiState.Open && modal.offersAlwaysAllow && accepted == modal.alwaysAllowKey()
         }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    private val modalSendErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
-
     /**
-     * One-shot "a modal send (answer or cancel) failed" signal (#451) — the established one-shot VM→UI
-     * event idiom this VM already uses for [navigationEvents]. Carries **no** modal payload (just [Unit]),
-     * so nothing sensitive can leak through it; the render slice (#452) shows a transient snackbar. Fires
-     * exactly once per caught failure ([RelayErrorException] from a server `error`, incl. the
-     * ungranted-device reject pyrycode#702; [IllegalStateException] from a not-connected session).
+     * Whether this chat shows "Your answer was rejected." (#1340): the daemon refused an answer this chat sent,
+     * and the user has not dismissed the notice. Read from the host fold, so it survives leaving the chat and
+     * a reconnect, and shows in no other chat.
      */
-    val modalSendErrors: Flow<Unit> = modalSendErrorChannel.receiveAsFlow()
+    val answerRejected: StateFlow<Boolean> =
+        hostModal
+            .map { conversationId in it.rejectedConversations }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, conversationId in hostModal.value.rejectedConversations)
 
     private val questions = questionDraftStore ?: QuestionDraftStore()
     private val mutableQuestionModal = MutableStateFlow<QuestionModalState?>(null)
@@ -1010,7 +1013,7 @@ class ThreadViewModel(
     private val newSessionErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
 
     /**
-     * One-shot "starting a new session failed" signal (#540) — the [modalSendErrors] one-shot idiom, cloned
+     * One-shot "starting a new session failed" signal (#540) — the one-shot idiom of [navigationEvents], cloned
      * for the overflow "New session" action. Carries **no** payload (just [Unit]), so nothing sensitive can
      * leak through it; the render slice shows a transient snackbar with a **fixed local string**, never an
      * exception message. Fires exactly once per caught not-connected failure ([IllegalStateException] from
@@ -1716,6 +1719,11 @@ class ThreadViewModel(
         armedModalOption.value = null
     }
 
+    /** The rejection notice's X (#1340): this chat stops showing it. */
+    fun onAnswerRejectionDismissed() {
+        recordModalAction(ModalAction.RejectionDismissed(conversationId))
+    }
+
     /**
      * Accept or withdraw the open prompt's "don't ask again this session" offer (#818). [modalId] is the
      * prompt the checkbox was drawn for, used only as a guard: a tap on a stale frame of a prompt that has
@@ -1753,12 +1761,13 @@ class ThreadViewModel(
     private fun scopedModal(): ModalUiState = hostModal.value.scopedTo(conversationId)
 
     /**
-     * Send a `modal_answer` for [optionId] of modal [modalId] via the injected outbound path. Clears the
-     * arm **before** launching — the second-confirm gesture is consumed on the attempt (success or
-     * failure); [currentModal] stays [ModalUiState.Open] until the daemon resolves it, so the user may
-     * answer again after a failure (no auto-retry — first-answer-wins is server-side). Catches **only** the
-     * two documented throws so [kotlinx.coroutines.CancellationException] still propagates; on failure it
-     * surfaces a one-shot [modalSendErrors] event and nothing else (no log, no [currentModal] mutation).
+     * Send a `modal_answer` for [optionId] of modal [modalId] via the injected outbound path. Clears the arm
+     * and closes the prompt **before** launching (#1340, desktop `answerPrompt`): the card leaves at once and
+     * the daemon's later `modal_dismissed` for it is ignored. Catches **only** the two documented throws so
+     * [kotlinx.coroutines.CancellationException] still propagates. A [RelayErrorException] is the daemon
+     * refusing the answer, so this chat shows the rejection notice; an [IllegalStateException] means the
+     * answer never reached the daemon, which re-sends the still-outstanding prompt on the next connection, so
+     * nothing is shown. No modal field or daemon text is logged or kept.
      */
     private fun sendAnswer(
         modalId: String,
@@ -1766,31 +1775,34 @@ class ThreadViewModel(
         alwaysAllow: Boolean,
     ) {
         armedModalOption.value = null
+        recordModalAction(ModalAction.AnsweredHere(modalId))
         viewModelScope.launch {
             try {
                 answerModal(modalId, optionId, alwaysAllow)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
-                modalSendErrorChannel.trySend(Unit)
+                RelayLog.d { "event=permission_answer outcome=rejected" }
+                recordModalAction(ModalAction.Rejected(conversationId))
             } catch (e: IllegalStateException) {
-                modalSendErrorChannel.trySend(Unit)
+                RelayLog.d { "event=permission_answer outcome=unsent" }
             }
         }
     }
 
-    /** The [sendAnswer] mirror for `modal_cancel` (no option id, no idempotency token). Same never-log,
-     *  catch-only-the-two-documented-throws, one-shot-error posture. */
+    /** The [sendAnswer] mirror for `modal_cancel` (no option id, no idempotency token): the prompt closes at
+     *  once, and a refused or unsent cancel shows nothing (#1340, desktop `cancelPrompt`). */
     private fun sendCancel(modalId: String) {
+        recordModalAction(ModalAction.AnsweredHere(modalId))
         viewModelScope.launch {
             try {
                 cancelModal(modalId)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
-                modalSendErrorChannel.trySend(Unit)
+                RelayLog.d { "event=permission_cancel outcome=refused" }
             } catch (e: IllegalStateException) {
-                modalSendErrorChannel.trySend(Unit)
+                RelayLog.d { "event=permission_cancel outcome=unsent" }
             }
         }
     }

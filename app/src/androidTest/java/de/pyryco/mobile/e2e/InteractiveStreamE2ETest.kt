@@ -3393,16 +3393,18 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
             }
             tapInPrompt(allow)
+            // #1340: the card closes on the tap itself, not on the daemon's reply.
+            awaitNoPromptDialog("A's card stayed after the allow tap")
 
             // 4. AC-1: the daemon took the phone's answer for this prompt, A's turn ends, and claude's reply
-            //    carries the command's output. The dialog leaves the thread.
+            //    carries the command's output. The phone's own answer is not announced as resolved elsewhere.
             val dismissed = runBlocking { peer.awaitModalDismissed(shown.modalId, THREAD_TIMEOUT_MS) }
             assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissed, "source"))
             assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissed, "outcome"))
             awaitTurnEnd(peer, chatA, 1, "A's allowed turn")
             assertBashRan(peer, chatA, 0, "A's allowed turn")
             assertTrue("A's reply does not carry the command's output", ANSWER_PERMISSION_TOKEN in assistantText(peer, chatA))
-            awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
+            composeTestRule.onAllNodes(hasText(string(R.string.modal_dismissed_remote))).assertCountEquals(0)
 
             // 5. AC-2: the same command in A runs again with no second prompt. Claude could repeat the number
             //    from context, so the proof is a successful Bash call in this turn, not the reply alone.

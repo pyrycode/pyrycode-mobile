@@ -120,3 +120,7 @@ The notice copy is a client string; no daemon text or error code reaches the UI.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-01
+
+## Revisions
+
+- **2026-10-01 — constructor position and empty thread.** `recordModalAction` is the last `ThreadViewModel` constructor parameter rather than beside `cancelModal`, so no positional caller in the twenty-odd test files shifts; `AppModule` and `makeVm` pass it by name. `ThreadScreen`'s empty-thread branch now also yields to the list when `answerRejected` holds, as it already did for an open request; otherwise a refused answer in a chat with no messages had no slot to draw in (caught by `ThreadScreenModalTest`). The contracts above are otherwise unchanged.
