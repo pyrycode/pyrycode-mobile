@@ -49,9 +49,10 @@ private val FieldLabelGap = 8.dp
 private val FieldGap = 12.dp
 
 // The prompt well opens tall enough to read as a paragraph box; the shell scrolls beyond that.
-private const val PROMPT_MIN_LINES = 4
+// Channel info's System prompt well (#1342) borrows both, so the two wells stay one size.
+internal const val PROMPT_MIN_LINES = 4
 private val NameWellHeight = 52.dp
-private val PromptWellHeight = 112.dp
+internal val PromptWellHeight = 112.dp
 private val WellInset = 16.dp
 private val NameTrailingInset = 56.dp
 

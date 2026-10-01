@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
+import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Question
@@ -72,11 +73,12 @@ class ThreadViewModelQuestionTest {
     private fun vm(
         repository: ConversationRepository = FakeConversationRepository(),
         questions: QuestionDraftStore? = null,
+        source: FakeConnectionStateSource = FakeConnectionStateSource(),
     ): ThreadViewModel =
         ThreadViewModel(
             SavedStateHandle(mapOf("conversationId" to CONV)),
             repository,
-            FakeConnectionStateSource(),
+            source,
             ComposerDraftStore(),
             questionDraftStore = questions,
             answerModal = { _, option, _ -> modalAnswers += option },
@@ -133,7 +135,7 @@ class ThreadViewModelQuestionTest {
             vm.onQuestionEvent(QuestionModalEvent.OtherTextChanged(1, " Web "))
             assertTrue(vm.state().canContinue)
             vm.onQuestionEvent(QuestionModalEvent.Continue)
-            assertEquals(listOf("batch-1" to listOf(QuestionAnswer(0, listOf("Kotlin")), QuestionAnswer(1, listOf(" Web ")))), answers)
+            assertEquals(listOf("batch-1" to listOf(QuestionAnswer(0, listOf("Kotlin")), QuestionAnswer(1, listOf("Web")))), answers)
         }
 
     @Test
@@ -196,6 +198,47 @@ class ThreadViewModelQuestionTest {
             assertEquals(QuestionSendPhase.Sent, vm.state().phase)
             assertEquals(1, answers.size)
             assertTrue(logs.none { "no active connection" in it })
+        }
+
+    // #1321: a Continue or refuse that races a disconnect sends nothing and locks nothing; picks survive.
+    @Test
+    fun continue_while_not_connected_sends_and_locks_nothing_and_answers_after_reconnect() =
+        runTest {
+            val source = FakeConnectionStateSource()
+            val vm = vm(source = source)
+            batches.value = batch()
+            source.emit(ConnectionState.Offline)
+            vm.answerBoth() // local picks stay editable during the outage
+            vm.onQuestionEvent(QuestionModalEvent.OtherTextChanged(1, "Web"))
+            val picked = vm.state().selections
+            vm.onQuestionEvent(QuestionModalEvent.Continue)
+            assertEquals(QuestionSendPhase.Idle, vm.state().phase)
+            assertTrue(answers.isEmpty())
+            assertEquals(picked, vm.state().selections)
+
+            source.emit(ConnectionState.Connected)
+            vm.onQuestionEvent(QuestionModalEvent.Continue)
+            assertEquals(QuestionSendPhase.Sent, vm.state().phase)
+            assertEquals(
+                listOf("batch-1" to listOf(QuestionAnswer(0, listOf("Rust")), QuestionAnswer(1, listOf("Android", "Web")))),
+                answers,
+            )
+        }
+
+    @Test
+    fun refuse_while_not_connected_sends_and_locks_nothing_and_refuses_after_reconnect() =
+        runTest {
+            val source = FakeConnectionStateSource()
+            val vm = vm(source = source)
+            batches.value = batch()
+            source.emit(ConnectionState.Reconnecting(secondsRemaining = 2))
+            vm.onQuestionEvent(QuestionModalEvent.Cancel)
+            assertEquals(QuestionSendPhase.Idle, vm.state().phase)
+            assertTrue(refusals.isEmpty())
+
+            source.emit(ConnectionState.Connected)
+            vm.onQuestionEvent(QuestionModalEvent.Cancel)
+            assertEquals(listOf("batch-1"), refusals)
         }
 
     @Test

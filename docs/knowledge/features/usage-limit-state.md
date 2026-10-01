@@ -130,10 +130,20 @@ every other conversation untouched. `observeUsageLimit` is a cold
 `.map { it[conversationId]?.takeIf(::isReadable) }.distinctUntilChanged()` projection — the expiry lives
 here and only here, so a consumer must not re-derive the rule.
 
-Connection-scoped, in-memory: a fresh repository per connection (#351) starts empty, which doubles as the
-**pairing-scoped clear** — a usage-limit posture belongs to an account, and nothing re-asserts a reading
-after a reconnect, so a reading can never be attributed to the next account. Nothing is persisted; the
-projection holds no reference to `ConversationCache`.
+The projection itself is still built fresh per repository/connection (#351) and holds no reference to
+`ConversationCache`; nothing is persisted. What changes across a reconnect is which `UsageLimitProjection`
+instance a repository is given: since [#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317),
+`RelayRepositoryCoordinator` owns one `HostReadings` (which holds this projection, among four others) for
+the life of a host's **pairing** and threads the same instance into every connection it builds, so a
+reconnect keeps the last reading instead of starting empty. The pairing-scoped clear is now
+`HostReadings.close()`, which `RelayRepositoryCoordinator.close()` calls — reached when
+`RelayConnectionRegistry.reconcile` closes the bundle on unpair or re-pair — not a fresh-repository-per-connection
+reset. A usage-limit posture still belongs to an account and is never attributed to the next one: the
+compatibility singleton facade (`AppModule.kt`'s bare `StableConversationRepository(...)`, no
+`heldReadings`) keeps the pre-#1317 connection-scoped read instead, so only the thread's path — the sole
+production consumer, through [`StableConversationRepository`](stable-conversation-repository.md)'s
+`heldReadings` — holds this reading across a reconnect. See [Relay repository coordinator §
+`HostReadings`](relay-repository-coordinator.md).
 
 `distinctUntilChanged` suppresses only value-*identical* re-emissions — a frame for **another**
 conversation does not re-emit this flow, while a genuinely changed reading is a different
@@ -212,8 +222,9 @@ claims neither blocking nor lifting — are discharged by the render sibling,
 - [Stall state](stall-state.md) (#395) — the separate signal this arm may neither raise nor clear.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeUsageLimit`
   joins; [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it
-  reach the thread ViewModel, and the mechanism that drops a reading across a reconnect (the pairing-scoped
-  clear).
+  reach the thread ViewModel. On the thread's path it reads the coordinator's held `HostReadings`
+  ([#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317)), so the reading survives a reconnect
+  and is dropped only when the pairing ends; the compatibility singleton still drops it on every reconnect.
 - Server SSOT: `internal/protocol/interactive.go` (`RateLimitedPayload`), pyrycode#1405/#1410,
   `docs/protocol-mobile.md § rate_limited`.
 - Reference (read for the expiry/clear rules, not the store shape): pyrycode-desktop

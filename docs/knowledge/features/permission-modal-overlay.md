@@ -1,8 +1,13 @@
 # Permission-modal overlay — the render half of the permission/choice modal
 
 The **render half of the permission/choice-modal UI surface**: how the hoisted
-[`currentModal`](current-modal-state.md) state is drawn as a separate-surface overlay over the active
-conversation thread, and how its resolution is surfaced on dismissal. Landed in
+[`currentModal`](current-modal-state.md) state is drawn inside the owning conversation's own message stream,
+and how its resolution is surfaced on dismissal. **[#1306](../../specs/architecture/1306-inline-permissions.md)
+moved this from a blocking dialog window into three `LazyColumn` items** in the conversation's scrollable
+history — the reader can go Back, scroll older messages or switch conversations without answering or
+cancelling; see § *What #1306 moved* below. Everything else on this page that predates #1306 (the fail-safe-deny
+highlight, the decision context, the always-allow offer) is otherwise unchanged in substance — only the
+container changed. Landed in
 [#446](../codebase/446.md) (split from #443, the render half of #439), part of the Phase 3 permission-modal
 feature (epic pyrycode#597, ADR 025). The state/projection half it consumes is the sibling slice
 [#445](../codebase/445.md) (blocked this one); **answering / cancelling** the modal — wiring the
@@ -37,7 +42,8 @@ two signals **verbatim — no UI-side re-derivation**:
   single-tap-default / second-confirm gate stays entirely in the VM ([#451](modal-answer-flow.md)).
 - **Explicit Cancel.** A low-emphasis `TextButton` below the options — the **only** path to `onModalCancel`
   (back-press / outside-tap dismissal stay disabled, see below). Since #815 this moved into the shared
-  `MobileGateModal` footer as an outlined `ModalCancelButton`; see § The overlay.
+  `MobileGateModal` footer as an outlined `ModalCancelButton`; since #1306 it renders as its own inline
+  `ModalCancelButton` item — see § The inline request.
 - **Send-error snackbar.** A failed `modal_answer` / `modal_cancel` surfaces on the existing
   `snackbarHostState` via a **fixed local string** `modal_send_failed` — see § Send-error confidentiality.
 - **Tapjacking net.** Now that the taps are live, `filterTouchesWhenObscured = true` on the dialog's own
@@ -45,37 +51,75 @@ two signals **verbatim — no UI-side re-derivation**:
 - **Route-host wiring.** `MainActivity` collects `vm.armedOptionId`, forwards it + `vm.modalSendErrors`, and
   binds `onModalOption` / `onModalCancel` to `vm::onModalOption` / `vm::onModalCancel`.
 
+## What #1306 moved
+
+[#1306](../../specs/architecture/1306-inline-permissions.md) replaced the `BasicAlertDialog` (wrapped since \#815
+in [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal)) with three `LazyListScope`
+items drawn directly inside `ThreadScreen`'s message list, following the #1305 question-batch precedent
+([Question batch modal](question-batch-modal.md)) almost exactly:
+
+- **Container.** `permissionRequestItems` replaces `PermissionModalOverlay`, emitting (under the list's
+  reverse layout, newest end first) Cancel, the card, then the title — see § The inline request below. The
+  request also renders in an **empty thread** (the `EmptyThreadState` branch now also gates on
+  `openRequest == null`) and no longer blocks Back, chat switching or history scrolling.
+- **Hardening moved from the dialog window to the activity surface.** `FLAG_SECURE` and
+  `filterTouchesWhenObscured` were the dialog's own window properties; with no dialog, the thread mounts
+  [`QuestionPromptProtection`](question-batch-modal.md#rendering) — the #1305 shared-owner guard — for as
+  long as a request is open, including while it is scrolled offscreen. See § Security below.
+- **Every decision callback now carries the rendered request's `modalId`.** `onOption(modalId, optionId)` /
+  `onCancel(modalId)` / `onAlwaysAllowChanged(modalId, accepted)` all forward the id the composed item was
+  drawn for, and `ThreadViewModel` rejects a mismatch — closing a real stale-tap hole a dialog's one-window
+  recomposition used to close for free. See [Modal answer flow § Stale
+  taps](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306).
+- **The session-grant checkbox moved to process lifetime.** It used to live on the VM and die on Back; it
+  now lives in an app-scoped `PermissionDraftStore`, so returning to the same outstanding request for the
+  life of the app process restores the tick. See [Modal answer flow § The session-grant
+  draft](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306).
+- **Leaving the conversation still clears an armed non-default option.** `ThreadViewModel.onConversationLeft()`,
+  fired by `MainActivity`'s `DisposableEffect` on Back or on opening another thread, nulls the arm only —
+  never the request, never the grant draft. Returning to allow needs two fresh taps.
+- **`ModalOptionButton`, `AlwaysAllowOffer`, `PermissionContext` and `dismissReasonText` are unchanged.** The
+  fail-safe-deny highlight, the armed second-confirm marker, the decision context and the always-allow offer
+  all render exactly as before — only their container moved.
+
 ## Where it lives
 
-`PermissionModalOverlay`, `ModalOptionButton`, `AlwaysAllowOffer` (#818) and `dismissReasonText` live in
-`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadPermissionModal.kt`. Since #815, the overlay's
-dialog chrome and window hardening are no longer its own: `PermissionModalOverlay` draws its content inside
-[`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal), the hardened entry point
-[Shared mobile modal](mobile-modal.md) exposes on its shell. `ModalOptionButton` and `dismissReasonText`
-stay in `ThreadPermissionModal.kt`. The state type is [`ModalUiState`](current-modal-state.md)
-(`data/model/ModalUiState.kt`, from #445 — moved from `ui/conversations/thread/` to `data/model` in
-[#492](../codebase/492.md) when the fold hoisted to the coordinator, so `ThreadScreen` now imports it).
-Collected in the route host at
+`permissionRequestItems`, `PermissionRequestCard`, `ModalOptionButton`, `AlwaysAllowOffer` (#818) and
+`dismissReasonText` live in
+`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadPermissionModal.kt`. Since
+[#1306](../../specs/architecture/1306-inline-permissions.md) the request is no longer a dialog: it renders
+directly inside `ThreadScreen`'s `LazyColumn`, and [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal)
+is no longer its container (that shell still gates `CreateChatModal`). The process-lifetime session-grant
+draft lives in the new `ui/conversations/thread/PermissionDraftStore.kt`, bound per host by
+`ThreadDestinationFactory.thread` in `di/AppModule.kt` alongside `QuestionDraftStore`. The state type is
+[`ModalUiState`](current-modal-state.md) (`data/model/ModalUiState.kt`, from #445 — moved from
+`ui/conversations/thread/` to `data/model` in [#492](../codebase/492.md) when the fold hoisted to the
+coordinator, so `ThreadScreen` now imports it). Collected in the route host at
 [`MainActivity.kt`](thread-screen.md#destination-block). Strings in `res/values/strings.xml`
-(`modal_*`). See [Thread screen](thread-screen.md) for how it sits among the other `Scaffold` siblings.
+(`modal_*`). See [Thread screen § list and status row](thread-screen-how-it-works-list-and-status-row.md#inline-permission-rows-and-the-shared-reveal-1306)
+for where the items sit among the message rows, and [Thread screen § overlays](thread-screen-how-it-works-overlays-and-app-bar.md#permission-modal-placement-post-446-moved-inline-in-1306)
+for what still reaches the old `Scaffold`-sibling `when` block (`Dismissed` only).
 
 ## The render path
 
 ```
-ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (host-level, modalId-keyed), scoped to this thread's own conversation since #816
+ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (host-level, modalId-keyed; #1337 holds every outstanding prompt, not one), scoped to this thread's own conversation since #816
 ThreadViewModel.armedOptionId : StateFlow<String?>          ◀── #451 arm projection (VM-scoped)
-ThreadViewModel.alwaysAllowAccepted : StateFlow<Boolean>    ◀── #818 offer-acceptance projection (VM-scoped)
+ThreadViewModel.alwaysAllowAccepted : StateFlow<Boolean>    ◀── #818 offer-acceptance projection, now backed by PermissionDraftStore (#1306)
 ThreadViewModel.modalSendErrors : Flow<Unit>                ◀── #451 payload-free one-shot
         │  MainActivity: collectAsStateWithLifecycle(currentModal, armedOptionId, alwaysAllowAccepted) like isThinking/isStalled;
-        │  modalSendErrors forwarded BY REFERENCE (single-consumer — collected in ThreadScreen, #452)
+        │  modalSendErrors forwarded BY REFERENCE (single-consumer — collected in ThreadScreen, #452);
+        │  DisposableEffect(vm) { onDispose { vm.onConversationLeft() } } clears the arm on the way out (#1306)
         ▼
 ThreadScreen(state, …, modalState = Hidden, armedOptionId = null, modalSendErrors = emptyFlow(),
              alwaysAllowAccepted = false, onAlwaysAllowChanged = { _, _ -> },
-             onModalOption = vm::onModalOption, onModalCancel = vm::onModalCancel)   ◀── all live since #452/#818
+             onModalOption = { modalId, optionId -> vm.onModalOption(optionId, modalId) },
+             onModalCancel = { modalId -> vm.onModalCancel(modalId) })   ◀── all live since #452/#818/#1306
         │  LaunchedEffect(modalSendErrors){ collect → snackbar(modal_send_failed) }   (#452 error collect)
-        │  when (modalState):
-        ├─ Open      → PermissionModalOverlay(open, armedOptionId, onOption, onCancel,
-        │                                      alwaysAllowAccepted, onAlwaysAllowChanged)  ── MobileGateModal (#815)
+        │  val openRequest = modalState as? ModalUiState.Open   (#1306)
+        │  LazyColumn(reverseLayout = true) { openRequest?.let { permissionRequestItems(it, ...) } ; … }
+        │  when (modalState):   ── the request itself no longer reaches this block (#1306)
+        ├─ Open      → Unit                                                  -- rendered inline above instead
         ├─ Dismissed → LaunchedEffect(modalId) { snackbarHostState.showSnackbar(dismissReasonText(source)) }
         └─ Hidden    → Unit
 ```
@@ -86,51 +130,77 @@ existing preview and androidTest call site stays inert — no call-site cascade.
 route host collects `currentModal` + `armedOptionId` + `alwaysAllowAccepted` exactly like the `isThinking` /
 `isStalled` collect-and-forward and binds `onModalOption` / `onModalCancel` / `onAlwaysAllowChanged` to the
 VM. [#451](modal-answer-flow.md) added the VM's decision methods (the answer/cancel + arm logic); the render
-slice [**#452**](../codebase/452.md) forwards those screen hooks to `vm::onModalOption` /
-`vm::onModalCancel` in the route host, threads `armedOptionId` into the overlay to draw the armed affordance,
-and collects `modalSendErrors` **inside `ThreadScreen`** (not the route host) because the snackbar — its
-effect — is a screen concern, while
-`navigationEvents` stays in `MainActivity` because navigation is a host concern. `modalSendErrors` is a
+slice [**#452**](../codebase/452.md) forwarded those screen hooks to `vm::onModalOption` /
+`vm::onModalCancel` in the route host and threaded `armedOptionId` into the overlay to draw the armed
+affordance; [**#1306**](../../specs/architecture/1306-inline-permissions.md) widened both hooks to
+two-argument lambdas that pass the rendered `modalId` alongside the tap, so a tap composed before a
+replacement cannot reach it (see [Modal answer flow § Stale
+taps](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306)). `ThreadScreen` still collects
+`modalSendErrors` internally (not the route host) because the snackbar — its effect — is a screen concern,
+while `navigationEvents` stays in `MainActivity` because navigation is a host concern. `modalSendErrors` is a
 single-consumer `Channel.receiveAsFlow()`, so `MainActivity` only forwards the reference.
 
-Host-level by construction: the coordinator's fold holds **one** modal per host, keyed on `modalId`, not a
-per-conversation map. Since [#816](current-modal-state.md), `ThreadViewModel` filters that single modal
-down to its own conversation (`ModalUiState.scopedTo`, driven by `Shown.conversationId` — see [Modal
-events](modal-events.md)) before this overlay ever sees it, so the overlay only draws in the thread whose
-conversation raised the modal — never in a second open thread for another conversation on the same host.
+Host-level by construction: the coordinator's fold holds **every outstanding prompt** on a host in one
+[`HostModalState`](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure), keyed on `modalId`
+([#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) — before it, the fold held a single
+modal and a second chat's prompt replaced the first's). `ThreadViewModel` filters the host's prompts down to
+its own conversation (`HostModalState.scopedTo`, driven by `Shown.conversationId` — see [Modal
+events](modal-events.md)) before this overlay ever sees them, so the overlay only draws in the thread whose
+conversation raised a given prompt — never in a second open thread for another conversation on the same
+host, and (since #1337) never pre-empted by a second chat's prompt arriving: chat A's card stays mounted
+while chat B raises and even resolves its own.
 
-## The overlay (`Open`)
+## The inline request (`Open`)
 
-Since [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), `PermissionModalOverlay(open:
-ModalUiState.Open, armedOptionId, onOption, onCancel, alwaysAllowAccepted, onAlwaysAllowChanged)` (the last
-two added by #818) draws inside
-[`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal) — the shared mobile-modal shell's
-hardened decision-gate entry point — rather than its own `BasicAlertDialog`. The dialog chrome, the window
-hardening (`SecureOn`, the obscured-touch filter, disabled back/outside dismissal, no close glyph) and the
-Cancel-only footer all now live in `MobileGateModal` / the private `MobileModalShell` it shares with
-`MobileModal`; see that document for the shell-side contract. This surface supplies only its content: the
-server title (passed as `MobileGateModal`'s `title`), the prompt and the option list — the option count is
+Since [#1306](../../specs/architecture/1306-inline-permissions.md), `permissionRequestItems(open:
+ModalUiState.Open, armedOptionId, onOption, onCancel, alwaysAllowAccepted, onAlwaysAllowChanged, gutter)` is
+an `internal fun LazyListScope.` extension that emits three keyed items directly into `ThreadScreen`'s
+message `LazyColumn` — no dialog, no `MobileGateModal`. Under the list's `reverseLayout = true`, items are
+emitted **newest end first**: Cancel (`permission-cancel:$modalId`), the card
+(`permission-card:$modalId`), then the title (`permission-title:$modalId`). `MobileGateModal` — the #815
+hardened dialog shell — is no longer this surface's container; it still gates `CreateChatModal`. Every
+server string renders through plain `Text` bounded by `MAX_PERMISSION_TEXT` (8192 chars). The option count is
 variable (`permission` = 4, `trust` = 2), so all options render uniformly in a `Column` to preserve array
 order and a single highlight path.
 
 ```kotlin
-MobileGateModal(
-    title = open.title,
-    cancelLabel = stringResource(R.string.modal_cancel),
-    onCancel = onCancel,
+internal fun LazyListScope.permissionRequestItems(
+    open: ModalUiState.Open,
+    armedOptionId: String?,
+    onOption: (modalId: String, optionId: String) -> Unit,
+    onCancel: (modalId: String) -> Unit,
+    alwaysAllowAccepted: Boolean,
+    onAlwaysAllowChanged: (modalId: String, accepted: Boolean) -> Unit,
+    gutter: Modifier,
 ) {
-    Text(text = open.prompt, style = MaterialTheme.typography.bodyLarge)   // verbatim, plain Text
-    if (!open.context.isEmpty) PermissionContext(open.context)             // #817, only when the frame carried any
-    if (open.offersAlwaysAllow)                                            // #818, only when the daemon offered it
-        AlwaysAllowOffer(open.alwaysAllowRules, alwaysAllowAccepted, onChanged = { onAlwaysAllowChanged(open.modalId, it) })
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        open.options.forEach { option ->          // wire array order = canonical display/selection order
-            ModalOptionButton(option.label,
-                isDefault = option.id == open.defaultOptionId,
-                isArmed   = option.id == armedOptionId,        // #452: reflects the VM's armed option
-                onClick   = { onOption(option.id) })           // every tap forwards verbatim
+    item(key = "permission-cancel:${open.modalId}") {
+        Box(gutter.testTag("permission-request-cancel")) {
+            ModalCancelButton(label = stringResource(R.string.modal_cancel), onClick = { onCancel(open.modalId) })
         }
     }
+    item(key = "permission-card:${open.modalId}") {
+        Box(gutter) { PermissionRequestCard(open, armedOptionId, onOption, alwaysAllowAccepted, onAlwaysAllowChanged) }
+    }
+    item(key = "permission-title:${open.modalId}") {
+        Box(gutter) { Text(text = open.title.take(MAX_PERMISSION_TEXT), style = MaterialTheme.typography.titleMedium) }
+    }
+}
+```
+
+`PermissionRequestCard` — the #1305 question card's own container (`background` fill, 1dp
+`primaryContainer` border, `modalControl` shape, 16dp padding) — holds the verbatim prompt, the decision
+context, the always-allow offer and the options, every tap forwarding `open.modalId` alongside it:
+
+```kotlin
+Text(text = open.prompt.take(MAX_PERMISSION_TEXT), style = MaterialTheme.typography.bodyLarge)
+if (!open.context.isEmpty) PermissionContext(open.context)             // #817, only when the frame carried any
+if (open.offersAlwaysAllow)                                            // #818, only when the daemon offered it
+    AlwaysAllowOffer(open.alwaysAllowRules, alwaysAllowAccepted, onChanged = { onAlwaysAllowChanged(open.modalId, it) })
+open.options.forEach { option ->          // wire array order = canonical display/selection order
+    ModalOptionButton(option.label.take(MAX_PERMISSION_TEXT),
+        isDefault = option.id == open.defaultOptionId,
+        isArmed   = option.id == armedOptionId,             // #452: reflects the VM's armed option
+        onClick   = { onOption(open.modalId, option.id) })  // every tap forwards verbatim, with the request id
 }
 ```
 
@@ -231,7 +301,7 @@ rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyM
 - **The whole row toggles**, via `Modifier.toggleable(role = Role.Checkbox)` on the `Row`, not just the
   visible box — the box and check are pure indicators, so there is exactly one tap
   target and one accessibility node.
-- **`onChanged` carries `open.modalId`**, forwarded to [`ThreadViewModel.onAlwaysAllowChanged`](modal-answer-flow.md#the-always-allow-session-grant-818)
+- **`onChanged` carries `open.modalId`**, forwarded to [`ThreadViewModel.onAlwaysAllowChanged`](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)
   — the render never decides acceptance itself, it only reports which prompt the tap landed on. This is the
   same "render reflects, VM decides" posture as `isArmed` below, and it closes the security review's MUST
   FIX: a tap that lands after a `Shown` replaces the frame carries the *old* `modalId`, so the VM's guard
@@ -248,10 +318,16 @@ rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyM
 
 When `currentModal` transitions to `Dismissed`, **no overlay renders** (it is removed — AC #3) and a
 snackbar surfaces the resolution reason via a `LaunchedEffect(modalState.modalId)`. Keying on `modalId`
-fires it **exactly once** per resolution (`Dismissed` is a sticky terminal state in #445's fold) and never
-re-fires on unrelated recomposition. The Scaffold gains a `snackbarHostState = remember {
-SnackbarHostState() }` + `snackbarHost`, mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md)
-dismiss-reason precedent.
+fires it **exactly once per composition of that `LaunchedEffect`** — not once per resolution overall.
+Through #1337, `Dismissed` was a sticky terminal state that a thread, once scoped onto it, never left until
+superseded by a new `Open`; since #1337, `HostModalState.scopedTo` keeps returning that conversation's most
+recent `Dismissed` from `resolved` (see [Current-modal state § the `HostModalState`
+fold](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure)) for as long as the **current connection** lasts,
+so **leaving the thread and reopening it re-runs `LaunchedEffect(modalId)` with the same id and the snackbar
+fires again.** This is a deliberate consequence of #1337's reconnect-only clear, not a regression: the
+snackbar is a one-shot *per view*, not a one-shot *per device*, and it stops the moment a reconnect empties
+`resolved`. The Scaffold gains a `snackbarHostState = remember { SnackbarHostState() }` + `snackbarHost`,
+mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent.
 
 `dismissReasonText(source)` maps the verbatim wire token to a **local** string resource:
 
@@ -292,139 +368,114 @@ mirror of the dismiss-reason mapped-not-echoed posture above.
 
 `security-sensitive`. The verbatim `title` / `prompt` / option `label`s may name a sensitive command or
 path; #437 carries them verbatim and #445 keeps them solely in a transient `StateFlow` (no persistence), so
-the render-time output-encoding, the screen-capture hardening, the send-error confidentiality, and (since
-[#452](../codebase/452.md), now that taps are live) the tapjacking net all land here.
+the render-time output-encoding, the screen-capture hardening, the send-error confidentiality, the
+tapjacking net and (since [#1306](../../specs/architecture/1306-inline-permissions.md)) the stale-tap guard
+all land here.
 
-- **Output-encoding / injection sink** — every server string renders through plain `Text(String)` (literal,
-  no markup / HTML / active-content interpretation). The injection sink would be routing them through
-  [`MarkdownText`](markdown-text.md) (which parses) — explicitly forbidden, mirroring the retired
-  `LiteralScreenSurface`'s verbatim-`Text` rule (#381, [retired by #883](../../specs/architecture/883-retire-literal-screen.md)).
-  No `buildAnnotatedString` parse, no `SelectionContainer` (text selection is a clipboard-exfiltration path
-  past `FLAG_SECURE`).
-- **Screen-capture hardening** — since [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), owned by
-  [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal)'s private `gate = true` shell
-  branch: `DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` sets `FLAG_SECURE` on the **dialog's
-  own window**. A Compose dialog draws in its own window, so the [#381](../codebase/381.md)
-  `LiteralScreenSurface.SecureScreen()` precedent (which flagged the **Activity** window, before [#883](../../specs/architecture/883-retire-literal-screen.md) retired the file) would **not** cover
-  it; `SecureOn`, **not** the default `Inherit`, is the load-bearing choice because the host thread screen
-  carries `FLAG_SECURE` nowhere. A deterministic Compose property — a real code-level net, not a stochastic
-  rule. Previously this had no Compose-test semantics node and was code-review-verified only; #815's
-  `MobileModalTest.gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses` now asserts
-  `window.attributes.flags and FLAG_SECURE` at runtime by reaching the dialog window through
-  `(LocalView.current.parent as DialogWindowProvider).window` — the same seam this render captures.
-  `plain_shell_window_is_not_hardened` asserts in the other direction, that `MobileModal`'s plain shell
-  (Edit host, Log data download) carries neither flag, so the hardening cannot leak across the private
-  `gate` switch.
-- **Tapjacking** ([#452](../codebase/452.md), now that the taps are live; owned by `MobileGateModal` since
-  #815) — `filterTouchesWhenObscured = true` on the dialog's **own** window, the deterministic View-level
-  analog of `SecureOn` (min SDK 33). It drops touches delivered while another window obscures the dialog —
-  **different fabric** from the second-confirm UX belt (#451): a single obscured tap can at worst arm/deny,
-  and the filter additionally hardens the deliberate two-tap tapjack of an *allow*. Like `FLAG_SECURE`, this
-  is now runtime-asserted by the same #815 `MobileModalTest` pair rather than code-review-verified only.
+- **Output-encoding / injection sink** — every server string renders through plain `Text(String)`, bounded
+  by the `MAX_PERMISSION_TEXT` (8192-char) constant (literal, no markup / HTML / active-content
+  interpretation). The injection sink would be routing them through [`MarkdownText`](markdown-text.md)
+  (which parses) — explicitly forbidden, mirroring the retired `LiteralScreenSurface`'s verbatim-`Text` rule
+  (#381, [retired by #883](../../specs/architecture/883-retire-literal-screen.md)). No `buildAnnotatedString`
+  parse, no `SelectionContainer` (text selection is a clipboard-exfiltration path past `FLAG_SECURE`).
+- **Screen-capture hardening and tapjacking moved to the activity surface (#1306).** #815 through #452 owned
+  both as **dialog-window** properties (`DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` +
+  `filterTouchesWhenObscured = true` on `MobileGateModal`'s own window). With the request now three
+  `LazyColumn` items and no dialog, neither property has a window to attach to; the thread instead mounts
+  [`QuestionPromptProtection`](question-batch-modal.md#rendering) — the #1305 shared-owner guard that sets
+  `FLAG_SECURE` and the obscured-touch filter on the **activity** window — from one call site whenever a
+  question batch **or** an open permission/trust request is present. This is the same seam
+  [`LiteralScreenSurface.SecureScreen()`](../codebase/381.md) originally hardened (the Activity window, before
+  [#883](../../specs/architecture/883-retire-literal-screen.md) retired the file), reused rather than
+  reinvented. `ThreadPermissionCaptureTest` (device-only, since a window flag and real `MotionEvent` dispatch
+  need a live window) asserts `FLAG_SECURE` on the activity window and the decor obscured-touch filter while
+  a request is present, that an obscured tap on an option or the grant row is dropped while an unobscured tap
+  at the same point acts, and that the prior window policy returns once the request is removed — the same
+  contract #815's `MobileModalTest` pair asserted for the retired dialog window.
+- **Stale taps carry the wrong `modalId` — closed by #1306.** A dialog recomposed as one window, so a tap
+  could only ever reach the modal that composed it; a `LazyColumn` row has no such guarantee. Every decision
+  callback — `onOption`, `onCancel`, `onAlwaysAllowChanged` — now carries the rendered request's `modalId`,
+  and `ThreadViewModel` rejects a mismatch against its synchronous `scopedModal()` read. See [Modal answer
+  flow § Stale taps](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306) for the guard itself; this
+  was the security review's one MUST FIX on #1306.
 - **Fail-safe-deny preserved; the UI cannot make an allow easier** ([#452](../codebase/452.md)) — the render
   only *reflects* the VM-owned `armedOptionId` (scoped, #451); it never re-derives the arm, interprets
-  option-id semantics, or auto-answers. Every tap forwards verbatim via `onClick = { onOption(option.id) }`;
-  the second-confirm gate is the VM's. Cancel sends `modal_cancel` — a withdrawal, never an allow.
-- **No persistence** — no modal-derived text reaches `rememberSaveable` / `SavedStateHandle` / DataStore;
-  `modalState` / `armedOptionId` are hoisted params, the dialog holds no saved state, the snackbar shows a
-  mapped local string. No server text survives process death.
+  option-id semantics, or auto-answers. Every tap forwards verbatim via `onClick = { onOption(open.modalId,
+  option.id) }`; the second-confirm gate is the VM's. Cancel sends `modal_cancel` — a withdrawal, never an
+  allow.
+- **No persistence** — no request-derived text reaches `rememberSaveable` / `SavedStateHandle` / DataStore;
+  `modalState` / `armedOptionId` are hoisted params, the list items hold no saved state, the snackbar shows a
+  mapped local string, and the session-grant draft in `PermissionDraftStore` is heap-only (see [Modal answer
+  flow § The session-grant draft](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)).
+  No server text survives process death.
 - **The always-allow offer ([#818](#the-always-allow-offer-818)) widens no grant on the render side** — the
   offered rules are claude-authored display text under the same output-encoding rule as `prompt` / option
-  `label`s (plain `Text`, no markup), inherit the same `FLAG_SECURE` window (they draw inside
-  `MobileGateModal`, never a separate surface), and the checkbox row inherits the same
-  `filterTouchesWhenObscured` tapjacking net as the options. The render sends nothing itself — it only
-  reports acceptance to the VM, which computes and sends the one boolean (see [Modal answer
-  flow § The always-allow session grant](modal-answer-flow.md#the-always-allow-session-grant-818)).
+  `label`s (plain `Text`, no markup), inherit the same activity-window `FLAG_SECURE` as the rest of the card,
+  and the checkbox row inherits the same obscured-touch net as the options. The render sends nothing itself —
+  it only reports acceptance to the VM, which computes and sends the one boolean (see [Modal answer
+  flow § The session-grant draft](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)).
 - **Accepted residuals (named, not skipped):** `FLAG_SECURE` blocks screen *capture*, not the accessibility
   node tree — a malicious accessibility service can read the verbatim text, but suppressing the a11y tree
-  would break legitimate TalkBack users, so it is a platform-level tradeoff, not a regression here.
+  would break legitimate TalkBack users, so it is a platform-level tradeoff, not a regression here. Unlike
+  the retired dialog, the inline request is not separately announced to screen readers as a modal interrupt —
+  the #1306 verifier review flagged this as matching the #1305 inline questions and not required by the
+  ticket, not as a regression to fix here.
 
-## Non-dismissable here, and the stale-`Open` question
+## Not answerable by a stray gesture; leaving the chat is not cancelling
 
-The overlay never leaves composition on a **stray** gesture: `MobileGateModal`'s `dismissOnBackPress` /
-`dismissOnClickOutside` are `false` and it draws no close glyph (#815), so back-press / outside-tap / close
-are all ignored (a permission gate must not read them as an implicit answer) and it leaves composition only
-when `currentModal` transitions away from `Open` (a daemon `Dismissed`, including timeout) **or** the user
-makes a deliberate choice. Cancel is the **explicit** outlined button in the shell's footer ([#452](../codebase/452.md)
-introduced it as a low-emphasis `TextButton`; [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal)
-moved it into the shared `ModalCancelButton` styling, matching `MobileModal`'s own Cancel) → `onModalCancel`
-→ `modal_cancel`; `onDismissRequest` stays bound to `onCancel` but is inert while both dismiss flags are
-`false`. `ThreadScreenModalTest.back_press_neither_answers_nor_cancels_and_no_close_glyph_is_offered` (#815)
-asserts the no-close-glyph and inert-back-press guarantees at the screen layer.
+The old dialog was **non-dismissable**: `MobileGateModal`'s `dismissOnBackPress` / `dismissOnClickOutside`
+were `false` and it drew no close glyph, so back-press / outside-tap / close were all ignored. The inline
+request keeps the same guarantee by a different mechanism (#1306): it is ordinary list content with no
+dismiss surface to disable, so Back, opening another conversation, or tapping a message row simply cannot
+reach it. Cancel remains the **only** path to `onModalCancel` → `modal_cancel` — the explicit outlined
+button below the card (`permission-request-cancel`), unchanged since [#452](../codebase/452.md) introduced
+it. `ThreadScreenModalTest`'s adapted case asserts Back invokes the screen's own `onBack` without answering
+or cancelling the request.
+
+**Leaving the chat clears the arm, not the request or the grant.** `ThreadViewModel.onConversationLeft()`
+(fired by `MainActivity`'s `DisposableEffect` on Back and on pushing a new destination) nulls any armed
+non-default option, so a returning reader needs two fresh taps to allow — but the request itself keeps
+rendering exactly as before, and an accepted session-grant draft survives in `PermissionDraftStore` for the
+same outstanding request. See [Modal answer flow § Leaving the conversation clears the arm, not the
+grant](modal-answer-flow.md#leaving-the-conversation-clears-the-arm-not-the-grant-1306).
 
 The [#445 open question](current-modal-state.md#lifecycle-errors-edge-cases) — should a connection drop clear
-a stale `Open`? — is **not** built here, nor in #451/#452: the daemon validates `modalId` server-side so a
-stale answer is rejected (surfacing via #451's error signal), so a proactive stale-clear is a UX nicety
-deferred to **#440** + the connection signal.
+a stale `Open`? — stayed unbuilt through #451/#452/#1306: the daemon validates `modalId` server-side so a
+stale answer is rejected (surfacing via #451's error signal). [#1337](current-modal-state.md#lifecycle-errors-edge-cases)
+answers the related question for a **new connection** (not a drop): the daemon's guaranteed connect-time
+re-send of every still-outstanding prompt means a held prompt can be safely cleared the moment a fresh
+connection is published, so it is cleared then — but a plain teardown with no new connection yet still
+retains, exactly as #445/#492 left it. The session-grant checkbox survives this clear for the same request:
+`PermissionDraftStore`'s `keeps` rule (see [Modal answer flow § The session-grant
+draft](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)) retires a draft
+only once its request is resolved or its conversation shows a different one, never merely because a
+reconnect emptied `hostModals` — so a daemon re-send of the same `modal_id` with the same rules after a
+background/foreground cycle finds the checkbox still ticked.
 
 ## Testing
 
-Shared screen test `app/src/sharedTest/.../thread/ThreadScreenModalTest.kt`, available to both unit and
-device suites, mirrors `ThreadScreenOverflowTest`'s idiom — the #446 set
-(render array-order, exactly-one-default-highlight, dismissed × {remote, local, timeout}, forward-compat
-fallback, hidden) **extended by [#452](../codebase/452.md)** with the AC#4 interaction tests:
-
-- **armed affordance** — `armedOptionId = "allow_once"`: **exactly one** option carries the
-  `modal_armed_option_desc` marker and it is `allow_once`; with `armedOptionId = null` **none** does; the
-  fail-safe-deny default (`reject_once`) **never** carries it even when a non-default is armed.
-- **tap forwarding** — tapping the default forwards `onModalOption("reject_once")`; tapping the explicit
-  Cancel button invokes `onModalCancel`.
-- **two-tap confirm (the AC#4 core)** — driven through a small **stateful VM-mimicking stand-in** (a
-  `var armed by remember { mutableStateOf<String?>(null) }` whose `onModalOption` mimics #451's branch order),
-  recomposing `armedOptionId = armed`: the **first** tap of a non-default arms it (no send recorded) **and**
-  renders the armed affordance; the **second** tap of the same option confirms (send recorded). This
-  exercises "single tap does not confirm, second tap confirms" at the render layer without re-implementing
-  the VM (whose rule is unit-tested in #451).
-- **send-error confidentiality** — a `Channel<Unit>` fed into `modalSendErrors` emits once: `modal_send_failed`
-  is displayed and no payload substring (`rm -rf`) appears in the snackbar.
-- **decision context** (#817) — a populated `context` shows the reason label and
-  value, the description and the blocked path, each with its own label; the `classifier` / `rule` sentence
-  labels and the `Reason type: <raw>` fallback for an unrecognised `reasonType` all render; a type-only
-  reason (`reason == null`, `reasonType` set) shows the label alone; a non-string reason's stringified text
-  (`"false"`) still displays; a context-free `Open` shows none of the context labels.
-- **always-allow offer** (#818) — a `permission` prompt with rules shows the label and each rule between the
-  context and the options; neither a `trust` prompt with rules nor a `permission` prompt without any renders
-  the offer; tapping the row calls `onAlwaysAllowChanged("m1", true)` and **not** `onModalOption`; with
-  `alwaysAllowAccepted = true` the checkbox renders checked.
-
-The compact-width case scrolls to every decision at 1.5× text and checks long labels for wrapping,
-overflow and ellipsis. The device-only `ThreadPermissionCaptureTest` saves unchecked, checked and armed
-412 × 892 surfaces for visual comparison. The fold logic remains unit-tested in #445, the decision logic
-in #451/#818, and decode in [Modal events](modal-events.md#the-four-decision-context-fields-817).
-
-Since [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), `FLAG_SECURE` and `filterTouchesWhenObscured`
-are **runtime-asserted**, not only code-review-verified: a window flag has no Compose-test semantics node,
-but content composed inside a Compose `Dialog` can capture `LocalView.current`, and
-`(view.parent as DialogWindowProvider).window` exposes `attributes.flags` and
-`decorView.filterTouchesWhenObscured` to an instrumented test. `MobileModalTest`'s
-`gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses` and
-`plain_shell_window_is_not_hardened` assert both flags in both directions (present on the gate, absent on
-the plain shell) using this seam, and `ThreadScreenModalTest.back_press_neither_answers_nor_cancels_and_no_close_glyph_is_offered`
-covers the same guarantee at the screen layer. In the #1300 dispatcher full device report,
-`MobileModalTest` ran 12 cases with 0 failures and 0 skips, including the gate-window, compact-scroll
-and IME cases; `ThreadPermissionCaptureTest` ran its viewport case with 0 failures and 0 skips. The
-full report contains 133 cases, 0 failures, 0 errors and 1 unrelated skip.
-
-> **Known test-strength NIT (code review, optional):** the send-error confidentiality test drives the error
-> over a `Hidden` modal, so the `prompt` (`rm -rf …`) is never composed and the `assertDoesNotExist("rm -rf")`
-> passes **vacuously**. The contract is enforced structurally (the event is `Unit` + a fixed local string), so
-> not a real gap — but the assertion would be stronger driven over an **`Open`** modal where the payload is
-> actually on screen. A candidate strengthening when **#440** next touches this test.
+Split into [Permission-modal overlay — testing](permission-modal-overlay-testing.md) (2026-10-01, to stay
+under the docs-guard size cap): the shared `ThreadScreenModalTest` coverage, the device-only capture test,
+and the rung-3 live scenarios (`interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` and
+[#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)'s
+`interactiveTurn_permissionPrompts_heldPerConversation`).
 
 ## Visual spec status
 
 Design source [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) is the host
-**Conversation Thread** frame and still does not draw the modal overlay directly — same treatment as the
-sibling Phase-3 interactive surfaces [#407](../codebase/407.md) (thinking indicator) /
-[#388](../codebase/388.md) (tool-row status) / [#396](../codebase/396.md) (stall promotion). Since
-[#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), the overlay's *container* is no longer built
-against bare M3 dialog defaults: it is drawn inside `MobileGateModal`, which follows the same landed
-[`533-2369`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-2369) generic mobile-modal
-frame [#638](mobile-modal.md) built the shared shell from (full-height rounded column, `titleLarge` header
-over an `inversePrimary` divider, centred scrolling content, centred footer). The close glyph that frame
-draws is deliberately left out here, since Cancel must stay the only dismissal control. The prompt copy
-itself (title / prompt / option `label`s) is still server-authored placeholder text, not a designed string,
-and the snackbar-vs-inline dismiss affordance remains design-owed.
+**Conversation Thread** frame and still does not draw the request directly — same treatment as the sibling
+Phase-3 interactive surfaces [#407](../codebase/407.md) (thinking indicator) / [#388](../codebase/388.md)
+(tool-row status) / [#396](../codebase/396.md) (stall promotion). Through #815 the overlay's container was
+`MobileGateModal`, built against the landed [`533-2369`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-2369)
+generic mobile-modal frame; **[#1306](../../specs/architecture/1306-inline-permissions.md) dropped that
+container** and instead follows the [`639-2242`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=639-2242)
+family (states `639-2451`/`639-2666`/`639-2882`/`639-3099`/`639-3308`/`640-2437`/`640-2838`) — unreachable in
+that run because the Figma MCP connector was unauthenticated, so the layout instead follows the sibling \#1305
+inline-question card (`app/src/androidTest/assets/question-1305/question-normal.png`): a `titleMedium`
+heading, the bordered card, then Cancel centred below it. The PR flags this as a deviation risk for the
+verifier's fidelity check against #1220; authorizing the Figma connector (`/mcp` in an interactive session)
+would let a later pass compare directly. The prompt copy itself (title / prompt / option `label`s) is still
+server-authored placeholder text, not a designed string.
 
 The dark component comparison inspected [checkbox `347:6771`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6771),
 its label child `347:6215`, [button states `489:1876`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=489-1876)
@@ -438,20 +489,26 @@ design gap, not an exact component match.
 
 ## Related
 
+- [Permission-modal overlay — testing](permission-modal-overlay-testing.md) — the shared screen test, the
+  device-only capture test, and the rung-3 live scenarios, split out on 2026-10-01 to stay under the
+  docs-guard size cap.
 - [#446 implementation notes](../codebase/446.md) — the base overlay: files, line refs, lessons, NITs.
 - [#452 implementation notes](../codebase/452.md) — the live armed affordance + Cancel + send-error +
   tapjacking + route-host wiring: files, line refs, the tapjacking pattern, lessons.
+- [1306 architecture doc](../../specs/architecture/1306-inline-permissions.md) — the inline move: design
+  source, the stale-tap security review, the two mid-build revisions (the `awaitReadPrompt` rescope and the
+  `ForcedSize` Robolectric-density lesson).
 - [Shared mobile modal](mobile-modal.md) ([#815](mobile-modal.md#the-hardened-gate-mobilegatemodal)) — the
-  overlay's current container: the `MobileGateModal` entry point that now owns the dialog chrome, the four
-  window-hardening properties and the Cancel-only footer this document used to describe as the overlay's own.
-- [Question batch modal](question-batch-modal.md) ([#661](question-batch-modal.md)) — `MobileGateModal`'s
-  second caller, the first to use its submit/sending/error extension. Its lock/single-send/late-completion
-  idiom mirrors this overlay's own armed-answer send, but it is drawn from `MainActivity` beside
-  `ThreadScreen` rather than as an eighth `Scaffold` sibling inside it.
+  overlay's container **through #1306**; still `CreateChatModal`'s hardened entry point.
+- [Question batch modal](question-batch-modal.md) ([#661](question-batch-modal.md), inline since #1305) —
+  the sibling prompt kind this surface now shares a `QuestionPromptProtection` owner and a reveal effect
+  with; `PermissionDraftStore` follows its `QuestionDraftStore`'s process-lifetime, app-scoped precedent.
 - [Modal answer flow](modal-answer-flow.md) ([#451](../codebase/451.md)) — the behavior half whose
   `armedOptionId` / `modalSendErrors` signals this renders and whose `onModalOption` / `onModalCancel`
-  decision methods the route host wires; since [#818](modal-answer-flow.md#the-always-allow-session-grant-818)
-  also `alwaysAllowAccepted` and `onAlwaysAllowChanged`, which `AlwaysAllowOffer` reflects the same way.
+  decision methods the route host wires; since [#818](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)
+  also `alwaysAllowAccepted` and `onAlwaysAllowChanged`, which `AlwaysAllowOffer` reflects the same way; since
+  [#1306](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306) the `modalId` guard every callback
+  carries, and [`onConversationLeft`](modal-answer-flow.md#leaving-the-conversation-clears-the-arm-not-the-grant-1306).
 - [#818 architecture doc](../../specs/architecture/818-permission-always-allow.md) and
   [PR #903](https://github.com/pyrycode/pyrycode-mobile/pull/903) — the always-allow offer: design source,
   the security review, the deliberate 10-file overage.
@@ -459,16 +516,21 @@ design gap, not an exact component match.
   this renders; the projection/state half this consumes.
 - [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the upstream decode seam; since #817 it
   also decodes the four `ModalContext` fields this overlay's `PermissionContext` renders.
-- [Thread screen](thread-screen.md) — the host; the overlay is the seventh `Scaffold` sibling, alongside
-  `WorkspacePicker` / `RenameDialog` / `SaveAsChannelDialog` / `StatusSheet` / `ChannelInfoSheet` /
-  `DeleteConfirmationDialog`.
-- `LiteralScreenSurface` ([#381](../codebase/381.md), retired by [#883](../../specs/architecture/883-retire-literal-screen.md)) — the `FLAG_SECURE`
-  **Activity-window** precedent this slice mirrored with the **dialog-window** `securePolicy` variant; also
-  the verbatim-`Text` (never `MarkdownText`) rule.
+- [Thread screen § list and status row](thread-screen-how-it-works-list-and-status-row.md#inline-permission-rows-and-the-shared-reveal-1306) —
+  the host; through #1306 the `Open` case was the seventh `Scaffold` sibling alongside `WorkspacePicker` /
+  `RenameDialog` / `SaveAsChannelDialog` / `StatusSheet` / `ChannelInfoSheet` / `DeleteConfirmationDialog` —
+  it now renders inline instead, and only `Dismissed` still reaches that `when` block (see [§
+  overlays](thread-screen-how-it-works-overlays-and-app-bar.md#permission-modal-placement-post-446-moved-inline-in-1306)).
+- `LiteralScreenSurface` ([#381](../codebase/381.md), retired by [#883](../../specs/architecture/883-retire-literal-screen.md)) — the **Activity-window**
+  `FLAG_SECURE` precedent; #446–#452 mirrored it with a **dialog-window** `securePolicy` variant, and
+  [#1306](../../specs/architecture/1306-inline-permissions.md) returned to the Activity-window shape via
+  `QuestionPromptProtection`. Also the source of the verbatim-`Text` (never `MarkdownText`) rule.
 - [Archived discussions screen](archived-discussions-screen.md) — the snackbar dismiss-reason precedent
   (`remember { SnackbarHostState() }` + `LaunchedEffect` + `Scaffold(snackbarHost = …)`).
 - Sibling slices: **#444** answering / cancelling, split into [**#451**](modal-answer-flow.md) the behavior
   (shipped) + [**#452**](../codebase/452.md) the armed-affordance render + route-host wiring (shipped) ·
-  **#440** read-only device mode (`blockedBy` #452 — the next consumer of this surface).
+  **#440** read-only device mode (`blockedBy` #452 — the next consumer of this surface) ·
+  [**#1306**](../../specs/architecture/1306-inline-permissions.md) the inline move (shipped) · **#1220** the
+  full application-wide comparison across the #1300/#1306 evidence, still in Inbox.
 - Producer SSOT: pyrycode#716 (`permission` / `trust` classes; fail-safe-deny `default_option_id`, no
   per-option destructive marker); ADR 025 § Phase 3 modals, EPIC pyrycode#597.

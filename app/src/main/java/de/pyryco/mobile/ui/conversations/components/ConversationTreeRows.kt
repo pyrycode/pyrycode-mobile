@@ -13,7 +13,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -90,7 +89,6 @@ private val TreeChevronHeight = 4.dp
 private val TreeControlWidth = 24.dp
 private val TreeGlyphGap = 12.dp
 private val TreeNameGap = 6.dp
-private val TreeLegDotGap = 6.dp
 private val TreeDotSize = 6.dp
 private val TreeDotRingWidth = 1.dp
 
@@ -173,25 +171,25 @@ fun TreeSectionHeader(
 }
 
 /**
- * One host in the tree: a server glyph, the host's name, a fold control, the two connection legs shown
- * separately, and the edit control that opens the Edit host modal for **this** host (#744).
+ * One host in the tree: a server glyph, the host's name, a fold control, and the edit control that
+ * opens the Edit host modal for **this** host (#744). It draws no connection dots (#1333); the thread's
+ * `ConnectionStatusLine` still shows both legs.
  *
  * Stateless — [hostName] is display text the caller resolved (a nameless host reads as whatever
  * #731 decides), [expanded] is the caller's flag, and the row reports a fold request back through
  * [onToggleExpanded]. The row resolves nothing: [serverId] is reported straight back through
  * [onEditTapped] and is otherwise used only to name the host's test controls.
- * Keeping the indicator pair accurate as hosts fail live is #668.
  *
- * The phone has no hover, so the edit pencil stays visible beside the connection dots.
+ * The phone has no hover, so the edit pencil stays visible.
  *
  * A host whose relay leg [isDisconnected] draws the design's disconnected treatment (#840): glyph and
- * name in the error colour, and a plug control inboard of the dots that reports through
+ * name in the error colour, and a plug control inboard of the pencil that reports through
  * [onReconnectTapped]. The frame binds the name to `errorContainer`, which is near-white on the light
  * surface, so both take `error` instead — error-toned and legible in either scheme.
  *
  * A host that refused this app build as too old (#1009) keeps that treatment but swaps the plug for an
- * update control, still reporting through [onReconnectTapped] so the caller decides what it opens; draws
- * its host dot as the idle ring; and adds a caption under the row asking for an update. The caption is
+ * update control, still reporting through [onReconnectTapped] so the caller decides what it opens, and
+ * adds a caption under the row asking for an update. The caption is
  * the only place the host's daemon-authored minimum version appears — plain text, never a description.
  */
 @Composable
@@ -242,7 +240,6 @@ fun TreeHostRow(
                     height = TreeBandHeight,
                 )
             }
-            ConnectionLegPair(status = connectionStatus, hostIdle = update != null)
             TreeRowControl(
                 // The supplied pen path, visible on mobile without hover.
                 painter = painterResource(R.drawable.ic_tree_edit),
@@ -293,7 +290,8 @@ fun treeHostChatAddTestTag(serverId: String): String = "tree-host-chat-add:${bou
 
 /**
  * Fixed Channels or Chats section under one host, each with its own create control. The supplied sidebar
- * frame shows only Channels' plus; #1190's later product decision gives Chats the matching control.
+ * frame shows only Channels' plus; #1190's later product decision gives Chats the matching control. A null
+ * [onAddTapped] draws no plus: the caller passes null while the host is not connected (#1336).
  */
 @Composable
 fun TreeHostSectionRow(
@@ -302,7 +300,7 @@ fun TreeHostSectionRow(
     sectionName: String,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
-    onAddTapped: () -> Unit,
+    onAddTapped: (() -> Unit)?,
     isChat: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -320,16 +318,18 @@ fun TreeHostSectionRow(
         onToggleExpanded = onToggleExpanded,
         modifier = modifier.padding(end = 10.dp),
     ) {
-        TreeRowControl(
-            painter = painterResource(R.drawable.ic_tree_add),
-            contentDescription =
-                stringResource(if (isChat) R.string.cd_tree_host_new_chat else R.string.cd_tree_host_new_channel, boundedHost),
-            onClick = onAddTapped,
-            modifier = Modifier.testTag(if (isChat) treeHostChatAddTestTag(serverId) else treeHostChannelAddTestTag(serverId)),
-            height = TreeBandHeight,
-            glyphWidth = 16.dp,
-            glyphHeight = 16.dp,
-        )
+        if (onAddTapped != null) {
+            TreeRowControl(
+                painter = painterResource(R.drawable.ic_tree_add),
+                contentDescription =
+                    stringResource(if (isChat) R.string.cd_tree_host_new_chat else R.string.cd_tree_host_new_channel, boundedHost),
+                onClick = onAddTapped,
+                modifier = Modifier.testTag(if (isChat) treeHostChatAddTestTag(serverId) else treeHostChannelAddTestTag(serverId)),
+                height = TreeBandHeight,
+                glyphWidth = 16.dp,
+                glyphHeight = 16.dp,
+            )
+        }
     }
 }
 
@@ -508,8 +508,8 @@ fun TreeConversationRow(
  * The leading row area is the fold control, so folding works by touch alone with nothing riding on a
  * pointer hovering. The trailing controls have separate, non-overlapping targets. A non-null [accent]
  * recolours the leading glyph and the name, and nothing else. The row deliberately sets no
- * `contentDescription` of its own: `clickable` merges the leading descendants, and an overriding description would replace the chevron's and the leg dots' own
- * names. The action is named through `onClickLabel`, and the chevron repeats that name so the
+ * `contentDescription` of its own: `clickable` merges the leading descendants, and an overriding description would replace the chevron's own
+ * name. The action is named through `onClickLabel`, and the chevron repeats that name so the
  * control is identifiable in the unmerged tree too.
  */
 @Composable
@@ -628,57 +628,8 @@ private fun TreeRowControl(
 }
 
 /**
- * The host row's trailing indicator pair: the relay-to-server leg inboard and the phone-to-relay leg
- * outboard, as the design places them.
- *
- * Both legs resolve through the package's existing [ConnectionLegVisual] mapping — no second
- * mapping. Each dot carries that mapping's own description, naming the leg and its state, so the
- * pair is identifiable beyond colour alone.
- *
- * [hostIdle] draws the inboard dot as the idle ring instead (#1009): the design's update-required host
- * shows its host as idle. The outboard relay dot keeps the mapping it shares with the Settings status line.
- */
-@Composable
-private fun ConnectionLegPair(
-    status: ConnectionStatus,
-    hostIdle: Boolean = false,
-) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(TreeLegDotGap),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (hostIdle) IdleLegDot() else LegDot(visual = status.pyrycode.toLegVisual())
-        LegDot(visual = status.relay.toLegVisual())
-    }
-}
-
-/** The host leg's idle ring: [ConversationStatusDot]'s idle drawing, named for the leg it stands in. */
-@Composable
-private fun IdleLegDot() {
-    val description = stringResource(R.string.cd_tree_host_leg_idle)
-    Box(
-        modifier =
-            Modifier
-                .size(TreeDotSize)
-                .border(TreeDotRingWidth, MaterialTheme.colorScheme.primary, CircleShape)
-                .clearAndSetSemantics { contentDescription = description },
-    )
-}
-
-@Composable
-private fun LegDot(visual: ConnectionLegVisual) {
-    Box(
-        modifier =
-            Modifier
-                .size(TreeDotSize)
-                .background(visual.category.color(), CircleShape)
-                .clearAndSetSemantics { contentDescription = visual.contentDescription },
-    )
-}
-
-/**
  * The conversation row's leading dot (#878), after desktop's `ConversationStatusDot`: the design's idle
- * ring on every state, with the state's fill inside it. Failed has no desktop counterpart and takes `error`.
+ * ring on every state, with the state's fill inside it.
  *
  * The dot names its state, so the meaning never rests on colour; the row's `selectable` merges that name
  * with the conversation's. Only Running blinks, and the alpha is read in the layer, so the blink redraws
@@ -690,7 +641,6 @@ private fun ConversationStatusDot(attention: ConversationAttention) {
         when (attention) {
             ConversationAttention.WaitingForAnswer -> MaterialTheme.colorScheme.warning
             ConversationAttention.Running -> MaterialTheme.colorScheme.tertiary
-            ConversationAttention.Failed -> MaterialTheme.colorScheme.error
             ConversationAttention.Unread -> MaterialTheme.colorScheme.success
             ConversationAttention.Idle -> Color.Transparent
         }
@@ -725,7 +675,6 @@ private fun ConversationAttention.descriptionRes(): Int =
     when (this) {
         ConversationAttention.WaitingForAnswer -> R.string.cd_conversation_attention_waiting
         ConversationAttention.Running -> R.string.cd_conversation_attention_running
-        ConversationAttention.Failed -> R.string.cd_conversation_attention_failed
         ConversationAttention.Unread -> R.string.cd_conversation_attention_unread
         ConversationAttention.Idle -> R.string.cd_conversation_attention_idle
     }

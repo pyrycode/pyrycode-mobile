@@ -47,6 +47,7 @@
 #   DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, spinner
 #   DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool running→done
 #   DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool failed
+#   DETERMINISTIC=1 SCENARIO=tool-then-text PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh # rung 4, reply text below its tool step
 #   DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh # rung 4, running-tool label elapsed → gone
 #   DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, reconnect continuity
 #   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
@@ -133,7 +134,7 @@ FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overri
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
 SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
                                               # tool | tool-failed (#455) | tool-progress (#950) | reconnect (#476) |
-                                              # replay-order (#477). Resolved to a @Test method + fixture(s)
+                                              # replay-order (#477) | tool-then-text (#1417). Resolved to a @Test method + fixture(s)
                                               # in the preflight below; bare DETERMINISTIC=1 (SCENARIO unset
                                               # → ping) keeps #431.
 
@@ -602,6 +603,10 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_failedToolStepRendersFailed"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-failed.jsonl}"    # single terminal drop
       ;;
+    tool-then-text)
+      TEST_METHOD="interactiveTurn_seededChannel_replyTextAfterToolRendersBelowIt"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-then-text.jsonl}"  # single drop: text, tool, text, turn end
+      ;;
     tool-progress)
       TEST_METHOD="interactiveTurn_seededChannel_runningToolLabelShowsElapsedThenClears"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-progress-open.jsonl}"      # drop A: tool_use + heartbeat, held open
@@ -623,7 +628,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       DROP_B_FENCE=disconnect                                                  # drop B fences on the phone-leg disconnect, not enqueue #2
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -1205,9 +1210,25 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership"
+  # #1332: the Archive lists the second-archived chat first, ordered by the daemon's archived_at. No Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_archiveTwoChats_listsSecondArchivedFirst"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsArchive_staysPerHost"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_createEditArchiveChannel_readsPromptBack"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolPrompt_rendersToolStepInThread"
+  # #1311: the status band keeps a reading for the whole tool-then-text turn. One turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy"
+  # #1394: the scanner's confirm waits for host B to answer before the list opens. Pairing over the
+  # scanner and a phone-local unpair only, so it spends no Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_scannerConfirm_waitsForHostThenOpensList"
+  # #1410: reopening a chat after a fresh connection shows its context reading from the thread's own ask, before
+  # any turn on the phone. One turn (the peer's ping, run while the phone is offline).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn"
+  # #1337: two chats on the answer daemon hold a real prompt each at once; answering A leaves B's in place.
+  # Two real-claude turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_permissionPrompts_heldPerConversation"
+  # #1344: after one ping turn, Channel info's MCP section lists the daemon's pyry_approve once Show built-in
+  # is ticked. One turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

@@ -13,14 +13,14 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
- * What claude last said about its usage-limit window, for every conversation on one connection (#802): its
+ * What claude last said about its usage-limit window, for every conversation on one host (#802): its
  * state, its decoder and its read for the `rate_limited` event, kept out of [RemoteConversationRepository]
  * so each status event lives in its own file. The repository keeps the routing: its `onInbound` arm calls
- * [apply] only behind the negotiated `interactive` gate. [now] is the repository's clock, passed through
+ * [apply] only behind the negotiated `interactive` gate. [now] is the coordinator's clock, passed through
  * so the read-time expiry compares against the same wall clock a test can supply.
  *
- * One instance per repository, and a fresh repository per connection (#351), so the state is
- * connection-scoped.
+ * One instance per host pairing, held in [HostReadings] by the coordinator (#1317), so the state survives
+ * a reconnect and ends with the pairing.
  */
 internal class UsageLimitProjection(
     private val now: () -> Instant,
@@ -43,17 +43,17 @@ internal class UsageLimitProjection(
      * read" because the observer maps an absent key to `null`, and a stored tombstone would need a
      * second value meaning the same thing.
      *
-     * Connection-scoped in-memory state — a fresh repository per connection (#351) starts empty, which
-     * is also this state's **pairing-scoped clear**: a usage-limit posture belongs to an account, and
-     * nothing re-asserts a reading after a reconnect, so a reading can never be attributed to the next
-     * account. **Nothing here is persisted and nothing may be** — a persisted copy would outlive the
-     * connection scope that is the whole clear mechanism.
+     * Pairing-scoped in-memory state (#1317) — kept across reconnects to the same host and dropped when
+     * the coordinator closes on unpair or re-pair, which is this state's **pairing-scoped clear**: a
+     * usage-limit posture belongs to an account, so a reading can never be attributed to another host or
+     * a later pairing. **Nothing here is persisted and nothing may be** — a persisted copy would outlive
+     * the pairing scope that is the whole clear mechanism.
      *
      * Growth, stated rather than defended: one bounded record per distinct `conversation_id` seen on
-     * this connection. Both halves are bounded per frame — the transport's frame contract caps the
+     * this host pairing. Both halves are bounded per frame — the transport's frame contract caps the
      * envelope ahead of any parse and the daemon bounds both strings at construction — so a flooding
      * daemon costs one entry per distinct id rather than an unbounded append per frame, and the
-     * connection scope returns it to zero. The posture [QueueProjection] and
+     * pairing scope returns it to zero. The posture [QueueProjection] and
      * `ModelMenuProjection.modelMenusByConversation` already ship; no eviction policy is built for a failure nobody has
      * observed. In particular **the expiry is not an eviction**: an expired entry stays here and merely
      * stops being readable (see [observe]), which is what keeps this projection free of the

@@ -1,8 +1,11 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -23,12 +26,14 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.warning
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -155,6 +160,20 @@ class ThreadComposerFooterTest {
         composeTestRule.onNodeWithText("Run configuration").assertDoesNotExist()
     }
 
+    // #1309: opening Run configuration asks the thread to re-read its settings once; closing asks nothing.
+    @Test
+    fun openingRunConfiguration_sendsOneOpenEvent_andClosingSendsNone() {
+        setThread(baseConfig.copy(permissionMode = "plan"))
+
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
+        composeTestRule.onNodeWithText("Run configuration").assertIsDisplayed()
+        assertEquals(listOf<ThreadEvent>(ThreadEvent.RunConfigOpen), overflowEvents)
+
+        composeTestRule.onNodeWithContentDescription("Close").performClick()
+        composeTestRule.onNodeWithText("Run configuration").assertDoesNotExist()
+        assertEquals(listOf<ThreadEvent>(ThreadEvent.RunConfigOpen), overflowEvents)
+    }
+
     @Test
     fun runConfigurationShowsUnavailablePermissionWhenNoConfirmedMode() {
         setThread(baseConfig.copy(permissionMode = ""))
@@ -270,8 +289,8 @@ class ThreadComposerFooterTest {
         setThread(baseConfig.copy(contextPercent = 84))
 
         contextSegment()
-            .assertTextEquals("Cxt: 84%")
-            .assert(hasContentDescription("Context usage 84%"))
+            .assertTextEquals("Cxt high: 84%")
+            .assert(hasContentDescription("Context usage high, 84%"))
             .assertIsDisplayed()
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
         composeTestRule.onNodeWithText("84% used").assertIsDisplayed()
@@ -305,5 +324,56 @@ class ThreadComposerFooterTest {
         contextSegment().assertTextEquals("Cxt: 37%")
         composeTestRule.onNodeWithText("Cxt: 12%").assertDoesNotExist()
         overlay().assertDoesNotExist()
+    }
+
+    // #1412: the reading turns warning at 50 and error at 70, where it also says the usage is high.
+    @Test
+    fun contextSegment_warnsAtFifty_andReadsHighAtSeventy() {
+        var percent by mutableStateOf<Int?>(49)
+        var primary = Color.Unspecified
+        var warning = Color.Unspecified
+        var error = Color.Unspecified
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                primary = MaterialTheme.colorScheme.primary
+                warning = MaterialTheme.colorScheme.warning
+                error = MaterialTheme.colorScheme.error
+                ThreadComposerFooter(
+                    runConfig = baseConfig.copy(contextPercent = percent),
+                    onOpen = {},
+                    onStatusClick = {},
+                    onAnchorChanged = { _, _ -> },
+                )
+            }
+        }
+
+        contextSegment().assertTextEquals("Cxt: 49%").assert(hasContentDescription("Context usage 49%"))
+        assertEquals(primary, contextColor())
+
+        percent = 50
+        contextSegment().assertTextEquals("Cxt: 50%")
+        assertEquals(warning, contextColor())
+
+        percent = 69
+        contextSegment().assertTextEquals("Cxt: 69%").assert(hasContentDescription("Context usage 69%"))
+        assertEquals(warning, contextColor())
+
+        percent = 70
+        contextSegment()
+            .assertTextEquals("Cxt high: 70%")
+            .assert(hasContentDescription("Context usage high, 70%"))
+        assertEquals(error, contextColor())
+    }
+
+    private fun contextColor(): Color {
+        val layouts = mutableListOf<TextLayoutResult>()
+        contextSegment()
+            .fetchSemanticsNode()
+            .config[SemanticsActions.GetTextLayoutResult]
+            .action
+            ?.invoke(layouts)
+        return layouts
+            .single()
+            .layoutInput.style.color
     }
 }

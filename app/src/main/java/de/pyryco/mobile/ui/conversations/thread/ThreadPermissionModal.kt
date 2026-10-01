@@ -9,8 +9,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -18,100 +19,136 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ModalContext
-import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
-import de.pyryco.mobile.ui.components.MobileGateModal
-import de.pyryco.mobile.ui.settings.label
-import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.components.ModalCancelButton
 import de.pyryco.mobile.ui.theme.modalControl
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
+/** Bounds each daemon-authored string the inline request renders (#1306). */
+private const val MAX_PERMISSION_TEXT = 8192
+
 /**
- * The permission/choice modal overlay (#446) — a separate-surface M3 dialog floating over the active
- * thread, **not** a row in the thread [LazyColumn]. Renders the verbatim [title][ModalUiState.Open.title],
- * [prompt][ModalUiState.Open.prompt], and [options][ModalUiState.Open.options] (in wire array order) and
- * highlights the producer's fail-safe-deny [defaultOptionId][ModalUiState.Open.defaultOptionId].
+ * The pending permission or trust request inside its conversation's stream (#1306, superseding the #446
+ * dialog): the server [title][ModalUiState.Open.title] as a heading, a card with the verbatim
+ * [prompt][ModalUiState.Open.prompt], claude's decision context, the session-grant offer and the
+ * [options][ModalUiState.Open.options] in wire order, then Cancel below the card. Under the thread's reverse
+ * layout the items are emitted newest end first, so Cancel sits at index 0 and the title furthest up.
  *
- * Since #815 it is drawn in the shared mobile modal container ([MobileGateModal]): the server title fills
- * the header, the prompt and options fill the scroll area, and the footer carries only Cancel. Since #817
- * claude's decision context ([PermissionContext]) sits between the prompt and the options, only when the
- * frame carried any.
+ * Security (render-time obligations #445 deferred, unchanged in substance):
+ * - **Inert output-encoding** — every server string renders through plain [Text] bounded by
+ *   [MAX_PERMISSION_TEXT]; never [de.pyryco.mobile.ui.conversations.components.MarkdownText], no
+ *   `SelectionContainer` clipboard path.
+ * - **Screen capture and tapjacking** — the dialog window that used to carry `FLAG_SECURE` and the
+ *   obscured-touch filter is gone; the thread mounts [QuestionPromptProtection] on the activity surface for as
+ *   long as a request is open, including while these items are scrolled offscreen.
+ * - **Stale taps** — every callback carries the rendered request's `modalId`, so a tap composed before a
+ *   replacement cannot answer, cancel or grant the replacement; the ViewModel compares it.
+ * - **No persistence** — item keys carry the `modalId` only, and nothing here is saved.
  *
- * Security (this slice owns the render-time obligations #445 deferred):
- * - **Inert output-encoding** — every server string renders through plain [Text] (literal, no
- *   markup/HTML/active content; never [de.pyryco.mobile.ui.conversations.components.MarkdownText], no
- *   `SelectionContainer` clipboard path) — the values may name a sensitive command or path.
- * - **Screen-capture hardening** and **tapjacking** (#452) — [MobileGateModal] sets `FLAG_SECURE` on the
- *   dialog's **own** window (the host carries none) and `filterTouchesWhenObscured` on it, a deterministic
- *   View-level net that is *different fabric* from the second-confirm UX belt (#451).
- * - **No persistence** — no modal-derived text reaches `rememberSaveable` / saved-instance state.
- *
- * Live in #452: [onOption] forwards every tapped option id verbatim — the VM decides arm-vs-send; the UI
- * never re-derives the arm. [armedOptionId] reflects the VM's armed non-default option (#451), drawing the
- * second-confirm affordance on that one option. [onCancel] is reached only via the explicit Cancel button;
- * the gate ignores back-press and outside taps and draws no close glyph (#446), so a permission gate never
- * reads a stray gesture as an implicit answer.
- *
- * #818: when the prompt [offers][ModalUiState.Open.offersAlwaysAllow] a session grant, [AlwaysAllowOffer]
- * sits between the context and the options, as on the desktop. Its toggle reports this prompt's `modalId`
- * so the VM can ignore a tap that lands after the prompt was replaced.
+ * [onOption] forwards every tapped option id verbatim: the ViewModel decides arm-vs-send (#451), and
+ * [armedOptionId] only reflects its armed non-default. Toggling the grant never arms or answers (#818).
+ * While the host is not [connected] (#1321) the options and Cancel are disabled; the grant stays usable.
  */
-@Composable
-internal fun PermissionModalOverlay(
+internal fun LazyListScope.permissionRequestItems(
     open: ModalUiState.Open,
     armedOptionId: String?,
-    onOption: (String) -> Unit,
-    onCancel: () -> Unit,
-    alwaysAllowAccepted: Boolean = false,
-    onAlwaysAllowChanged: (modalId: String, accepted: Boolean) -> Unit = { _, _ -> },
+    connected: Boolean,
+    onOption: (modalId: String, optionId: String) -> Unit,
+    onCancel: (modalId: String) -> Unit,
+    alwaysAllowAccepted: Boolean,
+    onAlwaysAllowChanged: (modalId: String, accepted: Boolean) -> Unit,
+    gutter: Modifier,
 ) {
-    MobileGateModal(
-        title = open.title,
-        cancelLabel = stringResource(R.string.modal_cancel),
-        onCancel = onCancel,
-    ) {
-        Text(text = open.prompt, style = MaterialTheme.typography.bodyLarge)
-        if (!open.context.isEmpty) PermissionContext(open.context)
-        if (open.offersAlwaysAllow) {
-            AlwaysAllowOffer(
-                rules = open.alwaysAllowRules,
-                accepted = alwaysAllowAccepted,
-                onChanged = { onAlwaysAllowChanged(open.modalId, it) },
+    item(key = "permission-cancel:${open.modalId}") {
+        Box(gutter.testTag("permission-request-cancel"), contentAlignment = Alignment.Center) {
+            ModalCancelButton(
+                label = stringResource(R.string.modal_cancel),
+                onClick = { onCancel(open.modalId) },
+                enabled = connected,
             )
         }
+    }
+    item(key = "permission-card:${open.modalId}") {
+        Box(gutter) {
+            PermissionRequestCard(open, armedOptionId, connected, onOption, alwaysAllowAccepted, onAlwaysAllowChanged)
+        }
+    }
+    item(key = "permission-title:${open.modalId}") {
+        Box(gutter) {
+            Text(
+                text = open.title.take(MAX_PERMISSION_TEXT),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.semantics { heading() }.testTag("permission-request-title"),
+            )
+        }
+    }
+}
+
+/** The request's card, in the #1305 question card's container: background fill, primary-container border. */
+@Composable
+private fun PermissionRequestCard(
+    open: ModalUiState.Open,
+    armedOptionId: String?,
+    connected: Boolean,
+    onOption: (modalId: String, optionId: String) -> Unit,
+    alwaysAllowAccepted: Boolean,
+    onAlwaysAllowChanged: (modalId: String, accepted: Boolean) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("permission-request-card"),
+        shape = MaterialTheme.shapes.modalControl,
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primaryContainer),
+    ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Iterate in array order (the canonical display/selection order). isDefault drives the
-            // fail-safe-deny highlight; isArmed reflects the VM's armed non-default option — no
-            // option-id semantics are interpreted, every tap forwards verbatim.
-            open.options.forEach { option ->
-                ModalOptionButton(
-                    label = option.label,
-                    isDefault = option.id == open.defaultOptionId,
-                    isArmed = option.id == armedOptionId,
-                    onClick = { onOption(option.id) },
+            Text(text = open.prompt.take(MAX_PERMISSION_TEXT), style = MaterialTheme.typography.bodyLarge)
+            if (!open.context.isEmpty) PermissionContext(open.context)
+            if (open.offersAlwaysAllow) {
+                AlwaysAllowOffer(
+                    rules = open.alwaysAllowRules,
+                    accepted = alwaysAllowAccepted,
+                    onChanged = { onAlwaysAllowChanged(open.modalId, it) },
                 )
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Iterate in array order (the canonical display/selection order). isDefault drives the
+                // fail-safe-deny highlight; isArmed reflects the VM's armed non-default option — no
+                // option-id semantics are interpreted, every tap forwards verbatim.
+                open.options.forEach { option ->
+                    ModalOptionButton(
+                        label = option.label.take(MAX_PERMISSION_TEXT),
+                        isDefault = option.id == open.defaultOptionId,
+                        isArmed = option.id == armedOptionId,
+                        enabled = connected,
+                        onClick = { onOption(open.modalId, option.id) },
+                    )
+                }
             }
         }
     }
@@ -137,12 +174,12 @@ private fun PermissionContext(context: ModalContext) {
                     "classifier" -> stringResource(R.string.modal_context_reason_classifier)
                     "rule" -> stringResource(R.string.modal_context_reason_rule)
                     null -> stringResource(R.string.modal_context_reason)
-                    else -> stringResource(R.string.modal_context_reason_type, type)
+                    else -> stringResource(R.string.modal_context_reason_type, type.take(MAX_PERMISSION_TEXT))
                 }
-            ModalContextRow(label = label, value = context.reason)
+            ModalContextRow(label = label, value = context.reason?.take(MAX_PERMISSION_TEXT))
         }
-        context.description?.let { ModalContextRow(stringResource(R.string.modal_context_description), it) }
-        context.blockedPath?.let { ModalContextRow(stringResource(R.string.modal_context_blocked_path), it) }
+        context.description?.let { ModalContextRow(stringResource(R.string.modal_context_description), it.take(MAX_PERMISSION_TEXT)) }
+        context.blockedPath?.let { ModalContextRow(stringResource(R.string.modal_context_blocked_path), it.take(MAX_PERMISSION_TEXT)) }
     }
 }
 
@@ -195,7 +232,7 @@ private fun AlwaysAllowOffer(
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
-        rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyMedium) }
+        rules.forEach { rule -> Text(text = rule.take(MAX_PERMISSION_TEXT), style = MaterialTheme.typography.bodyMedium) }
     }
 }
 
@@ -230,6 +267,9 @@ private fun ModalContextRow(
  *   deny/safe option (it answers on a single tap).
  * - neither → an [OutlinedButton], no marker (a first tap arms it via the VM).
  *
+ * Not [enabled] while the host is not connected (#1321): Material's disabled colours, and no tap reaches
+ * the VM, so a disabled option neither sends nor arms.
+ *
  * The `stateDescription` markers are accessible + test-observable (a screen reader announces them; the AC#4
  * test locates the armed / default option by these, not by colour). Only the local markers are added — the
  * verbatim server [label] stays the sole server text, rendered through plain [Text].
@@ -239,6 +279,7 @@ private fun ModalOptionButton(
     label: String,
     isDefault: Boolean,
     isArmed: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     val defaultDesc = stringResource(R.string.modal_default_option_desc)
@@ -257,6 +298,7 @@ private fun ModalOptionButton(
             FilledTonalButton(
                 onClick = onClick,
                 modifier = modifier,
+                enabled = enabled,
                 shape = shape,
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
             ) {
@@ -272,6 +314,7 @@ private fun ModalOptionButton(
             Button(
                 onClick = onClick,
                 modifier = modifier,
+                enabled = enabled,
                 shape = shape,
                 colors =
                     ButtonDefaults.buttonColors(
@@ -297,6 +340,7 @@ private fun ModalOptionButton(
                     ),
                 onClick = onClick,
                 modifier = modifier,
+                enabled = enabled,
                 shape = shape,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                 contentPadding = PaddingValues(horizontal = 19.dp, vertical = 7.dp),
@@ -309,33 +353,6 @@ private fun ModalOptionButton(
                     textAlign = TextAlign.Center,
                 )
             }
-    }
-}
-
-@Preview(name = "Permission choices — dark", widthDp = 412, heightDp = 892, showBackground = true)
-@Composable
-private fun PermissionModalPreview() {
-    PyrycodeMobileTheme(darkTheme = true) {
-        PermissionModalOverlay(
-            open =
-                ModalUiState.Open(
-                    modalId = "preview",
-                    modalClass = "permission",
-                    title = "Permission required",
-                    prompt = "Allow this action?",
-                    options =
-                        listOf(
-                            ModalOption("allow_once", "Allow once"),
-                            ModalOption("reject_once", "Reject once"),
-                        ),
-                    defaultOptionId = "reject_once",
-                    alwaysAllowRules = listOf("Applies to this session"),
-                ),
-            armedOptionId = null,
-            onOption = {},
-            onCancel = {},
-            alwaysAllowAccepted = true,
-        )
     }
 }
 

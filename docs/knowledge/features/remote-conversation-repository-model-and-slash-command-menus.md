@@ -167,10 +167,17 @@ paths. Decode boundary:
 
 The retention itself matches #791's exactly — same snapshot-replace keyed by the frame's own
 `conversation_id` and nothing else, same no-clearing-edge posture (absence of a frame is the only "no
-menu" signal), same cold `map { it[conversationId] }.distinctUntilChanged()` projection, same
-`switchToLive<SlashCommandMenu?>(null) { … }` host-isolating passthrough on
-[`StableConversationRepository`](stable-conversation-repository.md), same `flowOf(null)` interface default.
-See the model-list section above for the reasoning behind each of those — not repeated here.
+menu" signal), same cold `map { it[conversationId] }.distinctUntilChanged()` projection, same `flowOf(null)`
+interface default. See the model-list section above for the reasoning behind each of those — not repeated
+here.
+
+Unlike `model_list`, this projection is one of the five [`HostReadings`](relay-repository-coordinator.md)
+hold for the life of a host's pairing ([#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317)):
+on the thread's path, [`StableConversationRepository`](stable-conversation-repository.md) reads the held
+projection directly rather than switching, so a reconnect no longer drops a menu already offered — a
+reconnect is not "per host" in the sense the paragraph above used for `model_list`'s own retention, which
+is unchanged and still reset per connection. The compatibility singleton still passes no held readings and
+keeps the old `switchToLive<SlashCommandMenu?>(null) { … }` host-isolating passthrough.
 
 Two departures from the `model_list` sibling, both deliberate:
 

@@ -135,8 +135,8 @@ class FooterMenuTest {
         val config = config(choices = listOf(opus), inheritedChoice = inherited, savedModel = "", savedEffort = "")
 
         assertEquals(inherited.effortChoices, config.effortChoices)
-        assertTrue(footerControlEnabled(FooterControl.Effort, config))
-        assertFalse(footerControlEnabled(FooterControl.Effort, config.copy(sessionId = "")))
+        assertTrue(footerControlEnabled(FooterControl.Effort, config, connected = true))
+        assertFalse(footerControlEnabled(FooterControl.Effort, config.copy(sessionId = ""), connected = true))
     }
 
     @Test
@@ -144,7 +144,7 @@ class FooterMenuTest {
         val config = config(savedModel = "", savedEffort = "")
 
         assertTrue(config.effortChoices.isEmpty())
-        assertFalse(footerControlEnabled(FooterControl.Effort, config))
+        assertFalse(footerControlEnabled(FooterControl.Effort, config, connected = true))
     }
 
     @Test
@@ -169,7 +169,7 @@ class FooterMenuTest {
     fun permission_withoutAConfirmedMode_isHiddenAndOffersNothing() {
         assertNull(permissionModeLabel(config(permissionMode = "")))
         assertNull(footerMenu(FooterControl.Permission, config(permissionMode = "")))
-        assertFalse(footerControlEnabled(FooterControl.Permission, config(permissionMode = "")))
+        assertFalse(footerControlEnabled(FooterControl.Permission, config(permissionMode = ""), connected = true))
     }
 
     @Test
@@ -271,13 +271,18 @@ class FooterMenuTest {
 
     @Test
     fun permission_opensOnlyWithASessionAndNoOutstandingPermissionWrite() {
-        assertTrue(footerControlEnabled(FooterControl.Permission, config(permissionMode = "plan")))
-        assertFalse(footerControlEnabled(FooterControl.Permission, config(permissionMode = "plan", sessionId = "")))
-        assertFalse(footerControlEnabled(FooterControl.Permission, config(permissionMode = "plan", pendingPermission = "default")))
+        assertTrue(footerControlEnabled(FooterControl.Permission, config(permissionMode = "plan"), connected = true))
+        assertFalse(footerControlEnabled(FooterControl.Permission, config(permissionMode = "plan", sessionId = ""), connected = true))
+        val pendingPermission = config(permissionMode = "plan", pendingPermission = "default")
+        assertFalse(footerControlEnabled(FooterControl.Permission, pendingPermission, connected = true))
         // Model and effort gating is unchanged: a pending model tap does not block the permission control,
         // and a pending permission write does not block the model control.
-        assertTrue(footerControlEnabled(FooterControl.Permission, config(permissionMode = "plan", pendingModel = "haiku")))
-        assertTrue(footerControlEnabled(FooterControl.Model, config(permissionMode = "plan", pendingPermission = "default")))
+        assertTrue(
+            footerControlEnabled(FooterControl.Permission, config(permissionMode = "plan", pendingModel = "haiku"), connected = true),
+        )
+        assertTrue(
+            footerControlEnabled(FooterControl.Model, config(permissionMode = "plan", pendingPermission = "default"), connected = true),
+        )
     }
 
     // ---- #889: the effort display takes Claude's applied reading, falling back to the saved choice ----
@@ -374,7 +379,7 @@ class FooterMenuTest {
 
         assertEquals("high", runConfig.effortLabel)
         assertNull(footerMenu(FooterControl.Effort, runConfig))
-        assertFalse(footerControlEnabled(FooterControl.Effort, runConfig))
+        assertFalse(footerControlEnabled(FooterControl.Effort, runConfig, connected = true))
     }
 
     @Test
@@ -437,9 +442,21 @@ class FooterMenuTest {
     // #884: a command send needs no session to address and no idle run configuration.
     @Test
     fun actions_isEnabled_withoutASession_andWhileAWriteIsPending() {
-        assertTrue(footerControlEnabled(FooterControl.Actions, config(sessionId = "")))
-        assertTrue(footerControlEnabled(FooterControl.Actions, config(pendingModel = "haiku", pendingPermission = "plan")))
-        assertTrue(footerControlEnabled(FooterControl.Actions, ThreadRunConfig()))
+        assertTrue(footerControlEnabled(FooterControl.Actions, config(sessionId = ""), connected = true))
+        assertTrue(
+            footerControlEnabled(FooterControl.Actions, config(pendingModel = "haiku", pendingPermission = "plan"), connected = true),
+        )
+        assertTrue(footerControlEnabled(FooterControl.Actions, ThreadRunConfig(), connected = true))
+    }
+
+    // #1319: while the host is not connected no footer control opens, Actions included, as on desktop.
+    @Test
+    fun noControl_isEnabled_whileTheHostIsNotConnected() {
+        val writable = config(permissionMode = "plan")
+        FooterControl.entries.forEach { control ->
+            assertTrue("$control enabled when connected", footerControlEnabled(control, writable, connected = true))
+            assertFalse("$control disabled when not connected", footerControlEnabled(control, writable, connected = false))
+        }
     }
 
     // #884: the pre-existing controls are untouched by the Actions inputs.

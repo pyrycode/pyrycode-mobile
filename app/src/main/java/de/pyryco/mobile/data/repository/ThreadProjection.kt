@@ -54,6 +54,25 @@ internal class ThreadProjection {
     private val threadByConversation = MutableStateFlow<Map<String, List<ThreadItem>>>(emptyMap())
 
     /**
+     * `conversationId -> the turn ids whose turn_end this conversation has seen` on either lane (#1419).
+     * A `turn_end` can reach the client before the rows it ends: the newest history page can hold only
+     * the `turn_end`, or a live one can land before the page with the turn's deltas. Any row of an ended
+     * turn that enters the thread later is settled against this set ([withSettledTurns]).
+     *
+     * Every writer records here **before** it updates the thread. A history merge runs on the caller's
+     * coroutine while a live `turn_end` runs on the inbound collector, so the two can race, and a
+     * finalize whose flip finds none of the turn's rows writes nothing: a [MutableStateFlow.update] to an
+     * equal value never makes the merge's compare-and-set fail. So after its merge commits,
+     * [mergeHistoryPage] runs [settleEndedTurns], which reads this set afresh. Either the finalize
+     * recorded before that read, and the pass settles the rows, or its thread update starts after the
+     * merge committed, and its own flip finds them. A live delta needs no such pass: its update always
+     * changes the thread, so a racing merge either retries and sees the record or is seen by the delta.
+     * Grow-only, since an ended turn never streams again. Connection-scoped and in-memory like
+     * [mintedMessageIds], and dropped with the thread by [remove].
+     */
+    private val endedTurns = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+
+    /**
      * `conversationId -> the message ids this device minted and echoed into the thread` (#781) — the
      * ledger that makes a queued item's [QueuedMessage.messageId] safe to act on. Written by
      * [RemoteConversationRepository.sendMessage] through [recordMinted] after its ack (beside the confirmed insert) and consumed when a drop settles
@@ -358,14 +377,13 @@ internal class ThreadProjection {
     }
 
     /**
-     * Fold one `assistant_delta` into the conversation's live streaming assistant row (#337). The
-     * first delta of a turn opens a [Role.Assistant] [Message] keyed by
-     * [LiveSessionEvent.AssistantDelta.turnId] with [Message.isStreaming] `= true`; each later delta
-     * for that turn **appends** its text in place, keeping the row's id and position. One atomic
+     * Fold one `assistant_delta` into the conversation's assistant reply segments (#337, #1350). A
+     * delta extends the last row when it is a segment of the same turn and otherwise opens a new
+     * streaming [Role.Assistant] segment at the end, so text after a tool call or a user message draws
+     * below it; [withAssistantDelta] has the segment key and the guards that keep it unique. One atomic
      * [MutableStateFlow.update] into the same [threadByConversation] the live `message` and tool
      * arms write, so the assistant text interleaves by **arrival order** with messages and tool rows
-     * (AC #4). The `&& role == Role.Assistant` match namespaces this row so a `turnId` can never
-     * clobber a `message_id` or `toolUseId` row.
+     * (AC #4).
      *
      * **Arrival-order concatenation, by design.** The wire delivers a turn's deltas in
      * [LiveSessionEvent.AssistantDelta.seq] order over the single ordered inbound stream, and a fresh
@@ -381,21 +399,24 @@ internal class ThreadProjection {
      */
     fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
         threadByConversation.update { current ->
-            current + (event.conversationId to current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now()))
+            val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now())
+            val ended = event.turnId in endedTurns.value[event.conversationId].orEmpty()
+            current + (event.conversationId to if (ended) rows.withSettledTurns(setOf(event.turnId)) else rows)
         }
     }
 
     /**
-     * Finalize the live streaming assistant row on `turn_end` (#337): flip the matching
-     * [Role.Assistant] row (keyed by [LiveSessionEvent.TurnEnd.turnId]) to [Message.isStreaming]
-     * `= false` in place, so the thread renders the completed reply as static markdown rather than the
+     * Finalize the turn's assistant text on `turn_end` (#337): flip every streaming segment of
+     * [LiveSessionEvent.TurnEnd.turnId] (#1350) to [Message.isStreaming] `= false` in place, so the thread renders the completed reply as static markdown rather than the
      * streaming caret view. One atomic [MutableStateFlow.update]. **No-op when no streaming assistant
      * row exists for the turn** — a tool-only or empty turn carries no assistant text (AC #3), and a
      * duplicate `turn_end` re-applies the same flip (idempotent). `turn_end` carries no final text, so
      * nothing is appended here; [LiveSessionEvent.TurnEnd.stopReason] is not consumed by this slice
-     * (turn-outcome mapping is a later consumer concern).
+     * (turn-outcome mapping is a later consumer concern). The turn is first recorded in [endedTurns], so
+     * a row of it that a later merge brings in lands settled too (#1419).
      */
     fun finalizeAssistantTurn(event: LiveSessionEvent.TurnEnd) {
+        recordEnded(event.conversationId, setOf(event.turnId))
         threadByConversation.update { current ->
             current + (event.conversationId to current[event.conversationId].orEmpty().withFinalizedTurn(event))
         }
@@ -505,6 +526,10 @@ internal class ThreadProjection {
      * the negotiated set), `message` / `send_message` always do. The daemon's `request_history` handler has
      * no such gate, so this is the client's fail-closed half.
      *
+     * The page's `turn_end`s are recorded in [endedTurns] first, and the merged slice then settles every
+     * turn the conversation has seen end (#1419): a page can bring the rows of a turn whose `turn_end` came
+     * earlier, on the live lane or on a newer page.
+     *
      * Emits no log on any branch, like the rest of this class.
      */
     fun mergeHistoryPage(
@@ -513,17 +538,45 @@ internal class ThreadProjection {
         interactive: Boolean,
     ) {
         if (page.entries.isEmpty()) return
+        recordEnded(conversationId, endedTurnIds(page.entries, interactive))
         threadByConversation.update { current ->
             val existing = current[conversationId].orEmpty()
-            current + (conversationId to existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive)))
+            val merged = existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive))
+            current + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty()))
         }
+        settleEndedTurns(conversationId)
+    }
+
+    /**
+     * Settle every row of [conversationId]'s thread whose turn has ended, after a merge has committed
+     * (#1419). The merge's own settle can miss a live `turn_end` recorded while it ran, and that
+     * finalize's thread update cannot make the merge retry when it changes nothing; this pass closes the
+     * window (see [endedTurns]). Writes nothing when nothing changes.
+     */
+    private fun settleEndedTurns(conversationId: String) {
+        threadByConversation.update { current ->
+            val rows = current[conversationId] ?: return@update current
+            val settled = rows.withSettledTurns(endedTurns.value[conversationId].orEmpty())
+            if (settled === rows) current else current + (conversationId to settled)
+        }
+    }
+
+    /** Add [turnIds] to [conversationId]'s [endedTurns]; an empty set writes nothing (#1419). */
+    private fun recordEnded(
+        conversationId: String,
+        turnIds: Set<String>,
+    ) {
+        if (turnIds.isEmpty()) return
+        endedTurns.update { it + (conversationId to (it[conversationId].orEmpty() + turnIds)) }
     }
 
     /**
      * Drop [conversationId]'s thread after a confirmed `delete` (#532), the thread third of
-     * [ConversationCommands]' `removeConversation`. Removing an absent id re-emits nothing.
+     * [ConversationCommands]' `removeConversation`, along with the turns it has seen end (#1419). Removing
+     * an absent id re-emits nothing.
      */
     fun remove(conversationId: String) {
+        endedTurns.update { it - conversationId }
         threadByConversation.update { it - conversationId }
     }
 
@@ -534,9 +587,13 @@ internal class ThreadProjection {
      * [distinctUntilChanged] means a change to **another** conversation's slot does not re-emit this
      * flow (AC #3). A `StateFlow` always has a value, so a fresh collector receives the current thread
      * (empty until backfill/live arrives) on subscription.
+     *
+     * Every row but the last is read settled ([withOnlyLastRowStreaming], #1350): an assistant segment
+     * stops streaming once any row follows it, whichever write appended that row. This is the one read of
+     * the store, so no reader sees an earlier segment still streaming.
      */
     fun observe(conversationId: String): Flow<List<ThreadItem>> =
-        threadByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
+        threadByConversation.map { it[conversationId].orEmpty().withOnlyLastRowStreaming() }.distinctUntilChanged()
 
     /**
      * Decode one v2 `unrecognized_message` envelope (#609) to its routing [conversationId] and the mapped

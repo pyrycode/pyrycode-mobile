@@ -25,7 +25,6 @@ fun ThreadInputBar(
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
     onAnchorChanged: (Rect) -> Unit = {},
-    hasAttachments: Boolean = false,
     sending: Boolean = false,
 )
 
@@ -39,17 +38,19 @@ fun ThreadInputBar(
     isBusy: Boolean = false,
     onInterrupt: () -> Unit = {},
     onAnchorChanged: (Rect) -> Unit = {},
-    hasAttachments: Boolean = false,
     sending: Boolean = false,
     onImagesReceived: ((List<Uri>) -> Unit)? = null,
+    enabled: Boolean = true,
 )
 ```
 
 [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934) added `onImagesReceived`, defaulted `null` so every pre-#934 call site still compiles and renders a field with no `contentReceiver` at all. Non-null on `ThreadScreen`'s own call — see [§ Image paste into the field](#image-paste-into-the-field-934).
 
+[#1319](https://github.com/pyrycode/pyrycode-mobile/issues/1319) added `enabled` to the stateless overload only, defaulted `true` so every pre-#1319 call site and preview still compiles. `ThreadScreen` is the one real caller and passes its own `connected` (the host's `ConnectionState.Connected` check) through. The field itself stays editable regardless — `enabled` only folds into `buttonEnabled`, below — so a disconnected user can still type and the draft and any pending attachments are kept; only the tap that would reach the ViewModel is suppressed here, matching the ViewModel's own tap-time re-check (see [Connection state](connection-state.md)).
+
 [#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) added `onAnchorChanged`, defaulted on both overloads so no existing call site changes. It reports the field's `boundsInWindow()` with `left` moved in by `FieldLeadingInset` (16dp) on every frame the field's own position changes, so a row of the [slash-command type-ahead](slash-command-type-ahead.md)'s `OptionsOverlay` lines its text up with the composer's own typed text. See [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934) for the other #885 change to this file.
 
-[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) added `hasAttachments` and `sending`, both defaulted so every pre-#933 call site still compiles. They come from the chat's own pending-attachment strip — see [Thread screen § Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) — not from anything local to this composable.
+[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) added `hasAttachments` and `sending`, both defaulted so every pre-#933 call site still compiles. `sending` comes from the chat's own pending-attachment strip — see [Thread screen § Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) — not from anything local to this composable. [#1328](https://github.com/pyrycode/pyrycode-mobile/issues/1328) removed `hasAttachments` again: pending files no longer change whether the button shows Send or Stop, or whether Send is enabled — matching desktop, which has always required text alongside attachments.
 
 [#643](../codebase/643.md) added `isBusy` and `onInterrupt` to both overloads, defaulted so the pre-existing previews and call sites stay one-liners. The stateful overload holds `var text by rememberSaveable { mutableStateOf("") }` and delegates to the stateless overload; on send it invokes `onSend(text)` and resets `text = ""` **only when `text.isNotBlank()`**. Blank input is a UI no-op (button is also disabled when idle, but the IME `Send` action can still fire on some keyboards). The stateless overload is what the previews call directly.
 
@@ -59,18 +60,16 @@ The two-overload pattern matches the project convention for composables that nee
 
 [#643](../codebase/643.md) retired the standalone foot-of-list `InterruptAffordance` (see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) and folded its stop action into this button, following desktop's #678 precedent instead of inventing a third placement:
 
-| `text` | `hasAttachments` | `isBusy` | `sending` | description | action | enabled |
-|---|---|---|---|---|---|---|
-| non-blank | either | either | `false` | `cd_send_message` ("Send message") | `onSend` | yes |
-| non-blank | either | either | `true` | `cd_send_message` ("Send message") | `onSend` | no |
-| blank | `true` | either | `false` | `cd_send_message` ("Send message") | `onSend` | yes |
-| blank | `true` | either | `true` | `cd_send_message` ("Send message") | `onSend` | no |
-| blank | `false` | `true` | either | `cd_thread_interrupt` ("Stop the running turn") | `onInterrupt` | yes |
-| blank | `false` | `false` | either | `cd_send_message` ("Send message") | — | no |
+| `text` | `isBusy` | `sending` | description | action | enabled |
+|---|---|---|---|---|---|
+| non-blank | either | `false` | `cd_send_message` ("Send message") | `onSend` | yes |
+| non-blank | either | `true` | `cd_send_message` ("Send message") | `onSend` | no |
+| blank | `true` | either | `cd_thread_interrupt` ("Stop the running turn") | `onInterrupt` | yes |
+| blank | `false` | either | `cd_send_message` ("Send message") | — | no |
 
-Text present wins over an in-flight turn **deliberately**: sending while the agent is busy is a shipped path (the daemon queues it and [`QueuedBacklog`](queued-backlog-section.md) renders it, #461/#467), so a stop variant that pre-empted a typed message would silently remove the only tap that reaches it. Stop therefore owns the button exactly when the composer is empty **and holds no attachment** — [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) widened `stopping = isBusy && text.isBlank() && !hasAttachments`, since an attachment with no text is still something to send, not the empty state stop is for. One consequence worth knowing for anyone touching this path: **stop is unreachable while a draft sits in the composer, or while an attachment is pending** — the user must clear both first. Deliberate and settled (queue-while-busy is real, the design has exactly one button slot), but a real thing to watch during a live turn.
+Text present wins over an in-flight turn **deliberately**: sending while the agent is busy is a shipped path (the daemon queues it and [`QueuedBacklog`](queued-backlog-section.md) renders it, #461/#467), so a stop variant that pre-empted a typed message would silently remove the only tap that reaches it. Stop therefore owns the button exactly when the composer's text is blank — `stopping = isBusy && text.isBlank()`. [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) had widened this to `&& !hasAttachments`, treating a pending attachment with no text as something to send rather than the empty state stop is for; [#1328](https://github.com/pyrycode/pyrycode-mobile/issues/1328) reverted that: a pending attachment can't send without text either (matching desktop), so it no longer keeps the button out of the Stop state. One consequence worth knowing for anyone touching this path: **stop is unreachable while a draft sits in the composer** — the user must clear it first. Deliberate and settled (queue-while-busy is real, the design has exactly one button slot), but a real thing to watch during a live turn.
 
-`enabled = stopping || (!sending && (text.isNotBlank() || hasAttachments))` (also #933): attachments alone enable Send, and `sending` — true for as long as [`ThreadViewModel.sendWithAttachments`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) is uploading and sending — disables Send even when text is present, so a second tap during an in-flight attachment send does nothing.
+`buttonEnabled = enabled && (stopping || (!sending && text.isNotBlank()))`: pending attachments alone no longer enable Send — [#1328](https://github.com/pyrycode/pyrycode-mobile/issues/1328) — so a blank draft with files attached leaves Send disabled and the IME send action sends nothing, keeping the files for the next send. `sending` — true for as long as [`ThreadViewModel.sendWithAttachments`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) is uploading and sending — disables Send even when text is present, so a second tap during an in-flight attachment send does nothing. The leading `enabled &&` ([#1319](https://github.com/pyrycode/pyrycode-mobile/issues/1319)) disables both Send and the Stop variant together while the host is not connected, and they re-enable the moment `ThreadScreen`'s `connected` flips back — no navigation, no reset of `text`.
 
 Both states draw a filled-circle silhouette inside the same container-less 48dp `IconButton`. Send uses the 28dp `ic_composer_send` vector traced from Figma node `113:3543`; Stop retains `Icons.Filled.StopCircle` because the inspected components define no Stop asset. `IconButtonDefaults.iconButtonColors` supplies `colorScheme.primary` when enabled and primary at 0.38 alpha when disabled. The icon inherits that content colour, so its appearance follows the actual button enabled condition, including attachment sending. Figma defines neither a Stop nor a disabled Send variant; those appearances are app choices. A semantics-only enabled assertion would miss a wrong icon path or full-strength disabled tint, so `ThreadInputBarStyleTest` also samples rendered pixels.
 

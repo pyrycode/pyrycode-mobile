@@ -6,12 +6,15 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConnectionStateSource
@@ -38,9 +41,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -207,252 +212,76 @@ class ThreadViewModelTest {
             assertEquals(1, source.retryCallCount)
         }
 
-    // ---- #406: isThinking reduction over live turn-state events ---------------------------------
+    // ---- #406 / #459 / #1313: isThinking and isBusy read the repository's held turn phase ------------
 
     @Test
-    fun isThinking_initialValue_isFalseWithNoLiveSource() =
+    fun turnFlags_initialValue_areFalseWithNoLiveSource() =
         runTest {
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-            // 4-arg makeVm (no live source) still compiles; the flag defaults inert (AC #5).
-            val vm = makeVm(handle, FakeConversationRepository())
+            // A plain fake inherits observeTurnPhase's idle default, so both flags stay inert.
+            val vm = makeVm(activeHandle(), FakeConversationRepository())
             assertFalse(vm.isThinking.value)
-        }
-
-    @Test
-    fun isThinking_turnStateThinking_becomesTrue() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isThinking.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
-            advanceUntilIdle()
-
-            assertTrue(vm.isThinking.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isThinking_turnStateRespondingAndIdle_areFalse() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isThinking.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
-            advanceUntilIdle()
-            assertFalse(vm.isThinking.value)
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
-            advanceUntilIdle()
-            assertTrue(vm.isThinking.value)
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Idle))
-            advanceUntilIdle()
-            assertFalse(vm.isThinking.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isThinking_turnEnd_resetsToFalse() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isThinking.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
-            advanceUntilIdle()
-            assertTrue(vm.isThinking.value)
-
-            // A turn that ends straight out of thinking (no responding/idle between) still resets.
-            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, turnId = "t1", stopReason = "end_turn"))
-            advanceUntilIdle()
-            assertFalse(vm.isThinking.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isThinking_latestPhaseWins() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isThinking.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
-            advanceUntilIdle()
-
-            assertFalse(vm.isThinking.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isThinking_otherConversation_doesNotAffectFlag() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isThinking.collect {} }
-            advanceUntilIdle()
-
-            // The active conversation enters thinking.
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
-            advanceUntilIdle()
-            assertTrue(vm.isThinking.value)
-
-            // Another conversation going idle must not flip the active flag (AC #3).
-            events.emit(turnState("other-conversation", LiveSessionEvent.TurnState.Phase.Idle))
-            advanceUntilIdle()
-            assertTrue(vm.isThinking.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isThinking_nonPhaseEvents_leaveFlagUnchanged() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isThinking.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
-            advanceUntilIdle()
-            assertTrue(vm.isThinking.value)
-
-            // assistant_delta / tool_use / tool_result are not phase transitions — flag holds. The
-            // control-derived replay-gap (#417) is likewise not a thinking transition — flag holds.
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 0, text = "hi"))
-            events.emit(LiveSessionEvent.ToolUse(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", name = "read", inputSummary = "f"))
-            events.emit(LiveSessionEvent.ToolResult(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", isError = false, resultSummary = "ok"))
-            events.emit(LiveSessionEvent.ReplayGap(ACTIVE_CONV))
-            advanceUntilIdle()
-            assertTrue(vm.isThinking.value)
-            collector.cancel()
-        }
-
-    // ---- #459: isBusy reduction over live turn-state events (thinking OR responding) -------------
-
-    @Test
-    fun isBusy_initialValue_isFalseWithNoLiveSource() =
-        runTest {
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-            // No live source: the flag defaults inert, like isThinking (AC #1 — hidden before any turn).
-            val vm = makeVm(handle, FakeConversationRepository())
             assertFalse(vm.isBusy.value)
         }
 
     @Test
-    fun isBusy_turnStateThinking_becomesTrue() =
+    fun turnFlags_followTheHeldPhase() =
         runTest {
+            val repo = TurnPhaseControllableRepo()
+            val vm = makeVm(activeHandle(), repo)
+            val thinking = launch { vm.isThinking.collect {} }
+            val busy = launch { vm.isBusy.collect {} }
+            advanceUntilIdle()
+
+            repo.phase.value = LiveSessionEvent.TurnState.Phase.Thinking
+            advanceUntilIdle()
+            assertTrue(vm.isThinking.value)
+            assertTrue(vm.isBusy.value)
+
+            // `responding` is busy but not thinking: the stop affordance must last the whole turn.
+            repo.phase.value = LiveSessionEvent.TurnState.Phase.Responding
+            advanceUntilIdle()
+            assertFalse(vm.isThinking.value)
+            assertTrue(vm.isBusy.value)
+
+            repo.phase.value = LiveSessionEvent.TurnState.Phase.Idle
+            advanceUntilIdle()
+            assertFalse(vm.isThinking.value)
+            assertFalse(vm.isBusy.value)
+            thinking.cancel()
+            busy.cancel()
+        }
+
+    @Test
+    fun turnFlags_observeOnlyOwnConversationId() =
+        runTest {
+            val repo = TurnPhaseControllableRepo()
+            val vm = makeVm(activeHandle(), repo)
+            val thinking = launch { vm.isThinking.collect {} }
+            val busy = launch { vm.isBusy.collect {} }
+            advanceUntilIdle()
+
+            assertTrue(repo.observedIds.isNotEmpty())
+            assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            thinking.cancel()
+            busy.cancel()
+        }
+
+    @Test
+    fun turnFlags_ignoreLiveEvents() =
+        runTest {
+            // The per-ViewModel fold is gone: a live `turn_state` alone no longer moves the flags.
             val events = MutableSharedFlow<LiveSessionEvent>()
             val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isBusy.collect {} }
+            val thinking = launch { vm.isThinking.collect {} }
+            val busy = launch { vm.isBusy.collect {} }
             advanceUntilIdle()
 
             events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
             advanceUntilIdle()
-
-            assertTrue(vm.isBusy.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isBusy_turnStateResponding_becomesTrue() =
-        runTest {
-            // The case that distinguishes isBusy from isThinking: `responding` is busy (true), but
-            // isThinking treats it as false. The interrupt affordance must show across the whole turn.
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isBusy.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
-            advanceUntilIdle()
-
-            assertTrue(vm.isBusy.value)
             assertFalse(vm.isThinking.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isBusy_turnStateIdle_isFalse() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isBusy.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
-            advanceUntilIdle()
-            assertTrue(vm.isBusy.value)
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Idle))
-            advanceUntilIdle()
             assertFalse(vm.isBusy.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isBusy_turnEnd_resetsToFalse() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isBusy.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
-            advanceUntilIdle()
-            assertTrue(vm.isBusy.value)
-
-            // AC #3: the turn ending hides the affordance with no further input.
-            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, turnId = "t1", stopReason = "end_turn"))
-            advanceUntilIdle()
-            assertFalse(vm.isBusy.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isBusy_otherConversation_doesNotAffectFlag() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isBusy.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
-            advanceUntilIdle()
-            assertTrue(vm.isBusy.value)
-
-            // Another conversation going idle must not flip the active flag.
-            events.emit(turnState("other-conversation", LiveSessionEvent.TurnState.Phase.Idle))
-            advanceUntilIdle()
-            assertTrue(vm.isBusy.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun isBusy_nonPhaseEvents_leaveFlagUnchanged() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.isBusy.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
-            advanceUntilIdle()
-            assertTrue(vm.isBusy.value)
-
-            // assistant_delta / tool_use / tool_result / replay-gap are not phase transitions — flag holds.
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 0, text = "hi"))
-            events.emit(LiveSessionEvent.ToolUse(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", name = "read", inputSummary = "f"))
-            events.emit(LiveSessionEvent.ToolResult(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", isError = false, resultSummary = "ok"))
-            events.emit(LiveSessionEvent.ReplayGap(ACTIVE_CONV))
-            advanceUntilIdle()
-            assertTrue(vm.isBusy.value)
-            collector.cancel()
+            thinking.cancel()
+            busy.cancel()
         }
 
     // ---- #805: turnOutcome, and turn_end still clearing the spinner and the Stop affordance ------
@@ -547,36 +376,6 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             assertNotNull(vm.turnOutcome.value)
             collector.cancel()
-        }
-
-    // AC #4: a failed or interrupted turn must leave neither the spinner nor the Stop affordance on.
-    @Test
-    fun failedAndCancelledTurnEnds_clearIsThinkingAndIsBusy() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val thinking = launch { vm.isThinking.collect {} }
-            val busy = launch { vm.isBusy.collect {} }
-            advanceUntilIdle()
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
-            advanceUntilIdle()
-            assertTrue(vm.isThinking.value)
-            assertTrue(vm.isBusy.value)
-            events.emit(failedTurnEnd(ACTIVE_CONV))
-            advanceUntilIdle()
-            assertFalse(vm.isThinking.value)
-            assertFalse(vm.isBusy.value)
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
-            advanceUntilIdle()
-            assertTrue(vm.isBusy.value)
-            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t2", "cancelled", outcome = "error_during_execution", isError = true))
-            advanceUntilIdle()
-            assertFalse(vm.isThinking.value)
-            assertFalse(vm.isBusy.value)
-            thinking.cancel()
-            busy.cancel()
         }
 
     private fun failedTurnEnd(conversationId: String) =
@@ -778,6 +577,95 @@ class ThreadViewModelTest {
 
             assertEquals(ModalUiState.Hidden, vm.currentModal.value)
             assertNull(vm.armedOptionId.value)
+        }
+
+    // ---- #1321: a permission tap that races a disconnect sends nothing ---------------------------------
+    // Each case switches the source just before the call and never collects vm.connectionState, whose
+    // optimistic Connected seed must not open the gate.
+
+    @Test
+    fun onModalOption_whileNotConnected_neitherSendsNorArms_untilConnectedReturns() =
+        runTest {
+            val source = FakeConnectionStateSource()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(MutableStateFlow(openModal(modalId = "m1")), recorder, source = source)
+
+            source.emit(ConnectionState.Offline)
+            vm.onModalOption("reject_once") // the default
+            source.emit(ConnectionState.Reconnecting(secondsRemaining = 3))
+            vm.onModalOption("allow_once") // a first tap that would arm
+            advanceUntilIdle()
+            assertTrue("no decision may be sent while not connected", recorder.answers.isEmpty())
+            assertNull("a disabled option must not arm", vm.armedOptionId.value)
+
+            source.emit(ConnectionState.Connected)
+            vm.onModalOption("allow_once")
+            assertEquals("the same first tap arms once connected", "allow_once", vm.armedOptionId.value)
+            vm.onModalOption("reject_once")
+            advanceUntilIdle()
+            assertEquals(listOf("m1" to "reject_once"), recorder.answers)
+        }
+
+    @Test
+    fun armedSecondTap_whileNotConnected_sendsNothing_andAnswersAfterReconnect() =
+        runTest {
+            val source = FakeConnectionStateSource()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(MutableStateFlow(openModal(modalId = "m1")), recorder, source = source)
+            vm.onModalOption("allow_once") // armed while connected
+
+            source.emit(ConnectionState.Connecting)
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertTrue(recorder.answers.isEmpty())
+            assertEquals("the arm survives the outage", "allow_once", vm.armedOptionId.value)
+
+            source.emit(ConnectionState.Connected)
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertEquals(listOf("m1" to "allow_once"), recorder.answers)
+            assertNull(vm.armedOptionId.value)
+        }
+
+    @Test
+    fun onModalCancel_whileNotConnected_sendsNothing_andKeepsArmAndGrant() =
+        runTest {
+            val source = FakeConnectionStateSource()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(MutableStateFlow(offeringModal("m1")), recorder, source = source)
+            vm.onAlwaysAllowChanged("m1", true)
+            vm.onModalOption("allow_always")
+
+            source.emit(ConnectionState.Offline)
+            vm.onModalCancel("m1")
+            advanceUntilIdle()
+            assertTrue(recorder.cancels.isEmpty())
+            assertEquals("allow_always", vm.armedOptionId.value)
+            assertTrue("the grant draft is not cleared by a blocked cancel", vm.alwaysAllowAccepted.value)
+
+            source.emit(ConnectionState.Connected)
+            vm.onModalCancel("m1")
+            advanceUntilIdle()
+            assertEquals(listOf("m1"), recorder.cancels)
+        }
+
+    @Test
+    fun aConnectionSourceThatHasNotReported_gatesLikeOffline() =
+        runTest {
+            val silent =
+                object : ConnectionStateSource {
+                    override fun observe(): Flow<ConnectionState> = emptyFlow()
+
+                    override suspend fun retry() = Unit
+                }
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(MutableStateFlow(openModal(modalId = "m1")), recorder, source = silent)
+
+            vm.onModalOption("reject_once")
+            vm.onModalCancel("m1")
+            advanceUntilIdle()
+            assertTrue(recorder.answers.isEmpty())
+            assertTrue(recorder.cancels.isEmpty())
         }
 
     // ---- #818: the don't-ask-again offer is scoped to the prompt that showed it --------------------
@@ -1011,6 +899,94 @@ class ThreadViewModelTest {
             errorCollector.cancel()
         }
 
+    // ---- #1306: the grant draft outlives the destination; the arm and stale taps do not ------------
+
+    @Test
+    fun grantDraft_survivesLeavingAndReopening_andRidesTheNewDestinationsAllow() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val store = PermissionDraftStore(Dispatchers.Unconfined)
+            store.bind("host", owner = "coordinator", modals = modal.asHostModals())
+            val first = vmWithModalSendPath(modal, ModalSendRecorder(), store)
+            advanceUntilIdle()
+            first.onAlwaysAllowChanged("m1", true)
+            first.onModalOption("allow_once", "m1") // armed, then Back destroys this destination
+
+            val recorder = ModalSendRecorder()
+            val reopened = vmWithModalSendPath(modal, recorder, store)
+            advanceUntilIdle()
+            assertTrue("the checkbox draft returns", reopened.alwaysAllowAccepted.value)
+            assertNull("the arm does not", reopened.armedOptionId.value)
+
+            reopened.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertTrue("one tap on the reopened thread only arms", recorder.answers.isEmpty())
+            reopened.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertEquals(listOf("m1" to "allow_once"), recorder.answers)
+            assertEquals(listOf(true), recorder.grants)
+        }
+
+    @Test
+    fun leavingTheConversation_clearsTheArm_soAllowingNeedsTwoFreshTaps() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertEquals("allow_once", vm.armedOptionId.value)
+            vm.onConversationLeft()
+            advanceUntilIdle()
+            assertNull(vm.armedOptionId.value)
+
+            vm.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertTrue("the first tap after returning only re-arms", recorder.answers.isEmpty())
+            vm.onModalOption("allow_once", "m1")
+            advanceUntilIdle()
+            assertEquals(listOf("m1" to "allow_once"), recorder.answers)
+        }
+
+    @Test
+    fun tapsRenderedForAReplacedRequest_neitherAnswerNorCancelTheReplacement() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m2"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onModalOption("reject_once", "m1") // the default: one tap would answer m2
+            vm.onModalOption("allow_once", "m1")
+            vm.onModalOption("allow_once", "m1")
+            vm.onModalCancel("m1")
+            advanceUntilIdle()
+
+            assertTrue(recorder.answers.isEmpty())
+            assertTrue(recorder.cancels.isEmpty())
+            assertNull(vm.armedOptionId.value)
+        }
+
+    @Test
+    fun grantDraftForAReplacedRequest_isNotCarriedByTheReplacementsAllow() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1", defaultOptionId = "allow_once"))
+            val store = PermissionDraftStore(Dispatchers.Unconfined)
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder, store)
+            advanceUntilIdle()
+            vm.onAlwaysAllowChanged("m1", true)
+
+            modal.value = offeringModal("m2", defaultOptionId = "allow_once")
+            advanceUntilIdle()
+            assertFalse(vm.alwaysAllowAccepted.value)
+            vm.onModalOption("allow_once", "m2")
+            advanceUntilIdle()
+            assertEquals(listOf(false), recorder.grants)
+        }
+
     // ---- #816: the host's modal is scoped to the conversation that raised it ---------------------
 
     @Test
@@ -1091,6 +1067,71 @@ class ThreadViewModelTest {
             assertEquals(own, vmWithModal(MutableStateFlow(own)).currentModal.value)
         }
 
+    // ---- #1337: the host holds every chat's prompt; each chat shows and answers its own -----------
+
+    @Test
+    fun hostPrompts_eachChatShowsItsOwn_andKeepsItsOwnTick_andAnsweringOneLeavesTheOther() =
+        runTest {
+            val host =
+                MutableStateFlow(
+                    HostModalState(
+                        listOf(
+                            offeringModal("a1"),
+                            offeringModal("b1").copy(conversationId = OTHER_CONV),
+                        ),
+                    ),
+                )
+            val store = PermissionDraftStore(Dispatchers.Unconfined)
+            store.bind("host", owner = "coordinator", modals = host)
+            val recorder = ModalSendRecorder()
+            val chatA = hostChat(ACTIVE_CONV, host, recorder, store)
+            val chatB = hostChat(OTHER_CONV, host, recorder, store)
+            advanceUntilIdle()
+            assertEquals("a1", (chatA.currentModal.value as ModalUiState.Open).modalId)
+            assertEquals("b1", (chatB.currentModal.value as ModalUiState.Open).modalId)
+
+            chatA.onAlwaysAllowChanged("a1", true)
+            advanceUntilIdle()
+            assertTrue(chatA.alwaysAllowAccepted.value)
+            assertFalse("A's tick is A's alone", chatB.alwaysAllowAccepted.value)
+            chatB.onAlwaysAllowChanged("b1", true)
+            chatB.onAlwaysAllowChanged("b1", false)
+            advanceUntilIdle()
+            assertTrue("B's untick leaves A's", chatA.alwaysAllowAccepted.value)
+
+            chatA.onModalOption("reject_once", "a1") // the default answers on one tap
+            advanceUntilIdle()
+            assertEquals(listOf("a1" to "reject_once"), recorder.answers)
+
+            host.value = host.value.reduce(ModalEvent.Dismissed("a1", "reject_once", "local"))
+            advanceUntilIdle()
+            assertEquals(ModalUiState.Dismissed("a1", "reject_once", "local", ACTIVE_CONV), chatA.currentModal.value)
+            assertEquals("b1", (chatB.currentModal.value as ModalUiState.Open).modalId)
+
+            chatB.onModalCancel("b1")
+            advanceUntilIdle()
+            assertEquals(listOf("b1"), recorder.cancels)
+        }
+
+    @Test
+    fun hostPrompts_aRepeatedShownForAHeldId_updatesOnlyThatChatsPrompt() =
+        runTest {
+            val b1 = openModal(modalId = "b1", conversationId = OTHER_CONV)
+            val host = MutableStateFlow(HostModalState(listOf(openModal(modalId = "a1"), b1)))
+            val chatA = hostChat(ACTIVE_CONV, host, ModalSendRecorder())
+            val chatB = hostChat(OTHER_CONV, host, ModalSendRecorder())
+            advanceUntilIdle()
+
+            host.value =
+                host.value.reduce(
+                    ModalEvent.Shown("a1", "permission", "Run command?", "changed", fourOptions, "reject_once", ACTIVE_CONV),
+                )
+            advanceUntilIdle()
+
+            assertEquals("changed", (chatA.currentModal.value as ModalUiState.Open).prompt)
+            assertEquals(b1, chatB.currentModal.value)
+        }
+
     @Test
     fun modalSend_scopeCancellationMidSend_doesNotEmitErrorSignal() =
         runTest {
@@ -1131,8 +1172,7 @@ class ThreadViewModelTest {
     fun onInterrupt_targetsOpenConversationAfterA_withoutClearingBusyState() =
         runTest {
             val recorder = InterruptRecorder()
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val repository = FakeConversationRepository()
+            val repository = TurnPhaseControllableRepo()
             val previous =
                 makeVm(
                     SavedStateHandle(mapOf("conversationId" to "c-a")),
@@ -1147,12 +1187,11 @@ class ThreadViewModelTest {
                 makeVm(
                     SavedStateHandle(mapOf("conversationId" to ACTIVE_CONV)),
                     repository,
-                    liveSessionEvents = events,
                     interrupt = recorder.interrupt,
                 )
             val busyCollector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.isBusy.collect {} }
             val stateCollector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            repository.phase.value = LiveSessionEvent.TurnState.Phase.Responding
             advanceUntilIdle()
             val before = vm.state.value
             assertTrue(vm.isBusy.value)
@@ -1190,17 +1229,16 @@ class ThreadViewModelTest {
                     )
                 for (failure in failures) {
                     val recorder = InterruptRecorder(failWith = failure)
-                    val events = MutableSharedFlow<LiveSessionEvent>()
+                    val repository = TurnPhaseControllableRepo()
                     val vm =
                         makeVm(
                             SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
-                            FakeConversationRepository(),
-                            liveSessionEvents = events,
+                            repository,
                             interrupt = recorder.interrupt,
                         )
                     val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
                     val busyCollector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.isBusy.collect {} }
-                    events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+                    repository.phase.value = LiveSessionEvent.TurnState.Phase.Responding
                     advanceUntilIdle()
                     val before = vm.state.value
                     assertTrue(vm.isBusy.value)
@@ -3768,10 +3806,75 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             assertEquals(1, navEvents.size)
 
-            // A second trigger produces its own single event.
-            vm.onOverflowEvent(ThreadEvent.Archive)
+            // A second trigger produces its own single event. #1399: a second Archive leaves no more than once,
+            // so the second trigger is Delete.
+            vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
             advanceUntilIdle()
             assertEquals(2, navEvents.size)
+            collector.cancel()
+            navCollector.cancel()
+        }
+
+    @Test
+    fun conversationArchivedElsewhere_popsBackOnce() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+            assertTrue(navEvents.isEmpty())
+
+            // Another client archives it: the list reply now shows the row archived.
+            repo.archive("seed-channel-personal")
+            advanceUntilIdle()
+            assertEquals(listOf(ThreadNavigation.PopBack), navEvents)
+
+            // A later list update still showing it archived does not pop again.
+            repo.rename("seed-channel-personal", "renamed")
+            advanceUntilIdle()
+            assertEquals(listOf(ThreadNavigation.PopBack), navEvents)
+            collector.cancel()
+            navCollector.cancel()
+        }
+
+    @Test
+    fun ownArchive_whoseReplyMarksTheRowArchived_popsBackOnce() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.Archive)
+            advanceUntilIdle()
+
+            assertEquals(listOf(ThreadNavigation.PopBack), navEvents)
+            collector.cancel()
+            navCollector.cancel()
+        }
+
+    @Test
+    fun conversationRenamedElsewhere_doesNotPopBack() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+
+            repo.rename("seed-channel-personal", "renamed")
+            advanceUntilIdle()
+
+            assertEquals("renamed", vm.state.value.conversationName)
+            assertTrue(navEvents.isEmpty())
             collector.cancel()
             navCollector.cancel()
         }
@@ -4706,6 +4809,9 @@ class ThreadViewModelTest {
         // the demo path's fake is.
         repositoryAvailable: Flow<Boolean> = flowOf(true),
         rememberModel: suspend (String) -> Unit = {},
+        permissionDraftStore: PermissionDraftStore? = null,
+        // #1337: the host's whole prompt list; when absent, [currentModal] stands in as a one-prompt host.
+        hostModals: StateFlow<HostModalState>? = null,
     ): ThreadViewModel =
         ThreadViewModel(
             handle,
@@ -4713,12 +4819,13 @@ class ThreadViewModelTest {
             source,
             draftStore,
             liveSessionEvents,
-            currentModal,
+            hostModals ?: currentModal.asHostModals(),
             answerModal,
             cancelModal,
             interrupt,
             repositoryAvailable = repositoryAvailable,
             rememberModel = rememberModel,
+            permissionDraftStore = permissionDraftStore,
         )
 
     /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */
@@ -4742,14 +4849,57 @@ class ThreadViewModelTest {
     private fun TestScope.vmWithModalSendPath(
         currentModal: StateFlow<ModalUiState>,
         recorder: ModalSendRecorder,
+        permissionDraftStore: PermissionDraftStore? = null,
+        source: ConnectionStateSource = FakeConnectionStateSource(),
     ): ThreadViewModel =
         makeVm(
-            SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
+            SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV, "serverId" to "host")),
             FakeConversationRepository(),
+            source = source,
             currentModal = currentModal,
             answerModal = recorder.answer,
             cancelModal = recorder.cancel,
+            permissionDraftStore = permissionDraftStore,
         )
+
+    /** A chat on host "host" for [conversationId], reading the host's whole prompt list (#1337). */
+    private fun TestScope.hostChat(
+        conversationId: String,
+        host: StateFlow<HostModalState>,
+        recorder: ModalSendRecorder,
+        permissionDraftStore: PermissionDraftStore? = null,
+    ): ThreadViewModel =
+        makeVm(
+            SavedStateHandle(initialState = mapOf("conversationId" to conversationId, "serverId" to "host")),
+            FakeConversationRepository(),
+            answerModal = recorder.answer,
+            cancelModal = recorder.cancel,
+            permissionDraftStore = permissionDraftStore,
+            hostModals = host,
+        )
+
+    /**
+     * A one-prompt host view of a single-modal flow (#1337), so the cases written against one modal keep
+     * driving it: an [ModalUiState.Open] is the host's only outstanding prompt, a [ModalUiState.Dismissed]
+     * its only resolved one. Synchronous, like the coordinator's `StateFlow`, so `.value` reads stay exact.
+     */
+    @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+    private fun StateFlow<ModalUiState>.asHostModals(): StateFlow<HostModalState> {
+        val source = this
+        return object : StateFlow<HostModalState> {
+            override val value: HostModalState get() = source.value.asHost()
+            override val replayCache: List<HostModalState> get() = listOf(value)
+
+            override suspend fun collect(collector: FlowCollector<HostModalState>): Nothing = source.collect { collector.emit(it.asHost()) }
+        }
+    }
+
+    private fun ModalUiState.asHost(): HostModalState =
+        when (this) {
+            is ModalUiState.Open -> HostModalState(outstanding = listOf(this))
+            is ModalUiState.Dismissed -> HostModalState(resolved = listOf(this))
+            ModalUiState.Hidden -> HostModalState()
+        }
 
     /** Records the outbound interrupt calls (#458), optionally throwing [failWith] after recording to
      *  exercise the inert-swallow path. */
@@ -5053,6 +5203,22 @@ class ThreadViewModelTest {
     }
 
     /**
+     * The [StallControllableRepo] shape for #1313: delegates to a seeded [FakeConversationRepository] and
+     * overrides only [observeTurnPhase] with a controllable held phase, recording each observed id.
+     */
+    private class TurnPhaseControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val phase = MutableStateFlow(LiveSessionEvent.TurnState.Phase.Idle)
+        val observedIds = mutableListOf<String>()
+
+        override fun observeTurnPhase(conversationId: String): Flow<LiveSessionEvent.TurnState.Phase> {
+            observedIds += conversationId
+            return phase
+        }
+    }
+
+    /**
      * The [StallControllableRepo] shape for #597: delegates the whole [ConversationRepository] surface to a
      * seeded [FakeConversationRepository] and overrides only [observeCompacting] with a controllable
      * [MutableStateFlow], recording each observed id for the routing assertion.
@@ -5289,6 +5455,7 @@ class ThreadViewModelTest {
         const val RUN_CONFIG_CONV = "seed-channel-personal"
 
         const val ACTIVE_CONV = "thread-406-active"
+        const val OTHER_CONV = "thread-1337-other"
         const val SAVE_AS_CONV = "chat-957"
 
         val WARNING_READING =

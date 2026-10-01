@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
@@ -259,7 +260,7 @@ class ThreadScreenChannelInfoTest {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
-        composeTestRule.onNodeWithText("Rename").performClick()
+        composeTestRule.onNodeWithText("Rename").performScrollTo().performClick()
 
         assertEquals(listOf(ThreadEvent.Rename, ThreadEvent.ChannelInfoDismiss), events)
     }
@@ -278,7 +279,7 @@ class ThreadScreenChannelInfoTest {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
-        composeTestRule.onNodeWithText("Archive").performClick()
+        composeTestRule.onNodeWithText("Archive").performScrollTo().performClick()
 
         assertEquals(listOf(ThreadEvent.Archive), events)
     }
@@ -288,7 +289,7 @@ class ThreadScreenChannelInfoTest {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
-        composeTestRule.onNodeWithText("Delete").performClick()
+        composeTestRule.onNodeWithText("Delete").performScrollTo().performClick()
 
         assertEquals(listOf(ThreadEvent.Delete), events)
     }

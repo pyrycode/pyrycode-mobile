@@ -12,18 +12,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
- * The context-usage reading for every conversation on one connection (#945): its state, its decoder and its read.
+ * The context-usage reading for every conversation on one host (#945): its state, its decoder and its read.
  * The repository keeps the routing: its `onInbound` arm calls [apply] only behind the negotiated `interactive` gate,
  * and its `session_transition` arm calls [onSessionTransition].
  *
- * **The phone does not send `request_context_usage` (#946).** The daemon answers a mid-turn ask only after the turn
- * ends, and until pyrycode#2563 it holds every later frame on the connection behind that wait, `send_message` and
- * `interrupt` included. The phone cannot tell whether a turn is open when it subscribes, a reconnect least of all, so
- * any ask could stall the thread. The reading comes from the daemon's post-turn `context_usage` push alone, and stays
- * absent until the conversation's next turn ends on this connection.
+ * **This class sends nothing.** The reading comes from the daemon's post-turn `context_usage` push and from the
+ * answer to the connection's own `request_context_usage`, which the open thread sends when it opens and when its host
+ * returns (#1410). A refusal of that ask never reaches here, so it leaves the reading as it was.
  *
- * One instance per repository, and a fresh repository per connection (#351), so the state is connection-scoped:
- * a reconnect starts from nothing. Nothing here logs.
+ * One instance per host pairing, held in [HostReadings] by the coordinator (#1317), so a reconnect keeps the last
+ * pushed reading instead of starting from nothing. Nothing here logs.
  */
 internal class ContextUsageProjection {
     /**

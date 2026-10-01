@@ -2782,6 +2782,7 @@ class RemoteConversationRepositoryTest {
                     status = ToolCallStatus.Done,
                     inputFields = mapOf("file_path" to "../src/a.kt", "old_string" to "x\ny…"),
                     parentToolUseId = "agent-1",
+                    resultDetail = "",
                 ),
                 liveCall,
             )
@@ -6893,7 +6894,7 @@ class RemoteConversationRepositoryTest {
 
             assertEquals(listOf("tu1"), messageIds(emissions.last()))
             assertEquals(
-                ToolCall(toolName = "Bash", input = "ls -la", output = "files", status = ToolCallStatus.Done),
+                ToolCall(toolName = "Bash", input = "ls -la", output = "files", status = ToolCallStatus.Done, resultDetail = ""),
                 toolCallOf(emissions.last(), "tu1"),
             )
         }
@@ -6912,7 +6913,7 @@ class RemoteConversationRepositoryTest {
             runCurrent()
 
             assertEquals(
-                ToolCall(toolName = "Bash", input = "boom", output = "exit 1", status = ToolCallStatus.Failed),
+                ToolCall(toolName = "Bash", input = "boom", output = "exit 1", status = ToolCallStatus.Failed, resultDetail = ""),
                 toolCallOf(emissions.last(), "tu1"),
             )
         }
@@ -7010,7 +7011,7 @@ class RemoteConversationRepositoryTest {
 
             assertEquals(listOf("tu1"), messageIds(emissions.last()))
             assertEquals(
-                ToolCall(toolName = "Bash", input = "ls", output = "files", status = ToolCallStatus.Done),
+                ToolCall(toolName = "Bash", input = "ls", output = "files", status = ToolCallStatus.Done, resultDetail = ""),
                 toolCallOf(emissions.last(), "tu1"),
             )
         }

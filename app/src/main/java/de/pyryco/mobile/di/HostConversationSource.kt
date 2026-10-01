@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ReadPosition
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
@@ -58,8 +59,8 @@ data class AttentionAlert(
 /**
  * Internal presentation and stream descriptor; repository-stream identity is the bundle generation.
  *
- * The last three are the host's own attention sources (#877): its coordinator's live events, its single
- * permission prompt and its outstanding question batches. Defaulted inert for the demo host.
+ * The last three are the host's own attention sources (#877): its coordinator's live events, every
+ * permission prompt it holds (#1338) and its outstanding question batches. Defaulted inert for the demo host.
  */
 internal data class HostConversationConnection(
     val serverId: String,
@@ -67,7 +68,7 @@ internal data class HostConversationConnection(
     val repositories: StateFlow<ConversationRepository?>,
     val status: StateFlow<ConnectionStatus>,
     val liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
-    val modal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    val modals: StateFlow<HostModalState> = MutableStateFlow(HostModalState()),
     val questionBatches: StateFlow<List<QuestionBatch>> = MutableStateFlow(emptyList()),
 )
 
@@ -205,7 +206,7 @@ class HostConversationSource internal constructor(
     /**
      * The host's attention collectors (#877), all under the entry's job so a replaced bundle stops them.
      * Events fold with the viewing state read under the same monitor; a repository going away is the host
-     * losing its connection, which ends every running turn on it.
+     * losing its connection, which ends every running turn and busy conversation on it.
      */
     private fun launchAttention(entry: Held) {
         val connection = entry.connection
@@ -227,6 +228,13 @@ class HostConversationSource internal constructor(
             }
         }
         scope.launch(entry.job) {
+            // Each connection's repository holds its own busy edges (#1452); a null one observes nothing, and
+            // the collector above clears the busy set it left.
+            connection.repositories.collectLatest { repository ->
+                repository?.observeBusyConversations()?.collect { ids -> updateAttention(entry) { attention = attention.withBusy(ids) } }
+            }
+        }
+        scope.launch(entry.job) {
             // Opening is idempotent, so every viewed conversation of this host is re-opened on each change.
             viewing.viewed.collect { viewed ->
                 val opened = viewed.filter { it.first == connection.serverId }.map { it.second }
@@ -234,11 +242,11 @@ class HostConversationSource internal constructor(
             }
         }
         scope.launch(entry.job) {
-            combine(connection.modal, connection.questionBatches, ::Pair).collect { (modal, batches) ->
+            combine(connection.modals, connection.questionBatches, ::Pair).collect { (modals, batches) ->
                 updateAttention(entry) {
-                    this.modal = modal
+                    this.modals = modals.outstanding
                     this.batches = batches
-                    val current = promptKeys(modal, batches)
+                    val current = promptKeys(modals.outstanding, batches)
                     current.filterKeys { it !in prompts }.forEach { (key, conversationId) ->
                         alert(connection.serverId, conversationId, AttentionAlert.Kind.Prompt, key)
                     }
@@ -273,7 +281,7 @@ class HostConversationSource internal constructor(
         if (!isCurrent(entry)) return
         entry.change()
         if (entry.positions.value != null) entry.positions.value = entry.attention.positions
-        entry.resolved = entry.attention.resolve(entry.modal, entry.batches)
+        entry.resolved = entry.attention.resolve(entry.modals, entry.batches)
         publish()
     }
 
@@ -288,13 +296,11 @@ class HostConversationSource internal constructor(
 
     /** Each outstanding prompt's key and its conversation; a blank-conversation prompt belongs to none. */
     private fun promptKeys(
-        modal: ModalUiState,
+        modals: List<ModalUiState.Open>,
         batches: List<QuestionBatch>,
-    ): Map<String, String> {
-        val open = (modal as? ModalUiState.Open)?.takeIf { it.conversationId.isNotBlank() }
-        return batches.filter { it.conversationId.isNotBlank() }.associate { "batch:${it.questionBatchId}" to it.conversationId } +
-            listOfNotNull(open?.let { "modal:${it.modalId}" to it.conversationId })
-    }
+    ): Map<String, String> =
+        batches.filter { it.conversationId.isNotBlank() }.associate { "batch:${it.questionBatchId}" to it.conversationId } +
+            modals.filter { it.conversationId.isNotBlank() }.associate { "modal:${it.modalId}" to it.conversationId }
 
     /** Whether [entry] is still its host's live generation; a retired one may neither publish nor persist. */
     private fun isCurrent(entry: Held): Boolean {
@@ -361,7 +367,7 @@ class HostConversationSource internal constructor(
         var live = false
 
         var attention = HostAttentionState()
-        var modal: ModalUiState = ModalUiState.Hidden
+        var modals: List<ModalUiState.Open> = emptyList()
         var batches: List<QuestionBatch> = emptyList()
         var resolved: Map<String, ConversationAttention> = emptyMap()
 

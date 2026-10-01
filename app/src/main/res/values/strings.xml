@@ -28,7 +28,6 @@
     <string name="create_chat_failed">Couldn’t create the chat. Try again.</string>
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <string name="cd_tree_host_update">Update Pyrycode to use %1$s</string>
-    <string name="cd_tree_host_leg_idle">Pyrycode: idle</string>
     <string name="tree_host_update_required">Update Pyrycode to use this host.</string>
     <string name="tree_host_update_required_version">Update Pyrycode to version %1$s or newer to use this host.</string>
     <!-- A Chats row's pencil (#827); %1$s is the chat's (clamped) name or the untitled fallback. -->
@@ -43,7 +42,6 @@
     <!-- A tree conversation row's status dot (#878): one per attention state, so the meaning never rests on colour. -->
     <string name="cd_conversation_attention_waiting">Waiting for your answer</string>
     <string name="cd_conversation_attention_running">Running</string>
-    <string name="cd_conversation_attention_failed">Failed</string>
     <string name="cd_conversation_attention_unread">Unread</string>
     <string name="cd_conversation_attention_idle">Idle</string>
     <string name="untitled_discussion">Untitled discussion</string>
@@ -138,8 +136,10 @@
     <string name="status_sheet_context_unavailable">Not reported yet</string>
     <string name="thread_footer_context">Cxt: %1$d%%</string>
     <string name="thread_footer_context_unavailable">Cxt: n/a</string>
+    <string name="thread_footer_context_high">Cxt high: %1$d%%</string>
     <string name="cd_context_usage">Context usage %1$d%%</string>
     <string name="cd_context_usage_unavailable">Context usage unavailable</string>
+    <string name="cd_context_usage_high">Context usage high, %1$d%%</string>
     <string name="thread_effort_note_selected_unavailable">Selected effort. The running effort is unavailable.</string>
     <string name="thread_effort_note_default_unavailable">%1$s\'s default applies. The running effort is unavailable.</string>
     <string name="thread_effort_note_not_reported">%1$s reports no effort parameter.</string>
@@ -158,6 +158,12 @@
     <string name="cd_thread_tool_running_elapsed">Claude is running %1$s, %2$s elapsed</string>
     <string name="cd_thread_tool_running_codex">Codex is running %1$s</string>
     <string name="cd_thread_tool_running_elapsed_codex">Codex is running %1$s, %2$s elapsed</string>
+    <!-- #1311: the responding phase of a running turn, and a stalled turn. Client-owned; no daemon text. -->
+    <string name="thread_working_label">Working…</string>
+    <string name="cd_thread_working">Claude is working</string>
+    <string name="cd_thread_working_codex">Codex is working</string>
+    <string name="thread_stalled_label">The turn seems to have stalled…</string>
+    <string name="cd_thread_stalled">The turn seems to have stalled</string>
     <string name="thread_api_retry_label">Retrying — attempt %1$d/%2$d</string>
     <string name="thread_api_retry_label_unknown">Retrying…</string>
     <string name="cd_thread_api_retry">Claude is retrying, attempt %1$d of %2$d</string>
@@ -420,6 +426,8 @@
     <string name="cd_remove_attachment">Remove %1$s</string>
     <string name="thread_attachment_file">File</string>
     <string name="thread_attachments_sending">Sending</string>
+    <!-- #1327: desktop's wording for a large upload's figure; %1$d is a whole percentage, 0..100. -->
+    <string name="thread_attachments_uploading">Uploading… %1$d%%</string>
     <plurals name="thread_attachments_too_large">
         <item quantity="one">%1$d file is over the 8 MB limit and was not added</item>
         <item quantity="other">%1$d files are over the 8 MB limit and were not added</item>
@@ -439,6 +447,20 @@
     <string name="thread_attachment_not_found">File not found</string>
     <string name="thread_attachment_failed">Couldn\'t load file</string>
     <string name="thread_attachment_retry">Retry</string>
+    <!-- #1325: why a send carrying attachments stopped at a file, one sentence per reason, as on desktop. -->
+    <string name="thread_attachment_send_unreadable">That file could not be read.</string>
+    <string name="thread_attachment_send_too_large">Too large to attach — this app sends files up to %1$s MB.</string>
+    <string name="thread_attachment_send_not_connected">Not connected — the file was not sent.</string>
+    <string name="thread_attachment_send_connection_lost">The connection dropped before the file finished uploading.</string>
+    <string name="thread_attachment_send_failed">The file could not be sent.</string>
+    <string name="thread_attachment_send_host_invalid_chunk">The host rejected part of the upload.</string>
+    <string name="thread_attachment_send_host_integrity_failed">The host could not verify the uploaded file.</string>
+    <string name="thread_attachment_send_host_too_large">The host refused the file as too large.</string>
+    <string name="thread_attachment_send_host_too_many_uploads">The host has too many uploads in progress. Try again shortly.</string>
+    <string name="thread_attachment_send_host_storage_failed">The host could not store the file.</string>
+    <string name="thread_attachment_send_host_message_too_long">The host refused the upload as too long.</string>
+    <string name="thread_attachment_send_host_incomplete">The upload did not complete.</string>
+    <string name="thread_attachment_send_unclassified">The upload failed for an unknown reason.</string>
     <!-- #985: a ready attachment's tap and long-press labels, and the notices each outcome shows. -->
     <string name="thread_attachment_open">Open</string>
     <string name="thread_attachment_save">Save</string>
