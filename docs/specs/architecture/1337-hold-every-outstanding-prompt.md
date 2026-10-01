@@ -115,3 +115,9 @@ Pending for the documentation stage: update `docs/knowledge/features/current-mod
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-01
+
+## Revisions
+
+### 2026-10-01 — the new live method joins the curated LIVE list
+
+Driven by the verifier's re-review MUST FIX: the live run on `f62f1719` never executed `interactiveTurn_permissionPrompts_heldPerConversation`, because the method was on no list the live gate selects. New contract: the method is on the LIVE `TEST_TARGET` list in `scripts/e2e-emulator.sh`, `LIVE_MINIMUM` in `scripts/android-test-gate.py` rises by one to 41, and `test_live_floor_matches_the_curated_list` pins it. The PR body's `## Live tests` names it and the sibling `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`. No production behaviour changes; the same pass corrects four comments that still described #492's single retained modal and adds the missing pre-reconnect assertion in `hostModals_anotherHostsReconnectLeavesThisHostsPrompts`.
