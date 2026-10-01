@@ -199,7 +199,11 @@ val appModule =
         single { UsageLimitDismissals() }
         // #932: reads a pending attachment's bytes through its content URI when the thread sends it.
         single<AttachmentReader> { ContentResolverAttachmentReader(androidContext().contentResolver, androidContext().packageName) }
-        viewModel { ScannerViewModel() }
+        viewModel {
+            val registry = get<RelayConnectionRegistry>()
+            // #1386: Confirm waits on the saved record's status before the scanner reports it paired.
+            ScannerViewModel(get(), registry, registry::pairingStatus)
+        }
         viewModel {
             val registry = get<RelayConnectionRegistry>()
             // #842: the route's optional target host; blank is the unrouted add-host entry.
