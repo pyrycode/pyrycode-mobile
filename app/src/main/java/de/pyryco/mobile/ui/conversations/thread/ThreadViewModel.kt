@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
@@ -225,6 +226,14 @@ class ThreadViewModel(
      */
     val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
 
+    private val attachmentSendFailureChannel = Channel<AttachmentSendFailure>(capacity = Channel.BUFFERED)
+
+    /**
+     * One notice per send that stopped at a failed read or upload (#1325), naming why. A reason only, never a
+     * name, URI or the daemon's code, so the snackbar it drives shows fixed local text.
+     */
+    val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
+
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
     /**
@@ -252,6 +261,16 @@ class ThreadViewModel(
 
     private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)
     val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()
+
+    /** Set once the thread has left for an archived row (#1399), so its own archive pops only once. */
+    private val leftArchived = AtomicBoolean(false)
+
+    /** Sends the archive exit's [ThreadNavigation.PopBack] the first time only; returns whether it sent. */
+    private suspend fun leaveForList(): Boolean {
+        if (!leftArchived.compareAndSet(false, true)) return false
+        navigationChannel.send(ThreadNavigation.PopBack)
+        return true
+    }
 
     /** A model tap whose write has not settled, or `null`. A matching fresh settings reading confirms it;
      *  a rejected write or lost settings context clears it. */
@@ -330,11 +349,18 @@ class ThreadViewModel(
     /**
      * The conversation list, shared (#1110) so [state] and [conversationAgent] ride one upstream
      * subscription: the remote repository sends a `list_conversations` request on every subscription.
+     *
+     * #1399: a list showing this row archived, from any client, leaves for the list. Upstream of `shareIn`
+     * so it runs once per emission. A row that disappears, or is only renamed or moved, stays (desktop #653).
      */
     private val conversations: Flow<List<Conversation>> =
         repository
             .observeConversations(ConversationFilter.All)
-            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+            .onEach { list ->
+                if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
+                    RelayLog.d { "event=thread_left_archived" }
+                }
+            }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
 
     /** The agent that runs this conversation (#1110); Claude while the list does not hold it yet. */
     private val conversationAgent: Flow<ConversationAgent> =
@@ -1330,7 +1356,10 @@ class ThreadViewModel(
         }
     }
 
-    /** Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not. */
+    /**
+     * Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not and
+     * sending one [attachmentSendFailures] notice (#1325).
+     */
     private suspend fun upload(
         target: String,
         entry: PendingAttachment,
@@ -1338,21 +1367,29 @@ class ThreadViewModel(
         val bytes =
             when (val read = attachmentReader.read(entry.uri)) {
                 is AttachmentRead.Bytes -> read.bytes
-                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large")
-                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed")
+                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large", AttachmentSendFailure.TOO_LARGE)
+                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed", AttachmentSendFailure.UNREADABLE)
             }
         val result =
             repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType) { sent, total ->
                 _attachmentUploadProgress.value = attachmentUploadProgress(entry.key, sent, total)
             }
         _attachmentUploadProgress.value = null
-        if (result !is AttachmentUploadResult.Stored) return attachmentSendFailed("upload_failed")
-        draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
-        return result.attachmentId
+        when (result) {
+            is AttachmentUploadResult.Stored -> {
+                draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
+                return result.attachmentId
+            }
+            is AttachmentUploadResult.Failed -> return attachmentSendFailed("upload_failed", attachmentSendFailure(result))
+        }
     }
 
-    private fun attachmentSendFailed(outcome: String): String? {
+    private fun attachmentSendFailed(
+        outcome: String,
+        failure: AttachmentSendFailure,
+    ): String? {
         RelayLog.d { "event=composer_attachment_send outcome=$outcome" }
+        attachmentSendFailureChannel.trySend(failure)
         return null
     }
 
@@ -1763,7 +1800,8 @@ class ThreadViewModel(
         viewModelScope.launch {
             try {
                 repository.archive(conversationId)
-                navigationChannel.send(ThreadNavigation.PopBack)
+                // #1399: the reply may already have popped through [conversations]; leave once.
+                leaveForList()
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {

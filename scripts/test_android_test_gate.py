@@ -116,7 +116,6 @@ class AndroidGateTest(unittest.TestCase):
         branch = live[: live.index("\nelse\n")]
         targets = [line for line in branch.split("\n") if line.lstrip().startswith('TEST_TARGET="')]
         self.assertTrue(any("#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage" in target for target in targets))
-        self.assertTrue(any("#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild" in target for target in targets))
         self.assertTrue(any("#interactiveTurn_createEditArchiveChannel_readsPromptBack" in target for target in targets))
         self.assertTrue(any("#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts" in target for target in targets))
         self.assertTrue(any("#interactiveTurn_toolPrompt_rendersToolStepInThread" in target for target in targets))
@@ -124,7 +123,9 @@ class AndroidGateTest(unittest.TestCase):
         self.assertFalse(any("#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost" in target for target in targets))
         # #1305 excludes the cross-host file method until #1369 repairs the phone after daemon #2699.
         self.assertFalse(any("#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost" in target for target in targets))
-        self.assertEqual(gate.LIVE_MINIMUM, 43)
+        # #1325 excludes five settings methods until #1397 repairs the held-settings e2e helper.
+        self.assertFalse(any("#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive" in target for target in targets))
+        self.assertEqual(gate.LIVE_MINIMUM, 38)
         self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))
