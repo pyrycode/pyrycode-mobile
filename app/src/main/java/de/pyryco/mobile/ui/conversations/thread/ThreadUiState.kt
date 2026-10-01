@@ -180,6 +180,8 @@ data class ThreadEffortChoice(
  *   [droppedModels] so each number keeps its provenance; the sheet sums them for display only.
  * @param settingsAvailable Whether a settings reading is available at all. `false` ⇒ both labels read
  *   unknown; it covers no connection, no `interactive` capability, and the window before the first reply.
+ * @param settingsHeld Whether the reading was carried across a reconnect (#1320) rather than answered on the
+ *   current connection. It is shown, but nothing automatic acts on it.
  * @param savedModel The saved model override verbatim; `""` and confirmed `default` mean inherited.
  * @param savedEffort The **saved** effort choice verbatim, `""` meaning inherited default. It is the
  *   display fallback only while [appliedEffort] reports no value (#889), and never a write source.
@@ -220,6 +222,7 @@ data class ThreadRunConfig(
      */
     val overflowChoices: List<ThreadModelChoice> = emptyList(),
     val settingsAvailable: Boolean = false,
+    val settingsHeld: Boolean = false,
     val savedModel: String = "",
     val savedEffort: String = "",
     val pendingModel: String? = null,
