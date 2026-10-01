@@ -515,9 +515,13 @@ internal class ThreadProjection {
      * [distinctUntilChanged] means a change to **another** conversation's slot does not re-emit this
      * flow (AC #3). A `StateFlow` always has a value, so a fresh collector receives the current thread
      * (empty until backfill/live arrives) on subscription.
+     *
+     * Every row but the last is read settled ([withOnlyLastRowStreaming], #1350): an assistant segment
+     * stops streaming once any row follows it, whichever write appended that row. This is the one read of
+     * the store, so no reader sees an earlier segment still streaming.
      */
     fun observe(conversationId: String): Flow<List<ThreadItem>> =
-        threadByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
+        threadByConversation.map { it[conversationId].orEmpty().withOnlyLastRowStreaming() }.distinctUntilChanged()
 
     /**
      * Decode one v2 `unrecognized_message` envelope (#609) to its routing [conversationId] and the mapped

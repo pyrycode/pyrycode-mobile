@@ -99,6 +99,14 @@ Existing tests that encode the old single-bubble order are updated to the new or
 
 - Do `ThreadViewModelTest`'s existing fold tests assert the old merged-bubble order anywhere? Resolve by running them. Update the expectations only where they encode the bug.
 
+## Revisions
+
+### 2026-10-01: open question resolved, one gap filed
+
+- **Open question.** No `ThreadViewModelTest` expectation encoded the old order. One `HistoryPageReducerTest` fixture started its turn at `seq 1`. The protocol starts every lane at 0, and under this design a turn first seen at `seq 1` keys `"<turnId>#1"`, so the fixture moved to `seq 0`/`1`. Its assertion, one finalised row keyed by the bare id, is unchanged.
+- **Fold tests.** `ThreadViewModelTest` has no pure `ThreadFold` tests, so the synthetic-guard tests went into a new `ThreadFoldSegmentTest`.
+- **Gap filed as #1419, not fixed here.** A `turn_end` that arrives before the rows it ends never settles them. One case is a newest page holding only the `turn_end`. Another is a live `turn_end` arriving before the page with the turn's text. `withFinalizedTurn` sees only rows already in the list, and nothing remembers ended turns. This is pre-existing, and it is not a cut inside a segment. `AssistantSegmentTest.turnEndOnANewerPageThanItsRows_settlesThem` is `@Ignore`d on #1419, and the cut-point loops skip that one cut.
+
 ## Documentation handoff
 
 Pending for the documentation stage:
