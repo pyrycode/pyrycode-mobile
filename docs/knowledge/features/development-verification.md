@@ -271,6 +271,10 @@ the test's final size, wait for idle, run the test, then restore both in
 need different final sizes, read the size from a private runtime annotation on
 the test method (`@Viewport("320x692")`) instead of branching on the method
 name, so the size stays attached to the test it belongs to.
+`ToolRowDesignCaptureTest` (#1425) copied the same shape for its own
+412x892/320x700 pair. The rule is now a plain copy in two classes; extract it
+to a shared `TestRule` before a third capture test needs it rather than
+copying it again.
 
 Reply assertions must not depend on total substring-count growth: removing queued
 prompt text can offset a newly displayed assistant reply. For fresh discussions

@@ -87,6 +87,13 @@ private const val MAX_PLAUSIBLE_THINKING_TOKENS = 1_000_000L
  * same [Text] argument, so the icon keeps its identity when a tool opens or closes. With no reading the
  * label shows no time; nothing here counts seconds.
  *
+ * **Working and stalled (#1311).** [isWorking] is the `responding` phase of a running turn and reads
+ * `Working…`, so the band never goes dark while claude writes text, between two tools, or after a denial.
+ * [isStalled] reads the client-owned `The turn seems to have stalled…` in the error colour and outranks
+ * every other label here. Both vary the same [Text], so the glyph keeps its identity across Thinking →
+ * Working → Running tool → Stalled. Which one the band shows is decided once, by `statusArm` beside the
+ * thread screen; the precedence below only mirrors it.
+ *
  * Figma's input status glyph keeps its 14 × 16 bounds while its opacity pulses; no animation frame
  * rotates or stretches the supplied shape.
  */
@@ -97,15 +104,18 @@ fun ThinkingIndicator(
     progress: ThinkingProgress? = null,
     runningTool: ToolCall? = null,
     agent: ConversationAgent = ConversationAgent.Claude,
+    isWorking: Boolean = false,
+    isStalled: Boolean = false,
 ) {
-    if (!isThinking && runningTool == null) return
+    if (!isThinking && !isWorking && !isStalled && runningTool == null) return
     // Null whenever the reading must not be shown: no frame yet, or one the sanity gate declines.
-    val tokens = progress?.takeIf { it.isRenderableReading() }?.estimatedTokens
+    val tokens = progress?.takeIf { isThinking && it.isRenderableReading() }?.estimatedTokens
     // #897: name and seconds come from the one open call. The seconds are claude's reading, never a timer.
-    val toolName = runningTool?.toolName
+    val toolName = runningTool?.takeUnless { isStalled }?.toolName
     val elapsed = runningTool?.elapsedSeconds?.let(::formatToolElapsed)
     val description =
         when {
+            isStalled -> stringResource(R.string.cd_thread_stalled)
             toolName != null && elapsed != null ->
                 stringResource(
                     when (agent) {
@@ -131,15 +141,24 @@ fun ThinkingIndicator(
                     },
                     tokens,
                 )
-            else -> stringResource(R.string.cd_thread_thinking)
+            isThinking -> stringResource(R.string.cd_thread_thinking)
+            else ->
+                stringResource(
+                    when (agent) {
+                        ConversationAgent.Claude -> R.string.cd_thread_working
+                        ConversationAgent.Codex -> R.string.cd_thread_working_codex
+                    },
+                )
         }
     val label =
         when {
+            isStalled -> stringResource(R.string.thread_stalled_label)
             toolName != null && elapsed != null ->
                 stringResource(R.string.thread_tool_running_elapsed_label, toolName, elapsed)
             toolName != null -> stringResource(R.string.thread_tool_running_label, toolName)
             tokens != null -> stringResource(R.string.thread_thinking_progress_label, tokens)
-            else -> stringResource(R.string.thread_thinking_label)
+            isThinking -> stringResource(R.string.thread_thinking_label)
+            else -> stringResource(R.string.thread_working_label)
         }
     val glyphPulse = rememberInfiniteTransition(label = "thinking glyph")
     val glyphAlpha =
@@ -170,7 +189,8 @@ fun ThinkingIndicator(
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.primary,
+            // #1311: the stall reads in the error colour the turn-outcome arm's text already uses.
+            color = if (isStalled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
             maxLines = if (toolName != null) 1 else Int.MAX_VALUE,
             overflow = if (toolName != null) TextOverflow.Ellipsis else TextOverflow.Clip,
         )
@@ -242,6 +262,31 @@ private fun ThinkingIndicatorRunningToolPreview() {
                         elapsedSeconds = 65,
                     ),
             )
+        }
+    }
+}
+
+@Preview(name = "ThinkingIndicator — Working", showBackground = true, widthDp = 412)
+@Composable
+private fun ThinkingIndicatorWorkingPreview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        Surface {
+            ThinkingIndicator(isThinking = false, isWorking = true)
+        }
+    }
+}
+
+@Preview(
+    name = "ThinkingIndicator — Stalled, Dark",
+    showBackground = true,
+    widthDp = 412,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun ThinkingIndicatorStalledPreview() {
+    PyrycodeMobileTheme(darkTheme = true) {
+        Surface {
+            ThinkingIndicator(isThinking = false, isStalled = true)
         }
     }
 }
