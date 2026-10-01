@@ -21,6 +21,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
@@ -36,9 +37,14 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditor
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.attachmentTarget
+import de.pyryco.mobile.ui.conversations.components.loadsOnShow
 import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
@@ -63,7 +69,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
@@ -77,6 +82,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.floor
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
@@ -249,11 +255,24 @@ class ThreadViewModel(
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
     /**
-     * Each shown message attachment's state by id (#984). An id is absent until its row is first shown,
-     * which is what starts its load ([onAttachmentShown]); the screen draws an absent id as loading. A
-     * sibling flow for the same reason as [draft].
+     * Each shown message attachment's state by id (#984). An id is absent until its load starts: when its
+     * row is first shown ([onAttachmentShown]), or for a file not fetched on sight, when it is tapped
+     * ([onAttachmentRequested], #1329). The screen draws an absent id as loading, or that file as its ready
+     * row. A sibling flow for the same reason as [draft].
      */
     val attachmentStates: StateFlow<Map<String, AttachmentViewState>> = _attachmentStates.asStateFlow()
+
+    // #1329: the action a tap asked for, by id, while that tap's load runs. Main thread only, like
+    // [_attachmentsSending]: written by [onAttachmentRequested], removed when the load settles.
+    private val pendingAttachmentRequests = mutableMapOf<String, Pair<MessageAttachment, AttachmentAction>>()
+
+    private val attachmentLoadChannel = Channel<AttachmentLoaded>(capacity = Channel.BUFFERED)
+
+    /**
+     * One open or save per tapped file that loaded ready (#1329), for the screen to run through its
+     * attachment actions. Carries the loaded source, so it never waits on [attachmentStates] recomposing.
+     */
+    val attachmentLoads: Flow<AttachmentLoaded> = attachmentLoadChannel.receiveAsFlow()
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -268,6 +287,12 @@ class ThreadViewModel(
     private val pendingSaveAsChannelDialog = MutableStateFlow<SaveAsChannelDialogState?>(null)
 
     private val pendingChannelInfo = MutableStateFlow(false)
+
+    /**
+     * The Channel info sheet's System prompt editor (#1342), present only while the sheet is open, so every
+     * open starts from a fresh read. Bound to [repository], the reconnect-surviving facade.
+     */
+    private val promptEditor = MutableStateFlow<SystemPromptEditor?>(null)
 
     private val pendingDeleteConfirm = MutableStateFlow(false)
 
@@ -384,7 +409,8 @@ class ThreadViewModel(
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
      * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine, and
-     * Claude's reported context usage (#946) by a third; the repository clears that reading itself.
+     * Claude's reported context usage (#946) by a third, where [contextPercent] computes the one value the footer
+     * and the Status sheet both show (#1411); the repository clears that reading itself.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -398,11 +424,13 @@ class ThreadViewModel(
             pendingEffort,
             pendingPermission,
         ) { settings, menuAndAgent, model, effort, permission ->
-            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission)
-        }.combine(runningModel) { config, (running, announced) -> config.copy(running = running, announcedModel = announced) }
-            .combine(repository.observeContextUsage(conversationId)) { config, usage ->
-                config.copy(contextPercent = usage?.percentage)
-            }
+            // #1411: the settings ride along to the context-usage combine, which falls back to their token pair.
+            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission) to settings
+        }.combine(runningModel) { (config, settings), (running, announced) ->
+            config.copy(running = running, announcedModel = announced) to settings
+        }.combine(repository.observeContextUsage(conversationId)) { (config, settings), usage ->
+            config.copy(contextPercent = contextPercent(usage, settings))
+        }
 
     /**
      * This conversation's published slash-command menu (#882), feeding both the Actions menu's absent
@@ -659,6 +687,16 @@ class ThreadViewModel(
     val turnOutcome: StateFlow<TurnOutcomeReport?> =
         liveSessionEvents
             .runningFold(null as TurnOutcomeReport?) { current, event -> nextTurnOutcome(current, event) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
+            )
+
+    /** The open Channel info sheet's System prompt state (#1342), or `null` while the sheet is closed. */
+    val systemPrompt: StateFlow<SystemPromptEditorState?> =
+        promptEditor
+            .flatMapLatest { editor -> editor?.state ?: flowOf(null) }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -1461,11 +1499,30 @@ class ThreadViewModel(
     }
 
     /**
-     * A message attachment's row is on screen (#984): start its load unless it already has a state. The
-     * claim is a compare-and-set, so a row shown twice loads once, and a failure waits for [onRetryAttachment].
+     * A message attachment's row is on screen (#984): start its load unless it already has a state, and only
+     * when it is fetched on sight ([loadsOnShow], #1329); any other file waits for [onAttachmentRequested].
+     * The claim is a compare-and-set, so a row shown twice loads once, and a failure waits for
+     * [onRetryAttachment].
      */
-    fun onAttachmentShown(attachmentId: String) {
-        if (claimAttachment(attachmentId) { it == null }) loadAttachment(attachmentId)
+    fun onAttachmentShown(attachment: MessageAttachment) {
+        if (!loadsOnShow(attachment)) return
+        if (claimAttachment(attachment.attachmentId) { it == null }) loadAttachment(attachment.attachmentId)
+    }
+
+    /**
+     * A file not fetched yet was tapped or long-pressed (#1329): load it as a shown row would, and once it is
+     * ready deliver [action] once through [attachmentLoads]. Only a tap that claims the load records the
+     * action, so a tap on a row already loading, ready or failed does nothing here.
+     */
+    fun onAttachmentRequested(
+        attachment: MessageAttachment,
+        action: AttachmentAction,
+    ) {
+        val id = attachment.attachmentId
+        if (!claimAttachment(id) { it == null }) return
+        pendingAttachmentRequests[id] = attachment to action
+        RelayLog.d { "event=thread_attachment_request id=$id action=${action.name.lowercase()}" }
+        loadAttachment(id)
     }
 
     /** The retry control of a failed attachment (#984). Not found is final and has none. */
@@ -1508,6 +1565,11 @@ class ThreadViewModel(
                 }
             RelayLog.d { "event=thread_attachment_load id=$attachmentId outcome=$outcome" }
             _attachmentStates.update { it + (attachmentId to state) }
+            // #1329: a tap's action settles with its load, once; a load that did not end ready drops it.
+            val (attachment, action) = pendingAttachmentRequests.remove(attachmentId) ?: return@launch
+            val ready = state as? AttachmentViewState.Ready
+            ready?.let { attachmentLoadChannel.trySend(AttachmentLoaded(attachmentTarget(attachment, it), it.source, action)) }
+            RelayLog.d { "event=thread_attachment_request id=$attachmentId outcome=${if (ready != null) "delivered" else "dropped"}" }
         }
     }
 
@@ -2122,6 +2184,21 @@ class ThreadViewModel(
             }
         }
 
+    /** Closes the Channel info sheet and drops its System prompt editor; a write already sent still lands. */
+    private fun closeChannelInfo() {
+        // #1344: by any path — dismiss, Archive or a confirmed Delete. Only the call that actually closes the
+        // sheet releases the MCP reconnect and toggle waits it may have started, so a daemon that never answers
+        // cannot leave the section's controls disabled after the sheet reopens. Every caller is on the main
+        // thread via [onOverflowEvent], so the read and the write below cannot interleave with another close.
+        val wasOpen = pendingChannelInfo.value
+        pendingChannelInfo.value = false
+        promptEditor.value = null
+        if (!wasOpen) return
+        repository.endMcpReconnectWait(conversationId)
+        repository.endMcpToggleWait(conversationId)
+        RelayLog.d { "event=mcp_wait_released" }
+    }
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
             ThreadEvent.Archive -> {
@@ -2169,8 +2246,10 @@ class ThreadViewModel(
             }
             // #1309: opening either sheet re-reads the settings it shows. #1344: Channel info also asks for the
             // MCP reading, which starts empty on every connection, unless the session reports it cannot answer.
+            // #1342: each open also mounts a fresh System prompt editor, whose construction reads the prompt.
             ThreadEvent.ChannelInfo ->
                 if (pendingChannelInfo.compareAndSet(false, true)) {
+                    promptEditor.value = SystemPromptEditor(viewModelScope, repository, conversationId)
                     rereadRunSettings("channel_info_open")
                     if (state.value.runConfig.mcpServersSupported) {
                         repository.requestMcpStatus(conversationId)
@@ -2178,6 +2257,9 @@ class ThreadViewModel(
                     }
                 }
             ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
+            is ThreadEvent.SystemPromptEdit -> promptEditor.value?.edit(event.text)
+            ThreadEvent.SystemPromptSave -> promptEditor.value?.save()
+            ThreadEvent.SystemPromptClear -> promptEditor.value?.clear()
             // #1344: always the route's own conversation; the Claude-authored name only goes on the wire.
             is ThreadEvent.McpReconnect -> {
                 repository.reconnectMcpServer(conversationId, event.serverName)
@@ -2276,18 +2358,6 @@ class ThreadViewModel(
         val seq: Long,
         val settings: SessionSettings?,
     )
-
-    /**
-     * Close Channel info (#1344) by any path — dismiss, Archive or a confirmed Delete. Only the call that
-     * actually closes it releases the MCP reconnect and toggle waits it may have started, so a daemon that
-     * never answers cannot leave the section's controls disabled after the sheet reopens.
-     */
-    private fun closeChannelInfo() {
-        if (!pendingChannelInfo.getAndUpdate { false }) return
-        repository.endMcpReconnectWait(conversationId)
-        repository.endMcpToggleWait(conversationId)
-        RelayLog.d { "event=mcp_wait_released" }
-    }
 
     /**
      * The thread's content surface (#461): the rendered rows folded with the queued-message backlog and,
@@ -2511,6 +2581,27 @@ internal fun String.modelFamily(): String {
     val bare = removePrefix("claude-")
     val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
     return head.replaceFirstChar { it.uppercaseChar() }.inert()
+}
+
+/**
+ * How full the context window is, as a whole percent in 0..100, or `null` when unavailable (#1411, desktop's
+ * `contextTokenSource` + `contextUsagePercent`). A present [usage] always supplies the pair, its `totalTokens`
+ * over `maxTokens`, whatever it holds; only an absent one falls back to [settings]' `usedTokens` over
+ * `windowTokens`. A window of `0` or less in the pair used is unavailable, never a fallback. Claude's own
+ * `percentage` is not read, so the footer and the Status sheet share one clamp. Rounds half up, as `Math.round`.
+ */
+internal fun contextPercent(
+    usage: ContextUsage?,
+    settings: SessionSettings?,
+): Int? {
+    val (used, window) =
+        when {
+            usage != null -> usage.totalTokens to usage.maxTokens
+            settings != null -> settings.usedTokens to settings.windowTokens
+            else -> return null
+        }
+    if (window <= 0) return null
+    return floor(used.toDouble() / window.toDouble() * 100 + 0.5).coerceIn(0.0, 100.0).toInt()
 }
 
 private fun Conversation.displayName(): String =

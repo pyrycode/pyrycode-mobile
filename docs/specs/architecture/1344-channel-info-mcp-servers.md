@@ -100,3 +100,9 @@ Pending for the documentation stage: `docs/knowledge/features/channel-info-sheet
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-01
+
+## Revisions
+
+### 2026-10-01 — merge with #1342's System prompt section
+
+Merging `main` brought #1342's own private `closeChannelInfo()`, which also drops the System prompt editor. The two are now one function: it reads `pendingChannelInfo`, clears it and the editor, and releases both MCP waits only when the sheet was open. The read and the write replace the planned `getAndUpdate`; every caller runs on the main thread through `onOverflowEvent`, so the release still happens exactly once per close, which the security review's concurrency finding relies on. The `ChannelInfo` arm mounts the editor, rereads settings, then requests MCP status. In the sheet, the System prompt section sits between Memory and MCP servers, desktop's order in `ConversationScreen`; the MCP section is still after Memory and before Actions. The two sections push Actions below the Robolectric viewport, so `ThreadScreenChannelInfoTest` scrolls to Rename, Archive and Delete before tapping, and the order test compares unclipped `positionInRoot` rather than clipped bounds.

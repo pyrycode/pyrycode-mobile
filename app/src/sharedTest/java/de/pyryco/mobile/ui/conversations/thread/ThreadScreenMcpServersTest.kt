@@ -86,7 +86,7 @@ class ThreadScreenMcpServersTest {
         composeTestRule
             .onNode(hasText(value) and hasAnyAncestor(isDialog()))
             .fetchSemanticsNode()
-            .boundsInRoot.top
+            .positionInRoot.y
 
     @Test
     fun section_showsAfterMemoryAndBeforeActions_whenTheCapabilityIsAbsentOrTrue() {

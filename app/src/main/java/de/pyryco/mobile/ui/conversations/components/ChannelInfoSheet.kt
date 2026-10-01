@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -38,11 +40,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.error
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
@@ -54,7 +61,12 @@ import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchAvailability
 import de.pyryco.mobile.data.repository.MemorySearchProvider
 import de.pyryco.mobile.data.repository.MemorySearchReport
+import de.pyryco.mobile.data.repository.SessionPromptStatus
+import de.pyryco.mobile.data.repository.SystemPromptLimit
+import de.pyryco.mobile.ui.components.PROMPT_MIN_LINES
+import de.pyryco.mobile.ui.components.PromptWellHeight
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 
 internal data class ChannelInfoUiModel(
     val conversationName: String,
@@ -82,6 +94,12 @@ internal fun ChannelInfoSheet(
     // Gated on the thread state's "mutations supported" signal (#507): false in relay mode, where the
     // Actions are unavailable. Defaulted for previews/tests only — production threads the real value.
     mutationsSupported: Boolean = true,
+    // #1342: the System prompt section's state and controls. `null` omits the section — a preview/test
+    // seam; the thread host always passes a state while the sheet is open.
+    systemPrompt: SystemPromptEditorState? = null,
+    onSystemPromptChange: (String) -> Unit = {},
+    onSystemPromptSave: () -> Unit = {},
+    onSystemPromptClear: () -> Unit = {},
     // #1344: a row's Reconnect and its switch, with the row's Claude-authored server name and, for the switch, the
     // state asked for. Defaulted for previews/tests only — production wires both.
     onMcpReconnect: (String) -> Unit = {},
@@ -118,6 +136,10 @@ internal fun ChannelInfoSheet(
             onInstallMemoryPlugin = onInstallMemoryPlugin,
             onDismiss = onDismiss,
             mutationsSupported = mutationsSupported,
+            systemPrompt = systemPrompt,
+            onSystemPromptChange = onSystemPromptChange,
+            onSystemPromptSave = onSystemPromptSave,
+            onSystemPromptClear = onSystemPromptClear,
             onMcpReconnect = onMcpReconnect,
             onMcpToggle = onMcpToggle,
         )
@@ -133,6 +155,10 @@ internal fun ChannelInfoSheetContent(
     onInstallMemoryPlugin: () -> Unit,
     onDismiss: () -> Unit,
     mutationsSupported: Boolean = true,
+    systemPrompt: SystemPromptEditorState? = null,
+    onSystemPromptChange: (String) -> Unit = {},
+    onSystemPromptSave: () -> Unit = {},
+    onSystemPromptClear: () -> Unit = {},
     onMcpReconnect: (String) -> Unit = {},
     onMcpToggle: (String, Boolean) -> Unit = { _, _ -> },
 ) {
@@ -148,6 +174,17 @@ internal fun ChannelInfoSheetContent(
 
         SectionHeader(text = "Memory")
         MemoryRow(report = model.memorySearch, onInstall = onInstallMemoryPlugin)
+
+        // Desktop shows this for every conversation, so it is not behind mutationsSupported.
+        if (systemPrompt != null) {
+            SectionHeader(text = SYSTEM_PROMPT_HEADER)
+            SystemPromptSection(
+                state = systemPrompt,
+                onChange = onSystemPromptChange,
+                onSave = onSystemPromptSave,
+                onClear = onSystemPromptClear,
+            )
+        }
 
         model.mcpServers?.let { mcp ->
             SectionHeader(text = "MCP servers")
@@ -385,10 +422,12 @@ private fun ActionCell(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     FilledTonalButton(
         onClick = onClick,
         modifier = modifier,
+        enabled = enabled,
     ) {
         Text(
             text = label,
@@ -396,6 +435,111 @@ private fun ActionCell(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+/** The device suites' handle for the System prompt box. */
+internal const val CHANNEL_INFO_PROMPT_FIELD_TAG: String = "channel-info-prompt"
+
+// Desktop's SystemPromptSection copy (#1342), verbatim. No daemon string reaches any of these.
+private const val SYSTEM_PROMPT_HEADER = "System prompt"
+private const val SYSTEM_PROMPT_LOADING = "Reading the stored prompt from the daemon"
+private const val SYSTEM_PROMPT_UNAVAILABLE = "Couldn't read the stored system prompt."
+private const val SYSTEM_PROMPT_HINT =
+    "This prompt is stored on the channel, so two channels on one repository can behave differently."
+private const val SYSTEM_PROMPT_FIELD_LABEL = "System prompt for this channel"
+private const val SYSTEM_PROMPT_OVER_LIMIT = "Over the ${SystemPromptLimit.MAX_BYTES}-byte limit. Shorten it before saving."
+private const val SYSTEM_PROMPT_SAVING = "Saving"
+private const val SYSTEM_PROMPT_SAVED = "Saved. A running session keeps the prompt it started with until Reset session."
+private const val SYSTEM_PROMPT_DIFFERS =
+    "The running session was started with a different prompt. Reset session applies the saved one."
+
+/** Desktop's `WRITE_REJECTED`, one line per refusal the phone can classify. */
+internal fun SystemPromptRefusal.line(): String =
+    when (this) {
+        SystemPromptRefusal.Malformed -> "Not saved: the daemon refused the request."
+        SystemPromptRefusal.NotFound -> "Not saved: the daemon has no record of this channel."
+        SystemPromptRefusal.Unclassified -> "Not saved: the daemon refused the write."
+    }
+
+/** The write line under the box: in flight, acknowledged, refused, or nothing yet. */
+internal fun SystemPromptEditorState.Loaded.writeLine(): String? =
+    when {
+        saving -> SYSTEM_PROMPT_SAVING
+        saved -> SYSTEM_PROMPT_SAVED
+        saveFailed -> (refusal ?: SystemPromptRefusal.Unclassified).line()
+        else -> null
+    }
+
+/**
+ * The System prompt section (#1342), desktop's `SystemPromptSectionView`: a status line until the reading
+ * arrives, then the box, its byte count and the Save and Clear controls. The prompt reaches only the text
+ * field; it is never logged, keyed on, or put into a description.
+ */
+@Composable
+private fun SystemPromptSection(
+    state: SystemPromptEditorState,
+    onChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onClear: () -> Unit,
+) {
+    val lineStyle = MaterialTheme.typography.bodySmall
+    val lineColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val lineModifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+    when (state) {
+        SystemPromptEditorState.Loading -> Text(SYSTEM_PROMPT_LOADING, lineModifier, lineColor, style = lineStyle)
+        SystemPromptEditorState.Unavailable -> Text(SYSTEM_PROMPT_UNAVAILABLE, lineModifier, lineColor, style = lineStyle)
+        is SystemPromptEditorState.Loaded -> {
+            Text(SYSTEM_PROMPT_HINT, lineModifier, lineColor, style = lineStyle)
+            BasicTextField(
+                value = state.draft,
+                onValueChange = onChange,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .semantics {
+                            contentDescription = SYSTEM_PROMPT_FIELD_LABEL
+                            if (state.overLimit) error(SYSTEM_PROMPT_OVER_LIMIT)
+                        }.testTag(CHANNEL_INFO_PROMPT_FIELD_TAG),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                minLines = PROMPT_MIN_LINES,
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                decorationBox = { innerTextField ->
+                    // Edit channel's prompt well (ChannelFormFields), on the sheet's own container token.
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = PromptWellHeight)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.shapes.modalControl)
+                                .padding(16.dp),
+                    ) {
+                        innerTextField()
+                    }
+                },
+            )
+            Text(
+                text = "${state.draftBytes} / ${SystemPromptLimit.MAX_BYTES} bytes",
+                modifier = lineModifier,
+                color = if (state.overLimit) MaterialTheme.colorScheme.error else lineColor,
+                style = lineStyle,
+            )
+            if (state.overLimit) {
+                Text(SYSTEM_PROMPT_OVER_LIMIT, lineModifier, MaterialTheme.colorScheme.error, style = lineStyle)
+            }
+            if (state.appliedStatus == SessionPromptStatus.Differs) {
+                Text(SYSTEM_PROMPT_DIFFERS, lineModifier, lineColor, style = lineStyle)
+            }
+            state.writeLine()?.let { Text(it, lineModifier, lineColor, style = lineStyle) }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ActionCell(label = "Save", onClick = onSave, modifier = Modifier.weight(1f), enabled = state.canSave)
+                ActionCell(label = "Clear", onClick = onClear, modifier = Modifier.weight(1f), enabled = state.canClear)
+            }
+        }
     }
 }
 
@@ -446,6 +590,13 @@ private val SAMPLE_MODEL =
         channelId = "ch_a8f3c2d1e9b7",
     )
 
+private val SAMPLE_PROMPT =
+    SystemPromptEditorState.Loaded(
+        confirmed = "Answer in short paragraphs.",
+        appliedStatus = SessionPromptStatus.Differs,
+        draft = "Answer in short paragraphs.",
+    )
+
 @Preview(name = "ChannelInfoSheet — Light", showBackground = true, widthDp = 412)
 @Composable
 private fun ChannelInfoSheetPreview() {
@@ -462,6 +613,7 @@ private fun ChannelInfoSheetPreview() {
                     onDelete = {},
                     onInstallMemoryPlugin = {},
                     onDismiss = {},
+                    systemPrompt = SAMPLE_PROMPT,
                 )
             }
         }
@@ -489,6 +641,7 @@ private fun ChannelInfoSheetDarkPreview() {
                     onDelete = {},
                     onInstallMemoryPlugin = {},
                     onDismiss = {},
+                    systemPrompt = SAMPLE_PROMPT,
                 )
             }
         }

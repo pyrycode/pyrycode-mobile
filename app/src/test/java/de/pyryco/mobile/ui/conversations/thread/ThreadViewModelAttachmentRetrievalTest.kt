@@ -10,12 +10,15 @@ import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
+import de.pyryco.mobile.ui.conversations.components.AttachmentTarget
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -122,8 +125,8 @@ class ThreadViewModelAttachmentRetrievalTest {
             val repository = RetrievingRepository(AttachmentRetrievalResult.Retrieved(kept, "photo.png", "image/png"))
             val vm = vm(repository)
 
-            vm.onAttachmentShown(ATTACHMENT)
-            vm.onAttachmentShown(ATTACHMENT)
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
             advanceUntilIdle()
 
             assertEquals(listOf(CONV to ATTACHMENT), repository.retrievals)
@@ -139,7 +142,7 @@ class ThreadViewModelAttachmentRetrievalTest {
             val repository = RetrievingRepository(AttachmentRetrievalResult.NotFound)
             val vm = vm(repository)
 
-            vm.onAttachmentShown(ATTACHMENT)
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
             advanceUntilIdle()
             vm.onRetryAttachment(ATTACHMENT)
             advanceUntilIdle()
@@ -158,11 +161,11 @@ class ThreadViewModelAttachmentRetrievalTest {
                 )
             val vm = vm(repository)
 
-            vm.onAttachmentShown(ATTACHMENT)
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
             advanceUntilIdle()
             assertEquals(AttachmentViewState.Failed, vm.attachmentStates.value[ATTACHMENT])
             // Being shown again is not a retry: only the control starts one.
-            vm.onAttachmentShown(ATTACHMENT)
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
             advanceUntilIdle()
             assertEquals(1, repository.retrievals.size)
 
@@ -182,8 +185,8 @@ class ThreadViewModelAttachmentRetrievalTest {
             val repository = RetrievingRepository(AttachmentRetrievalResult.TooLarge, AttachmentRetrievalResult.Invalid)
             val vm = vm(repository)
 
-            vm.onAttachmentShown(ATTACHMENT)
-            vm.onAttachmentShown(OTHER)
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
+            vm.onAttachmentShown(MessageAttachment(OTHER))
             advanceUntilIdle()
 
             assertEquals(AttachmentViewState.Failed, vm.attachmentStates.value[ATTACHMENT])
@@ -195,7 +198,7 @@ class ThreadViewModelAttachmentRetrievalTest {
         runTest {
             val vm = vm(RetrievingRepository(throwOnRetrieve = IllegalStateException("no store")))
 
-            vm.onAttachmentShown(ATTACHMENT)
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
             advanceUntilIdle()
 
             assertEquals(AttachmentViewState.Failed, vm.attachmentStates.value[ATTACHMENT])
@@ -209,7 +212,7 @@ class ThreadViewModelAttachmentRetrievalTest {
             val repository = RetrievingRepository()
             val vm = vm(repository, store, ProbingReader(setOf(ORIGINAL)))
 
-            vm.onAttachmentShown(ATTACHMENT)
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
             advanceUntilIdle()
 
             assertTrue(repository.retrievals.isEmpty())
@@ -228,7 +231,7 @@ class ThreadViewModelAttachmentRetrievalTest {
             val repository = RetrievingRepository(AttachmentRetrievalResult.Retrieved(kept, "a.pdf", "application/pdf"))
             val vm = vm(repository, store, reader)
 
-            vm.onAttachmentShown(ATTACHMENT)
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
             advanceUntilIdle()
 
             assertEquals(listOf(ORIGINAL), reader.probes)
@@ -272,8 +275,8 @@ class ThreadViewModelAttachmentRetrievalTest {
             val repository = RetrievingRepository(AttachmentRetrievalResult.Retrieved(kept, "secret-name.png", "image/png"))
             val vm = vm(repository, store, ProbingReader(setOf(ORIGINAL)))
 
-            vm.onAttachmentShown(ATTACHMENT)
-            vm.onAttachmentShown(OTHER)
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT))
+            vm.onAttachmentShown(MessageAttachment(OTHER))
             advanceUntilIdle()
 
             val loads = logs.filter { it.startsWith("event=thread_attachment_load") }
@@ -285,6 +288,189 @@ class ThreadViewModelAttachmentRetrievalTest {
                 loads,
             )
             assertTrue(logs.none { "secret-name" in it || "content://" in it || "/kept" in it })
+        }
+
+    /** Collects [ThreadViewModel.attachmentLoads] for the rest of the test. */
+    private fun TestScope.loadsOf(vm: ThreadViewModel): List<AttachmentLoaded> {
+        val loads = mutableListOf<AttachmentLoaded>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.attachmentLoads.collect { loads += it } }
+        return loads
+    }
+
+    @Test
+    fun shown_retrievesTheImageOnly_andNothingForAKnownNonImageFile() =
+        runTest {
+            val repository = RetrievingRepository(AttachmentRetrievalResult.Retrieved(kept, "photo.png", "image/png"))
+            val vm = vm(repository)
+
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT, "photo.png", "image/png"))
+            vm.onAttachmentShown(MessageAttachment(OTHER, "report.pdf", "application/pdf"))
+            advanceUntilIdle()
+
+            assertEquals(listOf(CONV to ATTACHMENT), repository.retrievals)
+            assertFalse(vm.attachmentStates.value.containsKey(OTHER))
+        }
+
+    @Test
+    fun shownNameOnly_retrievesAnImageExtension_andDefersAnyOther() =
+        runTest {
+            val repository =
+                RetrievingRepository(
+                    AttachmentRetrievalResult.Retrieved(kept, "fetched.bin", "application/octet-stream"),
+                    AttachmentRetrievalResult.Retrieved(kept, "fetched.bin", "application/octet-stream"),
+                )
+            val vm = vm(repository)
+
+            vm.onAttachmentShown(MessageAttachment(ATTACHMENT, "offer.png"))
+            vm.onAttachmentShown(MessageAttachment(OTHER, "offer.PNG"))
+            vm.onAttachmentShown(MessageAttachment(THIRD, "offer.pdf"))
+            vm.onAttachmentShown(MessageAttachment(FOURTH, "README"))
+            advanceUntilIdle()
+
+            assertEquals(listOf(CONV to ATTACHMENT, CONV to OTHER), repository.retrievals)
+        }
+
+    @Test
+    fun tappingADeferredFile_loadsItOnce_andDeliversOneOpen() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val repository =
+                object : ConversationRepository by FakeConversationRepository() {
+                    var calls = 0
+
+                    override suspend fun retrieveAttachment(
+                        conversationId: String,
+                        attachmentId: String,
+                    ): AttachmentRetrievalResult {
+                        calls++
+                        gate.await()
+                        return AttachmentRetrievalResult.Retrieved(kept, "fetched.pdf", "application/pdf")
+                    }
+                }
+            val vm = vm(repository)
+            val loads = loadsOf(vm)
+            val reference = MessageAttachment(ATTACHMENT, "report.pdf")
+
+            vm.onAttachmentShown(reference)
+            vm.onAttachmentRequested(reference, AttachmentAction.OPEN)
+            assertEquals(AttachmentViewState.Loading, vm.attachmentStates.value[ATTACHMENT])
+            vm.onAttachmentRequested(reference, AttachmentAction.SAVE)
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(1, repository.calls)
+            // The reference's own name wins; retrieval fills the type it left unknown.
+            assertEquals(
+                listOf(
+                    AttachmentLoaded(
+                        AttachmentTarget(ATTACHMENT, "report.pdf", "application/pdf"),
+                        AttachmentSource.Kept(kept),
+                        AttachmentAction.OPEN,
+                    ),
+                ),
+                loads,
+            )
+        }
+
+    @Test
+    fun longPressingADeferredFile_deliversASave() =
+        runTest {
+            val repository = RetrievingRepository(AttachmentRetrievalResult.Retrieved(kept, "fetched.bin", "application/octet-stream"))
+            val vm = vm(repository)
+            val loads = loadsOf(vm)
+
+            vm.onAttachmentRequested(MessageAttachment(ATTACHMENT, "report.pdf", "application/pdf"), AttachmentAction.SAVE)
+            advanceUntilIdle()
+
+            assertEquals(listOf(AttachmentAction.SAVE), loads.map { it.action })
+            assertEquals(AttachmentTarget(ATTACHMENT, "report.pdf", "application/pdf"), loads.single().target)
+        }
+
+    @Test
+    fun aTappedLoadThatFails_deliversNothing_andItsRetryOpensNothingByItself() =
+        runTest {
+            val repository =
+                RetrievingRepository(
+                    AttachmentRetrievalResult.Unavailable,
+                    AttachmentRetrievalResult.Retrieved(kept, "fetched.bin", "application/octet-stream"),
+                    AttachmentRetrievalResult.NotFound,
+                )
+            val vm = vm(repository)
+            val loads = loadsOf(vm)
+
+            vm.onAttachmentRequested(MessageAttachment(ATTACHMENT, "report.pdf"), AttachmentAction.OPEN)
+            advanceUntilIdle()
+            assertEquals(AttachmentViewState.Failed, vm.attachmentStates.value[ATTACHMENT])
+            // A tap on a failed row is not a retry: only the control starts one.
+            vm.onAttachmentRequested(MessageAttachment(ATTACHMENT, "report.pdf"), AttachmentAction.OPEN)
+            vm.onRetryAttachment(ATTACHMENT)
+            advanceUntilIdle()
+            vm.onAttachmentRequested(MessageAttachment(OTHER, "gone.zip"), AttachmentAction.SAVE)
+            advanceUntilIdle()
+
+            assertEquals(3, repository.retrievals.size)
+            assertEquals(
+                AttachmentViewState.Ready(AttachmentSource.Kept(kept), "fetched.bin", "application/octet-stream"),
+                vm.attachmentStates.value[ATTACHMENT],
+            )
+            assertEquals(AttachmentViewState.NotFound, vm.attachmentStates.value[OTHER])
+            assertTrue(loads.isEmpty())
+        }
+
+    @Test
+    fun tappingAFileThisPhoneSent_readsItsOriginal_withNoRetrieval() =
+        runTest {
+            val store = ComposerDraftStore()
+            store.recordSentOriginals(HOST, CONV, mapOf(ATTACHMENT to ORIGINAL))
+            val repository = RetrievingRepository()
+            val vm = vm(repository, store, ProbingReader(setOf(ORIGINAL)))
+            val loads = loadsOf(vm)
+            val reference = MessageAttachment(ATTACHMENT, "notes.txt", "text/plain")
+
+            vm.onAttachmentShown(reference)
+            advanceUntilIdle()
+            assertFalse(vm.attachmentStates.value.containsKey(ATTACHMENT))
+            vm.onAttachmentRequested(reference, AttachmentAction.OPEN)
+            advanceUntilIdle()
+
+            assertTrue(repository.retrievals.isEmpty())
+            assertEquals(
+                listOf(
+                    AttachmentLoaded(
+                        AttachmentTarget(ATTACHMENT, "notes.txt", "text/plain"),
+                        AttachmentSource.Original(ORIGINAL),
+                        AttachmentAction.OPEN,
+                    ),
+                ),
+                loads,
+            )
+        }
+
+    @Test
+    fun requestLogs_carryTheIdAndStaticCodes_neverANameOrUri() =
+        runTest {
+            val repository =
+                RetrievingRepository(
+                    AttachmentRetrievalResult.Retrieved(kept, "fetched.bin", "application/octet-stream"),
+                    AttachmentRetrievalResult.Unavailable,
+                )
+            val vm = vm(repository)
+            loadsOf(vm)
+
+            vm.onAttachmentRequested(MessageAttachment(ATTACHMENT, "secret-name.pdf"), AttachmentAction.OPEN)
+            vm.onAttachmentRequested(MessageAttachment(OTHER, "secret-name.zip"), AttachmentAction.SAVE)
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(
+                    "event=thread_attachment_request id=$ATTACHMENT action=open",
+                    "event=thread_attachment_request id=$ATTACHMENT outcome=delivered",
+                    "event=thread_attachment_request id=$OTHER action=save",
+                    "event=thread_attachment_request id=$OTHER outcome=dropped",
+                ),
+                logs.filter { it.startsWith("event=thread_attachment_request") },
+            )
+            assertTrue(logs.none { "secret-name" in it || "/kept" in it })
         }
 
     private fun keptMarkdown(bytes: ByteArray): File =
@@ -395,6 +581,8 @@ class ThreadViewModelAttachmentRetrievalTest {
         const val CONV = "c1"
         const val ATTACHMENT = "0f8fad5b-d9cb-469f-a165-70867728950e"
         const val OTHER = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        const val THIRD = "16fd2706-8baf-433b-82eb-8c7fada847da"
+        const val FOURTH = "886313e1-3b8a-5372-9b90-0c9aee199e5d"
         const val ORIGINAL = "content://docs/original"
     }
 }

@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -74,6 +75,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.BannerNoticeRow
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
@@ -93,6 +95,7 @@ import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
@@ -222,6 +225,9 @@ fun ThreadScreen(
     // bar owned its own text.
     draft: String = "",
     onDraftChange: (String) -> Unit = {},
+    // #1342: the open Channel info sheet's System prompt state (ThreadViewModel.systemPrompt); its edits,
+    // Save and Clear go through onOverflowEvent.
+    systemPrompt: SystemPromptEditorState? = null,
     // #843: this thread's host rejected the saved pairing (ThreadViewModel.rePairAvailable). Draws the
     // Top overlay's pairing pill (#1002) and withholds the connection banner, whose retry cannot succeed then.
     // The tap is bound by MainActivity to the code-pair route keyed by the destination's own server id.
@@ -247,10 +253,14 @@ fun ThreadScreen(
     attachmentSendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
     // row is on screen, and a failed one's retry. Bound by MainActivity; defaulted so other screens and tests
-    // draw attachments as loading and start nothing.
+    // draw attachments as loading, or a file not fetched on sight (#1329) as its ready row, and start nothing.
     attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
-    onAttachmentShown: (String) -> Unit = {},
+    onAttachmentShown: (MessageAttachment) -> Unit = {},
     onRetryAttachment: (String) -> Unit = {},
+    // #1329: a file not fetched yet, tapped or long-pressed, and the one-shot open or save once it loaded.
+    // Bound by MainActivity → vm::onAttachmentRequested / vm.attachmentLoads.
+    onRequestAttachment: (MessageAttachment, AttachmentAction) -> Unit = { _, _ -> },
+    attachmentLoads: Flow<AttachmentLoaded> = emptyFlow(),
     // #1027: a ready markdown attachment's tap, and the one-shot signal that it could not be read. Bound by
     // MainActivity → vm::onOpenMarkdownAttachment / vm.markdownOpenFailures.
     onOpenMarkdownAttachment: (String) -> Unit = {},
@@ -330,6 +340,8 @@ fun ThreadScreen(
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
             noticeScope.launch { snackbarHostState.showSnackbar(resources.getString(notice.message)) }
         }
+    // #1329: a tapped file that loaded ready opens or saves once, through the same actions as a ready row.
+    LaunchedEffect(attachmentLoads, attachmentActions) { attachmentLoads.collect(attachmentActions.loaded) }
     // #1027: a markdown file that cannot be read says what any failed open says.
     LaunchedEffect(markdownOpenFailures, snackbarHostState) {
         markdownOpenFailures.collect { snackbarHostState.showSnackbar(resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
@@ -646,6 +658,7 @@ fun ThreadScreen(
                                                         onRetryAttachment = onRetryAttachment,
                                                         onOpenAttachment = attachmentActions.open,
                                                         onSaveAttachment = attachmentActions.save,
+                                                        onRequestAttachment = onRequestAttachment,
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
@@ -833,6 +846,10 @@ fun ThreadScreen(
             onDelete = { onOverflowEvent(ThreadEvent.Delete) },
             onInstallMemoryPlugin = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) },
             onDismiss = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
+            systemPrompt = systemPrompt ?: SystemPromptEditorState.Loading,
+            onSystemPromptChange = { onOverflowEvent(ThreadEvent.SystemPromptEdit(it)) },
+            onSystemPromptSave = { onOverflowEvent(ThreadEvent.SystemPromptSave) },
+            onSystemPromptClear = { onOverflowEvent(ThreadEvent.SystemPromptClear) },
             onMcpReconnect = { name -> onOverflowEvent(ThreadEvent.McpReconnect(name)) },
             onMcpToggle = { name, enabled -> onOverflowEvent(ThreadEvent.McpToggle(name, enabled)) },
         )
