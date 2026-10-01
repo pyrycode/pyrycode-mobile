@@ -106,3 +106,24 @@ Pending for the documentation stage: `docs/knowledge/features/pairing-confirm-ga
 ## Open questions
 
 - Retry after `UpdateRequired` re-verifies (no second save). The registry re-emits the held `UpdateRequired`, so it fails again at once — identical to today's observable behaviour, since today's re-save's `connect()` is a no-op while foregrounded.
+
+## Security review
+
+Run after the plan's first commit: the `security-sensitive` label was noticed only then. No implementation code existed when this section was added; it is committed before Phase B.
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings — the step reads only the registry's decoded `ConnectionStatus` and maps it to a static `PairingVerification.Failure` enum. `UpdateRequired.minClientVersion` (daemon-authored) is never read, rendered or logged; all three texts are constants.
+- [Tokens] No findings — `PairCodeState.saved` keeps the token-bearing `PairedServer` in memory for the screen's lifetime, as `confirmation` already does. Both `PairCodeState.toString` and `PairedServer.toString` are redacted; logs carry only `Failure.code`. `PairCodeViewModelTest.withVm` already asserts no token or code reaches logs or `state.toString()`. Not retrying `PairingRejected` avoids repeatedly presenting a rejected credential.
+- [File / storage] No findings — Retry performs no write: the record is saved once, from Confirm, through `confirmPairingAndConnect`. A Retry observes `pairingStatus(saved)`, which matches the exact saved record; if the stored record were replaced, it emits `null` and the wait ends at the deadline rather than verifying a different host.
+- [Android attack surface] No findings — no intents, deep links, providers or WebViews touched.
+- [Crypto] No findings — success still requires pyrycode `Connected`, the encrypted-session leg; relay `Connected` alone never completes pairing.
+- [Network & I/O] No findings — a Retry re-collects the status flow; the registry redials a stale `DaemonAbsent`/`Offline` once per tap through `retryHost`, keeping the supervisor's backoff. A hostile relay holding `Offline`/`Connecting` is bounded by the 30 s deadline.
+- [Logs] No findings — `event=pair_code_failed code=<static>`; no host id, token or status payload.
+- [Concurrency] No findings — Retry sets `Connecting` synchronously in `onEvent` before launching, and `Pair` outside Editing is ignored, so two waits cannot overlap. Back cancels the single `operation` job; a cancelled wait writes no state. A flow that completes yields `Deadline` instead of a crash from `first()`.
+- [Threat model] OUT OF SCOPE — the QR scanner path's adoption of the same step is the sibling ticket split from #1322.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-01
