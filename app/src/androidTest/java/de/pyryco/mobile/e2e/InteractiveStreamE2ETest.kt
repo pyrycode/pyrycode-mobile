@@ -1103,9 +1103,12 @@ class InteractiveStreamE2ETest {
      * `last_used_at` on the daemon, so the old last-use order would put B on top and only the daemon's
      * `archived_at` puts A there — the scenario fails on the pre-#1332 order.
      *
-     * The screen first draws from the held list, where both rows were folded in from `conversation_updated`
-     * and carry no stamp, then settles when its own `list_conversations` reply brings the daemon's stamps, so
-     * the order is waited for rather than read once. Zero real-claude turns; both chats are deleted afterwards.
+     * When the screen opens, B already carries its stamp from the `list_conversations` reply that confirmed its
+     * archive, while A may still hold none: that confirming read can match on the held list, where A was folded
+     * in from `conversation_updated`, before its own reply lands. A can therefore first draw below B and move
+     * in front of it when the screen's own list reply arrives; the screen keeps an at-top list on its new first
+     * row, so the order is waited for rather than read once. Zero real-claude turns; both chats are deleted
+     * afterwards.
      */
     @Test
     fun interactiveTurn_archiveTwoChats_listsSecondArchivedFirst() {
@@ -1128,12 +1131,7 @@ class InteractiveStreamE2ETest {
             // 2. Archive B from its open thread, then A from its reopened thread.
             archiveOpenThread()
             archivedIds(serverId) { idB in it }
-            awaitListText(nameA)
-            composeTestRule.onAllNodesWithText(nameA, substring = true).onFirst().performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
-                    composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
-            }
+            openChatRow(nameA)
             archiveOpenThread()
             archivedIds(serverId) { idA in it }
 

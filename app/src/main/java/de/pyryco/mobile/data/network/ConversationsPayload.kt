@@ -95,8 +95,8 @@ private fun ConversationSummaryDto.toConversation(): Conversation =
 /**
  * The daemon's `archived_at` as an [Instant], or `null` when it is absent or does not parse. Total on
  * purpose: it runs after [de.pyryco.mobile.data.repository.ConversationListProjection.applySnapshot]'s
- * decode guard, so a throw here would end the connection's inbound collector. An out-of-range year
- * surfaces as an arithmetic error rather than a format error, hence both catches.
+ * decode guard, so a throw here would end the connection's inbound collector. A malformed or
+ * out-of-range stamp is a format error; the arithmetic catch only keeps the function total.
  */
 private fun parseArchivedAt(wire: String?): Instant? =
     wire?.let {

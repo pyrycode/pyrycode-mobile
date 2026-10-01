@@ -114,3 +114,13 @@ Pending for the documentation stage: update `docs/knowledge/features/archived-di
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-01
+
+## Revisions
+
+### 2026-10-01 — rework after verifier FAIL on PR #1398
+
+- **Finding (MUST FIX):** the new order moves a row archived from this phone in front of the first row once the screen's own `list_conversations` reply brings its stamp. The tab's keyed `LazyColumn` stays anchored on the row it showed first, so the newest-archived row opened just above the viewport.
+- **New contract:** `ArchivedDiscussionsScreen` hoists the tab list's `LazyListState` (in the same place the implicit one lived, so it still resets when a tab is empty) and a private `KeepNewTopRowInView` requests a scroll to index 0 when the first row's id changes while the list was at the top: zero scroll offset, and the first visible index is 0 or already anchored onto the previous first row. A list the user scrolled keeps its place. The check reads the index against the new `items`, not `layoutInfo`, because at effect time the anchor has already moved the index while `layoutInfo` still describes the previous layout.
+- **Tests:** two shared screen tests in `ArchivedDiscussionsLayoutTest` — a row moved to index 0 of an at-top list is displayed above the previous first row (red before the fix), and a scrolled list keeps its visible row and does not compose the moved one.
+- **Scenario (MUST FIX, same root cause):** `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst` KDoc now states that B is stamped by the intermediate list reply and A may not be; with the screen fix the wait settles in both orderings. Step 2 reopens A through `openChatRow`.
+- **NIT:** `parseArchivedAt` comment no longer claims an out-of-range year surfaces as an arithmetic error.
