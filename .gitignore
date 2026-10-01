@@ -24,6 +24,10 @@ local.properties
 .codegraph
 .dispatcher.lock
 
+# Local assistant instructions. Keep the dispatcher's automatic commits
+# from adding machine-specific files to feature branches.
+/AGENTS.md
+
 # Kotlin compiler-daemon session markers. Deleted and recreated on every
 # build, so tracking one makes every worktree permanently dirty — and the
 # dispatcher's unconditional safety-net commit would then re-commit that
