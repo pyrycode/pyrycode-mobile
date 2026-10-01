@@ -79,6 +79,32 @@ daemon text amplifies instead of truncating (flagged in the ticket's security re
 well-formed input is unaffected: a collision needs two ids sharing both a 256-character prefix and an
 identical length.
 
+**Host section sort order (\#1331).** Each host's Channels and Chats sections sort alphabetically,
+independently of each other; archived rows are not in either section. The sort key comes from
+`HostWorkspaceGroup.kt`'s `conversationSortKey(label)`: trim, `Normalizer.normalize(_, NFKD)`, strip
+every combining mark (`Regex("\\p{Mn}+")`), then `lowercase()` under `Locale.ROOT`. The label itself —
+fed to both the key function and the row's own text — is the conversation's non-blank `name`, otherwise
+the same `R.string.untitled_discussion` placeholder `treeHost` draws, so sorted and drawn text can never
+diverge. `conversationLabelComparator(placeholder)` in the same file orders ascending by that key, then
+by the trimmed label, then by conversation id, all three compared as UTF-16 code units via
+`String.compareTo` — no locale collation and no natural-number order, so "Chat 10" sorts before "Chat 2",
+and "Alpha" sorts before "alpha" on a key tie. `ConversationTree` resolves the placeholder string once via
+`stringResource`, then sorts under `remember(hostState.hosts, untitled)` and hands the sorted lists to
+`treeHost`, which takes them as parameters rather than reading `host.channels` / `host.chats` directly —
+`treeHost` is a `LazyListScope` extension and cannot call `stringResource` or `remember` itself. Because
+the sort is a pure, synchronous derivation keyed on every `hostState.hosts` emission, a rename, an
+auto-named chat or a new chat moves to its sorted position on the very next emission, with no
+pull-to-refresh. `ConversationListProjection.project`'s own `sortedByDescending { it.lastUsedAt }` is
+untouched — it still feeds other readers — and `HostWorkspaceGroup`'s `groupConversationsByWorkspace`
+keeps its own first-encounter group order; only the per-section row order changes. Row keys, selection
+(`HostConversationTarget`) and fold keys (`TreeFoldKey`) already address a row by host id and conversation
+id or by host id and section, so a re-sort moves a row without breaking its selection, fold state or edit
+target. Desktop's `channelListViewModel.ts` implements the identical rule as `compareByTitle`; keep the
+two texts in sync if either is refined. Known residual gaps, not yet observed in practice: the sort key is
+recomputed per comparison rather than cached per row (negligible at realistic list sizes), and Kotlin's
+`trim()` does not strip a leading/trailing U+FEFF the way JavaScript's `trim()` does, so a name framed by
+a BOM could sort differently between the two apps.
+
 ## Add controls (#738)
 
 The fixed toolbar plus pairs another host. Each host has a Channels-section plus (#1189) and a

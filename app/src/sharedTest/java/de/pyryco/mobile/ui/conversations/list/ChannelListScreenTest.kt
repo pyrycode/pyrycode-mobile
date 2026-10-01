@@ -977,6 +977,115 @@ class ChannelListScreenTest {
         composeTestRule.onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG)).onFirst().assertIsNotSelected()
     }
 
+    /** Every composed row under [tag], top to bottom, read by the text it draws. */
+    private fun drawnRows(tag: String): List<String> =
+        composeTestRule
+            .onAllNodes(hasTestTag(tag))
+            .fetchSemanticsNodes()
+            .sortedBy { it.boundsInRoot.top }
+            .map { node -> node.config[SemanticsProperties.Text].first().text }
+
+    /**
+     * #1331: each host's sections sort alphabetically on every emission, so a rename, an auto-name and a
+     * new chat each land at their sorted place with no refresh. The hosts' names interleave, so a sort
+     * across hosts instead of within each would draw a different order.
+     */
+    @Test
+    fun treeSections_sortAlphabeticallyWithinEachHost_andResortOnEveryEmission() {
+        val state =
+            mutableStateOf(
+                HostChannelListState(
+                    listOf(
+                        entry(
+                            "pyrybox",
+                            "Pyrybox",
+                            channels = listOf(conversation("p-c1", "delta ops", "/w", true), conversation("p-c2", "Bravo ops", "/w", true)),
+                            chats = listOf(conversation("p-d1", "echo", "/w", false), conversation("p-d2", null, "/w", false)),
+                        ),
+                        entry(
+                            "macbook",
+                            "Macbook",
+                            chats = listOf(conversation("m-d1", "Charlie", "/w", false), conversation("m-d2", "alpha", "/w", false)),
+                        ),
+                    ),
+                ),
+            )
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(state.value, onEvent = { events += it }) }
+        }
+        val untitled = string(R.string.untitled_discussion)
+
+        assertEquals(listOf("Bravo ops", "delta ops"), drawnRows(TREE_CHANNEL_ROW_TEST_TAG))
+        assertEquals(listOf("echo", untitled, "alpha", "Charlie"), drawnRows(TREE_CHAT_ROW_TEST_TAG))
+
+        // A rename moves a channel, the daemon names the unnamed chat, and a new unnamed chat arrives.
+        composeTestRule.runOnIdle {
+            state.value =
+                HostChannelListState(
+                    listOf(
+                        entry(
+                            "pyrybox",
+                            "Pyrybox",
+                            channels = listOf(conversation("p-c1", "Alpha ops", "/w", true), conversation("p-c2", "Bravo ops", "/w", true)),
+                            chats = listOf(conversation("p-d1", "echo", "/w", false), conversation("p-d2", "Bug triage", "/w", false)),
+                        ),
+                        entry(
+                            "macbook",
+                            "Macbook",
+                            chats =
+                                listOf(
+                                    conversation("m-d3", null, "/w", false),
+                                    conversation("m-d1", "Charlie", "/w", false),
+                                    conversation("m-d2", "alpha", "/w", false),
+                                ),
+                        ),
+                    ),
+                )
+        }
+
+        assertEquals(listOf("Alpha ops", "Bravo ops"), drawnRows(TREE_CHANNEL_ROW_TEST_TAG))
+        assertEquals(listOf("Bug triage", "echo", "alpha", "Charlie", untitled), drawnRows(TREE_CHAT_ROW_TEST_TAG))
+    }
+
+    /** #1331: a re-sort moves rows, never identities — the highlight and both pens follow the moved row. */
+    @Test
+    fun resortedRows_keepTheirSelectionAndEditorTargets() {
+        fun host(
+            channelName: String,
+            chatName: String,
+        ) = entry(
+            "pyrybox",
+            "Pyrybox",
+            channels = listOf(conversation("c1", channelName, "/w", true), conversation("c2", "middle channel", "/w", true)),
+            chats = listOf(conversation("d1", chatName, "/w", false), conversation("d2", "middle chat", "/w", false)),
+        )
+        val state =
+            mutableStateOf(
+                HostChannelListState(listOf(host("alpha channel", "alpha chat")), selected = HostConversationTarget("pyrybox", "d1")),
+            )
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(state.value, onEvent = { events += it }) }
+        }
+        assertEquals(listOf("alpha chat", "middle chat"), drawnRows(TREE_CHAT_ROW_TEST_TAG))
+
+        composeTestRule.runOnIdle { state.value = state.value.copy(hosts = listOf(host("zulu channel", "zulu chat"))) }
+
+        assertEquals(listOf("middle channel", "zulu channel"), drawnRows(TREE_CHANNEL_ROW_TEST_TAG))
+        assertEquals(listOf("middle chat", "zulu chat"), drawnRows(TREE_CHAT_ROW_TEST_TAG))
+        composeTestRule.onNode(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText("zulu chat")).assertIsSelected()
+        composeTestRule.onNode(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText("middle chat")).assertIsNotSelected()
+
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_chat_edit, "zulu chat"))).performClick()
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_channel_edit, "zulu channel"))).performClick()
+        assertEquals(
+            listOf(
+                ChannelListEvent.TreeChatEditTapped(HostConversationTarget("pyrybox", "d1")),
+                ChannelListEvent.TreeChannelEditTapped(HostConversationTarget("pyrybox", "c1")),
+            ),
+            events,
+        )
+    }
+
     private fun openChat(
         saving: Boolean = false,
         failed: Boolean = false,
