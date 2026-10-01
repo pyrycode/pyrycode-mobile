@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -61,6 +62,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
@@ -415,6 +417,13 @@ class ThreadViewModel(
             ::Pair,
         ).distinctUntilChanged()
 
+    /** This conversation's MCP server reading (#1344), seeded so a source that never emits cannot stall [state]. */
+    private val mcpStatusReading: Flow<McpStatus> =
+        repository
+            .observeMcpStatus(conversationId)
+            .onStart { emit(McpStatus()) }
+            .distinctUntilChanged()
+
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
             pendingRenameDialog,
@@ -517,6 +526,8 @@ class ThreadViewModel(
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
         }.combine(backgroundTaskReading) { uiState, (roster, count) ->
             uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+        }.combine(mcpStatusReading) { uiState, mcp ->
+            uiState.copy(mcpStatus = mcp)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -2100,13 +2111,13 @@ class ThreadViewModel(
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
                 // overflow menu, where it is already false); the send + success-only PopBack live in
                 // sendArchive, off the shared silent guard (#556).
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 sendArchive()
             }
             ThreadEvent.Delete -> pendingDeleteConfirm.value = true
             ThreadEvent.DeleteConfirm -> {
                 pendingDeleteConfirm.value = false
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 launchGuardedRepoCall {
                     repository.delete(state.value.conversationId)
                     // #790: success-only, the position [sendMessage]'s own clear occupies — each of the
@@ -2139,9 +2150,26 @@ class ThreadViewModel(
                 pendingSaveAsChannelDialog.value = null
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
-            // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
-            ThreadEvent.ChannelInfo -> if (pendingChannelInfo.compareAndSet(false, true)) rereadRunSettings("channel_info_open")
-            ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
+            // #1309: opening either sheet re-reads the settings it shows. #1344: Channel info also asks for the
+            // MCP reading, which starts empty on every connection, unless the session reports it cannot answer.
+            ThreadEvent.ChannelInfo ->
+                if (pendingChannelInfo.compareAndSet(false, true)) {
+                    rereadRunSettings("channel_info_open")
+                    if (state.value.runConfig.mcpServersSupported) {
+                        repository.requestMcpStatus(conversationId)
+                        RelayLog.d { "event=mcp_status_requested" }
+                    }
+                }
+            ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
+            // #1344: always the route's own conversation; the Claude-authored name only goes on the wire.
+            is ThreadEvent.McpReconnect -> {
+                repository.reconnectMcpServer(conversationId, event.serverName)
+                RelayLog.d { "event=mcp_reconnect_sent" }
+            }
+            is ThreadEvent.McpToggle -> {
+                repository.toggleMcpServer(conversationId, event.serverName, event.enabled)
+                RelayLog.d { "event=mcp_toggle_sent enabled=${event.enabled}" }
+            }
             ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
@@ -2231,6 +2259,18 @@ class ThreadViewModel(
         val seq: Long,
         val settings: SessionSettings?,
     )
+
+    /**
+     * Close Channel info (#1344) by any path — dismiss, Archive or a confirmed Delete. Only the call that
+     * actually closes it releases the MCP reconnect and toggle waits it may have started, so a daemon that
+     * never answers cannot leave the section's controls disabled after the sheet reopens.
+     */
+    private fun closeChannelInfo() {
+        if (!pendingChannelInfo.getAndUpdate { false }) return
+        repository.endMcpReconnectWait(conversationId)
+        repository.endMcpToggleWait(conversationId)
+        RelayLog.d { "event=mcp_wait_released" }
+    }
 
     /**
      * The thread's content surface (#461): the rendered rows folded with the queued-message backlog and,

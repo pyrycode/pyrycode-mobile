@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -36,6 +37,24 @@ sealed interface ThreadEvent {
     data object ChannelInfo : ThreadEvent
 
     data object ChannelInfoDismiss : ThreadEvent
+
+    /**
+     * Reconnect on one row of Channel info's MCP servers section (#1344). [serverName] is Claude-authored and
+     * only put on the wire, so [toString] leaves it out.
+     */
+    data class McpReconnect(
+        val serverName: String,
+    ) : ThreadEvent {
+        override fun toString(): String = "McpReconnect(serverName=<redacted>)"
+    }
+
+    /** The on/off switch on one MCP server row (#1344): [enabled] is the state asked for. [toString] as [McpReconnect]. */
+    data class McpToggle(
+        val serverName: String,
+        val enabled: Boolean,
+    ) : ThreadEvent {
+        override fun toString(): String = "McpToggle(serverName=<redacted>, enabled=$enabled)"
+    }
 
     /** The Run configuration sheet opened (#1309); the thread re-reads its settings. */
     data object RunConfigOpen : ThreadEvent
@@ -114,6 +133,9 @@ data class ThreadUiState(
     // menu has been received. The composer's type-ahead reads them. They are workspace-authored, so they
     // reach the screen only through slashCommandOptions' inert display text, and a pick inserts the name.
     val slashCommands: List<SlashCommandMenuRow>? = null,
+    // #1344: this conversation's MCP server reading on this connection. Its server strings are Claude-authored
+    // and reach the screen only as bounded inert text in Channel info.
+    val mcpStatus: McpStatus = McpStatus(),
 )
 
 /**
@@ -241,6 +263,9 @@ data class ThreadRunConfig(
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
+
+    /** Whether this session answers MCP status (#1344): only an explicit `mcp_servers: false` hides Channel info's section. */
+    val mcpServersSupported: Boolean get() = capabilities?.mcpServers ?: true
 
     /** No pick and no explicit saved model: the conversation runs whatever the daemon's default resolves to. */
     private val inherited: Boolean
