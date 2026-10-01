@@ -19,3 +19,7 @@ Add `internal enum class ContextUsageStep { Normal, Warning, High }` and `intern
 
 - Unit test `ContextUsageStepTest` under `app/src/test/`: 0 and 49 are `Normal`, 50 and 69 are `Warning`, 70 and 100 are `High`.
 - Screen test in `ThreadComposerFooterTest`: renders `ThreadComposerFooter` inside the theme at 49, 50, 69 and 70, reads each text's colour from its `TextLayoutResult` and compares it with the theme's `primary`, `warning` and `error`; at 70 asserts "Cxt high: 70%" and the high content description, and at 69 the ordinary "Cxt: 69%".
+
+## Revisions
+
+- 2026-10-01: three existing tests used 84%, which is now the high step. `contextSegment_showsTheReportedPercentage_andTheSheetAgrees` now expects "Cxt high: 84%". `compactWidthAndEnlargedText_keepThreeActionsSeparate` (#1032) moves to 37%, because "Cxt high: 84%" does not fit 320dp at 1.5× font and that test is about the ordinary reading's layout. The new screen test also asserts the high text is not ellipsized at Robolectric's default 320dp. The real-Claude regexes in `InteractiveStreamE2ETest` now accept `Cxt high:` too, so a reading of 70 or more does not fail them.

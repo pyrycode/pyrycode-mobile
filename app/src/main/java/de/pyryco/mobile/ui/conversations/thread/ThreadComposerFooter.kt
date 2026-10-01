@@ -41,6 +41,7 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
 import de.pyryco.mobile.ui.conversations.components.agentName
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.warning
 
 /**
  * The composer footer's option controls (#808). [Permission] joined at #650 and [Actions] at #884, each
@@ -374,30 +375,51 @@ internal fun footerShrinkCap(
     return left
 }
 
+/** The footer's context-usage steps (#1412), after desktop's `contextUsageStep` (desktop #1062). */
+internal enum class ContextUsageStep { Normal, Warning, High }
+
+/** The step for a reported [percent] (#1412): below 50 is normal, 50 to 69 a warning, 70 and above high. */
+internal fun contextUsageStep(percent: Int): ContextUsageStep =
+    when {
+        percent >= 70 -> ContextUsageStep.High
+        percent >= 50 -> ContextUsageStep.Warning
+        else -> ContextUsageStep.Normal
+    }
+
 /**
  * Figma's `Cxt: 84%` text (110:3497): Claude's reported [percent] as sent, in the footer's body-small style.
  * `null` is the unavailable state, dimmed like a disabled button and described as unavailable — never `0%`.
+ * A reading is coloured by its [contextUsageStep] (#1412), and the high step says so in text and description.
  */
 @Composable
 private fun ContextSegment(
     percent: Int?,
     modifier: Modifier = Modifier,
 ) {
-    val description =
-        if (percent != null) {
-            stringResource(R.string.cd_context_usage, percent)
-        } else {
-            stringResource(R.string.cd_context_usage_unavailable)
+    val step = percent?.let(::contextUsageStep)
+    val text: String
+    val description: String
+    if (percent == null) {
+        text = stringResource(R.string.thread_footer_context_unavailable)
+        description = stringResource(R.string.cd_context_usage_unavailable)
+    } else if (step == ContextUsageStep.High) {
+        text = stringResource(R.string.thread_footer_context_high, percent)
+        description = stringResource(R.string.cd_context_usage_high, percent)
+    } else {
+        text = stringResource(R.string.thread_footer_context, percent)
+        description = stringResource(R.string.cd_context_usage, percent)
+    }
+    val color =
+        when (step) {
+            null -> MaterialTheme.colorScheme.onSurfaceVariant
+            ContextUsageStep.Normal -> MaterialTheme.colorScheme.primary
+            ContextUsageStep.Warning -> MaterialTheme.colorScheme.warning
+            ContextUsageStep.High -> MaterialTheme.colorScheme.error
         }
     Text(
-        text =
-            if (percent != null) {
-                stringResource(R.string.thread_footer_context, percent)
-            } else {
-                stringResource(R.string.thread_footer_context_unavailable)
-            },
+        text = text,
         style = MaterialTheme.typography.bodySmall,
-        color = if (percent != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = color,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier.testTag(CONTEXT_USAGE_TEST_TAG).semantics { contentDescription = description },

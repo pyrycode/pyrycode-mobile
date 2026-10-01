@@ -122,8 +122,9 @@ class ThreadComposerFooterWidthTest {
             PyrycodeMobileTheme(darkTheme = true) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
                     CompositionLocalProvider(LocalDensity provides Density(1f, 1.5f)) {
+                        // An ordinary reading (#1412 gives 70 and above the longer "Cxt high:" text).
                         ThreadComposerFooter(
-                            runConfig = fullConfig.copy(contextPercent = 84),
+                            runConfig = fullConfig.copy(contextPercent = 37),
                             onOpen = { actions++ },
                             onStatusClick = { statusClicks++ },
                             onAnchorChanged = { _, _ -> },
@@ -142,7 +143,7 @@ class ThreadComposerFooterWidthTest {
         val contextText = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true)
         val actionsBounds = actionsText.getUnclippedBoundsInRoot()
         val contextBounds = contextText.getUnclippedBoundsInRoot()
-        for ((label, node) in listOf("Actions" to actionsText, "Cxt: 84%" to contextText)) {
+        for ((label, node) in listOf("Actions" to actionsText, "Cxt: 37%" to contextText)) {
             val layouts = mutableListOf<TextLayoutResult>()
             node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
             val layout = layouts.single()
