@@ -1,7 +1,6 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,9 +19,7 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
-private val IndicatorHorizontalPadding = 16.dp
 private val IndicatorVerticalPadding = 4.dp
-private val SpinnerLabelGap = 8.dp
 
 /**
  * Foot-of-list "compacting" affordance shown while the active conversation's remote claude is
@@ -37,10 +34,10 @@ private val SpinnerLabelGap = 8.dp
  * the same defence-in-depth posture as both its siblings.
  *
  * **Indeterminate, deliberately.** The upstream detector streams no compaction progress — the wire
- * payload is `{conversation_id, active}` and carries no counter, percent, or ETA — so an indeterminate
- * spinner is the honest rendering and a progress bar would invent data. Nothing daemon-supplied reaches
- * either string (both are literals with no format argument), so unlike [ApiRetryIndicator] there is no
- * display-sanitisation gate to clone.
+ * payload is `{conversation_id, active}` and carries no counter, percent, or ETA — so a plain label is the
+ * honest rendering and a progress bar would invent data. The band's snowflake beside it turns only while
+ * the turn is busy (#1312). Nothing daemon-supplied reaches either string (both are literals with no
+ * format argument), so unlike [ApiRetryIndicator] there is no display-sanitisation gate to clone.
  *
  * The status this renders is **conversation-level, not turn-scoped** — it neither opens nor closes a
  * turn, so it decorates the existing thinking affordance's slot rather than altering the turn lifecycle,
@@ -65,14 +62,10 @@ fun CompactingIndicator(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = IndicatorHorizontalPadding,
-                    vertical = IndicatorVerticalPadding,
-                ).semantics(mergeDescendants = true) { contentDescription = description },
+                .padding(vertical = IndicatorVerticalPadding)
+                .semantics(mergeDescendants = true) { contentDescription = description },
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(SpinnerLabelGap),
     ) {
-        ThreadStatusSpinner()
         Text(
             text = stringResource(R.string.thread_compacting_label),
             style = MaterialTheme.typography.bodySmall,

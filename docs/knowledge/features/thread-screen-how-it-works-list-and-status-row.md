@@ -366,3 +366,12 @@ Stalled, TurnOutcome, Thinking, Working, RunningTool`, top wins. Reset session n
 (matching desktop); `Stalled` (riding [`StallProjection`](stall-state.md) unchanged) and `Working` (the
 `responding` phase, no open tool) are new. Rationale:
 [Thinking indicator § Working and stalled](thinking-indicator.md#working-and-stalled-1311).
+
+**The band is always composed, one glyph (#1312).** `StatusArm.None` still makes `StatusReading` emit
+nothing, but the band no longer collapses when it does: `ThreadStatusArea` always draws the snowflake
+(`ThreadStatusGlyph`) at its leading edge, in a weighted reading box that holds its place even when empty, so
+the input field's position does not depend on which arm — or no arm — is showing. The waiting-for-answers
+reading (above this order) still draws its own question glyph in the snowflake's place instead. The glyph
+turns while `ThreadViewModel.isBusy || localSendPending` holds, independent of `statusArm`, so switching arms
+never restarts the rotation; see [Thinking indicator § The band is always composed, and the glyph always
+turns with it](thinking-indicator.md#working-and-stalled-1311) for the gate and the per-arm cleanup.
