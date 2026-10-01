@@ -98,17 +98,21 @@ the exact case-sensitive server id; names and relay URLs never identify a host.
 | Saving credentials/name | Dismissal and editing are blocked until persistence finishes. |
 | Connecting | Cancel the wait, enter Cancelled and pop; later readiness cannot navigate. |
 
-Credential-save failure cannot start a new connection. Name-write or connection
-failure after saving returns to the draft with explicit retained-pairing feedback
-and Retry. Retry crosses the fingerprint gate again and upserts the same host for
-an unchanged code. Cancel does not undo saved credentials or a successful name
-write. See [failure behavior](paste-code-dialog.md#failure-and-cancellation).
+Credential-save failure cannot start a new connection, and Retry for it crosses
+the fingerprint gate again and upserts the same host for an unchanged code, as
+before. A connection-verification failure is different (#1385): Retry does not
+re-parse, re-confirm or save again — it waits on the already-saved record for a
+fresh 30 s. See [the shared verification rule](paste-code-dialog.md#target-readiness-and-retry)
+for the three outcomes and their texts. Cancel does not undo saved credentials or
+a successful name write. See [failure behavior](paste-code-dialog.md#failure-and-cancellation).
 
 The connection wait follows the complete saved record through registry
 reconciliation, including replacement credentials on re-pairing. Another host's
 connection, a stale bundle or bare relay readiness cannot complete it. Both relay
-and encrypted-session status must be Connected within 30 seconds; a new
-unavailable status ends the wait earlier.
+and encrypted-session status must be Connected within 30 seconds; relay blips
+(`Offline`, `Connecting`, `Reconnecting`) keep the wait going, while
+`PairingRejected`, `UpdateRequired` or an absent daemon end it earlier — see
+[the shared verification rule](paste-code-dialog.md#target-readiness-and-retry).
 
 `LaunchedEffect(state.phase)` translates Cancelled to `popBackStack()` and Complete
 to `navigate(CHANNEL_LIST)` with `popUpTo(navController.graph.id) { inclusive = true }`
