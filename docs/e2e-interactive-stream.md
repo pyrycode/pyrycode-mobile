@@ -961,11 +961,13 @@ lifecycle. They reuse #545's settings helpers and #850's `setHostLink` / `cycleH
 `SecondClientPeer` approval path, rather than repeating those scenarios.
 
 `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` runs a ping, cuts and restores the link,
-and confirms the footer's `Cxt:` segment reads `n/a` on the new connection — the reading belongs to the
-connection and nothing asks for it again since #946's Rework 1 — while model, effort and permission settle
-on what a fresh reading taken on the new connection reports. A second ping brings the context percentage
-back, proving the post-turn push is the fresh reading, and a model picked from the footer after that turn
-is confirmed by a further fresh reading. The #545 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
+and confirms that the footer keeps its context percentage across the reconnect, matching #1317. The
+inherited model's selected row follows the held model announcement. Effort and permission settle on a
+live settings reply. Since #1397, `freshSettings` skips the held reply that #1320 emits first. The second
+ping must finish and deliver a context reading with a token count greater than the held reading. A saved
+percentage alone cannot prove freshness, because both turns can round to the same percentage. A model
+picked from the footer after that turn is confirmed by another live settings reply.
+The #545 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
 method's effort-label mapping moved into a shared `appliedEffortFooter` helper both methods call, with no
 behaviour change. Two real claude turns: the ping before the cut and the ping after it.
 
@@ -1929,6 +1931,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
+| `tool-then-text` (#1417) | reply text after a tool step renders below it | `tool-then-text.jsonl` | one |
 | `tool-progress` (#950) | the status area's running-tool label adds claude's elapsed reading after a `tool_progress` heartbeat, then clears once the call's `tool_result` lands while the turn stays busy | `tool-progress-open.jsonl` + `tool-progress-result.jsonl` | **two** |
 | `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
 | `offline-retry` (#1286) | actual Offline pill retries the same host and a new reply renders | `ping.jsonl` | one |
@@ -1948,6 +1951,7 @@ DETERMINISTIC=1 SCENARIO=stream      PYRYCODE_SRC=~/Workspace/Projects/pyrycode 
 DETERMINISTIC=1 SCENARIO=spinner     PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # spinner
 DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool running→done
 DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool failed
+DETERMINISTIC=1 SCENARIO=tool-then-text PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reply text below its tool step
 DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # running-tool label elapsed → gone
 DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
 DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
@@ -2020,6 +2024,17 @@ fold renders the row `Running` (briefly) → `Failed`; the test asserts only the
 content-description (tolerant, stable). The `tool_use` line must precede the `tool_result` line so they
 correlate. Assertions never depend on the producer-derived `input_summary`/`result_summary` text — only
 the status CDs and the verbatim tool name.
+
+**`tool-then-text` (#1417)** — reply text written after a tool step must render **below** that step, proving
+the per-segment reply order from #1350 through the real daemon, relay and app. `tool-then-text.jsonl` is a
+single raw fragment: an `assistant` line (id `ttt-1`) holding text with the marker `foxtrot`, an `assistant`
+line sharing id `ttt-1` with a `Bash` `tool_use` whose input is `{}` (empty input keeps the collapsed row's
+lead on the tool name rather than a `command`, #1315), the correlated non-error `tool_result`, then an
+`assistant` line with a new id `ttt-2` and `stop_reason: end_turn` holding text with the marker `zulu`. The
+two markers don't occur in the seeded channel name, the prompt, `Bash` or each other (the #431 false-green
+lesson). The test waits for both markers and the `Bash` row to render and the running-tool/thinking CDs to
+clear, then asserts by `boundsInRoot` that the `foxtrot` node sits above the tool row and the `zulu` node
+sits below it, and that the two markers land in different nodes.
 
 **`reconnect` (#476, Layer 2b)** — an in-flight reply must survive a mid-turn relay-link drop. It reuses
 the spinner's **two-fragment causal release** with a sever/restore inserted in the gap:
