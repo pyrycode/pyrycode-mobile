@@ -47,6 +47,7 @@
 #   DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, spinner
 #   DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool running→done
 #   DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool failed
+#   DETERMINISTIC=1 SCENARIO=tool-then-text PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh # rung 4, reply text below its tool step
 #   DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh # rung 4, running-tool label elapsed → gone
 #   DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, reconnect continuity
 #   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
@@ -133,7 +134,7 @@ FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overri
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
 SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
                                               # tool | tool-failed (#455) | tool-progress (#950) | reconnect (#476) |
-                                              # replay-order (#477). Resolved to a @Test method + fixture(s)
+                                              # replay-order (#477) | tool-then-text (#1417). Resolved to a @Test method + fixture(s)
                                               # in the preflight below; bare DETERMINISTIC=1 (SCENARIO unset
                                               # → ping) keeps #431.
 
@@ -602,6 +603,10 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_failedToolStepRendersFailed"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-failed.jsonl}"    # single terminal drop
       ;;
+    tool-then-text)
+      TEST_METHOD="interactiveTurn_seededChannel_replyTextAfterToolRendersBelowIt"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-then-text.jsonl}"  # single drop: text, tool, text, turn end
+      ;;
     tool-progress)
       TEST_METHOD="interactiveTurn_seededChannel_runningToolLabelShowsElapsedThenClears"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-progress-open.jsonl}"      # drop A: tool_use + heartbeat, held open
@@ -623,7 +628,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       DROP_B_FENCE=disconnect                                                  # drop B fences on the phone-leg disconnect, not enqueue #2
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
