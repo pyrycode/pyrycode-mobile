@@ -81,3 +81,8 @@ Pending for the documentation stage:
 **2026-10-01, rework after the live gate.**
 
 - The full live suite ran 41 methods: 40 passed, including `interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`. One failed: `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` times out in `openChatRow` when it reopens the asking chat. It fails the same way on `origin/main` alone, so it is outside this ticket. It is filed as #1445 and isolated with `@Ignore("blocked on #1445 …")`, in the style of the #1397 ignores. No production code changes.
+
+**2026-10-01, rework after triage of the script tests.**
+
+- The verifier's MUST FIX: the `@Ignore` on `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` left the method in the curated LIVE `TEST_TARGET` list in `scripts/e2e-emulator.sh`, which `scripts/test_android_test_gate.py` requires to match the runnable methods. The method leaves the list with a #1445 exclusion comment; `LIVE_MINIMUM` follows from the list.
+- The PR's `## Live tests` now reads `all`, so the live gate runs the full suite after the ignore. That run is AC4's evidence and covers the band-driving methods the verifier named.
