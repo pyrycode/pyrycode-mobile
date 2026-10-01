@@ -3408,8 +3408,9 @@ class InteractiveStreamE2ETest {
      * The chat is prepared as #545's are: nothing remembered and no saved model.
      *  * **The context reading is held.** After a real turn the footer shows `Cxt: N%`. The host's readings are
      *    kept for the life of its pairing (#1317), so after the reconnect it still shows that same reading.
-     *  * **The readings come back.** Model, effort and permission settle, none pending, on what a fresh
-     *    reading taken on the new connection reports.
+     *  * **The readings come back.** Effort and permission settle, none pending, on what a fresh reading
+     *    taken on the new connection reports. The model is inherited, and the first turn's announcement is
+     *    held too (#1317), so the mark follows that announcement (#1308) rather than the default row.
      *  * **A context reading after a turn.** After a turn on the new connection the footer shows `Cxt: N%`.
      *  * **A change is confirmed.** A published model picked from the footer is the saved model a fresh
      *    reading reports. It is picked after the last turn, so no turn runs on a model the account may not serve.
@@ -3443,7 +3444,14 @@ class InteractiveStreamE2ETest {
             val (effortLabel, effortNote) = appliedEffortFooter(fresh.effectiveEffort)
             val mode = fresh.permissionMode
             assertTrue("the fresh reading after a real turn confirms no permission mode", mode.isNotEmpty())
-            awaitFooter(changeModelLabel, inheritedModelLabel(publishedMenu(chat.id)))
+            // The first turn's announcement is held across the reconnect too (#1317), so the inherited chat
+            // marks the row it maps to rather than the default row's resolution (#1308).
+            val announced = announcedModel(chat.id)
+            check(announced.isNotEmpty()) { "claude's announced model was cut" }
+            val menu = publishedMenu(chat.id)
+            val marked = announcedRow(menu, announced)
+            awaitAnnouncedMark(menu, marked, claudeFamily(announced).ifEmpty { UNAVAILABLE_MODEL_LABEL })
+            if (marked != null) awaitFooter(changeModelLabel, marked.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeEffortLabel, effortLabel) { it == effortNote }
             awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
 
@@ -3454,7 +3462,9 @@ class InteractiveStreamE2ETest {
             // 5. A model picked from the published menu is confirmed by a fresh reading.
             val target =
                 checkNotNull(
-                    usableRows(publishedMenu(chat.id)).firstOrNull { it.value != INHERITED_MODEL_VALUE && it.value != fresh.model },
+                    usableRows(menu).firstOrNull {
+                        it.value != INHERITED_MODEL_VALUE && it.value != fresh.model && it.value != marked?.value
+                    },
                 ) {
                     "the menu publishes no usable model besides the inherited default"
                 }

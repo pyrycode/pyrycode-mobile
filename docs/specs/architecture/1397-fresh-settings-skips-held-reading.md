@@ -16,3 +16,9 @@ Overlap: #1410 adds lines next to the #1325 comments in both scripts; additive, 
 ## Testing strategy
 
 `python3 -m unittest scripts/test_android_test_gate.py` proves the floor matches the list and that no listed method is `@Ignore`d. `./gradlew compileDebugAndroidTestKotlin` compiles the helper change. The five methods run only on the dispatcher's live gate (`python3 scripts/android-test-gate.py live`), which this ticket's acceptance names; the PR lists `all` under `## Live tests` because `freshSettings` is shared across the class.
+
+## Revisions
+
+### 2026-10-01: the reconnect method's model mark follows the held announcement
+
+The live gate (log `2026-10-01T12-32-28-212Z_real-claude-gate_#1397`) passed 43 of 44. `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` got past the held `Cxt: N%` and the fresh reading, then failed with `run configuration 'Model' never settled on '<inherited label>'`. The cause is #1317's other held reading, not the held settings: the first turn's announced model is held across the reconnect too, and `ThreadRunConfig.selectedChoice` marks the row an inherited chat's announcement maps to (#1308), not the default row's resolution that `inheritedModelLabel` names. Before #1317 the reconnect cleared the announcement, so the old expectation held. Step 3 now reads the announced model and checks the mark with `announcedRow` and `awaitAnnouncedMark`, then `awaitFooter` on the marked label, as `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` does. Step 5's target also skips the marked row, so the pick is a real change. No production code changes.
