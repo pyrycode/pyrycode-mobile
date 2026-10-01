@@ -125,6 +125,41 @@ class StableConversationRepository(
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
         heldReadings?.observeContextUsage(conversationId) ?: switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
 
+    /** Switched, never held (#1343): the MCP reading is per connection, so a reconnect starts from nothing. */
+    override fun observeMcpStatus(conversationId: String): Flow<McpStatus> =
+        switchToLive(McpStatus()) { it.observeMcpStatus(conversationId) }
+
+    /**
+     * The five MCP commands (#1343) forward through [currentRepository]`.value`, the [refreshSessionSettings]
+     * shape, not [live]: with no connection nothing can be sent, so nothing is set and nothing throws.
+     */
+    override fun requestMcpStatus(conversationId: String) {
+        currentRepository.value?.requestMcpStatus(conversationId)
+    }
+
+    override fun reconnectMcpServer(
+        conversationId: String,
+        serverName: String,
+    ) {
+        currentRepository.value?.reconnectMcpServer(conversationId, serverName)
+    }
+
+    override fun toggleMcpServer(
+        conversationId: String,
+        serverName: String,
+        enabled: Boolean,
+    ) {
+        currentRepository.value?.toggleMcpServer(conversationId, serverName, enabled)
+    }
+
+    override fun endMcpReconnectWait(conversationId: String) {
+        currentRepository.value?.endMcpReconnectWait(conversationId)
+    }
+
+    override fun endMcpToggleWait(conversationId: String) {
+        currentRepository.value?.endMcpToggleWait(conversationId)
+    }
+
     /**
      * The files offered in [conversationId] on the owner host's live connection (#898). The switch is what
      * makes offers live-only across connections: a reconnect or a host switch drops the previous

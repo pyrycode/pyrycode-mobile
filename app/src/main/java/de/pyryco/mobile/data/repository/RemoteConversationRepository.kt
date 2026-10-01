@@ -178,6 +178,20 @@ class RemoteConversationRepository(
     private val contextUsageProjection = hostReadings.contextUsage
 
     /**
+     * The MCP server reading of every conversation on **this connection** (#1343): the held report, the five
+     * request flags, the three request verbs and their refusal correlation. Deliberately not in [HostReadings]: a
+     * reconnect starts from nothing and the surface asks again. [onInbound] hands it `mcp_status` behind the
+     * `interactive` gate and the refusal half of `error`. Its ids come from [relayRequests]' one counter, through a
+     * lambda for the reason [modelMenuProjection] gives.
+     */
+    private val mcpStatusProjection =
+        McpStatusProjection(
+            send = pump::send,
+            negotiatedCapabilities = negotiatedCapabilities,
+            nextRequestId = { relayRequests.nextRequestId() },
+        )
+
+    /**
      * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
      * with every write that folds a thread row. [onInbound] hands it the thread frames behind the
      * `interactive` gate, and [sendMessage], [dropQueuedMessage] and [requestHistory] record into it.
@@ -533,6 +547,8 @@ class RemoteConversationRepository(
                 envelope.inReplyTo?.let { id ->
                     relayRequests.waiter(id)?.completeExceptionally(relayRequests.mapError(envelope.payload))
                     modelMenuProjection.applyRefusal(id, envelope.payload)
+                    // The MCP asks (#1343) register in their own ledger, disjoint by the same one counter.
+                    mcpStatusProjection.applyRefusal(id, envelope.payload)
                 }
             TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
                 // A v2 structured live-session envelope (#385). AC #2: gate on the negotiated
@@ -669,6 +685,13 @@ class RemoteConversationRepository(
                 // ask (#945): see [ContextUsageProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     contextUsageProjection.apply(envelope)
+                }
+            }
+            TYPE_MCP_STATUS -> {
+                // A conversation's MCP server report, pushed or answering one of this client's MCP requests
+                // (#1343): see [McpStatusProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    mcpStatusProjection.apply(envelope)
                 }
             }
             TYPE_SESSION_TRANSITION -> {
@@ -1086,6 +1109,25 @@ class RemoteConversationRepository(
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsageProjection.observe(conversationId)
+
+    override fun observeMcpStatus(conversationId: String): Flow<McpStatus> = mcpStatusProjection.observe(conversationId)
+
+    override fun requestMcpStatus(conversationId: String) = mcpStatusProjection.requestStatus(conversationId)
+
+    override fun reconnectMcpServer(
+        conversationId: String,
+        serverName: String,
+    ) = mcpStatusProjection.reconnect(conversationId, serverName)
+
+    override fun toggleMcpServer(
+        conversationId: String,
+        serverName: String,
+        enabled: Boolean,
+    ) = mcpStatusProjection.toggle(conversationId, serverName, enabled)
+
+    override fun endMcpReconnectWait(conversationId: String) = mcpStatusProjection.endReconnectWait(conversationId)
+
+    override fun endMcpToggleWait(conversationId: String) = mcpStatusProjection.endToggleWait(conversationId)
 
     override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> =
         attachmentOfferProjection.observe(conversationId)
@@ -1572,6 +1614,29 @@ class RemoteConversationRepository(
         const val TYPE_CONTEXT_USAGE = "context_usage"
 
         /**
+         * Capability-gated status event: one conversation's MCP server report, `{conversation_id, servers,
+         * dropped_servers}` (#1343, pyrycode#2375) — pyrycode `docs/protocol-mobile.md` § `mcp_status`. Pushed once
+         * per eligible child, and also the correlated answer to [TYPE_MCP_STATUS_REQUEST], and to an accepted
+         * [TYPE_MCP_RECONNECT] or [TYPE_MCP_TOGGLE]. Opens, closes and alters no turn.
+         */
+        const val TYPE_MCP_STATUS = "mcp_status"
+
+        /**
+         * Phone → daemon: ask for one conversation's current [TYPE_MCP_STATUS] (#1343, pyrycode#2381). Refused with
+         * `protocol.malformed`, [ERROR_CONVERSATION_NOT_FOUND] or [ERROR_MCP_STATUS_UNAVAILABLE]. Interactive-gated.
+         */
+        const val TYPE_MCP_STATUS_REQUEST = "mcp_status_request"
+
+        /**
+         * Phone → daemon: reconnect one MCP server on the conversation's live child (#1343, pyrycode#2420). Accepted
+         * answers with a correlated [TYPE_MCP_STATUS]; every refusal is [ERROR_MCP_ACTUATION_REFUSED].
+         */
+        const val TYPE_MCP_RECONNECT = "mcp_reconnect"
+
+        /** Phone → daemon: turn one MCP server on or off (#1343, pyrycode#2420). Answered like [TYPE_MCP_RECONNECT]. */
+        const val TYPE_MCP_TOGGLE = "mcp_toggle"
+
+        /**
          * Phone → daemon: ask for a fresh [TYPE_CONTEXT_USAGE] reading of one conversation (#945, pyrycode#2431).
          * Payload is the single `conversation_id` key; the reply is a [TYPE_CONTEXT_USAGE] correlated by
          * `in_reply_to`, or an `error` carrying [ERROR_CONVERSATION_NOT_FOUND] or [ERROR_CONTEXT_USAGE_UNAVAILABLE].
@@ -1762,6 +1827,19 @@ class RemoteConversationRepository(
          * this code and [ContextUsageProjection] handles no refusal at all.
          */
         const val ERROR_CONTEXT_USAGE_UNAVAILABLE = "context_usage.unavailable"
+
+        /**
+         * Server `error.code` refusing a [TYPE_MCP_STATUS_REQUEST] for a hosted conversation with no live eligible
+         * child or no usable child reply (#1343). The only status-ask refusal that marks the reading unavailable.
+         */
+        const val ERROR_MCP_STATUS_UNAVAILABLE = "mcp_status.unavailable"
+
+        /**
+         * The single merged `error.code` for every [TYPE_MCP_RECONNECT] or [TYPE_MCP_TOGGLE] refusal (#1343). The
+         * phone settles any correlated refusal of those verbs the same way, so nothing branches on this code; it
+         * documents the contract.
+         */
+        const val ERROR_MCP_ACTUATION_REFUSED = "mcp_actuation.refused"
 
         /** Client-side synthetic code for an undecodable `error` payload (#346 fallback, never hangs). */
         const val ERROR_MALFORMED_REPLY = "error.malformed_reply"
