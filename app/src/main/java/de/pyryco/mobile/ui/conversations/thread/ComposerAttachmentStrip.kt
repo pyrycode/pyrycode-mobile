@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -77,7 +78,9 @@ const val ATTACHMENT_STRIP_TEST_TAG = "composer_attachment_strip"
  * An image shows a thumbnail, and any other file, or an image whose thumbnail fails, shows the `File` tile
  * with a short type label. Each tile's remove control drops only that entry. While [sending], the remove
  * controls give way to progress indicators, the tiles dim and the row says "Sending", because the send has
- * already taken its snapshot of these entries.
+ * already taken its snapshot of these entries. The tile named by [uploadProgress] fills its indicator to that
+ * figure instead of spinning, and the row says "Uploading… N%" (#1327). Neither is a live region, so no chunk
+ * is announced.
  *
  * File names come from another app's provider. They appear only as content descriptions and are never logged.
  */
@@ -87,8 +90,14 @@ fun ComposerAttachmentStrip(
     sending: Boolean,
     onRemove: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    uploadProgress: AttachmentUploadProgress? = null,
 ) {
-    val sendingDescription = stringResource(R.string.thread_attachments_sending)
+    val sendingDescription =
+        if (uploadProgress != null) {
+            stringResource(R.string.thread_attachments_uploading, uploadProgress.percent)
+        } else {
+            stringResource(R.string.thread_attachments_sending)
+        }
     LazyRow(
         modifier =
             modifier
@@ -97,7 +106,12 @@ fun ComposerAttachmentStrip(
         horizontalArrangement = Arrangement.spacedBy(ItemGap),
     ) {
         items(attachments, key = { it.key }) { attachment ->
-            AttachmentItem(attachment = attachment, sending = sending, onRemove = { onRemove(attachment.key) })
+            AttachmentItem(
+                attachment = attachment,
+                sending = sending,
+                percent = uploadProgress?.takeIf { it.key == attachment.key }?.percent,
+                onRemove = { onRemove(attachment.key) },
+            )
         }
     }
 }
@@ -106,6 +120,7 @@ fun ComposerAttachmentStrip(
 private fun AttachmentItem(
     attachment: PendingAttachment,
     sending: Boolean,
+    percent: Int?,
     onRemove: () -> Unit,
 ) {
     Box(modifier = Modifier.padding(top = RemoveOverlap, end = RemoveOverlap)) {
@@ -134,7 +149,16 @@ private fun AttachmentItem(
                     .size(RemoveSize),
             contentAlignment = Alignment.Center,
         ) {
-            if (sending) {
+            if (sending && percent != null) {
+                // #1327: the same indicator as drawn, with the indeterminate one's empty track; only the fill differs.
+                CircularProgressIndicator(
+                    progress = { percent / 100f },
+                    strokeWidth = SendingIndicatorStroke,
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = Color.Transparent,
+                    modifier = Modifier.size(RemoveSize),
+                )
+            } else if (sending) {
                 CircularProgressIndicator(
                     strokeWidth = SendingIndicatorStroke,
                     color = MaterialTheme.colorScheme.primary,
