@@ -356,6 +356,40 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * #1344: after one real turn (the daemon queries the conversation's live child), opening Channel info asks
+     * for the MCP reading; ticking "Show built-in" lists the daemon's own `pyry_approve` server. Asserts only the
+     * built-in name — the operator's other MCP servers vary and are never hard-coded.
+     */
+    @Test
+    fun interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn() {
+        awaitChannelList()
+        awaitConnected()
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+
+        // The Show built-in row appears only once a report has arrived for this conversation.
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithContentDescription(MCP_SHOW_BUILT_IN).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithContentDescription(MCP_SHOW_BUILT_IN).performScrollTo().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(MCP_BUILT_IN_APPROVE).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText(MCP_BUILT_IN_APPROVE).performScrollTo().assertIsDisplayed()
+    }
+
+    /**
      * #946: after one real turn, the composer footer's `Cxt:` segment shows the percentage Claude reported
      * (`context_usage`, published after every completed turn and answered on the screen's own ask). Asserts
      * only the `Cxt: N%` shape — the figure depends on the operator's claude and is never hard-coded.
@@ -993,6 +1027,8 @@ class InteractiveStreamE2ETest {
         // 7. Open Channel info → tap the sheet's Delete. "Channel info" is ungated; the sheet's Delete
         //    ActionCell is unique while only the sheet is open. Tapping it opens the confirm dialog OVER the
         //    still-composed sheet (ThreadEvent.Delete leaves pendingChannelInfo true) → two "Delete" nodes.
+        //    The System prompt and MCP servers sections push Actions below the fold, so scroll to Delete
+        //    before tapping; an off-screen tap lands outside the sheet and opens nothing (#1344).
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1001,7 +1037,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(DELETE_ACTION).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText(DELETE_ACTION).performClick()
+        composeTestRule.onNodeWithText(DELETE_ACTION).performScrollTo().performClick()
 
         // 8. Confirm the delete. Wait for the dialog's unique title, then tap the CONFIRM "Delete" — the sheet's
         //    "Delete" is also on screen, so disambiguate by the dialog's sibling "Cancel" button (the sheet has
@@ -3355,7 +3391,6 @@ class InteractiveStreamE2ETest {
      * **Three real-claude turns**: A's allowed command, its repeat, and B's command.
      */
     @Test
-    @Ignore("blocked on #1445 — reopening the asking chat times out in openChatRow; fails on main")
     fun interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation() {
         val (serverId, peer) = answerHostPeer()
         try {
@@ -5576,13 +5611,12 @@ class InteractiveStreamE2ETest {
                 { node -> attentionOf(node) },
             ).mapValues { (_, states) -> states.sorted() }
 
-    /** The attention state a tree row's merged node carries: whichever of the dot's five descriptions it holds. */
+    /** The attention state a tree row's merged node carries: whichever of the dot's four descriptions it holds. */
     private fun attentionOf(node: SemanticsNode): String {
         val states =
             listOf(
                 R.string.cd_conversation_attention_waiting,
                 R.string.cd_conversation_attention_running,
-                R.string.cd_conversation_attention_failed,
                 R.string.cd_conversation_attention_unread,
                 R.string.cd_conversation_attention_idle,
             ).map(::string)
@@ -6996,6 +7030,10 @@ class InteractiveStreamE2ETest {
         const val RENAME_ITEM = "Rename"
         const val RENAME_SAVE = "Save"
         const val CHANNEL_INFO_ITEM = "Channel info"
+
+        // #1344: Channel info's MCP section — the Show built-in switch's label and the daemon's own approval server.
+        const val MCP_SHOW_BUILT_IN = "Show built-in"
+        const val MCP_BUILT_IN_APPROVE = "pyry_approve"
         const val DELETE_ACTION = "Delete"
         const val DELETE_DIALOG_TITLE = "Delete conversation?"
         const val DELETE_DIALOG_CANCEL = "Cancel"

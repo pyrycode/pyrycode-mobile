@@ -25,6 +25,7 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -454,6 +455,13 @@ class ThreadViewModel(
             ::Pair,
         ).distinctUntilChanged()
 
+    /** This conversation's MCP server reading (#1344), seeded so a source that never emits cannot stall [state]. */
+    private val mcpStatusReading: Flow<McpStatus> =
+        repository
+            .observeMcpStatus(conversationId)
+            .onStart { emit(McpStatus()) }
+            .distinctUntilChanged()
+
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
             pendingRenameDialog,
@@ -556,6 +564,8 @@ class ThreadViewModel(
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
         }.combine(backgroundTaskReading) { uiState, (roster, count) ->
             uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+        }.combine(mcpStatusReading) { uiState, mcp ->
+            uiState.copy(mcpStatus = mcp)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -2194,8 +2204,17 @@ class ThreadViewModel(
 
     /** Closes the Channel info sheet and drops its System prompt editor; a write already sent still lands. */
     private fun closeChannelInfo() {
+        // #1344: by any path — dismiss, Archive or a confirmed Delete. Only the call that actually closes the
+        // sheet releases the MCP reconnect and toggle waits it may have started, so a daemon that never answers
+        // cannot leave the section's controls disabled after the sheet reopens. Every caller is on the main
+        // thread via [onOverflowEvent], so the read and the write below cannot interleave with another close.
+        val wasOpen = pendingChannelInfo.value
         pendingChannelInfo.value = false
         promptEditor.value = null
+        if (!wasOpen) return
+        repository.endMcpReconnectWait(conversationId)
+        repository.endMcpToggleWait(conversationId)
+        RelayLog.d { "event=mcp_wait_released" }
     }
 
     fun onOverflowEvent(event: ThreadEvent) {
@@ -2243,17 +2262,31 @@ class ThreadViewModel(
                 pendingSaveAsChannelDialog.value = null
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
-            // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
+            // #1309: opening either sheet re-reads the settings it shows. #1344: Channel info also asks for the
+            // MCP reading, which starts empty on every connection, unless the session reports it cannot answer.
             // #1342: each open also mounts a fresh System prompt editor, whose construction reads the prompt.
             ThreadEvent.ChannelInfo ->
                 if (pendingChannelInfo.compareAndSet(false, true)) {
                     promptEditor.value = SystemPromptEditor(viewModelScope, repository, conversationId)
                     rereadRunSettings("channel_info_open")
+                    if (state.value.runConfig.mcpServersSupported) {
+                        repository.requestMcpStatus(conversationId)
+                        RelayLog.d { "event=mcp_status_requested" }
+                    }
                 }
             ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
             is ThreadEvent.SystemPromptEdit -> promptEditor.value?.edit(event.text)
             ThreadEvent.SystemPromptSave -> promptEditor.value?.save()
             ThreadEvent.SystemPromptClear -> promptEditor.value?.clear()
+            // #1344: always the route's own conversation; the Claude-authored name only goes on the wire.
+            is ThreadEvent.McpReconnect -> {
+                repository.reconnectMcpServer(conversationId, event.serverName)
+                RelayLog.d { "event=mcp_reconnect_sent" }
+            }
+            is ThreadEvent.McpToggle -> {
+                repository.toggleMcpServer(conversationId, event.serverName, event.enabled)
+                RelayLog.d { "event=mcp_toggle_sent enabled=${event.enabled}" }
+            }
             ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()

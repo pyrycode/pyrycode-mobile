@@ -99,11 +99,14 @@ empty a host.
 ### Attention state (#877)
 
 Every conversation row on every host carries exactly one `ConversationAttention`
-(`di/ConversationAttention.kt`): `WaitingForAnswer`, `Running`, `Failed`, `Unread`,
+(`di/ConversationAttention.kt`): `WaitingForAnswer`, `Running`, `Unread`,
 `Idle`, declared in precedence order and resolved by the total function
-`resolveAttention(waiting, running, failed, unread)` — desktop's
+`resolveAttention(waiting, running, unread)` — desktop's
 `resolveConversationStatus` order (`../pyrycode-desktop/src/renderer/src/store/conversationStatus.ts`)
-with mobile's extra `Failed`, which sits after `Running` and before `Unread`.
+exactly, with no mobile-only state. An earlier mobile-only `Failed` state sat after `Running`
+and before `Unread`; #1451 removed it to match desktop, which has no failed state — a turn
+that ends Failed or StoppedEarly while not viewed now folds as an ordinary completed turn and
+resolves Unread, then Idle once opened.
 Drawing the state on `TreeConversationRow` is a separate, blocked ticket; this
 slice only publishes it.
 
@@ -120,18 +123,18 @@ I/O, no logging, because every id it touches is daemon-authored and used only as
 equality key:
 
 - `onEvent(event, viewing)` folds one `LiveSessionEvent`. `TurnState` Thinking/Responding
-  adds the conversation to `running` and clears it from `failed` (a next turn starting
-  retires the previous turn's failure); `TurnState` Idle clears `running`. `TurnEnd`
+  adds the conversation to `running`; `TurnState` Idle clears `running`. `TurnEnd`
   clears `running` and, unless its `turnId` is blank, over `MAX_TURN_ID_CHARS` (256), or
   already **counted** — in the bounded per-conversation `counted` list (newest last, capped
   at `MAX_COUNTED_TURNS_PER_CONVERSATION` = 16) or equal to the stored position's
-  `completedTurnId`/`readTurnId` — records the turn as counted, sets a `ReadPosition`
+  `completedTurnId`/`readTurnId` — records the turn as counted and sets a `ReadPosition`
   (read immediately if `viewing`, else `completedTurnId` only, keeping the prior
-  `readTurnId`), and marks the conversation failed only when not viewing and
-  `turnOutcomeReport(event)?.kind` is `Failed` or `StoppedEarly` (`Interrupted` never
-  counts). Every other event is a no-op.
-- `opened(conversationId)` clears `failed` and sets `readTurnId = completedTurnId`.
-- `disconnected()` clears `running` only — positions and `failed` survive a lost
+  `readTurnId`). A turn whose `turnOutcomeReport(event)?.kind` is `Failed` or `StoppedEarly`
+  sets that same `ReadPosition` like any other completed turn (#1451 removed the separate
+  `failed` fold this used to feed), so it resolves Unread when not viewed and Idle once
+  opened. Every other event is a no-op.
+- `opened(conversationId)` sets `readTurnId = completedTurnId`.
+- `disconnected()` clears `running` only — positions survive a lost
   connection in memory, matching the lifecycle driver closing a supervisor and the
   collector below seeing a null repository.
 - `restored(stored)` merges positions read from the cache under the live ones — a live
@@ -156,8 +159,8 @@ constructor parameter (`relay(...)` and `demo(...)` both default to a fresh inst
 folds `viewing.viewed` per host, re-opening every currently-viewed conversation of that
 host on each change. `ChannelListViewModel.onHostRowTapped` calls
 `hostSource.markOpened(serverId, conversationId)` directly instead — the list tap has no
-`ConversationViewing` handle of its own, so opening it also clears `failed`, but does not
-hold the conversation read past that one call the way a thread's view does.
+`ConversationViewing` handle of its own, so opening it also advances the read position via
+`opened`, but does not hold the conversation read past that one call the way a thread's view does.
 
 `HostConversationSource.launchAttention(entry)` runs four collectors under the same
 `entry.job` `reconcile` already cancels on bundle replacement or removal: the live-event
