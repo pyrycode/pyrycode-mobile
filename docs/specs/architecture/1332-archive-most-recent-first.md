@@ -32,7 +32,7 @@ In-flight overlap: #1311, #1325 and #1329 also touch `InteractiveStreamE2ETest.k
 ### Wire decode (`ConversationsPayload.kt`)
 
 - `ConversationSummaryDto` gains `@SerialName("archived_at") val archivedAt: String? = null`. Kept a raw string so an unparsable time cannot fail the whole list; a non-string JSON value still fails the decode (strict `MobileJson`, no `isLenient`), like a malformed `last_used_at`.
-- `toConversation` maps it through a private `parseArchivedAt(String?): Instant?` — `Instant.parse` inside `catch (IllegalArgumentException)` (kotlinx-datetime's `DateTimeFormatException` is one), returning `null` on failure.
+- `toConversation` maps it through a private `parseArchivedAt(String?): Instant?` — `Instant.parse` inside a catch, returning `null` on failure. The catch covers `IllegalArgumentException` (kotlinx-datetime's `DateTimeFormatException` is one) **and** `ArithmeticException`/`DateTimeArithmeticException` for out-of-range years, because `toConversations` runs after `applySnapshot`'s decode `try`: an escaping throw there would kill the connection's single inbound collector (see Security review).
 
 ### Domain (`Conversation.kt`)
 
@@ -94,3 +94,23 @@ Evidence for the live scenario is the dispatcher's live gate run after verificat
 ## Documentation handoff
 
 Pending for the documentation stage: update `docs/knowledge/features/archived-discussions-screen.md` with the archive order rule (key `archived_at` falling back to `last_used_at`, descending, id ascending tie-break, subtitle from the same key, legacy rows placed by `last_used_at`), and retire the "subtitle uses `lastUsedAt`" limitation and follow-up (a).
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] SHOULD FIX (folded into Design) — `archived_at` is daemon-authored. The boundary is `ConversationSummaryDto` plus the private `parseArchivedAt`; everything downstream holds an `Instant?`, never the raw string. The non-obvious hole: `ConversationListProjection.applySnapshot` only guards the decode, and `toConversations` runs after its `try`, so any exception `Instant.parse` throws that is not caught in `parseArchivedAt` would escape the relay's single inbound collector and freeze the connection. `parseArchivedAt` therefore catches both `IllegalArgumentException` and `ArithmeticException`-family errors, and a decode test feeds an out-of-range year to prove the row survives.
+- [Trust boundaries] No new finding — a hostile daemon can set a far-future `archived_at` and pin a row to the top of its own host's Archive, or produce a negative age in `formatArchiveRelativeTime`. It can already do both through `last_used_at` today, the effect is confined to that host's own rows (the screen is host-bound since #715), and the subtitle is a locally formatted relative time, never daemon text.
+- [Tokens, secrets] Not applicable — no tokens, keys or credentials are created, stored or read.
+- [File / storage] Not applicable by decision — `archivedAt` is deliberately not added to `FileConversationCache`'s `CachedConversation`, so nothing new is written to disk.
+- [Android attack surface] Not applicable — no intents, deep links, pending intents, push handling, providers or WebViews change.
+- [Crypto] Not applicable — no primitives touched; the field arrives inside the existing Noise session.
+- [Network & I/O] No findings — no new verb or request; the field's length is bounded by the existing inbound frame cap, and `Instant.parse` is linear in it.
+- [Logs] No findings — nothing new is logged; the timestamp and conversation ids stay out of logs.
+- [Concurrency] No findings — the merge runs inside `upsertConversation`'s existing atomic `MutableStateFlow.update`; a snapshot always replaces the list wholesale and so carries the authoritative stamp; no new coroutine.
+- [Threat model] OUT OF SCOPE — the daemon's own stamping rules (re-archive keeps the stamp, unarchive clears it) are enforced by pyrycode#2698, not here.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-01
