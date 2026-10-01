@@ -155,6 +155,117 @@ history path. [#775](../codebase/775.md) gave `appendSessionBoundary`, this merg
 one shared `(previousSessionId, newSessionId, occurredAt)` identity, so a repeated eviction is now
 admitted as its own row on every path instead of crashing the live lane.
 
+## Assistant reply segments: the key, the seam join, and the turn-seq dedupe (#1350)
+
+[#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350) makes `withAssistantDelta` match desktop's
+`appendDelta`: it extends the thread's **last** row only when that row is already an assistant segment of
+the same `turn_id`; a tool row, a user message, a session boundary, or no row at all makes the delta open a
+new segment at the end instead. A turn that goes text, tool, text now draws as two assistant rows around the
+tool, live and on replay — see [Streaming assistant turns](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
+and [Live tool-call](live-tool-call.md) for the consumer-side read of this. The segment is `Message.segment:
+AssistantSegment?` (`data/model/Message.kt`), non-null exactly on an assistant row folded from deltas:
+`AssistantSegment(turnId, deltas: List<SegmentDelta>)`, one `SegmentDelta(seq, length)` per folded delta in
+fold order, so the lengths sum to `content.length`. It carries no text, so its `toString` is safe to log.
+
+**The segment key.** `segmentKey(turnId, openingSeq)` is the bare `turnId` when the opening delta's `seq` is
+`0` — every turn's text starts there, so this is always the turn's first segment — and `"<turnId>#<openingSeq>"`
+otherwise. Both live and a replayed page derive the same key from the same opening delta, with no shared
+state between them. A row cached before segments existed carries no record and is keyed by the bare id, so it
+reads as a turn's first segment under the new scheme too, and the pre-existing [#425](../codebase/425.md)
+key-uniqueness guard keeps matching it unchanged.
+
+**Two guards keep the key unique**, since it is also the thread's `LazyColumn` key and a daemon chooses
+`turn_id` freely (it could pick one that spells another turn's `"<turnId>#<seq>"`, a `tool_use_id`, or a
+`message_id`):
+
+- `withAssistantDelta` drops a delta whose `seq` is not above the highest `seq` any segment of its turn
+  already holds (`highestSeqOf`) before it ever looks at opening a new segment — this is also what makes a
+  repeated first delta after a tool row a no-op instead of re-minting the first segment's key.
+- A delta that would open a segment under a key any `MessageItem` already carries is dropped outright.
+- The mirror case — `withToolUse` dropping a `tool_use` whose id any message already carries, not only an
+  existing tool row — is in [Live tool-call](live-tool-call.md#tool_uses-own-repeat-check-is-id-only-not-role-namespaced-1350).
+
+Each guard only ever suppresses a row; none of them ever completes, moves or resets one, so the worst a
+hostile `turn_id` achieves is missing text, never a crashed list.
+
+**Only the newest segment streams.** `List<ThreadItem>.withOnlyLastRowStreaming()` settles every streaming
+assistant row but the last, returning the same list when nothing changed; `ThreadProjection.observe` applies
+it before `distinctUntilChanged`, so every reader of the projection sees a segment stop the moment any row
+follows it — a tool call, a user message, whatever put that row there. See
+[Streaming assistant turns § the known gap](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
+for the one composition point downstream of `observe` this does not cover.
+`turn_end` (`withFinalizedTurn`) still settles **every** streaming segment of the turn, plus a bare-id row
+with no segment record — not only the last one — since a daemon bug or a race can otherwise leave an earlier
+segment stuck streaming.
+
+### The seam join
+
+A history page is cut by entry count and byte size, never by turn, so a page can start or end inside a
+segment; the same is true where a newest page meets the live rows, or where the cache meets either. Within
+one fold a delta always extends the last row when it is the same turn's segment, so two assistant rows of one
+turn ever sitting adjacent in a merged list are always **one segment a seam cut in two**, never two
+independent segments that happen to be neighbours.
+
+`joinSegments(older, newer): Message?` joins such a pair: both must record a segment of the same `turnId`,
+and `newer` must have opened after `older` did (`newer.firstSeq > older.firstSeq`); anything else returns
+`null` and nothing joins — a `message` frame or a row cached before segments existed has no record and never
+joins. The joined row keeps `older`'s id, timestamp and session (it saw the segment's true opener), holds
+`older`'s deltas plus `newer`'s deltas whose `seq` is past `older`'s last (a delta the ask-versus-answer race
+delivered to both lanes is counted once, located from `newer`'s own record and clamped to its content so a
+mismatched record cuts short instead of throwing), and takes `newer`'s streaming flag, since the newer lane
+knows whether the turn has ended. `withJoinedSegments()` walks a merged list once and applies this to every
+adjacent pair, returning the same list when nothing joined. Joining only ever removes the later row and keeps
+the earlier row's already-unique id, so it can never mint a duplicate key.
+
+### The `(turnId, seq)` dedupe — the receiver owns a turn from its lowest `seq`
+
+An id-and-adjacency join alone assumed both lanes place one turn's rows in the same relative order, which
+held for every scripted scenario built on tool calls — a tool row's position is agreed by both lanes — but
+broke on a mid-turn user message: `MessageCommands.sendMessage` appends the local echo as soon as the `ack`
+arrives, mid-turn, while the daemon logs a message sent while claude is busy only once it is delivered from
+the queued-message backlog (pyrycode `docs/protocol-mobile.md` § `queue_state` / § `message`, #2699). The two
+lanes can therefore place that message in different positions relative to the turn's deltas, which splits the
+turn into differently-keyed segments on each side — the verifier reproduced both a reconnect-through-cache and
+an in-session case where this drew the turn's reply text twice (PR #1420 review, 2026-10-01).
+
+The fix: before merging a page or cached rows, `mergeHistoryRows` and `mergeCachedRows` first compute
+`segmentHeads()` — for every turn the receiving thread already holds segments of, the lowest `seq` it holds
+and the index of its first segment row. An incoming row runs through `olderThan(heads)`: an assistant segment
+of a turn the thread holds keeps only the deltas below that turn's lowest `seq` (`takeWhile { it.seq < below
+}`, content cut to match and clamped to length), and is dropped entirely when none are below it; every other
+row passes through unchanged. Because deltas are recorded in increasing `seq`, what survives is always a
+prefix of the record and the content, so the trimmed row's id — that of its own opening delta — stays
+correct. The same `seq` can therefore never be drawn twice: the receiver owns everything from its lowest `seq`
+up, and the incoming side only ever contributes what is strictly older. `withJoinedSegments()` then joins a
+trimmed head to the segment it continues, exactly as for a page-boundary seam.
+
+`mergeCachedRows` additionally floors where a trimmed cached head can land: no lower than right above the
+receiving thread's first segment row for that turn (`heads[turnId].index`), never lower just because the
+cached row's own position in `cached` was lower. Without that ceiling, a cached head that sat *below* the
+echo in live arrival order could land below newer text the page holds, reproducing the same duplication from
+the cache side.
+
+**Pre-change cached rows.** A row cached before segments existed carries `segment == null` but is keyed by
+its turn's bare id and holds that turn's whole text (as every row did before #1350).
+`withoutSegmentsOfWholeTurns()` removes any segment of a turn such a row's id names from the merged result —
+it only ever removes rows, never the whole-turn row itself — so the legacy row keeps drawing exactly as it
+did before this ticket, with its text appearing once rather than once more per segment underneath it.
+
+**Lesson for later tickets touching this merge:** a join keyed on id-plus-adjacency is only as safe as the
+assumption that every lane orders a turn's interleaved rows the same way. A client-placed local echo breaks
+that assumption structurally (the client decides when its own echo appears; the daemon decides independently
+when it logs the same turn), so any future per-turn join here needs a receiver-owns-the-prefix rule like
+`olderThan`/`segmentHeads`, not a positional one.
+
+### The cache's segment record
+
+`FileConversationCache`'s `CachedMessage` gains `segment: CachedSegment? = null` (`turnId`, `seqs: List<Int>`,
+`lengths: List<Int>`), defaulted so a document written before this change still reads with `segment = null`.
+On read, the record is kept only when it is internally consistent — the lists are non-empty, equal length,
+strictly increasing `seqs`, non-negative `lengths` summing to the row's `content.length` — and dropped to
+`null` otherwise, which costs that row its join (it falls back to counting as a pre-change whole-turn row) but
+never rejects the document.
+
 ## The walk that finally calls `requestHistory` (#777)
 
 [#645](../codebase/645.md) shipped the fold and left `requestHistory` with no caller. [#777](../codebase/777.md)
