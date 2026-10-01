@@ -1296,6 +1296,36 @@ live selector: `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` lists it after
 (see [Pre-ship gate](#pre-ship-gate)). Its first live pass is recorded in [Verification
 status](#verification-status).
 
+The **scanner-confirm-waits-for-host** scenario ([#1394](https://github.com/pyrycode/pyrycode-mobile/issues/1394) —
+`interactiveTurn_scannerConfirm_waitsForHostThenOpensList`) is **always-on** (not `@Ignore`d): [#1386's
+PR #1391](https://github.com/pyrycode/pyrycode-mobile/pull/1391) made `ScannerViewModel` report a pairing done
+only after the host answers — `ConfirmPairing` saves the record and moves to `Verifying`, and only
+`Paired` lets the `Routes.SCANNER` composable in `MainActivity` navigate to the channel list — proven on
+the JVM and in Robolectric but not over the real relay. This drives the scanner's own confirm, not the
+paste-link path `pairHostByCode` exercises: it opens the scanner from the list's pair-another-host
+control, waits for `ScannerUiState.ReadyToScan`, injects host B's existing pair code as
+`ScannerEvent.QrDecoded` (the scanner and the paste-code path share `parsePairingPayload`, so no new
+fixture is needed), taps "Confirm pairing", then waits up to `PAIR_TIMEOUT_MS` — covering the view
+model's 30 s connection wait plus the pop — for the channel-list tag (`pairHostByScanner`). It asserts
+the scanner view model itself ended in `Paired`, so a `Cancelled` return to the list cannot pass by
+coincidence, that host B is saved, and that B's seeded conversation (`ARG_COLLISION_NAME_B`) folds away
+under B's label and not A's, with the converse check for A. A scanner pairing saves no display name, so
+both hosts would read "Unnamed host"; the scenario names B first with
+`PairedServerCollectionStore.setDisplayName` (the call the Edit host modal makes) so the two labels
+differ. **VM access.** `MainActivity` builds its `NavHostController` inside `setContent`, and Compose's
+`NavHost` does not tag the view with it, so the route's `ScannerViewModel` is unreachable by
+`nav.getBackStackEntry(...)` the way `PairCodeScreenTest` reaches its own screen-owned nav host. Instead
+`pairHostByScanner` swaps in `scannerViewModelModule { captured.set(it) }`, a mirror of `AppModule`'s
+`ScannerViewModel` definition that also records the instance Koin builds, and restores the plain mirror
+in `finally`; the VM is still created by the route's own `koinViewModel` call in the route's back-stack
+entry, so the `Paired` navigation and the pop are the production ones. Because the restore loads the
+plain mirror rather than reinstating `AppModule`'s own definition, every later live method in the same
+process resolves the scanner view model from the mirror, not from `AppModule`, until the process ends;
+keep `scannerViewModelModule` in step with `AppModule`'s definition by hand; the drift has no error if
+the two are not kept in step. Zero real-claude turns: pairing and the list are daemon round-trips. B is
+removed in `finally`. No rung-4 twin: the deterministic harness provisions one host per invocation and
+cannot pair a second, and this scenario needs the second live host that only rung 3 / `LIVE` provisions.
+
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
 token, `turn_state` flips to `responding` and `isThinking` goes false. Before [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311)
