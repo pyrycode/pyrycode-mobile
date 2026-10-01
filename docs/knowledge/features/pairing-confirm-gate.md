@@ -135,6 +135,12 @@ to Welcome. Disabled otherwise, so Back pops normally.
   Parse/derive failures and Decline/Back from confirmation persist nothing.
   After Confirm, manual pairing can retain saved credentials despite a later
   name or connection failure; its feedback explicitly reports that partial success.
+  Since [#1385](../specs/architecture/1385-pairing-verification-rule.md), the post-save connection wait
+  itself is a shared, Android-free step (`verifySavedPairing`) that classifies each saved host's status
+  into waiting, success, or one of three static failures (unavailable/deadline, rejected, update-required)
+  — see [pair-with-code § target readiness and retry](paste-code-dialog.md#target-readiness-and-retry).
+  Retry re-verifies the already-saved record for a fresh wait; it never re-saves, so this gate's "Confirm
+  is the only save" property holds across any number of retries.
 - **No shown-vs-saved gap.** See the fingerprint↔record binding above — the display and the persist read
   the same immutable object.
 - **Confirm-after-close is a no-op by construction.** `onConfirmPairing` reads the *current* collected

@@ -299,6 +299,28 @@ class ThreadViewModelPermissionTest {
             assertEquals("no retry after the context changed", reads, repo.refreshes)
         }
 
+    // #1320: a same-host reconnect now heads the subscription with the held reading, same session, instead of
+    // `null`. It is still a context the write no longer belongs to, so it cancels as the `null` did.
+    @Test
+    fun aHeldReadingOnAReconnect_cancelsTheRetries_andClearsAPendingModel() =
+        runTest {
+            val repo = ScriptedRepo()
+            val vm = collectedVm(repo, reading("plan"))
+            repo.onRefresh = { reading("plan") }
+            vm.onPermissionModeSelected("default")
+            vm.onModelSelected("sonnet")
+            assertEquals("sonnet", vm.state.value.runConfig.pendingModel)
+
+            repo.readings.emit(reading("plan").copy(permissionMode = "", held = true))
+            val reads = repo.refreshes
+            assertNull(vm.state.value.runConfig.pendingPermission)
+            assertNull(vm.state.value.runConfig.pendingModel)
+            advanceTimeBy(PERMISSION_SETTLE_WINDOW_MS)
+            runCurrent()
+
+            assertEquals("no retry after the reconnect", reads, repo.refreshes)
+        }
+
     @Test
     fun aReadingForAnotherSession_cancelsTheRetries() =
         runTest {

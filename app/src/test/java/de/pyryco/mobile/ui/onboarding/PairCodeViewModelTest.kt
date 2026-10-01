@@ -109,18 +109,17 @@ class PairCodeViewModelTest {
                 status.value = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down)
                 runCurrent()
                 assertEquals(PairCodePhase.Editing, vm.state.value.phase)
-                assertTrue(
-                    vm.state.value.error
-                        .orEmpty()
-                        .contains("Pairing saved"),
-                )
+                assertEquals(PairingVerification.Failure.Unavailable.message, vm.state.value.error)
                 assertEquals(1, store.list().size)
+                val saves = store.saves
+                // The saved draft is frozen: Retry waits again rather than re-parsing it.
                 vm.onEvent(PairCodeEvent.Name("  "))
                 status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
                 submit()
                 runCurrent()
                 assertEquals("Shared", store.list().single().displayName)
                 assertEquals(PairCodePhase.Complete, vm.state.value.phase)
+                assertEquals(saves, store.saves)
             }
         }
 
@@ -135,11 +134,7 @@ class PairCodeViewModelTest {
                 assertEquals(PairCodePhase.Connecting, vm.state.value.phase)
                 advanceTimeBy(1)
                 runCurrent()
-                assertTrue(
-                    vm.state.value.error
-                        .orEmpty()
-                        .contains("Pairing saved"),
-                )
+                assertEquals(PairingVerification.Failure.Deadline.message, vm.state.value.error)
                 submit()
                 runCurrent()
                 vm.onEvent(PairCodeEvent.Back)
@@ -179,11 +174,70 @@ class PairCodeViewModelTest {
                 status.value = ConnectionStatus(RelayLinkStatus.PairingRejected, PyrycodeLinkStatus.Down)
                 runCurrent()
                 assertEquals(PairCodePhase.Editing, vm.state.value.phase)
-                assertTrue(
-                    vm.state.value.error
-                        .orEmpty()
-                        .contains("Pairing saved"),
-                )
+                val rejected = vm.state.value
+                assertEquals(PairingVerification.Failure.Rejected.message, rejected.error)
+                assertFalse(rejected.failure?.retryable ?: true)
+                // Not retryable: neither Pair nor an edited code starts another wait or save.
+                status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+                vm.onEvent(PairCodeEvent.Code("replacement"))
+                submit()
+                runCurrent()
+                assertSame(rejected, vm.state.value)
+                assertEquals(1, store.saves)
+                vm.onEvent(PairCodeEvent.Back)
+                assertEquals(PairCodePhase.Cancelled, vm.state.value.phase)
+            }
+        }
+
+    @Test fun offlineDuringTheWaitKeepsWaitingUntilConnected() =
+        runTest {
+            withVm {
+                vm.onEvent(PairCodeEvent.Code(code))
+                submit()
+                runCurrent()
+                status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+                advanceTimeBy(10_000)
+                runCurrent()
+                assertEquals(PairCodePhase.Connecting, vm.state.value.phase)
+                assertEquals(null, vm.state.value.error)
+                status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+                runCurrent()
+                assertEquals(PairCodePhase.Complete, vm.state.value.phase)
+            }
+        }
+
+    @Test fun retryWaitsAgainForTheSavedHostWithoutConfirmingOrSaving() =
+        runTest {
+            withVm {
+                vm.onEvent(PairCodeEvent.Code(code))
+                submit()
+                runCurrent()
+                status.value = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down)
+                runCurrent()
+                assertEquals(PairingVerification.Failure.Unavailable, vm.state.value.failure)
+                advanceTimeBy(5_000)
+                observed = null
+                vm.onEvent(PairCodeEvent.Pair)
+                assertEquals(PairCodePhase.Connecting, vm.state.value.phase)
+                assertEquals(null, vm.state.value.confirmation)
+                assertEquals(null, vm.state.value.error)
+                runCurrent()
+                // The absence reported before Retry does not end the new wait.
+                assertEquals(PairCodePhase.Connecting, vm.state.value.phase)
+                assertEquals(record, observed)
+                advanceTimeBy(29_999)
+                runCurrent()
+                assertEquals(PairCodePhase.Connecting, vm.state.value.phase)
+                advanceTimeBy(1)
+                runCurrent()
+                assertEquals(PairingVerification.Failure.Deadline, vm.state.value.failure)
+                vm.onEvent(PairCodeEvent.Pair)
+                runCurrent()
+                status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+                runCurrent()
+                assertEquals(PairCodePhase.Complete, vm.state.value.phase)
+                assertEquals(1, store.saves)
+                assertEquals(1, connects)
             }
         }
 
@@ -272,11 +326,7 @@ class PairCodeViewModelTest {
                 status.value = ConnectionStatus(RelayLinkStatus.PairingRejected, PyrycodeLinkStatus.Down)
                 runCurrent()
                 assertEquals(PairCodePhase.Editing, vm.state.value.phase)
-                assertTrue(
-                    vm.state.value.error
-                        .orEmpty()
-                        .contains("Pairing saved"),
-                )
+                assertEquals(PairingVerification.Failure.Rejected.message, vm.state.value.error)
                 assertEquals("Pyrybox", store.loadById("B")?.displayName)
             }
         }
