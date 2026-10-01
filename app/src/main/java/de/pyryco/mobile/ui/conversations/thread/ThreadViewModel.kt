@@ -539,12 +539,27 @@ class ThreadViewModel(
         )
 
     /**
-     * The switch-back offer as the refusal row draws it (#1360), or `null`. Pending while any model write is
-     * outstanding, the switch-back's own or the menu's. Eager, so it holds while no screen collects it.
+     * The switch-back offer as the refusal row draws it (#1360), or `null`. Shown only while the latest
+     * settings reading names a session to address, as desktop shows it, so the button is never one whose tap
+     * [onSwitchBack] would drop. Pending while any model write is outstanding, the switch-back's own or the
+     * menu's. Eager, so it holds while no screen collects it; [settingsReadings] is a plain state holder, so
+     * reading it opens no settings subscription.
      */
     val switchBackOffer: StateFlow<SwitchBackOffer?> =
-        combine(refusalOffer, pendingModel) { offer, pending ->
-            offer?.let { SwitchBackOffer(it.occurredAt, it.originalModel, pending = pending != null, failed = it.failed) }
+        combine(
+            refusalOffer,
+            pendingModel,
+            settingsReadings
+                .map {
+                    it.settings
+                        ?.sessionId
+                        .orEmpty()
+                        .isNotEmpty()
+                }.distinctUntilChanged(),
+        ) { offer, pending, addressable ->
+            offer?.takeIf { addressable }?.let {
+                SwitchBackOffer(it.occurredAt, it.originalModel, pending = pending != null, failed = it.failed)
+            }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     init {
@@ -2041,6 +2056,8 @@ class ThreadViewModel(
                 if (event.scope == SESSION_SCOPE && refusal.originalModel.isNotEmpty() && fallbackModel.isNotEmpty()) {
                     refusalOffer.value = RefusalOffer(refusal.originalModel, fallbackModel, refusal.occurredAt)
                     RelayLog.d { "event=refusal_offer outcome=armed" }
+                    // The refusal means a session is running, but a reading taken before it spawned names none.
+                    repository.refreshSessionSettings(conversationId)
                 } else {
                     clearRefusalOffer("unqualified")
                 }

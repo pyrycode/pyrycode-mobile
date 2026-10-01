@@ -50,6 +50,7 @@
 #   DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh # rung 4, running-tool label elapsed → gone
 #   DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, reconnect continuity
 #   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
+#   DETERMINISTIC=1 SCENARIO=refusal     PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, refusal switch-back
 #   DETERMINISTIC=1 INTERACTIVE_RUNNER=stream-json PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, pinned runner
 # Tunables (env):
 #   PORT=<a free port>  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
@@ -133,7 +134,8 @@ FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overri
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
 SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
                                               # tool | tool-failed (#455) | tool-progress (#950) | reconnect (#476) |
-                                              # replay-order (#477). Resolved to a @Test method + fixture(s)
+                                              # replay-order (#477) | refusal (#1360). Resolved to a @Test
+                                              # method + fixture(s)
                                               # in the preflight below; bare DETERMINISTIC=1 (SCENARIO unset
                                               # → ping) keeps #431.
 
@@ -622,8 +624,14 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/replay-order.jsonl}"   # drop B: ordered sequence, produced while offline
       DROP_B_FENCE=disconnect                                                  # drop B fences on the phone-leg disconnect, not enqueue #2
       ;;
+    refusal)
+      # #1360: one session-scoped model_refusal_fallback (haiku -> sonnet, both in fakeclaude's canned menu) and
+      # a reply, single drop. The test taps Switch back and reads the written model back.
+      TEST_METHOD="interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/refusal.jsonl}"
+      ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | refusal)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"

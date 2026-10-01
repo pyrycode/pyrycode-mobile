@@ -171,7 +171,7 @@ class ThreadViewModelRefusalOfferTest {
             ack.complete(Unit)
             runCurrent()
             assertNull("an acknowledged write ends the offer", vm.switchBackOffer.value)
-            assertEquals(1, repo.refreshes)
+            assertEquals("one on arming, one after the ack", 2, repo.refreshes)
         }
 
     @Test
@@ -207,9 +207,29 @@ class ThreadViewModelRefusalOfferTest {
             source.emit(ConnectionState.Connected)
             repo.readings.value = reading(sessionId = "")
             runCurrent()
+            assertNull("no button whose tap would be dropped", vm.switchBackOffer.value)
             vm.onSwitchBack()
             runCurrent()
             assertTrue("no session", repo.settings.isEmpty())
+
+            repo.readings.value = reading()
+            runCurrent()
+            assertEquals(SwitchBackOffer(T1, ORIGINAL, pending = false, failed = false), vm.switchBackOffer.value)
+        }
+
+    // A thread opened before its session spawned holds a reading with no session; the refusal proves one runs.
+    @Test
+    fun arming_asksForAFreshReading_soAReadingFromBeforeTheSessionSpawnedIsReplaced() =
+        runTest {
+            repo.readings.value = reading(sessionId = "")
+            val vm = collectedVm()
+
+            repo.refusals.emit(refused(ORIGINAL, FALLBACK, T1))
+            assertEquals(1, repo.refreshes)
+            assertNull(vm.switchBackOffer.value)
+
+            repo.readings.value = reading()
+            runCurrent()
             assertEquals(SwitchBackOffer(T1, ORIGINAL, pending = false, failed = false), vm.switchBackOffer.value)
         }
 

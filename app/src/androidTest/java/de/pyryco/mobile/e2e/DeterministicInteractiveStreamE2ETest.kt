@@ -2,9 +2,11 @@ package de.pyryco.mobile.e2e
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -18,12 +20,15 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.grantNotificationPermission
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
@@ -36,7 +41,7 @@ import org.koin.core.context.GlobalContext
  * `fakeclaude` backend (pyrycode #642) — **no real claude, zero claude turns** — and asserts a
  * scripted reply renders in the thread.
  *
- * Eight scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
+ * Ten scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
  * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
  *  - `ping` (default, #431) — a single-line reply renders.
  *  - `stream` (#454) — a multi-`assistant_delta` reply assembles into one message.
@@ -55,6 +60,8 @@ import org.koin.core.context.GlobalContext
  *    link is severed, the ordered sequence accrues in the daemon's in-ring buffer during the outage
  *    (drop B fenced on the relay-logged phone-leg disconnect, not a 2nd send a severed phone cannot
  *    make), then the link is restored and the buffered sequence replays in order (see the method KDoc).
+ *  - `refusal` (#1360) — a session-scoped `model_refusal_fallback` offers Switch back on its row; the tap
+ *    writes the original model, the button goes, and a fresh settings reading names that model.
  *
  * It is a thin variant of [InteractiveStreamE2ETest] (rung 3). **One** step differs: instead of tapping
  * the host row's add control (which mints a *fresh* per-conversation claude session that `fakeclaude` —
@@ -123,6 +130,9 @@ class DeterministicInteractiveStreamE2ETest {
             .targetContext
             .getString(R.string.cd_thread_tool_running, TOOL_NAME)
 
+    private val switchBackPrefix: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_refusal_switch_back)
+
     private val runningToolElapsedLabel: String =
         InstrumentationRegistry
             .getInstrumentation()
@@ -147,6 +157,54 @@ class DeterministicInteractiveStreamE2ETest {
             .onAllNodesWithText(PING, substring = true, ignoreCase = true)
             .onFirst()
             .assertIsDisplayed()
+    }
+
+    /**
+     * `refusal` scenario (#1360) — the fixture's claude line is a session-scoped `model_refusal_fallback` from
+     * `haiku` to `sonnet`, then a reply. The refusal row offers "Switch back to haiku"; one tap writes `haiku`
+     * to the session through the real daemon, the button goes once the write is acknowledged, and a fresh
+     * `request_session_settings` reply names `haiku`. `haiku` because the scripted daemon accepts only
+     * fakeclaude's canned menu, which it holds once the turn has spawned fakeclaude, so the tap waits for the
+     * reply. The held reading a subscription opens with is skipped, as #1397 does for the live class.
+     */
+    @Test
+    fun interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+
+        val switchBack = switchBackPrefix + REFUSAL_ORIGINAL_MODEL
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(REFUSAL_REPLY, substring = true).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodes(hasText(switchBack) and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(switchBack, substring = true).assertCountEquals(1)
+        composeTestRule.onNode(hasText(switchBack) and hasClickAction()).performClick()
+
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(switchBackPrefix, substring = true).fetchSemanticsNodes().isEmpty()
+        }
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val fresh =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    val seeded =
+                        repository.observeConversations(ConversationFilter.All).first { list ->
+                            list.any {
+                                it.name ==
+                                    SEED_CHANNEL_NAME
+                            }
+                        }
+                    val id = seeded.first { it.name == SEED_CHANNEL_NAME }.id
+                    repository.observeSessionSettings(id).filterNotNull().first { !it.held }
+                }
+            }
+        assertEquals(REFUSAL_ORIGINAL_MODEL, fresh.model)
     }
 
     /** The real daemon-absent state keeps Retry visible until the pill restores this seeded thread (#1286). */
@@ -605,6 +663,12 @@ class DeterministicInteractiveStreamE2ETest {
         // replay ("bravo alpha charlie") fails the match. Collides with nothing else on screen (the
         // "e2e-seed" title, "ping", "Bash", "streamed world", "reconnected reply", the inert "hello" prompt).
         const val ORDERED_REPLY_SUBSTRING = "alpha bravo charlie"
+
+        /** `refusal.jsonl`'s `original_model` (#1360): a value fakeclaude's canned menu offers, so the write is accepted. */
+        const val REFUSAL_ORIGINAL_MODEL = "haiku"
+
+        /** `refusal.jsonl`'s reply text, which follows the refusal line. */
+        const val REFUSAL_REPLY = "refusal handled"
 
         // Production UI string (no test tags exist). Keep in sync with res/values/strings.xml:
         //   cd_send_message = "Send message".

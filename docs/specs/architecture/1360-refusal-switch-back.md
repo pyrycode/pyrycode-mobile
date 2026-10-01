@@ -238,3 +238,19 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-01
+
+## Revisions
+
+### 2026-10-01: the offer shows only with a session to address, and arming asks for a fresh reading
+
+- **What changed.** `switchBackOffer` is `null` while the latest settings reading (`settingsReadings`) names
+  no session, as desktop shows its button only for an addressable session. Arming an offer also calls
+  `repository.refreshSessionSettings(conversationId)`.
+- **What drove it.** The first scripted `refusal` run tapped a visible button that `onSwitchBack` dropped
+  with `run_config_write_skipped reason=no_session`. The thread's reading was taken before the turn spawned
+  the session, and nothing re-read it, so a fresh conversation's first refusal offered a button that could
+  not write.
+- **New contract.** The button appears once a reading names a session. A refusal proves a session is
+  running, so arming asks for that reading. The tap guards are unchanged. `ThreadViewModelRefusalOfferTest`
+  covers both: `arming_asksForAFreshReading_…` and the no-session case in
+  `aTap_sendsNothing_offlineOrWithoutASessionOrWithoutAnOffer`.

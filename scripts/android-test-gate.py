@@ -23,7 +23,10 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 E2E_PACKAGE = "de.pyryco.mobile.e2e"
-SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order")
+SCENARIOS = (
+    "ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order",
+    "refusal",
+)
 # The live gate's executed-test floor: the size of scripts/e2e-emulator.sh's LIVE curated list (#848),
 # so a method silently dropped from that list reddens the gate. Raise it with the list.
 # 20 while #977 keeps the #687 bypass method out of the list; #981 restores it and 21.
