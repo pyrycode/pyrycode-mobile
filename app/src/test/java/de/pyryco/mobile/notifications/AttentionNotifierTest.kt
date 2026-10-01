@@ -248,6 +248,10 @@ class AttentionNotifierTest {
         val emoji = "😀"
         assertEquals(emoji.repeat(80), notificationTitle(emoji.repeat(81)))
         assertEquals("x".repeat(79) + emoji, notificationTitle("x".repeat(79) + emoji + "y"))
+        // The trim strips U+FEFF as desktop's JS trim does; inner format characters stay, as on desktop.
+        val bom = 0xFEFF.toChar()
+        assertNull(notificationTitle("$bom $bom"))
+        assertEquals("a${bom}b", notificationTitle("${bom}a${bom}b$bom"))
     }
 
     @Test

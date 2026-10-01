@@ -214,7 +214,8 @@ internal fun notificationTitle(name: String?): String? {
         title.appendCodePoint(codePoint)
         kept++
     }
-    return title.trim().toString().ifEmpty { null }
+    // JS trim, which desktop uses, also strips U+FEFF; Kotlin's whitespace test does not.
+    return title.trim { it.isWhitespace() || it.code == 0xFEFF }.toString().ifEmpty { null }
 }
 
 /** The alert's text: Claude's reads as it always has, Codex's names Codex, an unlisted conversation's names no one. */
