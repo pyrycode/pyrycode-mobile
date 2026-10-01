@@ -516,6 +516,24 @@ class ThreadViewModel(
             )
 
     /**
+     * The tap-time read of this thread's host connection (#1321). Collected `Eagerly`, so it is current
+     * with no screen collecting. Unlike [connectionState] it is seeded `null` rather than an optimistic
+     * `Connected`, so a host that has not reported yet cannot be answered.
+     */
+    private val hostConnection: StateFlow<ConnectionState?> =
+        connectionStateSource.observe().stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Whether a prompt answer may be sent now (#1321): only while the host is [ConnectionState.Connected].
+     * A refused tap changes nothing, so the prompt answers as it stood once the host reconnects.
+     */
+    private fun promptSendAllowed(kind: String): Boolean {
+        if (hostConnection.value == ConnectionState.Connected) return true
+        RelayLog.d { "event=prompt_send_blocked kind=$kind reason=not_connected" }
+        return false
+    }
+
+    /**
      * The tap-time re-check (#1319), after desktop's: the screen greys these controls while the host is not
      * connected, and a tap that races a disconnect is dropped here before any state change or send. Logs
      * the static [action] code only.
@@ -831,12 +849,14 @@ class ThreadViewModel(
                 }
             QuestionModalEvent.Continue -> {
                 val answers = held.answers()
-                if (!held.locked && answers != null) {
+                if (!held.locked && answers != null && promptSendAllowed("question_answer")) {
                     sendQuestion(held, "answer", answers) { answerQuestionBatch(it, answers) }
                 }
             }
             QuestionModalEvent.Cancel ->
-                if (!held.locked) sendQuestion(held, "refuse", null) { refuseQuestionBatch(it) }
+                if (!held.locked && promptSendAllowed("question_refuse")) {
+                    sendQuestion(held, "refuse", null) { refuseQuestionBatch(it) }
+                }
         }
     }
 
@@ -1549,6 +1569,8 @@ class ThreadViewModel(
         val open = scopedModal() as? ModalUiState.Open ?: return
         // #1306: a tap composed for a request that has since been replaced carries the old id.
         if (modalId != null && modalId != open.modalId) return
+        // #1321: checked before the send or the arm, so a disabled option's tap changes nothing.
+        if (!promptSendAllowed("permission_option")) return
         when {
             optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId, grantsAlwaysAllow(open, optionId))
             armedModalOption.value == ArmedModalOption(open.modalId, optionId) ->
@@ -1563,6 +1585,8 @@ class ThreadViewModel(
     fun onModalCancel(modalId: String? = null) {
         val open = scopedModal() as? ModalUiState.Open ?: return
         if (modalId != null && modalId != open.modalId) return
+        // #1321: before the arm and the grant draft are dropped, so a refused cancel keeps both.
+        if (!promptSendAllowed("permission_cancel")) return
         armedModalOption.value = null
         grantDrafts.set(serverId, conversationId, null)
         sendCancel(open.modalId)
