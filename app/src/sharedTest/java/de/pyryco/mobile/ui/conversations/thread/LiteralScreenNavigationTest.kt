@@ -32,6 +32,7 @@ import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.InertAttachmentStore
 import de.pyryco.mobile.di.InertConversationCache
 import de.pyryco.mobile.di.ObservablePairedServerStore
@@ -134,6 +135,10 @@ class LiteralScreenNavigationTest {
     @Test fun flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges() {
         start(live = true)
         select(a.serverId)
+        // The host source reconciles on Dispatchers.Default, which Compose idling does not track; until
+        // A is in its snapshots, openAddWorkspace rejects A as an unknown host and nothing is requested.
+        val hosts = app.koin.get<HostConversationSource>()
+        compose.waitUntil(5_000) { hosts.snapshots.value.any { it.serverId == a.serverId } }
         compose.runOnIdle { model<ChannelListViewModel>().openAddWorkspace(a.serverId) }
         assertOwnerPicker()
         select(b.serverId)
@@ -151,11 +156,8 @@ class LiteralScreenNavigationTest {
     }
 
     private fun assertOwnerPicker() {
-        compose.waitForIdle()
-        compose.runOnIdle {
-            assertTrue(peers.getValue(a.serverId).outbound.any { it.type == "recent_workspaces" })
-            assertNoOtherPickerCalls()
-        }
+        compose.waitUntil(5_000) { peers.getValue(a.serverId).outbound.any { it.type == "recent_workspaces" } }
+        compose.runOnIdle { assertNoOtherPickerCalls() }
         compose.onNodeWithText("/${a.serverId}/recent").assertIsDisplayed()
         compose.onNodeWithText("/${b.serverId}/recent").assertDoesNotExist()
         compose.runOnIdle { assertNoOtherPickerCalls() }

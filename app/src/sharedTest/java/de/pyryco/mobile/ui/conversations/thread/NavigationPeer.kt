@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * In-process Noise peer: the production registry, repositories and routes remain in the test.
@@ -34,7 +35,9 @@ internal class NavigationPeer(
     private val frames = Channel<InnerFrameV2>(Channel.UNLIMITED)
     private val links = Channel<TransportEvent>(Channel.UNLIMITED)
     private var pair: CipherStatePair? = null
-    val outbound = mutableListOf<Envelope>()
+
+    // Appended on the main thread; on a device, a test's waitUntil reads it from the instrumentation thread.
+    val outbound = CopyOnWriteArrayList<Envelope>()
     override val inbound = frames.receiveAsFlow()
     override val events = links.receiveAsFlow()
 

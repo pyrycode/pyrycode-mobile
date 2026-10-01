@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -132,6 +133,25 @@ class ComposerAttachmentStripTest {
     }
 
     @Test
+    fun whileALargeFileUploads_itsTileFillsToTheFigure_andTheStripSaysUploading() {
+        setScreen(
+            attachments = listOf(entry(1, "big.bin"), entry(2, "next.bin")),
+            sending = true,
+            uploadProgress = AttachmentUploadProgress(key = 1, percent = 40),
+        )
+
+        composeRule
+            .onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG)
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Uploading… 40%"))
+        val indicators =
+            composeRule
+                .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo))
+                .fetchSemanticsNodes()
+                .map { it.config[SemanticsProperties.ProgressBarRangeInfo] }
+        assertEquals(listOf(ProgressBarRangeInfo(0.4f, 0f..1f), ProgressBarRangeInfo.Indeterminate), indicators)
+    }
+
+    @Test
     fun attachmentsWithBlankText_keepSendDisabled_untilTextIsTyped() {
         val sent = mutableListOf<String>()
         setScreen(attachments = listOf(entry(1, "one.txt")), onSend = { sent += it })
@@ -238,6 +258,7 @@ class ComposerAttachmentStripTest {
     private fun setScreen(
         attachments: List<PendingAttachment>,
         sending: Boolean = false,
+        uploadProgress: AttachmentUploadProgress? = null,
         onRemove: (Long) -> Unit = {},
         onSend: (String) -> Unit = {},
         registry: ActivityResultRegistry? = null,
@@ -252,10 +273,10 @@ class ComposerAttachmentStripTest {
                             override val activityResultRegistry: ActivityResultRegistry = registry
                         }
                     CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-                        Screen(attachments, sending, onRemove, onSend, onPicked, refusals)
+                        Screen(attachments, sending, onRemove, onSend, onPicked, refusals, uploadProgress)
                     }
                 } else {
-                    Screen(attachments, sending, onRemove, onSend, onPicked, refusals)
+                    Screen(attachments, sending, onRemove, onSend, onPicked, refusals, uploadProgress)
                 }
             }
         }
@@ -269,6 +290,7 @@ class ComposerAttachmentStripTest {
         onSend: (String) -> Unit,
         onPicked: (List<PickedAttachment>) -> Unit,
         refusals: Flow<AttachmentRefusal>,
+        uploadProgress: AttachmentUploadProgress? = null,
     ) {
         var draft by remember { mutableStateOf("") }
         ThreadScreen(
@@ -281,6 +303,7 @@ class ComposerAttachmentStripTest {
             onRetry = {},
             attachments = attachments,
             attachmentsSending = sending,
+            attachmentUploadProgress = uploadProgress,
             onAttachmentsPicked = onPicked,
             onRemoveAttachment = onRemove,
             attachmentRefusals = refusals,
