@@ -2,7 +2,6 @@ package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
 import androidx.annotation.StringRes
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,9 +22,7 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
-private val IndicatorHorizontalPadding = 16.dp
 private val IndicatorVerticalPadding = 4.dp
-private val SpinnerLabelGap = 8.dp
 
 /**
  * Status-slot affordance for a running Reset session (#872), rendering the open conversation's
@@ -33,10 +30,10 @@ private val SpinnerLabelGap = 8.dp
  * Without it the thread pauses through the wrap-up turn and the respawn with no explanation.
  *
  * Stateless and a pure function of [status]: emits nothing for `null`, the sibling early-return idiom.
- * Otherwise the [CompactingIndicator] row — a small indeterminate spinner, since both phases are progress
- * with no counter on the wire — with the label chosen by [resettingLabelRes]. The label is also the row's
- * merged content description, so the wording has one source. Every string is a local resource selected by
- * closed-set enum; no daemon or claude text reaches this composable.
+ * Otherwise the [CompactingIndicator] row — a plain label, since both phases are progress with no counter
+ * on the wire — chosen by [resettingLabelRes]; the band draws the snowflake beside it (#1312). The label
+ * is also the row's merged content description, so the wording has one source. Every string is a local
+ * resource selected by closed-set enum; no daemon or claude text reaches this composable.
  */
 @Composable
 fun ResettingIndicator(
@@ -50,14 +47,10 @@ fun ResettingIndicator(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = IndicatorHorizontalPadding,
-                    vertical = IndicatorVerticalPadding,
-                ).semantics(mergeDescendants = true) { contentDescription = label },
+                .padding(vertical = IndicatorVerticalPadding)
+                .semantics(mergeDescendants = true) { contentDescription = label },
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(SpinnerLabelGap),
     ) {
-        ThreadStatusSpinner()
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
