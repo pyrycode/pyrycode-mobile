@@ -31,6 +31,8 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -1109,6 +1111,117 @@ class RelayRepositoryCoordinatorTest {
             hostB.coordinator.close()
         }
 
+    // #1317: the five pushed readings belong to the host's pairing, not one connection, so a background and
+    // foreground cycle neither blanks them in the gap nor makes the next connection start from nothing.
+    @Test
+    fun hostReadings_surviveTheDisconnectedGapAndTheNextConnection() =
+        runTest {
+            val env = newEnv()
+            val first = openInteractiveConnection(env)
+            HostReadingFrames.all("conv-1", model = "opus").forEach(first::push)
+            runCurrent()
+            HostReadingFrames.assertHeld(env.coordinator.hostReadings, "conv-1", model = "opus")
+
+            env.connections.value = null
+            runCurrent()
+            assertNull(env.coordinator.currentRepository.value)
+            HostReadingFrames.assertHeld(env.coordinator.hostReadings, "conv-1", model = "opus")
+
+            openInteractiveConnection(env)
+            val second = env.coordinator.currentRepository.value
+            assertNotNull(second)
+            HostReadingFrames.assertHeld(env.coordinator.hostReadings, "conv-1", model = "opus")
+            HostReadingFrames.assertHeld(second!!, "conv-1", model = "opus")
+
+            env.coordinator.close()
+        }
+
+    @Test
+    fun hostReadings_takeReplacementsAndClearsFromTheNextConnection() =
+        runTest {
+            val env = newEnv()
+            val readings = env.coordinator.hostReadings
+            HostReadingFrames.all("conv-1", model = "opus").forEach(openInteractiveConnection(env)::push)
+            runCurrent()
+            env.connections.value = null
+            runCurrent()
+
+            val second = openInteractiveConnection(env)
+            second.push(HostReadingFrames.modelAnnounced("conv-1", "sonnet"))
+            second.push(HostReadingFrames.contextUsage("conv-1", total = 80_000))
+            second.push(HostReadingFrames.slashCommandList("conv-1", name = "review"))
+            runCurrent()
+            assertEquals(AnnouncedModel("sonnet", truncated = false), readings.observeAnnouncedModel("conv-1").first())
+            assertEquals(80_000L, readings.observeContextUsage("conv-1").first()?.totalTokens)
+            assertEquals(
+                listOf("review"),
+                readings
+                    .observeSlashCommandMenu("conv-1")
+                    .first()
+                    ?.rows
+                    ?.map { it.name },
+            )
+
+            second.push(HostReadingFrames.sessionTransition("conv-1"))
+            runCurrent()
+            assertNull(readings.observeAnnouncedModel("conv-1").first())
+            assertNull(readings.observeSessionFacts("conv-1").first())
+            assertNull(readings.observeContextUsage("conv-1").first())
+            assertNotNull(readings.observeUsageLimit("conv-1").first())
+            assertNotNull(readings.observeSlashCommandMenu("conv-1").first())
+
+            second.push(HostReadingFrames.rateLimited("conv-1", status = "allowed"))
+            runCurrent()
+            assertNull(readings.observeUsageLimit("conv-1").first())
+            assertNotNull(readings.observeSlashCommandMenu("conv-1").first())
+
+            env.coordinator.close()
+        }
+
+    // The usage-limit expiry is read against the coordinator's clock, so a reading held across a reconnect
+    // still lapses at its reset time.
+    @Test
+    fun hostReadings_expireAHeldUsageLimitOnTheCoordinatorClock() =
+        runTest {
+            var clock = Instant.fromEpochSeconds(1_000)
+            val env = newEnv(now = { clock })
+            openInteractiveConnection(env).push(HostReadingFrames.rateLimited("conv-1", resetsAt = 2_000))
+            runCurrent()
+            openInteractiveConnection(env)
+            assertNotNull(
+                env.coordinator.hostReadings
+                    .observeUsageLimit("conv-1")
+                    .first(),
+            )
+
+            clock = Instant.fromEpochSeconds(2_000)
+            assertNull(
+                env.coordinator.hostReadings
+                    .observeUsageLimit("conv-1")
+                    .first(),
+            )
+
+            env.coordinator.close()
+        }
+
+    @Test
+    fun hostReadings_areHeldPerHostAndDroppedWhenThePairingEnds() =
+        runTest {
+            val hostA = newEnv()
+            val hostB = newEnv()
+            HostReadingFrames.all("conv-1", model = "opus").forEach(openInteractiveConnection(hostA)::push)
+            openInteractiveConnection(hostB)
+            runCurrent()
+            HostReadingFrames.assertHeld(hostA.coordinator.hostReadings, "conv-1", model = "opus")
+            HostReadingFrames.assertNone(hostB.coordinator.hostReadings, "conv-1")
+
+            hostA.coordinator.close()
+            runCurrent()
+            HostReadingFrames.assertNone(hostA.coordinator.hostReadings, "conv-1")
+
+            hostB.coordinator.close()
+        }
+
     @Test
     fun questionSends_reachOnlyTheHostTheyAreMadeOn() =
         runTest {
@@ -1384,6 +1497,7 @@ class RelayRepositoryCoordinatorTest {
         deviceName: String = "",
         pushTokens: Flow<String?> = flowOf(null),
         relayStatus: MutableStateFlow<RelayLinkStatus> = MutableStateFlow(RelayLinkStatus.Connected),
+        now: () -> Instant = Clock.System::now,
     ): Env {
         val connections = MutableStateFlow<RelayTransport?>(null)
         val pumps = mutableListOf<FakeManagedPump>()
@@ -1395,6 +1509,7 @@ class RelayRepositoryCoordinatorTest {
                 dispatcher = StandardTestDispatcher(testScheduler),
                 deviceName = deviceName,
                 pushTokens = pushTokens,
+                now = now,
             )
         coordinator.start()
         return Env(connections, pumps, coordinator, relayStatus)

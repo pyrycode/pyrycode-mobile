@@ -490,12 +490,17 @@ class ThreadViewModel(
                 ),
         )
 
+    /**
+     * This thread's host connection, `Connected` once the host has answered the handshake (#1318). Started
+     * eagerly (#1319) so [connectedFor] reads the live state at tap time even when no screen collects it;
+     * a `WhileSubscribed` value stays at its initial `Connected` without a collector.
+     */
     val connectionState: StateFlow<ConnectionState> =
         connectionStateSource
             .observe()
             .stateIn(
                 scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
+                started = SharingStarted.Eagerly,
                 initialValue = ConnectionState.Connected,
             )
 
@@ -514,6 +519,17 @@ class ThreadViewModel(
     private fun promptSendAllowed(kind: String): Boolean {
         if (hostConnection.value == ConnectionState.Connected) return true
         RelayLog.d { "event=prompt_send_blocked kind=$kind reason=not_connected" }
+        return false
+    }
+
+    /**
+     * The tap-time re-check (#1319), after desktop's: the screen greys these controls while the host is not
+     * connected, and a tap that races a disconnect is dropped here before any state change or send. Logs
+     * the static [action] code only.
+     */
+    private fun connectedFor(action: String): Boolean {
+        if (connectionState.value == ConnectionState.Connected) return true
+        RelayLog.d { "event=thread_action_skipped action=$action reason=not_connected" }
         return false
     }
 
@@ -1243,6 +1259,7 @@ class ThreadViewModel(
      * between them.
      */
     fun sendMessage(text: String) {
+        if (!connectedFor("send")) return
         if (_attachmentsSending.value) return
         // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
         if (text.isBlank()) return
@@ -1486,6 +1503,7 @@ class ThreadViewModel(
      * comes this way. Logs static codes only.
      */
     fun onComposerCommand(action: ComposerAction) {
+        if (!connectedFor("composer_action")) return
         val command = action.command ?: return
         if (action in state.value.absentActions) {
             RelayLog.d { "event=composer_action action=${action.value} outcome=absent" }
@@ -1640,10 +1658,11 @@ class ThreadViewModel(
         }
     }
 
-    /** Stop this ViewModel's conversation. Always attempts the send; the daemon is authoritative on
+    /** Stop this ViewModel's conversation. Sends whenever the host is connected (#1319); the daemon is authoritative on
      *  whether its turn is running and on the interactive gate. The affordance passes no arguments:
      *  [sendInterrupt] supplies the saved open [conversationId], without changing local turn state. */
     fun onInterrupt() {
+        if (!connectedFor("interrupt")) return
         sendInterrupt()
     }
 
@@ -1825,6 +1844,7 @@ class ThreadViewModel(
      * path clears it, which is what restores the last confirmed reading.
      */
     fun onModelSelected(value: String) {
+        if (!connectedFor("model")) return
         val config = state.value.runConfig
         if (config.pending || value == config.selectedModel) return
         if (!skipUnlessWritable(config)) return
@@ -1836,6 +1856,7 @@ class ThreadViewModel(
      *  the selected row, forwarded verbatim — never `Effort.name.lowercase()`, whose five entries are this
      *  device's guess at a vocabulary the row itself publishes. */
     fun onEffortSelected(level: String) {
+        if (!connectedFor("effort")) return
         effortRecall.cancel()
         val config = state.value.runConfig
         if (config.pending || level == config.selectedEffort) return
@@ -1863,6 +1884,7 @@ class ThreadViewModel(
      * on the confirmed reading and [ThreadRunConfig.pendingPermission] only marks it pending.
      */
     fun onPermissionModeSelected(value: String) {
+        if (!connectedFor("permission")) return
         val mode = PermissionModeOption.fromWire(value) ?: return
         val config = state.value.runConfig
         if (config.permissionMode.isEmpty() || value == config.permissionMode) return

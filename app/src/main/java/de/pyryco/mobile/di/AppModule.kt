@@ -342,7 +342,8 @@ internal class ThreadDestinationFactory(
             fake
         } else {
             val repositories = bundle?.coordinator?.currentRepository ?: MutableStateFlow(null)
-            val stable = StableConversationRepository(repositories)
+            // #1317: the host's pushed readings stay readable while it is disconnected, until its pairing ends.
+            val stable = StableConversationRepository(repositories, bundle?.coordinator?.hostReadings)
             // #797: the thread cache sits under the hook, not in it, so an instrumentation decorator
             // (E2eTestApplication's TappingConversationRepository) observes the restored thread too. A
             // blank owner gets no cache, so no rows are ever filed under the empty id.
