@@ -47,6 +47,34 @@ Status opener placed after it in source order. That placement did not actually p
 a wide enough set of button labels could still starve them to nothing — [#1032](https://github.com/pyrycode/pyrycode-mobile/issues/1032) fixed this by moving the weight one level up, onto
 `FooterTextRow` itself, so the two trailing icons are always measured before any text control.
 
+### Colour steps at 50 and 70 percent (#1412, after desktop #1062)
+
+`contextUsageStep(percent: Int)` mirrors desktop's `contextUsageStep`: below 50 is `Normal`, 50 to 69 is
+`Warning`, 70 and above is `High`. As on desktop, the thresholds and colours are the operator's ruling, not
+a design state — Figma `110:3497` shows only the ordinary 42% reading. `ContextSegment` picks text,
+description and colour in one `when` over the step: `Normal` and `Warning` both read `"Cxt: N%"` (`primary`
+or `ColorScheme.warning`, from `ui/theme/WarningColors.kt`), and `High` reads `"Cxt high: N%"`
+(`colorScheme.error`) with the content description "Context usage high, N%". The text style
+(`bodySmall`) does not change at any step. The unavailable state (`"Cxt: n/a"`, `onSurfaceVariant`) is a
+separate branch, untouched by the step.
+
+**The high text does not always fit, and that's accepted.** `"Cxt high: N%"` is long enough that at a
+320dp-wide footer with 1.5× font scale it ellipsizes — the content description still carries the full
+figure (`"Context usage high, 84%"`), so the information survives even when the glyphs don't.
+`ThreadComposerFooterTest` cannot catch this: it is a semantics-level test, and semantics always hold the
+untruncated description regardless of what the rendered line shows. The layout claim lives in
+`ThreadComposerFooterWidthTest` (a NATIVE-graphics test class), which actually measures line counts:
+`compactWidth_highReadingFitsOnOneLine` (320dp, default font) asserts the high text stays on one
+unellipsized line, and `compactWidthAndEnlargedText_highReadingKeepsTheFigureInItsDescription` (320dp,
+1.5× font) pins the accepted trade-off that it ellipsizes there while the description keeps "Context usage
+high, 84%". A reading at or above 70% also changed two older fixed-percentage tests: the #1032 compact-width
+layout test `compactWidthAndEnlargedText_keepThreeActionsSeparate` moved its reading from 84% to 37% because
+it is about the *ordinary* reading's layout, not the high one, and `contextSegment_showsTheReportedPercentage_andTheSheetAgrees`
+now expects `"Cxt high: 84%"` since 84 is itself a high reading. The real-Claude regexes in
+`InteractiveStreamE2ETest` (`CONTEXT_REPORTED` and its users) accept `Cxt high:` too, so a live reading of
+70 or more does not fail them; there is no new rung-3 scenario for the colour step itself, since it is not a
+new operator flow and a live session cannot be pushed to a specific percentage on demand.
+
 **The open thread asks again, since [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410).**
 \#945 originally had `ContextUsageProjection` ask (`request_context_usage`) on the 0→1 subscriber edge, but
 \#946's own PR #970 was the reading's first production subscriber, and the daemon's

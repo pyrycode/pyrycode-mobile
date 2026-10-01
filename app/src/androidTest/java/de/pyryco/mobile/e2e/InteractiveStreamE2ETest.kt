@@ -392,7 +392,7 @@ class InteractiveStreamE2ETest {
     /**
      * #946: after one real turn, the composer footer's `Cxt:` segment shows the percentage Claude reported
      * (`context_usage`, published after every completed turn and answered on the screen's own ask). Asserts
-     * only the `Cxt: N%` shape — the figure depends on the operator's claude and is never hard-coded.
+     * only the `Cxt: N%` shape (or `Cxt high: N%` from 70, #1412) — the figure depends on the operator's claude and is never hard-coded.
      */
     @Test
     fun interactiveTurn_pingPrompt_footerShowsContextUsage() {
@@ -406,7 +406,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
-        val reported = Regex("Cxt: \\d+%")
+        val reported = Regex("Cxt(?: high)?: \\d+%")
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
                 reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
@@ -7467,8 +7467,8 @@ class InteractiveStreamE2ETest {
         // The published row value of the inherited-default model (#972), which the model change skips.
         const val INHERITED_MODEL_VALUE = "default"
 
-        // The footer's `Cxt:` segment with a reported percentage (#946), the app's own format.
-        val CONTEXT_REPORTED = Regex("Cxt: \\d+%")
+        // The footer's `Cxt:` segment with a reported percentage (#946), `Cxt high:` from 70 (#1412).
+        val CONTEXT_REPORTED = Regex("Cxt(?: high)?: \\d+%")
 
         // How many of the published commands the suggestions must list after the reconnect.
         const val SLASH_ROWS_CHECKED = 3
