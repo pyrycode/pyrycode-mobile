@@ -19,6 +19,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
@@ -28,11 +29,13 @@ import androidx.compose.ui.test.onChild
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.percentOffset
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.then
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.DpSize
@@ -321,7 +324,8 @@ class ThreadScreenModalTest {
         val blockedPathLabel = string(R.string.modal_context_blocked_path)
         listOf(ruleLabel, "Bash(rm:*) is on the ask list", descriptionLabel, "Remove the scratch directory")
             .plus(listOf(blockedPathLabel, "/tmp/scratch"))
-            .forEach { composeTestRule.onNodeWithText(it).assertIsDisplayed() }
+            // #1312: the always-present status band shortens the message area, so the lower rows scroll into view.
+            .forEach { composeTestRule.onNodeWithText(it).performScrollTo().assertIsDisplayed() }
 
         // prompt → reason → description → blocked path → options, top to bottom.
         val tops = listOf(modal.prompt, ruleLabel, descriptionLabel, blockedPathLabel, "Allow once").map(::top)
@@ -464,7 +468,9 @@ class ThreadScreenModalTest {
                 hasText(string(R.string.modal_always_allow_label)).and(SemanticsMatcher.keyIsDefined(SemanticsProperties.ToggleableState)),
             ).performScrollTo()
             .assertIsEnabled()
-            .performClick()
+            // #1312: the always-present status band leaves the scroll stopping with this row at the message
+            // area's top, under the Offline retry pill; tap its lower part, which the pill does not cover.
+            .performTouchInput { click(percentOffset(0.5f, 0.85f)) }
         composeTestRule.runOnIdle {
             assertTrue("no option may be forwarded while offline", tapped.isEmpty())
             assertEquals(0, cancelled)
