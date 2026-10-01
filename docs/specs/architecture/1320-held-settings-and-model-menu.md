@@ -113,3 +113,24 @@ Not operator-facing in the rung-3 sense: no new flow, only a reconnect state cha
 ## Documentation handoff
 
 Pending for the documentation stage: fold the two new held readings into the `HostReadings` sections of `docs/knowledge/features/relay-repository-coordinator.md` and the `StableConversationRepository` overview (the settings and model-menu reads are no longer purely switched when a holder is given).
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings — no new decode path. Settings still cross at `toSessionSettings` and menus at `ModelMenuProjection`'s `decodeModelList`; the holder stores only those decoded domain values. Routing is unchanged: a settings reply is filed under the id this phone asked for, a menu under the payload's own `conversation_id`. Rendering is unchanged (`ThreadViewModel`'s `inert` path).
+- [Trust boundaries — host attribution] No findings — the risk this label is about. One `HostReadings` per coordinator, which is per host and per pairing; `AppModule`'s `repository(serverId, bundle)` builds each host's facade with that host's holder, so host B's facade cannot read host A's holder. Unpair and re-pair close the coordinator, and `close()` flips `whileOpen`, so a facade collector parked in the disconnected gap switches to `null` at once. Covered by the two-host and close tests.
+- [Trust boundaries — confirmed-looking permission] No findings — a held settings reading is only ever exposed through `observeHeldSessionSettings`, which blanks `permissionMode` and resets `memorySearch` to `Unknown`; only a reply on the live connection reaches a consumer whole. `writable` staying true while disconnected is gated by #1319's connection check on every write.
+- [Tokens, secrets] No findings — nothing secret is held; no token or key path is touched.
+- [File / storage] No findings — in memory only, process lifetime at most; `CachingConversationRepository` delegates both reads without caching them, so nothing reaches disk.
+- [Android attack surface] No findings — no intents, deep links, providers, WebViews or push paths touched.
+- [Crypto] No findings — not touched.
+- [Network & I/O] SHOULD FIX (accepted as-is) — the menu map's keys come from daemon-authored `model_list` payloads, so a hostile daemon could grow it; that was already true per connection and now lives for the pairing. The paired daemon is the authenticated peer (Noise IK) and is already able to flood within one connection, so this adds no new attacker. The ask ledger stays per connection, so asks per connection remain bounded by the conversations subscribed.
+- [Logs] No findings — no logs added; held values are claude/daemon-authored and the #1317 no-log posture holds.
+- [Concurrency] No findings — writes use atomic `MutableStateFlow.update`. A settings read runs in the collector's coroutine and is cancelled by the facade's `flatMapLatest` when the connection changes; in the narrow window where a reply resumes after the switch, the worst case is storing the *same host's* valid reply, which is then only exposed invalidated. No new scope or job.
+- [Threat model] OUT OF SCOPE — a hostile relay can only delay or drop frames; delay now leaves the held (invalidated) reading on screen rather than a blank, which #1319's connection gate already covers. No follow-up needed.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-01
