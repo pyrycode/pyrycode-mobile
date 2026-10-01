@@ -206,7 +206,7 @@ class HostConversationSource internal constructor(
     /**
      * The host's attention collectors (#877), all under the entry's job so a replaced bundle stops them.
      * Events fold with the viewing state read under the same monitor; a repository going away is the host
-     * losing its connection, which ends every running turn on it.
+     * losing its connection, which ends every running turn and busy conversation on it.
      */
     private fun launchAttention(entry: Held) {
         val connection = entry.connection
@@ -225,6 +225,13 @@ class HostConversationSource internal constructor(
         scope.launch(entry.job) {
             connection.repositories.collect { repository ->
                 if (repository == null) updateAttention(entry) { attention = attention.disconnected() }
+            }
+        }
+        scope.launch(entry.job) {
+            // Each connection's repository holds its own busy edges (#1452); a null one observes nothing, and
+            // the collector above clears the busy set it left.
+            connection.repositories.collectLatest { repository ->
+                repository?.observeBusyConversations()?.collect { ids -> updateAttention(entry) { attention = attention.withBusy(ids) } }
             }
         }
         scope.launch(entry.job) {

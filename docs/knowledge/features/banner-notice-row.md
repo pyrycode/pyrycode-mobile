@@ -37,7 +37,7 @@ sealed interface ThreadItem {
     ) : ThreadItem
 }
 
-enum class BannerLevel { Warning, Notice }
+enum class BannerLevel { Warning, Notice, Info }
 ```
 
 - **`occurredAt` is the row's identity**, not a client-minted id — the envelope's (or stored entry's)
@@ -60,9 +60,14 @@ enum class BannerLevel { Warning, Notice }
   that case.
 - **`level` is closed client-side.** The wire's `level` is an open set — `warning` is observed, `info` /
   `notice` / `suggestion` are documented, and it may be empty — and `BannerPayloadDto.toRow` is a
-  **total** map: `"warning"` becomes `Warning`, every other value (including empty, unknown, and one
-  claude ships later) becomes `Notice`. The wire string itself never reaches the UI, so claude cannot
-  inject an arbitrary label.
+  **total** map: `"warning"` becomes `Warning`, `"info"` becomes `Info`
+  ([#1359](https://github.com/pyrycode/pyrycode-mobile/issues/1359)), every other value (including
+  empty, unknown, and one claude ships later) becomes `Notice`. The wire string itself never reaches the
+  UI, so claude cannot inject an arbitrary label. `ThreadScreen`'s render arm (below) draws `Warning` and
+  `Notice` through `BannerNoticeRow` and skips `Info` entirely — an info banner keeps its key and
+  `occurredAt` identity in `ThreadUiState.items` and composes to nothing, matching desktop's
+  `ConversationScreen.tsx` `TimelineRow` `banner` arm, which keeps the row in its timeline but returns
+  `null` for `level === 'info'`.
 - **`text` is carried verbatim, unsanitized**, bounded daemon-side at 4 KiB and not cleaned before it
   crosses the wire. Stripping belongs to the render boundary (`bannerDisplayText`, below) — keeping the
   domain value verbatim means the `(type, ts)` join never depends on presentation.
@@ -152,9 +157,10 @@ All four of the exhaustive `when`s over `ThreadItem` gained a `Banner` arm:
 
 - **`ThreadRow.listKey()`** — `"banner:$occurredAt"`; unique because `holdsBanner` is.
 - **`ThreadScreen`'s `LazyColumn` render** — `BannerNoticeRow(item = item, agent = state.agent)` (`agent`
-  since #1113), inside the same `rowAlpha`-driven `Box` as its neighbours, so above-delimiter dimming
-  applies with no new code. A banner row is **not** a session boundary for
-  `mostRecentSessionBoundaryIndex` — unchanged.
+  since #1113) for every level but `Info`; an `Info` row composes to nothing (#1359), inside the same
+  `rowAlpha`-driven `Box` as its neighbours, so above-delimiter dimming applies with no new code where a
+  row does draw. A banner row is **not** a session boundary for `mostRecentSessionBoundaryIndex` —
+  unchanged.
 - **`ThreadItem.timestamp()`** — `occurredAt`.
 - **`RemoteConversationRepositoryTest.threadShape()`** — the test-fixture helper outside production code
   that also needs every `ThreadItem` arm to keep compiling, the same fourth site #608's Lessons learned
@@ -174,8 +180,8 @@ replay is what restores a banner after a cold start or a fresh cache — not the
 
 - `BannerDisplayTextTest` (JVM, new): the stripping-set coverage listed above.
 - `RemoteConversationRepositoryTest`, `banner_*` block: text/level/truncated/`occurredAt` fold verbatim
-  from a live envelope; `warning` → `Warning` and every other tested value (`info`, `notice`,
-  `suggestion`, empty, an unrecognized string) → `Notice`; arrival-order interleaving with messages and
+  from a live envelope; `warning` → `Warning`, `info` → `Info` (#1359), and every other tested value
+  (`notice`, `suggestion`, empty, an unrecognized string) → `Notice`; arrival-order interleaving with messages and
   strict `conversation_id` routing; a repeated `ts` folds once while a distinct `ts` folds twice; a
   `stops_turn: true` banner leaves an existing stall, `ApiRetryStatus`, compacting state, and
   `liveSessionEvents` untouched; a missing field, a wrong-typed field, or a malformed `ts` drops only that
@@ -184,7 +190,9 @@ replay is what restores a banner after a cold start or a fresh cache — not the
 - `HistoryPageReducerTest`: a stored banner reduces to the same row stamped with the entry's own
   timestamp; a non-interactive reduction yields nothing; a malformed entry costs only that entry; a page
   whose banner the live thread already holds merges to one row; a repeated `ts` within one page yields
-  one row.
+  one row; every level but `warning` reduces to `Notice` except `info`, which reduces to `Info` (#1359) —
+  `reduceHistoryPage` returns a page newest-first and the reducer reverses it, so in a per-level fixture
+  the first (newest) entry ends up last in the asserted order.
 - `FileConversationCacheThreadTest`: `cacheableThreadRows` drops banner rows.
 - `BannerNoticeRowTest` (Compose shared screen test, `app/src/sharedTest/.../components/`): the attribution +
   sanitized text render as one string with escapes gone; a truncated row carries the mark and an
@@ -198,6 +206,9 @@ replay is what restores a banner after a cold start or a fresh cache — not the
 - **#1113**: the new sharedTest `ThreadAgentAttributionTest` (Robolectric, through `ThreadScreen`) covers
   a Codex conversation's warning banner — "Warning · Codex: …" text — and
   a Claude conversation rendering unchanged, proving the `state.agent` wiring end to end.
+- **#1359**: `ThreadBannerLevelTest` (Robolectric shared screen test, through `ThreadScreen`) holds an
+  `Info`, a `Notice` and a `Warning` banner in one thread — the info text does not exist, the notice and
+  warning texts are displayed — proving the skip is in the render arm, not the mapping.
 
 ## Related
 

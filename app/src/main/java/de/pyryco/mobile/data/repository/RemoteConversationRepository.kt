@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.ReplayCursor
+import de.pyryco.mobile.data.network.RequestContextUsagePayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
@@ -41,6 +42,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
@@ -133,8 +136,8 @@ class RemoteConversationRepository(
      */
     private val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks(),
     /**
-     * The five readings the host pushes and the phone never asks for again (#1317): announced model, session
-     * facts, context usage, usage limit and slash-command menu. [RelayRepositoryCoordinator] owns the instance
+     * The five readings the host pushes (#1317): announced model, session facts, context usage, usage limit and
+     * slash-command menu. Only context usage is also asked for, by [requestContextUsage] (#1410). [RelayRepositoryCoordinator] owns the instance
      * for the host's pairing and threads it into each repository, the [finishedBackgroundTasks] shape, so a
      * reconnect starts from the held readings rather than nothing. Every arm still applies, replaces and
      * clears through it as before. Since #1320 it also holds the model menus and the last successful
@@ -176,7 +179,7 @@ class RemoteConversationRepository(
     /**
      * The context-usage reading of every conversation (#945), held for the host's pairing (#1317). [onInbound]
      * hands it `context_usage` behind the `interactive` gate and the `session_transition` clear. It sends
-     * nothing: see [ContextUsageProjection].
+     * nothing; the ask is this connection's [requestContextUsage] (#1410).
      */
     private val contextUsageProjection = hostReadings.contextUsage
 
@@ -1060,6 +1063,31 @@ class RemoteConversationRepository(
     override fun refreshSessionSettings(conversationId: String) = sessionSettingsCommands.refreshSessionSettings(conversationId)
 
     /**
+     * Send one `request_context_usage` naming [conversationId] (#1410), the `askForModelMenu` posture in
+     * [ModelMenuProjection]: an empty id and a connection without `interactive` send nothing, and a send the
+     * transport refuses or throws on is dropped, never retried. No waiter is registered. The answer is a
+     * `context_usage` the [TYPE_CONTEXT_USAGE] arm applies by its own `conversation_id`, and a refusal is an
+     * `error` whose `in_reply_to` matches nothing, so it leaves the reading as it was. Never logs: the id is a
+     * cross-conversation correlation key.
+     */
+    override fun requestContextUsage(conversationId: String) {
+        if (conversationId.isEmpty()) return
+        if (CAPABILITY_INTERACTIVE !in negotiatedCapabilities()) return
+        val request =
+            Envelope(
+                id = relayRequests.nextRequestId(),
+                type = TYPE_REQUEST_CONTEXT_USAGE,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(RequestContextUsagePayloadDto(conversationId = conversationId)),
+            )
+        try {
+            pump.send(request)
+        } catch (e: Exception) {
+            // Absorbed: the next open or reconnect asks again.
+        }
+    }
+
+    /**
      * The `backfill_since` request for [conversationId]'s full thread (#313). Wire shape per server
      * SSOT `internal/protocol/messaging.go` `BackfillSincePayload` (#272): full history is requested
      * from the Unix epoch ([BACKFILL_ALL_HISTORY_SINCE]) with an advisory cap
@@ -1112,6 +1140,14 @@ class RemoteConversationRepository(
         turnPhaseProjection.observe(conversationId)
 
     override fun observeResetting(conversationId: String): Flow<ResetStatus?> = resettingProjection.observe(conversationId)
+
+    override fun observeBusyConversations(): Flow<Set<String>> =
+        combine(
+            stallProjection.observeIds(),
+            apiRetryProjection.observeIds(),
+            compactingProjection.observeIds(),
+            resettingProjection.observeIds(),
+        ) { stalled, retrying, compacting, resetting -> stalled + retrying + compacting + resetting }.distinctUntilChanged()
 
     override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = announcedModelProjection.observe(conversationId)
 
@@ -1649,8 +1685,9 @@ class RemoteConversationRepository(
          * Phone → daemon: ask for a fresh [TYPE_CONTEXT_USAGE] reading of one conversation (#945, pyrycode#2431).
          * Payload is the single `conversation_id` key; the reply is a [TYPE_CONTEXT_USAGE] correlated by
          * `in_reply_to`, or an `error` carrying [ERROR_CONVERSATION_NOT_FOUND] or [ERROR_CONTEXT_USAGE_UNAVAILABLE].
-         * Interactive-gated: a conn without it is answered with nothing at all. The phone does not send it until
-         * pyrycode#2563 stops a mid-turn ask from holding up the connection's later frames (#946).
+         * Interactive-gated: a conn without it is answered with nothing at all. Sent by [requestContextUsage] when a
+         * thread opens and when its host returns (#1410); since pyrycode#2563 a mid-turn ask no longer holds up the
+         * connection's later frames.
          */
         const val TYPE_REQUEST_CONTEXT_USAGE = "request_context_usage"
 
@@ -1832,8 +1869,8 @@ class RemoteConversationRepository(
         /**
          * Server `error.code` refusing a [TYPE_REQUEST_CONTEXT_USAGE] because the daemon hosts the conversation but
          * has neither a fresh nor a remembered reading (#945, pyrycode#2431/#2461). Retryable after a backoff, but
-         * the phone does not retry: the reading stays absent until the next turn-end frame, so nothing branches on
-         * this code and [ContextUsageProjection] handles no refusal at all.
+         * the phone does not retry [requestContextUsage] (#1410): the reading stays as it was until the next frame,
+         * so nothing branches on this code and [ContextUsageProjection] handles no refusal at all.
          */
         const val ERROR_CONTEXT_USAGE_UNAVAILABLE = "context_usage.unavailable"
 

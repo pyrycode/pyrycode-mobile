@@ -23,7 +23,10 @@ enum class ConversationAttention {
     /** A permission prompt or a clarification batch for this conversation is outstanding. */
     WaitingForAnswer,
 
-    /** A turn is in progress: `turn_state` Thinking or Responding, until Idle or `turn_end`. */
+    /**
+     * A turn is in progress: `turn_state` Thinking or Responding, until Idle or `turn_end`. Or the
+     * conversation is busy outside a turn (#1452): stalled, retrying the API, compacting or resetting.
+     */
     Running,
 
     /** A turn completed live while the operator was not viewing the conversation. */
@@ -58,11 +61,12 @@ internal const val MAX_READ_POSITIONS = 1000
  * The attention fold for one host (#877), keyed by that host's conversation ids. Pure: no clock, no I/O
  * and no logging, because every id in it is daemon-authored and used only as an equality key.
  *
- * [positions] is the persisted part. [running] is live-only, and [counted] holds each
+ * [positions] is the persisted part. [running] and [busy] are live-only, and [counted] holds each
  * conversation's recently completed turn ids so a turn the daemon delivers again counts once.
  */
 internal data class HostAttentionState(
     val running: Set<String> = emptySet(),
+    val busy: Set<String> = emptySet(),
     val positions: Map<String, ReadPosition> = emptyMap(),
     val counted: Map<String, List<String>> = emptyMap(),
 ) {
@@ -109,8 +113,12 @@ internal data class HostAttentionState(
         return copy(positions = positions + (conversationId to position.copy(readTurnId = position.completedTurnId)))
     }
 
-    /** The host's connection is gone, so no turn on it can be seen running. Everything else stays. */
-    fun disconnected(): HostAttentionState = if (running.isEmpty()) this else copy(running = emptySet())
+    /** The host's busy conversations now (#1452), replacing the previous set: the repository holds the edges. */
+    fun withBusy(ids: Set<String>): HostAttentionState = if (ids == busy) this else copy(busy = ids)
+
+    /** The host's connection is gone, so nothing on it can be seen running or busy. Everything else stays. */
+    fun disconnected(): HostAttentionState =
+        if (running.isEmpty() && busy.isEmpty()) this else copy(running = emptySet(), busy = emptySet())
 
     /** Merges positions read back from storage under the live ones: a live completion always wins. */
     fun restored(stored: Map<String, ReadPosition>): HostAttentionState = copy(positions = boundedPositions(stored + positions))
@@ -125,12 +133,12 @@ internal data class HostAttentionState(
         batches: List<QuestionBatch>,
     ): Map<String, ConversationAttention> {
         val prompted = prompts.map { it.conversationId }.filter { it.isNotBlank() }.toSet()
-        val ids = running + positions.keys + batches.map { it.conversationId } + prompted
+        val ids = running + busy + positions.keys + batches.map { it.conversationId } + prompted
         return ids
             .associateWith { id ->
                 resolveAttention(
                     waiting = id in prompted || batches.batchFor(id) != null,
-                    running = id in running,
+                    running = id in running || id in busy,
                     unread = positions[id]?.unread == true,
                 )
             }.filterValues { it != ConversationAttention.Idle }

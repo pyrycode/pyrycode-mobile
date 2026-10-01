@@ -122,6 +122,25 @@ The fold itself is the internal, pure `HostAttentionState` data class — no clo
 I/O, no logging, because every id it touches is daemon-authored and used only as an
 equality key:
 
+**`busy` (#1452).** A conversation blinks `Running` not only while a turn runs, but also while it
+is stalled, retrying the API, compacting or resetting — desktop's `isWorking`
+(`../pyrycode-desktop/src/renderer/src/store/conversationStatus.ts`). `HostAttentionState.busy` is
+a sibling of `running`, folded by `withBusy(ids: Set<String>)` (full-set replace, since the
+repository already holds the edges) rather than by `onEvent`, which stays `running`-only. `resolve`
+treats `running = id in running || id in busy`, and `disconnected()` clears `busy` alongside
+`running`. The ids come from `ConversationRepository.observeBusyConversations()` (default
+`flowOf(emptySet())`), implemented in `RemoteConversationRepository` as the union of
+`StallProjection`, `ApiRetryProjection`, `CompactingProjection` and `ResettingProjection`'s own
+host-wide `observeIds()` reads — see [Stall state](stall-state.md#how-it-surfaces-in-the-repository),
+[API-retry status](api-retry-status.md#how-it-surfaces-in-the-repository),
+[Compacting state](compacting-state.md#how-it-surfaces-in-the-repository) and
+[Resetting state](resetting-state.md#how-it-surfaces-in-the-repository). The four edges are reused
+**unchanged**, because the thread's own indicators read the same projections, which keeps two
+deliberate differences from desktop's `isWorking`: a stall's blink clears on any decoded live
+event rather than only `turn_state`, and a reset's blink also clears on `session_transition`,
+since desktop has no such edge. No new visuals: a busy conversation resolves to the existing
+`ConversationAttention.Running`, which already draws the blink.
+
 - `onEvent(event, viewing)` folds one `LiveSessionEvent`. `TurnState` Thinking/Responding
   adds the conversation to `running`; `TurnState` Idle clears `running`. `TurnEnd`
   clears `running` and, unless its `turnId` is blank, over `MAX_TURN_ID_CHARS` (256), or
@@ -162,15 +181,32 @@ host on each change. `ChannelListViewModel.onHostRowTapped` calls
 `ConversationViewing` handle of its own, so opening it also advances the read position via
 `opened`, but does not hold the conversation read past that one call the way a thread's view does.
 
-`HostConversationSource.launchAttention(entry)` runs four collectors under the same
+`HostConversationSource.launchAttention(entry)` runs five collectors under the same
 `entry.job` `reconcile` already cancels on bundle replacement or removal: the live-event
 fold (reading `viewing` under the class monitor via `updateAttention`), a `repositories`
-null emission → `disconnected()`, the combined `modals`/`questionBatches` → `resolve`, and,
-only when a `cache` is bound, a one-shot restore followed by a collector over each
-distinct positions map, written through `ConversationCache.writeReadPositions`. All four
+null emission → `disconnected()`, a second, independent `connection.repositories.collectLatest`
+that folds each repository's `observeBusyConversations()` into `busy` via `withBusy(ids)`
+(#1452, a null repository observes nothing), the combined `modals`/`questionBatches` →
+`resolve`, and, only when a `cache` is bound, a one-shot restore followed by a collector over
+each distinct positions map, written through `ConversationCache.writeReadPositions`. All five
 route through one `@Synchronized updateAttention(entry, change)`, which reuses `update`'s
 staleness guard (factored out as `isCurrent(entry)`) so a retired bundle cannot publish or
 persist.
+
+**Known gap: a disconnect can race a stale busy write.** The null-repository collector clears
+`busy` with `disconnected()`, and the separate `observeBusyConversations()` collector writes
+it with `withBusy(ids)` — two different coroutines, with no ordering between them. In the gap
+`RelayRepositoryCoordinator.teardownActive` leaves between nulling `activeConnection` and
+cancelling the repository scope, a busy emission already in flight (or a rising `stall`/
+`compacting` frame applied right there) can take the monitor after `disconnected()` runs and
+write the retired repository's ids back; `isCurrent(entry)` checks only the generation, not
+repository identity, so it does not catch this. Flagged as a verifier SHOULD FIX on the #1452
+PR and left open: the existing `running` path has the identical shape (the same gap can replay
+a stale `turn_state`), the window is narrow, and the next connection's first — empty — emission
+heals it. A fix needs to close both paths together, either by folding the clear into the same
+`collectLatest` block as the busy write (so cancellation serializes them) or by guarding the
+write with `connection.repositories.value === repository`, the way the snapshot path's
+`update(entry, repository)` already does.
 
 **Known gap: a restore landing after a view opens does not re-mark it read.** The restore
 collector folds `attention.restored(written)` directly, without re-applying `opened` for

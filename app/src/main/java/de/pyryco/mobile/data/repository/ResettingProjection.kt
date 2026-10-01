@@ -75,6 +75,9 @@ internal class ResettingProjection {
      */
     fun observe(conversationId: String): Flow<ResetStatus?> = resetByConversation.map { it[conversationId] }.distinctUntilChanged()
 
+    /** Every conversation resetting right now (#1452), for the host's list. Same edges as [observe]. */
+    fun observeIds(): Flow<Set<String>> = resetByConversation.map { it.keys }.distinctUntilChanged()
+
     /**
      * Decode one v2 `resetting` envelope (#871) to its routing conversation id and its reading, or **null**
      * when the envelope must be dropped. A non-null result carries a **`null` status for the falling edge**
