@@ -127,8 +127,9 @@ class AndroidGateTest(unittest.TestCase):
         # #1325 excludes five settings methods until #1397 repairs the held-settings e2e helper.
         self.assertFalse(any("#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive" in target for target in targets))
         self.assertTrue(any("#interactiveTurn_scannerConfirm_waitsForHostThenOpensList" in target for target in targets))
+        self.assertTrue(any("#interactiveTurn_archiveTwoChats_listsSecondArchivedFirst" in target for target in targets))
         self.assertTrue(any("#interactiveTurn_permissionPrompts_heldPerConversation" in target for target in targets))
-        self.assertEqual(gate.LIVE_MINIMUM, 41)
+        self.assertEqual(gate.LIVE_MINIMUM, 42)
         self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))

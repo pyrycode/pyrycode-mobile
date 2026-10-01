@@ -191,6 +191,12 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    `interactiveTurn_createEditArchiveChannel_readsPromptBack` creates from an empty Channels section,
    reads the original and edited prompt, waits for a distinct reply after Reset session, then restores
    through the selected host's list-toolbar Archive entry and finds the edited name on the list.
+   **Archive order** (#1332 — `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`): archives two
+   freshly created chats on a live daemon, the newer-by-last-use one first and the older one second, then
+   opens Archive and asserts the second-archived chat is on top — proving the daemon's `archived_at` stamp,
+   not `lastUsedAt`, decides the order; the old order would put the first-archived (newer-by-last-use) chat
+   on top instead. Zero claude turns. In the curated `LIVE=1` list in `scripts/e2e-emulator.sh`, which
+   raised `LIVE_MINIMUM` by one.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -2152,7 +2158,18 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-01 (#1394).** The dispatcher ran
+**Current live verification — 2026-10-01 (#1332).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1332` at
+`cc94a05bbc`, merged with `origin/main` at `18ea26526a` (0 commits behind before the merge):
+**41 executed, 41 passed, 0 failed, 0 skipped**, exit 0, wall clock 518.8s. This is full-suite evidence;
+no separate focused live run is claimed. `LIVE_MINIMUM` rose from 40 to 41 with this ticket's new method,
+`interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`, joining the curated selector (see
+[Pre-ship gate](#pre-ship-gate)); this is the method's first live run. An earlier attempt reported 38
+executed and did not include the new method, because the curated selector and `LIVE_MINIMUM` had not yet
+been updated for it; that gap was found in review and fixed before this run. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1332#issuecomment-5932798343).
+
+**Previous live verification — 2026-10-01 (#1394).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1394` at
 `ba11f50add`, merged with `origin/main` at `2e1e2e46cd` (0 commits behind before the merge):
 **40 executed, 40 passed, 0 failed, 0 skipped**, exit 0, wall clock 527.1s. This is full-suite evidence;

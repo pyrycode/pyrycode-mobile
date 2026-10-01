@@ -512,6 +512,49 @@ class ArchivedDiscussionsViewModelTest {
             collector.cancel()
         }
 
+    @Test
+    fun loaded_eachTabFollowsTheArchiveOrder_mixingStampedAndLegacyRows() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ArchivedDiscussionsViewModel(stubRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+
+            fun archived(
+                id: String,
+                promoted: Boolean,
+                lastUsedAt: String,
+                archivedAt: String?,
+            ) = sampleArchivedDiscussion(id).copy(
+                isPromoted = promoted,
+                lastUsedAt = Instant.parse(lastUsedAt),
+                archivedAt = archivedAt?.let(Instant::parse),
+            )
+            // The input order disagrees with both the archive order and the last-use order. Keys:
+            // d-new 06-10 (stamped), d-legacy 06-05 (last use), d-old 06-01 (stamped); d-tie-b and
+            // d-tie-a share 05-20, one stamped and one legacy, so only the id breaks the tie.
+            val dOld = archived("d-old", false, lastUsedAt = "2026-06-20T00:00:00Z", archivedAt = "2026-06-01T00:00:00Z")
+            val dTieB = archived("d-tie-b", false, lastUsedAt = "2026-01-01T00:00:00Z", archivedAt = "2026-05-20T00:00:00Z")
+            val dLegacy = archived("d-legacy", false, lastUsedAt = "2026-06-05T00:00:00Z", archivedAt = null)
+            val dNew = archived("d-new", false, lastUsedAt = "2026-01-02T00:00:00Z", archivedAt = "2026-06-10T00:00:00Z")
+            val dTieA = archived("d-tie-a", false, lastUsedAt = "2026-05-20T00:00:00Z", archivedAt = null)
+            // Channels sort on their own: c-legacy (06-03) sits between the two stamped channels.
+            val cOld = archived("c-old", true, lastUsedAt = "2026-06-30T00:00:00Z", archivedAt = "2026-06-02T00:00:00Z")
+            val cLegacy = archived("c-legacy", true, lastUsedAt = "2026-06-03T00:00:00Z", archivedAt = null)
+            val cNew = archived("c-new", true, lastUsedAt = "2026-01-01T00:00:00Z", archivedAt = "2026-06-04T00:00:00Z")
+
+            source.emit(listOf(dOld, cOld, dTieB, dLegacy, cLegacy, dNew, cNew, dTieA))
+            advanceUntilIdle()
+
+            val loaded = vm.state.value as ArchivedDiscussionsUiState.Loaded
+            assertEquals(
+                listOf("d-new", "d-legacy", "d-old", "d-tie-a", "d-tie-b"),
+                loaded.discussions.map { it.id },
+            )
+            assertEquals(listOf("c-new", "c-legacy", "c-old"), loaded.channels.map { it.id })
+            collector.cancel()
+        }
+
     // --- helpers ---
 
     private fun stubRepo(source: MutableSharedFlow<List<Conversation>>): ConversationRepository =
