@@ -79,6 +79,10 @@ internal fun PairCodeScreen(
             return@Box
         }
         val editing = state.phase == PairCodePhase.Editing
+        // After a verification failure the pairing is saved: the draft is frozen, and Pair can only
+        // wait again, which a rejected pairing cannot (#1385).
+        val drafting = editing && state.failure == null
+        val canRetry = state.failure?.retryable != false
         val saving = state.phase == PairCodePhase.Saving
         val colors = MaterialTheme.colorScheme
         val uriHandler = LocalUriHandler.current
@@ -131,12 +135,12 @@ internal fun PairCodeScreen(
                         if (targetName != null) {
                             PairCodeField("Host name", targetName, false, {}, "Clear host name")
                         } else {
-                            PairCodeField("Host name", state.name, editing, { onEvent(PairCodeEvent.Name(it)) }, "Clear host name")
+                            PairCodeField("Host name", state.name, drafting, { onEvent(PairCodeEvent.Name(it)) }, "Clear host name")
                         }
                         PairCodeField(
                             "Pairing code",
                             state.code,
-                            editing,
+                            drafting,
                             { onEvent(PairCodeEvent.Code(it)) },
                             "Clear pairing code",
                             error = codeError,
@@ -148,14 +152,14 @@ internal fun PairCodeScreen(
                         }
                         Button(
                             onClick = { onEvent(PairCodeEvent.Pair) },
-                            enabled = editing,
+                            enabled = editing && canRetry,
                             modifier = Modifier.fillMaxWidth().height(56.dp),
                         ) {
                             Text(
                                 when {
                                     saving -> "Saving…"
                                     state.phase == PairCodePhase.Connecting -> "Connecting…"
-                                    state.error != null && codeError == null -> "Retry"
+                                    state.error != null && codeError == null && canRetry -> "Retry"
                                     else -> "Pair"
                                 },
                             )
