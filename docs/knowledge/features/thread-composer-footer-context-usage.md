@@ -4,16 +4,35 @@ Split out of [Thread composer footer](thread-composer-footer.md) on 2026-09-25 t
 under the 50000-byte size cap the docs guard enforces. This section moved here verbatim, except for the
 `ContextSegment` layout paragraph corrected below, and kept its heading, so its anchor is unchanged.
 
-## Context usage segment (#946)
+## Context usage segment (#946, computed since #1411)
 
 `ThreadRunConfig.contextPercent: Int?` is a third independent reading, joined the same way [§ Running
 model](thread-composer-footer.md#running-model-891) is: `runConfigFlow` folds it in with one more
 `.combine(repository.observeContextUsage(conversationId)) { config, usage -> config.copy(contextPercent =
-usage?.percentage) }` after the `runningModel` combine — a third link, not a sixth arm of the five-arm
-`combine` (already at Kotlin's typed ceiling). It carries Claude's reported `percentage` verbatim; `null`
-is the unavailable state, never `0%`, and it is never derived from `SessionSettings.usedTokens` /
-`.windowTokens`. See [Conversation repository § `observeContextUsage`](conversation-repository.md#shape)
-for the reading's own contract.
+contextPercent(usage, settings)) }` after the `runningModel` combine — a third link, not a sixth arm of the
+five-arm `combine` (already at Kotlin's typed ceiling). Since [#1411](https://github.com/pyrycode/pyrycode-mobile/issues/1411)
+the shown percentage is **computed, not Claude's verbatim `percentage`**, reversing #946's original rule: the
+top-level `contextPercent(usage, settings)` function (bottom of `ThreadViewModel.kt`) takes `usage.totalTokens`
+/ `.maxTokens` while a reading exists — whatever it holds, even a zero `maxTokens`, which still yields `null`
+rather than falling back — and otherwise `settings.usedTokens` / `.windowTokens`. It rounds half up to a whole
+percent and clamps to 0–100, matching desktop's `contextTokenSource` + `contextUsagePercent`. `null` is the
+unavailable state: neither source, or a window `<= 0` in the one source used. `runConfigFlow` threads
+`SessionSettings` through its chained combines as a pair so this fallback is available without subscribing to
+`sessionSettings` a second time (its `onEach` has side effects on pending state). See [Conversation repository
+§ `observeContextUsage`](conversation-repository.md#shape) for the reading's own contract, now preferred over
+the settings pair rather than mutually exclusive with it.
+
+**Known gap: a stale figure survives a session transition.** The repository clears the `context_usage`
+reading on a `session_transition`, but the replaced session's `SessionSettings` stays current until the
+re-requested reply lands, so `contextPercent` falls back to the *old* session's token pair for that gap —
+after `/clear` the footer and Status sheet can briefly show a non-`n/a` percentage for a session that no
+longer exists, where before #1411 they showed `n/a`. `ThreadRunConfig.forLiveSession` exists to hide exactly
+this kind of stale-settings window for session-scoped facets (it already blanks `permissionMode`,
+`appliedEffort` and `memorySearch`), but `contextPercent` was not added to it — desktop's own
+`runConfigStore.clearSnapshot` only fires on a conversation switch, delete or archive, never on a transition,
+so this matches desktop but diverges from mobile's own stricter rule. Unresolved as of #1411; a future ticket
+should either null the settings fallback when `settings.sessionId` differs from the live `currentSessionId`,
+or record a deliberate decision to accept the gap.
 
 A private `ContextSegment(percent: Int?)` renders Figma's `Cxt: 84%` text node (`110:3497`) — it is
 **plain text, not a `FooterControl`**: it opens no overlay and carries no click action. It is the last
@@ -46,8 +65,9 @@ the ask.
 
 **Same value, two surfaces.** [`StatusSheet`](status-sheet-readings.md#contextwindowsection)'s Context-window
 section reads the identical `ThreadRunConfig.contextPercent`, so the footer and the sheet cannot
-disagree. No rung-4 twin: whether the scripted `fakeclaude` path makes the daemon publish `context_usage`
-is not established.
+disagree — both read the one `contextPercent(usage, settings)` result computed in `runConfigFlow`, never
+Claude's `percentage` directly. No rung-4 twin: whether the scripted `fakeclaude` path makes the daemon publish
+`context_usage` is not established.
 
 ## Related
 

@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -28,7 +30,10 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -246,7 +251,10 @@ private fun LoadedBody(
                 }
             CenteredText(emptyText, Modifier)
         } else {
+            val listState = rememberLazyListState()
+            KeepNewTopRowInView(listState, items)
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp),
             ) {
@@ -267,6 +275,30 @@ private fun LoadedBody(
                 }
             }
         }
+    }
+}
+
+/**
+ * A keyed list stays anchored on the row it showed first, so a row that moves in front of it
+ * opens above the viewport. A row archived from this phone does that: its `archived_at` stamp
+ * arrives with the list reply that lands after the screen first draws (#1332). When the list
+ * was at the top, scroll to the new first row; a list the user scrolled keeps its place.
+ */
+@Composable
+private fun KeepNewTopRowInView(
+    listState: LazyListState,
+    items: List<Conversation>,
+) {
+    val firstId = items.first().id
+    var shownFirstId by remember(listState) { mutableStateOf(firstId) }
+    LaunchedEffect(listState, firstId) {
+        // The anchor may already have moved the first visible index onto the previous top row.
+        val index = listState.firstVisibleItemIndex
+        val wasAtTop =
+            listState.firstVisibleItemScrollOffset == 0 &&
+                (index == 0 || items.getOrNull(index)?.id == shownFirstId)
+        if (firstId != shownFirstId && wasAtTop) listState.requestScrollToItem(0)
+        shownFirstId = firstId
     }
 }
 

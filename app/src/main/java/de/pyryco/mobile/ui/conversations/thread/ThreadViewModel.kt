@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
@@ -20,6 +21,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
@@ -34,9 +36,14 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditor
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.attachmentTarget
+import de.pyryco.mobile.ui.conversations.components.loadsOnShow
 import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
@@ -62,7 +69,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
@@ -75,6 +81,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.floor
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
@@ -95,14 +102,15 @@ class ThreadViewModel(
     // defaults below: a default would hand every ViewModel its own store, which is exactly the
     // destination-scoped ownership this ticket removes — and a miswire would reproduce it invisibly.
     private val draftStore: ComposerDraftStore,
-    // #406: the coordinator's reconnection-surviving live-event seam, reduced to [isThinking]. Defaulted
-    // to an empty flow so the fake-backed graph + existing tests stay inert (the flag holds `false`).
+    // #406: the coordinator's reconnection-surviving live-event seam, folded into the thread rows and
+    // [turnOutcome]; the turn flags read the repository's held phase instead (#1313). Defaulted
+    // to an empty flow so the fake-backed graph + existing tests stay inert.
     liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
-    // #492: the host coordinator's process-scoped, reconnection-surviving "current modal" projection
-    // (#437/#445), folded once at the coordinator layer. It holds the host's single modal whichever
-    // conversation raised it; #816 scopes it to this thread as [currentModal]. Defaulted to a fresh
-    // MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal tests stay inert.
-    private val hostModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    // #492: the host coordinator's process-scoped modal fold (#437/#445), folded once at the coordinator
+    // layer. Since #1337 it holds every prompt outstanding on the host, whichever conversation raised it;
+    // #816 scopes it to this thread as [currentModal]. Defaulted to an empty host so the fake-backed Koin
+    // graph + non-modal tests stay inert.
+    private val hostModal: StateFlow<HostModalState> = MutableStateFlow(HostModalState()),
     // #451: the outbound modal-send path → the coordinator's passthrough to the connection-scoped concrete
     // repo (RelayRepositoryCoordinator.answerModal / cancelModal). Defaulted no-ops so the fake-backed Koin
     // graph + existing ThreadViewModel tests stay inert. The VM holds only these two suspend lambdas, never
@@ -152,9 +160,10 @@ class ThreadViewModel(
         savedStateHandle.get<String>("conversationId").orEmpty()
 
     /**
-     * The host's modal as this thread sees it (#816): shown only when the conversation that raised it is
-     * this thread's own, else [ModalUiState.Hidden] (see [scopedTo]). Seeded from the host's current value
-     * and collected `Eagerly`, so `.value` is right from construction.
+     * The host's prompts as this thread sees them (#816, #1337): this conversation's first outstanding
+     * prompt, else its latest dismissal, else [ModalUiState.Hidden] (see [HostModalState.scopedTo]). Another
+     * conversation's prompt never shows here. Seeded from the host's current value and collected `Eagerly`,
+     * so `.value` is right from construction.
      */
     val currentModal: StateFlow<ModalUiState> =
         hostModal
@@ -234,14 +243,35 @@ class ThreadViewModel(
      */
     val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
 
+    private val sentMessageChannel = Channel<Unit>(capacity = Channel.CONFLATED)
+
+    /**
+     * One signal per send the daemon accepted, of text or attachments (#1314), desktop's `onMessageSent`. The
+     * screen follows the newest end on it. Conflated: sends accepted before the screen collects follow once.
+     */
+    val sentMessages: Flow<Unit> = sentMessageChannel.receiveAsFlow()
+
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
     /**
-     * Each shown message attachment's state by id (#984). An id is absent until its row is first shown,
-     * which is what starts its load ([onAttachmentShown]); the screen draws an absent id as loading. A
-     * sibling flow for the same reason as [draft].
+     * Each shown message attachment's state by id (#984). An id is absent until its load starts: when its
+     * row is first shown ([onAttachmentShown]), or for a file not fetched on sight, when it is tapped
+     * ([onAttachmentRequested], #1329). The screen draws an absent id as loading, or that file as its ready
+     * row. A sibling flow for the same reason as [draft].
      */
     val attachmentStates: StateFlow<Map<String, AttachmentViewState>> = _attachmentStates.asStateFlow()
+
+    // #1329: the action a tap asked for, by id, while that tap's load runs. Main thread only, like
+    // [_attachmentsSending]: written by [onAttachmentRequested], removed when the load settles.
+    private val pendingAttachmentRequests = mutableMapOf<String, Pair<MessageAttachment, AttachmentAction>>()
+
+    private val attachmentLoadChannel = Channel<AttachmentLoaded>(capacity = Channel.BUFFERED)
+
+    /**
+     * One open or save per tapped file that loaded ready (#1329), for the screen to run through its
+     * attachment actions. Carries the loaded source, so it never waits on [attachmentStates] recomposing.
+     */
+    val attachmentLoads: Flow<AttachmentLoaded> = attachmentLoadChannel.receiveAsFlow()
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -256,6 +286,12 @@ class ThreadViewModel(
     private val pendingSaveAsChannelDialog = MutableStateFlow<SaveAsChannelDialogState?>(null)
 
     private val pendingChannelInfo = MutableStateFlow(false)
+
+    /**
+     * The Channel info sheet's System prompt editor (#1342), present only while the sheet is open, so every
+     * open starts from a fresh read. Bound to [repository], the reconnect-surviving facade.
+     */
+    private val promptEditor = MutableStateFlow<SystemPromptEditor?>(null)
 
     private val pendingDeleteConfirm = MutableStateFlow(false)
 
@@ -372,7 +408,8 @@ class ThreadViewModel(
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
      * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine, and
-     * Claude's reported context usage (#946) by a third; the repository clears that reading itself.
+     * Claude's reported context usage (#946) by a third, where [contextPercent] computes the one value the footer
+     * and the Status sheet both show (#1411); the repository clears that reading itself.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -386,11 +423,13 @@ class ThreadViewModel(
             pendingEffort,
             pendingPermission,
         ) { settings, menuAndAgent, model, effort, permission ->
-            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission)
-        }.combine(runningModel) { config, (running, announced) -> config.copy(running = running, announcedModel = announced) }
-            .combine(repository.observeContextUsage(conversationId)) { config, usage ->
-                config.copy(contextPercent = usage?.percentage)
-            }
+            // #1411: the settings ride along to the context-usage combine, which falls back to their token pair.
+            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission) to settings
+        }.combine(runningModel) { (config, settings), (running, announced) ->
+            config.copy(running = running, announcedModel = announced) to settings
+        }.combine(repository.observeContextUsage(conversationId)) { (config, settings), usage ->
+            config.copy(contextPercent = contextPercent(usage, settings))
+        }
 
     /**
      * This conversation's published slash-command menu (#882), feeding both the Actions menu's absent
@@ -587,17 +626,23 @@ class ThreadViewModel(
             )
 
     /**
+     * This conversation's turn phase as the repository holds it (#1313): the latest `turn_state`, back to
+     * idle on `turn_end`, kept per conversation for the connection rather than folded here. A thread
+     * opened mid-turn or resubscribing after [SharingStarted.WhileSubscribed] lapsed reads the current
+     * phase at once, and a new connection reads idle until the daemon reports again.
+     */
+    private val turnPhase = repository.observeTurnPhase(conversationId)
+
+    /**
      * Whether this conversation's agent is currently in its `thinking` phase (#406) — `true` only while
-     * the latest `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking],
-     * `false` for `responding` / `idle` / `turn_end` or before any event. A sibling [StateFlow] beside
+     * the held phase is [LiveSessionEvent.TurnState.Phase.Thinking]. A sibling [StateFlow] beside
      * [connectionState] (not a [ThreadUiState] field): like the connection signal it is a transient,
-     * connection-scoped cross-cutting signal the stateless screen takes as a separate parameter. The
-     * reduction emits only on a phase transition, so [stateIn]'s last value is retained for events that
-     * leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow default.
+     * connection-scoped cross-cutting signal the stateless screen takes as a separate parameter. `false`
+     * covers idle, `responding` and the fake's idle default.
      */
     val isThinking: StateFlow<Boolean> =
-        liveSessionEvents
-            .mapNotNull { event -> thinkingTransition(event) }
+        turnPhase
+            .map { it == LiveSessionEvent.TurnState.Phase.Thinking }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -605,21 +650,14 @@ class ThreadViewModel(
             )
 
     /**
-     * Whether this conversation's agent is currently **running a turn** (#459) — `true` while the latest
-     * `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking] **or**
-     * [LiveSessionEvent.TurnState.Phase.Responding], `false` for `idle` / `turn_end` or before any event.
-     * The broader sibling of [isThinking] (which is `true` for `thinking` only): the interrupt affordance
-     * (#459) must stay visible across the whole in-flight turn, not just the thinking phase. Same posture
-     * and lifecycle as [isThinking] — a hoisted [StateFlow] beside [connectionState] the stateless screen
-     * takes as a separate parameter, backed by its own [busyTransition] reducer (a dedicated reducer is
-     * simpler than combining [isThinking] with a second flow and matches the established sibling pattern).
-     * The reduction emits only on a busy/not-busy transition, so [stateIn]'s last value is retained for
-     * events that leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow
-     * default.
+     * Whether this conversation's agent is currently **running a turn** (#459) — `true` while the held
+     * phase is [LiveSessionEvent.TurnState.Phase.Thinking] **or** [LiveSessionEvent.TurnState.Phase.Responding].
+     * The broader sibling of [isThinking]: the interrupt affordance must stay visible across the whole
+     * in-flight turn, not just the thinking phase. Same posture and lifecycle as [isThinking].
      */
     val isBusy: StateFlow<Boolean> =
-        liveSessionEvents
-            .mapNotNull { event -> busyTransition(event) }
+        turnPhase
+            .map { it == LiveSessionEvent.TurnState.Phase.Thinking || it == LiveSessionEvent.TurnState.Phase.Responding }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -645,6 +683,16 @@ class ThreadViewModel(
                 initialValue = null,
             )
 
+    /** The open Channel info sheet's System prompt state (#1342), or `null` while the sheet is closed. */
+    val systemPrompt: StateFlow<SystemPromptEditorState?> =
+        promptEditor
+            .flatMapLatest { editor -> editor?.state ?: flowOf(null) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
+            )
+
     /**
      * Whether this conversation is currently stalled (#395) — drives the prominent screen-snapshot CTA
      * (#396). A sibling [StateFlow] beside [connectionState] / [isThinking] (not a [ThreadUiState]
@@ -661,6 +709,18 @@ class ThreadViewModel(
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = false,
             )
+
+    private val _localSendPending = MutableStateFlow(false)
+
+    /**
+     * The local-send window (#1311), desktop's `localSendPending`: `true` from the moment a send is handed
+     * to the daemon until the daemon first speaks, so the status band reads "Thinking…" across the round
+     * trip instead of going dark. Opened in [sendMessage] and [sendWithAttachments] immediately before the
+     * repository send, so a blank, refused or upload-failed send never opens it. Closed by any `turn_state`
+     * for this conversation, by a failed send, and by a change of connection ([closeLocalSendWindow]).
+     * Not [isBusy]: a window the daemon has not confirmed must never arm the stop control.
+     */
+    val localSendPending: StateFlow<Boolean> = _localSendPending.asStateFlow()
 
     /**
      * Whether this conversation's remote claude is stuck retrying an API error, and at which attempt
@@ -1021,48 +1081,6 @@ class ThreadViewModel(
      */
     val sessionSettingsErrors: Flow<Unit> = sessionSettingsErrorChannel.receiveAsFlow()
 
-    /**
-     * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
-     * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
-     * phase: `thinking` ⇒ `true`; `responding` / `idle` / `turn_end` ⇒ `false`; the non-phase events
-     * (`assistant_delta` / `tool_use` / `tool_result`) are not transitions ⇒ `null`.
-     */
-    private fun thinkingTransition(event: LiveSessionEvent): Boolean? {
-        if (event.conversationId != conversationId) return null
-        return when (event) {
-            is LiveSessionEvent.TurnState -> event.phase == LiveSessionEvent.TurnState.Phase.Thinking
-            is LiveSessionEvent.TurnEnd -> false
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> null
-        }
-    }
-
-    /**
-     * Folds one live event to the next [isBusy] value, or `null` to leave the flag unchanged. Mirrors
-     * [thinkingTransition] exactly; the **only** difference is the phase predicate — a turn is "running"
-     * across the `thinking` **and** `responding` phases. Routes by [conversationId] first (other
-     * conversations never move the flag), then maps the turn phase: `thinking` / `responding` ⇒ `true`;
-     * `idle` / `turn_end` ⇒ `false`; the non-phase events (`assistant_delta` / `tool_use` / `tool_result`
-     * / replay-gap) are not transitions ⇒ `null`.
-     */
-    private fun busyTransition(event: LiveSessionEvent): Boolean? {
-        if (event.conversationId != conversationId) return null
-        return when (event) {
-            is LiveSessionEvent.TurnState ->
-                event.phase == LiveSessionEvent.TurnState.Phase.Thinking ||
-                    event.phase == LiveSessionEvent.TurnState.Phase.Responding
-            is LiveSessionEvent.TurnEnd -> false
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> null
-        }
-    }
-
     /** Folds one live event into [turnOutcome]; events for other conversations leave it unchanged. */
     private fun nextTurnOutcome(
         current: TurnOutcomeReport?,
@@ -1104,6 +1122,8 @@ class ThreadViewModel(
                 .distinctUntilChanged()
                 .drop(1)
                 .collect { available ->
+                    // #1311: a drop and the return both end the round trip the window was waiting on.
+                    closeLocalSendWindow("reconnect")
                     if (available) {
                         RelayLog.d { "event=history_walk_restart reason=reconnect" }
                         restartHistoryWalk(fromWalk = historyDemand.value.walk)
@@ -1111,10 +1131,49 @@ class ThreadViewModel(
                 }
         }
 
+        // #1311: the daemon's first `turn_state` for this conversation, of any phase, closes the local-send
+        // window. Collected here rather than behind a subscriber-bound stateIn, so it closes even while the
+        // screen is not collecting.
+        viewModelScope.launch {
+            liveSessionEvents.collect { event ->
+                if (event is LiveSessionEvent.TurnState && event.conversationId == conversationId) {
+                    closeLocalSendWindow("turn_state")
+                }
+            }
+        }
+
         // #1309: a conversation whose claude had not run yet reads no permission mode and no applied effort,
         // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
         viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+    }
+
+    private fun openLocalSendWindow() {
+        if (!_localSendPending.value) RelayLog.d { "event=local_send_window state=open" }
+        _localSendPending.value = true
+    }
+
+    private fun closeLocalSendWindow(reason: String) {
+        if (_localSendPending.value) RelayLog.d { "event=local_send_window state=closed reason=$reason" }
+        _localSendPending.value = false
+    }
+
+    /**
+     * Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. A send
+     * that returns was accepted, and tells the screen to follow the newest end again (#1314).
+     */
+    private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
+        openLocalSendWindow()
+        val sent =
+            try {
+                send()
+            } catch (e: Throwable) {
+                closeLocalSendWindow("send_failed")
+                throw e
+            }
+        RelayLog.d { "event=thread_send_accepted" }
+        sentMessageChannel.trySend(Unit)
+        return sent
     }
 
     /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */
@@ -1310,7 +1369,7 @@ class ThreadViewModel(
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
-            repository.sendMessage(state.value.conversationId, text)
+            sendInLocalWindow { repository.sendMessage(state.value.conversationId, text) }
             if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
         }
     }
@@ -1351,7 +1410,7 @@ class ThreadViewModel(
                 draftStore.recordSentOriginals(serverId, conversationId, originals)
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
-                repository.sendMessage(target, text, references)
+                sendInLocalWindow { repository.sendMessage(target, text, references) }
                 onSent()
                 draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
             } finally {
@@ -1436,11 +1495,30 @@ class ThreadViewModel(
     }
 
     /**
-     * A message attachment's row is on screen (#984): start its load unless it already has a state. The
-     * claim is a compare-and-set, so a row shown twice loads once, and a failure waits for [onRetryAttachment].
+     * A message attachment's row is on screen (#984): start its load unless it already has a state, and only
+     * when it is fetched on sight ([loadsOnShow], #1329); any other file waits for [onAttachmentRequested].
+     * The claim is a compare-and-set, so a row shown twice loads once, and a failure waits for
+     * [onRetryAttachment].
      */
-    fun onAttachmentShown(attachmentId: String) {
-        if (claimAttachment(attachmentId) { it == null }) loadAttachment(attachmentId)
+    fun onAttachmentShown(attachment: MessageAttachment) {
+        if (!loadsOnShow(attachment)) return
+        if (claimAttachment(attachment.attachmentId) { it == null }) loadAttachment(attachment.attachmentId)
+    }
+
+    /**
+     * A file not fetched yet was tapped or long-pressed (#1329): load it as a shown row would, and once it is
+     * ready deliver [action] once through [attachmentLoads]. Only a tap that claims the load records the
+     * action, so a tap on a row already loading, ready or failed does nothing here.
+     */
+    fun onAttachmentRequested(
+        attachment: MessageAttachment,
+        action: AttachmentAction,
+    ) {
+        val id = attachment.attachmentId
+        if (!claimAttachment(id) { it == null }) return
+        pendingAttachmentRequests[id] = attachment to action
+        RelayLog.d { "event=thread_attachment_request id=$id action=${action.name.lowercase()}" }
+        loadAttachment(id)
     }
 
     /** The retry control of a failed attachment (#984). Not found is final and has none. */
@@ -1483,6 +1561,11 @@ class ThreadViewModel(
                 }
             RelayLog.d { "event=thread_attachment_load id=$attachmentId outcome=$outcome" }
             _attachmentStates.update { it + (attachmentId to state) }
+            // #1329: a tap's action settles with its load, once; a load that did not end ready drops it.
+            val (attachment, action) = pendingAttachmentRequests.remove(attachmentId) ?: return@launch
+            val ready = state as? AttachmentViewState.Ready
+            ready?.let { attachmentLoadChannel.trySend(AttachmentLoaded(attachmentTarget(attachment, it), it.source, action)) }
+            RelayLog.d { "event=thread_attachment_request id=$attachmentId outcome=${if (ready != null) "delivered" else "dropped"}" }
         }
     }
 
@@ -2109,19 +2192,25 @@ class ThreadViewModel(
             }
         }
 
+    /** Closes the Channel info sheet and drops its System prompt editor; a write already sent still lands. */
+    private fun closeChannelInfo() {
+        pendingChannelInfo.value = false
+        promptEditor.value = null
+    }
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
             ThreadEvent.Archive -> {
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
                 // overflow menu, where it is already false); the send + success-only PopBack live in
                 // sendArchive, off the shared silent guard (#556).
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 sendArchive()
             }
             ThreadEvent.Delete -> pendingDeleteConfirm.value = true
             ThreadEvent.DeleteConfirm -> {
                 pendingDeleteConfirm.value = false
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 launchGuardedRepoCall {
                     repository.delete(state.value.conversationId)
                     // #790: success-only, the position [sendMessage]'s own clear occupies — each of the
@@ -2155,8 +2244,16 @@ class ThreadViewModel(
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
             // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
-            ThreadEvent.ChannelInfo -> if (pendingChannelInfo.compareAndSet(false, true)) rereadRunSettings("channel_info_open")
-            ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
+            // #1342: each open also mounts a fresh System prompt editor, whose construction reads the prompt.
+            ThreadEvent.ChannelInfo ->
+                if (pendingChannelInfo.compareAndSet(false, true)) {
+                    promptEditor.value = SystemPromptEditor(viewModelScope, repository, conversationId)
+                    rereadRunSettings("channel_info_open")
+                }
+            ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
+            is ThreadEvent.SystemPromptEdit -> promptEditor.value?.edit(event.text)
+            ThreadEvent.SystemPromptSave -> promptEditor.value?.save()
+            ThreadEvent.SystemPromptClear -> promptEditor.value?.clear()
             ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
@@ -2469,6 +2566,27 @@ internal fun String.modelFamily(): String {
     val bare = removePrefix("claude-")
     val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
     return head.replaceFirstChar { it.uppercaseChar() }.inert()
+}
+
+/**
+ * How full the context window is, as a whole percent in 0..100, or `null` when unavailable (#1411, desktop's
+ * `contextTokenSource` + `contextUsagePercent`). A present [usage] always supplies the pair, its `totalTokens`
+ * over `maxTokens`, whatever it holds; only an absent one falls back to [settings]' `usedTokens` over
+ * `windowTokens`. A window of `0` or less in the pair used is unavailable, never a fallback. Claude's own
+ * `percentage` is not read, so the footer and the Status sheet share one clamp. Rounds half up, as `Math.round`.
+ */
+internal fun contextPercent(
+    usage: ContextUsage?,
+    settings: SessionSettings?,
+): Int? {
+    val (used, window) =
+        when {
+            usage != null -> usage.totalTokens to usage.maxTokens
+            settings != null -> settings.usedTokens to settings.windowTokens
+            else -> return null
+        }
+    if (window <= 0) return null
+    return floor(used.toDouble() / window.toDouble() * 100 + 0.5).coerceIn(0.0, 100.0).toInt()
 }
 
 private fun Conversation.displayName(): String =

@@ -267,11 +267,36 @@ The name is never logged — `handle`'s log line carries only the static `outcom
 exported, so `NotificationTap.target(intent)` treats every extra as untrusted: wrong action, missing
 extras, a blank id, or an id over `MAX_TAP_ID_CHARS` (256) all parse to `null`. `PyryNavHost` then accepts
 the parsed target only when `ThreadDestinationFactory.isSavedHost(serverId)` — the saved-host store, not
-the live connection registry — and opens `Routes.thread(target)` **above** `CHANNEL_LIST`, so Back (or a
-conversation deleted since the alert) always lands on a usable list. The read happens once, in
-`MainActivity.onCreate`, only when `savedInstanceState == null` — a rotation does not re-navigate. The
-tap only navigates: it never sends a command or answers a prompt. See
-[Navigation § What it does](navigation.md#what-it-does) for the route itself.
+the live connection registry. The read happens once, in `MainActivity.onCreate`, only when
+`savedInstanceState == null` — a rotation does not re-navigate (and so drops a tap mid-wait, below; this
+is accepted, never an unchecked open). The tap only navigates: it never sends a command or answers a
+prompt. See [Navigation § What it does](navigation.md#what-it-does) for the route itself.
+
+**Since [#1400](../../specs/architecture/1400-notification-tap-active-conversation.md), a saved host is
+gate one, not the whole gate.** Desktop resolves a click through `notificationRowFor`
+(`pushNotifyBridge.ts`): it opens a row only when the host's list still holds it, unarchived, and
+otherwise opens nothing. Mobile's equivalent list is
+[`HostConversationSource.snapshots`](dependency-injection-host-conversation-source.md): `PyryNavHost`
+waits `withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT)` (5 s, `internal val` beside `PyryNavHost` in
+`MainActivity.kt`) for `snapshots.first { it.holdsActive(target) }` — some snapshot whose `serverId`
+matches and whose `channels + chats` (both already exclude archived rows) hold the conversation id. A
+snapshot cannot tell "not loaded yet" from "loaded and empty," and a cache restore can predate a
+conversation created since, so waiting for the row to *appear* is the only rule that never opens a
+conversation the tap couldn't check while still opening one that lands late; a cached or warm snapshot
+resolves `first {}` at once; only a cold start with nothing cached waits out the timeout. A timeout — an
+archived, deleted or unknown conversation — stays on `CHANNEL_LIST`.
+
+A row arriving inside the wait is not, by itself, enough: the effect also requires
+`navController.currentDestination?.route == Routes.CHANNEL_LIST` at the moment the row resolves. Without
+that check, a user who tapped into another thread, Settings or Archive during a cold-start wait could have
+the notification's thread pushed on top of wherever they went; the check makes a late-arriving row open
+the thread only while the user is still sitting on the list it left them on. `openThread` otherwise still
+pushes `Routes.thread(target)` **above** `CHANNEL_LIST`, so Back (or a conversation deleted since the
+alert) always lands on a usable list.
+
+The wait runs inside `LaunchedEffect(openTarget)`, in the nav host's composition scope, so leaving the nav
+host (there is none other than `MainActivity`'s) cancels it; `snapshots` is a hot, app-wide `StateFlow`
+only read here.
 
 **The permission prompt** is Android's own `POST_NOTIFICATIONS` request, asked from two places sharing
 `MainActivity.rememberNotificationPermissionRequest`: the Settings switch (turning
@@ -317,7 +342,9 @@ requires the runtime prompt above regardless of the manifest entry).
 ### Logging (#685)
 
 `event=attention_alert outcome=posted|duplicate|foreground|disabled|muted|no_permission kind=turn|prompt`,
-`event=notification_tap_accepted`, `event=notification_tap_rejected code=unknown_host`,
+`event=notification_tap_accepted`,
+`event=notification_tap_rejected code=unknown_host|inactive_conversation|navigated_away` (the latter two
+since #1400: a timed-out wait, and a row that resolved after the user left `CHANNEL_LIST`),
 `event=notification_permission_answered granted=…`, `event=attention_alert_ledger outcome=read_failed|write_failed`.
 No id, digest or notification text appears in any of these lines.
 
@@ -346,7 +373,16 @@ No id, digest or notification text appears in any of these lines.
   `nameOf` reads only the alert's own host (`theNameLookupReadsOnlyTheAlertsOwnHostAndIsNullWhenMissing`).
 - `NotificationTapNavigationTest` (`app/src/sharedTest`) drives `PyryNavHost` on the production Koin
   graph, per the `SettingsNavigationTest` pattern: a saved host's target opens the thread above
-  `CHANNEL_LIST`; an unsaved host's target stays on `CHANNEL_LIST`.
+  `CHANNEL_LIST`; an unsaved host's target stays on `CHANNEL_LIST`. Since #1400 it also rebinds
+  `HostConversationSource` (on `Dispatchers.Main.immediate`, like the registry binding beside it — the
+  test's effect dispatcher resumes on the emitting thread, so a `Dispatchers.Default` publish would
+  navigate off it) and the test's `ConversationCache` delegates `readConversations(SAVED)` to a
+  `CompletableDeferred<List<Conversation>>`, so rows land through the real cache-restore path on whatever
+  schedule a test chooses. It covers: an active channel or chat row opens the thread; an archived-only or
+  unknown row stays on the list once the clock is advanced past `NOTIFICATION_TAP_ROW_WAIT`; a row that
+  arrives mid-wait still opens; a row released only *after* the wait (proving the timeout actually
+  elapsed, not just a still-pending real-time wait) stays on the list; and a row arriving after the user
+  navigated off `CHANNEL_LIST` (e.g. to `Routes.ABOUT`) opens nothing, leaving them where they went.
 - `NotificationPermissionPromptTest` stays in `app/src/test`, not `app/src/sharedTest`, even though it
   drives a Composable (`rememberNotificationPermissionRequest`, made `internal` for this): a
   `sharedTest`/device run would raise Android's real permission dialog, which Robolectric's shadow
@@ -381,6 +417,9 @@ No id, digest or notification text appears in any of these lines.
   prompt piggybacks on; no new row was added.
 - Spec: `docs/specs/architecture/685-mobile-attention-alerts.md` (§ Design, § Security review — verdict
   PASS, § Revisions for the blank-conversation-prompt fix and the two rework rounds' device-test fixes).
+- Spec: `docs/specs/architecture/1400-notification-tap-active-conversation.md` (§ Design, § Security
+  review — verdict PASS) — the row-active gate, the bounded cold-start wait and the navigated-away guard
+  above.
 - Spec: `docs/specs/architecture/1022-attention-notifier-muted-gate.md` — the muted gate's design and its
   fail-open rationale.
 - [Data model § `Conversation`](data-model.md#conversation) — the `muted` field (#999) this gate reads,

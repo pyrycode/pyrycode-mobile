@@ -63,7 +63,8 @@ Pure function of `status`: no `ViewModel` reference, no flow collection, no `rem
 ## Placement in the thread
 
 Joins [`ThreadScreen`](thread-screen.md)'s single mutually-exclusive status slot (`ThreadStatusArea`,
-`ThreadScreen.kt`), ranked **between** api-retry and compaction — the full ladder, top wins:
+`ThreadScreen.kt`). Through #1310 this arm was ranked **between** api-retry and compaction, decided by a
+`when`'s clause order:
 
 ```kotlin
 when {
@@ -75,19 +76,28 @@ when {
 }
 ```
 
+**[#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) moved this arm above api-retry and
+replaced the `when` with one named function, `statusArm`** (`ThreadScreen.kt`), ported from desktop's
+`workingIndicatorState`: a running reset is now the top turn arm, so a reset the user started cannot be
+masked by a concurrent retry warning. See [Thread screen § The arm
+order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for the current `StatusArm`
+enum and the full precedence table, including the new stall and working arms this ticket added.
+
 **[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed the usage-limit arm that used to
 sit directly above this one.** From #872 to #1002 the ladder read api-retry → usage limit → resetting →
 compaction → turn outcome → thinking; claude's usage-limit report and the pairing-error notice now draw as
 pills in [`ThreadTopOverlay`](thread-top-overlay.md), pinned over the message area instead of sharing this
 slot, because a live `allowed_warning` reading was masking every arm below it (see [Thread top overlay §
-Why this moved](thread-top-overlay.md#why-this-moved-1002)). This ladder is turn status only now:
-api-retry → resetting → compaction → turn outcome → thinking/running tool.
+Why this moved](thread-top-overlay.md#why-this-moved-1002)). This ladder was turn status only from #1002 to
+\#1310: api-retry → resetting → compaction → turn outcome → thinking/running tool.
 
 Two things about where this arm sits, both from the original #872 ticket and pinned by
-`resetting_winsOverThinkingAndCompaction` / `apiRetry_winsOverResetting`:
+`resetting_winsOverThinkingAndCompaction` / `resetting_winsOverApiRetry` (renamed from
+`apiRetry_winsOverResetting` when #1311 flipped the two arms' order):
 
-- **Below api-retry**, the one remaining "something may be wrong" signal, so a running reset never hides
-  it.
+- **Above api-retry since #1311** (below it, #872–#1310) — api-retry is the one remaining "something may
+  be wrong" signal besides a reset itself, so the two never hide each other; which one wins now matches
+  desktop.
 - **Above compaction, turn outcome and thinking** — the wrap-up is itself a claude turn. Without this
   ordering, the reset the user started would read as generic thinking, or (since a wrap-up turn can
   legitimately trigger auto-compaction) as a compaction happening inside it. It also outranks a turn

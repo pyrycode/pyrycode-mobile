@@ -130,17 +130,21 @@ internal data class HostAttentionState(
     /** Merges positions read back from storage under the live ones: a live completion always wins. */
     fun restored(stored: Map<String, ReadPosition>): HostAttentionState = copy(positions = boundedPositions(stored + positions))
 
-    /** The non-Idle states, keyed by conversation id; a missing id is Idle. A blank-id prompt waits for no row. */
+    /**
+     * The non-Idle states, keyed by conversation id; a missing id is Idle. A conversation waits while any of
+     * the host's outstanding [prompts] belongs to it (#1338, desktop `selectHasOutstandingFor`). A blank-id
+     * prompt waits for no row.
+     */
     fun resolve(
-        modal: ModalUiState,
+        prompts: List<ModalUiState.Open>,
         batches: List<QuestionBatch>,
     ): Map<String, ConversationAttention> {
-        val prompted = (modal as? ModalUiState.Open)?.conversationId?.takeIf { it.isNotBlank() }
-        val ids = running + failed + positions.keys + batches.map { it.conversationId } + listOfNotNull(prompted)
+        val prompted = prompts.map { it.conversationId }.filter { it.isNotBlank() }.toSet()
+        val ids = running + failed + positions.keys + batches.map { it.conversationId } + prompted
         return ids
             .associateWith { id ->
                 resolveAttention(
-                    waiting = id == prompted || batches.batchFor(id) != null,
+                    waiting = id in prompted || batches.batchFor(id) != null,
                     running = id in running,
                     failed = id in failed,
                     unread = positions[id]?.unread == true,
