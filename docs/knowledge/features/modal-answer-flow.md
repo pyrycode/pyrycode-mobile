@@ -26,8 +26,8 @@ slice is the **glue** from the screen hooks to those methods.
 ## The data path
 
 ```
-ThreadScreen onModalOption(optionId) / onModalCancel()   ◀── route host wires them to the VM (#452)
-        │  (UI passes only the tapped optionId — never a modalId)
+ThreadScreen onModalOption(modalId, optionId) / onModalCancel(modalId)   ◀── route host wires them to the VM (#452, #1306)
+        │  (since #1306 the UI also passes the rendered request's modalId as a guard — never a target)
         ▼
 ThreadViewModel.onModalOption / onModalCancel            ◀── reads modalId from scopedModal() (#816: hostModal filtered to this VM's own conversationId, read synchronously — not the collected currentModal)
         │  fail-safe-deny decision: default → answer ; non-default → arm → 2nd confirm → answer ; cancel
@@ -54,8 +54,10 @@ a destructive vocabulary and never inspects option-id semantics** — it keys th
 `Open.defaultOptionId` (carried verbatim through #445):
 
 ```kotlin
-fun onModalOption(optionId: String) {
+fun onModalOption(optionId: String, modalId: String? = null) {
     val open = scopedModal() as? ModalUiState.Open ?: return   // #816: this thread's own modal, read synchronously
+    // #1306: a tap composed for a request that has since been replaced carries the old id.
+    if (modalId != null && modalId != open.modalId) return
     when {
         // #818: the session-grant flag is computed at the point of sending, not stored on the arm.
         optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId, grantsAlwaysAllow(open, optionId))
@@ -65,9 +67,11 @@ fun onModalOption(optionId: String) {
     }
 }
 
-fun onModalCancel() {
+fun onModalCancel(modalId: String? = null) {
     val open = scopedModal() as? ModalUiState.Open ?: return
+    if (modalId != null && modalId != open.modalId) return
     armedModalOption.value = null
+    grantDrafts.set(serverId, conversationId, null)   // #1306: a cancel drops the session-grant draft too
     sendCancel(open.modalId)
 }
 
@@ -76,6 +80,20 @@ fun onModalCancel() {
 // `currentModal`'s own stateIn catches up.
 private fun scopedModal(): ModalUiState = hostModal.value.scopedTo(conversationId)
 ```
+
+### Stale taps carry the wrong `modalId` (#1306)
+
+Inline rendering removed the property a dialog window gave for free: a `BasicAlertDialog` recomposed as one
+window, so the modal it drew from was always the one a tap could reach. As a `LazyColumn` row, a tap
+composed against request `m1` can be delivered by the time `m2` has replaced it — with the pre-#1306
+signatures (option id only), that tap would answer, cancel or grant **`m2`** in one shot, no second confirm
+needed if `m2`'s default happened to be the tapped option. `ThreadScreen`'s `onModalOption` / `onModalCancel`
+/ `onAlwaysAllowChanged` all gained the rendered item's `modalId` as a parameter for exactly this reason,
+and the VM guards on it: `modalId != null && modalId != open.modalId` is a no-op, never a fallback to some
+other request. The `modalId` argument is bound at the call site to the closure's own `open.modalId` — never
+re-read at tap time — so the guard actually reflects what was on screen when the finger landed, not what is
+open when the callback finally runs. The parameter defaults to `null` so a caller with no id (an existing
+test, a preview) keeps today's unguarded behavior; only `ThreadScreen`'s inline items supply one.
 
 | tap | result |
 |---|---|
@@ -89,6 +107,31 @@ The belt over-captures `reject_always` as needing a confirm, which is harmless (
 authoritative deny-on-timeout / first-answer-wins / per-device-grant enforcement is server-side
 (pyrycode#702/#703/#717); this is the phone-side UX belt **only** — it can make the action *harder* (never
 easier) than the wire allows.
+
+### Not connected refuses the tap, before the arm or grant change (#1321)
+
+A permission decision must not reach a closed socket believing it sent. `onModalOption` and `onModalCancel`
+each gate on `promptSendAllowed(kind)` right after the #1306 stale-id guard and before anything else changes:
+`onModalOption` before the default-send, the second-confirm send and the (re-)arm; `onModalCancel` before
+`armedModalOption.value = null` and the grant-draft clear. A refused tap is a pure early return — the arm,
+the grant draft and the rendered state are exactly as they were, so the same tap answers once the host
+reconnects. `AlwaysAllowOffer` (the session-grant checkbox) is a local choice and is not gated.
+
+`promptSendAllowed` reads a private `hostConnection: StateFlow<ConnectionState?>`, collected `Eagerly` in
+`viewModelScope` and seeded `null` — never the optimistic `Connected` that the public `connectionState`
+(used only for the banner) starts with. `null`, `Connecting`, `Reconnecting` and `Offline` all refuse; only
+`ConnectionState.Connected` allows. This is deliberately a **second** eager connection collector alongside
+[`connectedFor`](thread-composer-footer.md) (#1319, the composer/footer's own tap-time gate) rather than a
+shared helper: `connectedFor` seeds optimistically `Connected` to match the footer's pre-#1319 behavior, and
+changing that seed to fail closed would alter #1319's footer gating, which is out of this ticket's scope.
+Merging the two was flagged by the verifier as a follow-up, not done here.
+
+On the UI side, `permissionRequestItems`/`PermissionRequestCard`/`ModalOptionButton` and `ModalCancelButton`
+all take a `connected: Boolean` that `ThreadScreen` derives the same way as the #1319 footer gate
+(`connectionState == ConnectionState.Connected`) and pass straight to each control's `enabled`; a disabled
+button never calls back into the VM, so a tap on a greyed-out option neither sends nor arms. The VM-side gate
+is still required — the race this closes is the tap landing in the instant *after* the screen read
+`connected = true` but *before* `ThreadViewModel` observes the drop.
 
 ## The arm state — transient, modalId-scoped, structurally stale-safe
 
@@ -116,50 +159,106 @@ val armedOptionId: StateFlow<String?> =
   the daemon resolves it, so the user may answer again after a failure (no auto-retry — first-answer-wins is
   server-side).
 
-## The always-allow session grant (#818)
+### Leaving the conversation clears the arm, not the grant (#1306)
+
+The arm stays exactly as transient as above — it lives on the VM and dies with it — but a thread's
+`ThreadViewModel` now outlives its own screen: navigating to another conversation, or opening a second
+thread on top of this one, disposes the Compose destination without clearing the VM. `onConversationLeft()`
+is the explicit signal for that moment (`MainActivity`'s `DisposableEffect(vm) { onDispose {
+vm.onConversationLeft() } }`, fired by Back and by pushing a new destination alike):
+
+```kotlin
+fun onConversationLeft() {
+    armedModalOption.value = null
+}
+```
+
+It nulls only the arm. Coming back to the same outstanding request always needs two fresh taps on a
+non-default option — leaving never leaves a half-made "Allow" waiting to be confirmed by a later,
+unrelated tap. The session-grant draft below is **not** touched here: it belongs to the request, not to the
+visit, and the store that owns it retires it on its own terms (§ below).
+
+## The session-grant draft (#818, moved to process lifetime in #1306)
 
 A permission prompt can offer "don't ask again this session" (daemon #2364's `modal_shown.always_allow`,
 decoded into [`ModalUiState.Open.alwaysAllowRules`](current-modal-state.md) and its derived
 `offersAlwaysAllow`). Accepting the offer is a **separate, sibling state** to the arm above — it never arms
 and never sends by itself; it only changes what `sendAnswer` carries on the answer that *does* send.
 
-```kotlin
-private val acceptedAlwaysAllow = MutableStateFlow<AcceptedAlwaysAllow?>(null)   // private data class(modalId, rules)
+**#818 shipped it as a VM-private `MutableStateFlow<AcceptedAlwaysAllow?>`, so Back threw the tick away.**
+[#1306](../../specs/architecture/1306-inline-permissions.md) moved it into `PermissionDraftStore`
+(`ui/conversations/thread/PermissionDraftStore.kt`), an app-scoped singleton with the same process-lifetime
+precedent as [`QuestionDraftStore`](question-batch-modal.md#batch-ownership-process-lifetime-drafts-source--and-request-bound-sends) and
+[`ComposerDraftStore`](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership), so the
+checkbox survives Back for the same outstanding request:
 
+```kotlin
+internal data class PermissionGrantDraft(val modalId: String, val rules: List<String>)
+
+class PermissionDraftStore(dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate) {
+    private val drafts = MutableStateFlow<Map<Pair<String, String>, PermissionGrantDraft>>(emptyMap())
+    // bind(serverId, owner, modals) starts one collector per host that retires a stale draft (see below);
+    // observe/current/set are keyed on (serverId, conversationId); dispose() cancels everything.
+}
+```
+
+`ThreadViewModel` takes an optional `permissionDraftStore: PermissionDraftStore? = null` constructor
+parameter (a private store stands in for direct test/preview construction, mirroring `questionDraftStore`);
+`AppModule`'s `single { PermissionDraftStore() } onClose { it?.dispose() }` supplies the real one, and
+`ThreadDestinationFactory.thread` binds it to `bundle.coordinator.currentModal` beside the question-draft
+binding.
+
+```kotlin
 val alwaysAllowAccepted: StateFlow<Boolean> =
-    combine(currentModal, acceptedAlwaysAllow) { modal, accepted ->
+    combine(currentModal, grantDrafts.observe(serverId, conversationId)) { modal, accepted ->
         modal is ModalUiState.Open && modal.offersAlwaysAllow && accepted == modal.alwaysAllowKey()
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
 fun onAlwaysAllowChanged(modalId: String, accepted: Boolean) {
     val open = scopedModal() as? ModalUiState.Open ?: return
     if (open.modalId != modalId || !open.offersAlwaysAllow) return
-    acceptedAlwaysAllow.value = if (accepted) open.alwaysAllowKey() else null
+    grantDrafts.set(serverId, conversationId, if (accepted) open.alwaysAllowKey() else null)
 }
 
 private fun grantsAlwaysAllow(open: ModalUiState.Open, optionId: String): Boolean =
     optionId in ALWAYS_ALLOW_OPTION_IDS &&        // "allow_once" / "allow_always" only — never a deny
         open.offersAlwaysAllow &&
-        acceptedAlwaysAllow.value == open.alwaysAllowKey()
+        grantDrafts.current(serverId, conversationId) == open.alwaysAllowKey()
 ```
 
-- **Keyed on `(modalId, rules)`, not just `modalId`.** `alwaysAllowKey()` is `AcceptedAlwaysAllow(modalId,
+- **Keyed on `(modalId, rules)`, not just `modalId`.** `alwaysAllowKey()` is `PermissionGrantDraft(modalId,
   alwaysAllowRules)`. A new prompt, a replaced prompt, or the *same* `modalId` re-shown with a different rule
   list all read as unaccepted by construction — the same modalId-scoping discipline as `armedOptionId`, one
   field wider.
+- **Isolated by server, conversation, request identity and offer.** The map key is `(serverId,
+  conversationId)`; the stored value additionally carries `(modalId, rules)`, so two conversations, two
+  servers, or the same conversation's next request can never read each other's draft.
+- **A bound host retires a stale draft on its own, including while the chat is closed.** `bind(serverId,
+  owner, modals)` starts one `SupervisorJob`-scoped collector per host over the coordinator's `currentModal`;
+  on every emission it drops any draft for that server whose conversation's current modal is no longer an
+  `Open` offering that exact `(modalId, rules)` pair — replacement, resolution, cancellation, or the same
+  request re-offered with different rules all retire it, whether or not a thread for that conversation is
+  open. `bind` is idempotent per `owner` (the coordinator instance); a different owner cancels the old
+  collector and clears that host's drafts before starting fresh. An **unbound** store (a test, the demo
+  host) keeps every entry — the VM's own `(modalId, rules)` equality check in `grantsAlwaysAllow` still hides
+  a stale one from actually being used, so an unbound store is inert-but-correct, never unsafe.
 - **`onAlwaysAllowChanged`'s `modalId` argument is a guard, never a target.** It only stops a tap that lands
   after the rendered prompt was replaced from silently accepting the replacement's offer — the toggle can
-  never accept a prompt other than the one currently open. This was a security-review MUST FIX on this
-  ticket (a tap racing a `Shown` that replaces the frame before the tap lands).
+  never accept a prompt other than the one currently open. This was a security-review MUST FIX on #818 and
+  remains one under #1306's stale-tap guard above.
 - **A deny never carries the grant**, even with the offer accepted — `grantsAlwaysAllow` requires `optionId`
   to be `allow_once` or `allow_always`. This matches the desktop's `confirmPrompt`, and the contract treats
   `true` as a no-op on a deny anyway, so sending it there would carry no information.
-- **`onModalCancel` clears the acceptance** alongside the arm. **A send attempt does not** — `currentModal`
-  stays `Open` until the daemon resolves it, so a retry after a failed send still carries the same accepted
-  intent (mirrors the arm's own "clears on attempt, not on success" rule, just for a different field).
-- **Accepting never arms and never sends.** Ticking the checkbox only moves `acceptedAlwaysAllow`; it takes
-  effect the next time `onModalOption` decides to send. This keeps the existing arm-then-confirm gesture for
-  a non-default option completely unchanged — accepting the offer is not that second tap.
+- **`onModalCancel` clears the draft** alongside the arm. **A send attempt does not** — `currentModal` stays
+  `Open` until the daemon resolves it, so a retry after a failed send still carries the same accepted intent
+  (mirrors the arm's own "clears on attempt, not on success" rule, just for a different field).
+- **Accepting never arms and never sends.** Ticking the checkbox only moves the draft; it takes effect the
+  next time `onModalOption` decides to send. This keeps the existing arm-then-confirm gesture for a
+  non-default option completely unchanged — accepting the offer is not that second tap.
+- **Heap only.** The draft lives in the store's `MutableStateFlow`; nothing here reaches `rememberSaveable`,
+  `SavedStateHandle` or disk, so process death discards it exactly as before #1306 — only Back-and-reopen for
+  the life of the process survives now, not a restart. Debug logs (`event=permission_grant_draft
+  action=set|cleared|retired`) carry the action only, never a `modalId`, rule text or request text.
 - The flag itself never carries rule bytes — the phone sends only a boolean (`ModalAnswerPayloadDto
   .alwaysAllow: Boolean?`, `null` on an ordinary answer, `true` set at all only when the answer is a grant);
   the daemon decides what "the rules it retained for this modal" means and grants them, never the phone.
@@ -281,18 +380,19 @@ Taps on a VM with no open modal no-op via the `as? Open ?: return` guard.
 ## Testing
 
 Unit only (`./gradlew testDebugUnitTest --tests "…ThreadViewModelTest"` /
-`"…RelayRepositoryCoordinatorTest"`; bare `test --tests` is rejected — [[gradle-single-test-class-task]]). No
-instrumented test (no UI). `ThreadViewModelTest` drives an `Open` modal by setting the injected
-`StateFlow<ModalUiState>`'s `.value` directly (via the `vmWithModal` / `openModal(...)` helpers — renamed in
-[#492](../codebase/492.md) from the pre-hoist `vmWithModalEvents` / `modalShown` that emitted a raw
-`ModalEvent.Shown`), captures the send path with recording lambdas (`vmWithModalSendPath`), and asserts
-`armedOptionId.value` + collects `modalSendErrors` (the `navigationEvents` pattern): default→answer,
-non-default→arm, second-tap→send+clear, re-tap→re-arm, cancel→cancel+clear, failure→error-signal, stale-arm
-scoping, inert-with-no-modal, and the `modalSend_scopeCancellationMidSend_doesNotEmitErrorSignal` regression
-(hosts the VM in a real `ViewModelStore`, suspends a send on a never-completing deferred, `store.clear()`s
-the scope, asserts no error fires). `RelayRepositoryCoordinatorTest` mirrors the `register_push_token`
-quartet for the passthrough (delegate-over-active-connection + no-connection-throws), driven with
-`runCurrent()` ([[remote-repo-test-runcurrent-not-advanceuntilidle]]).
+`"…RelayRepositoryCoordinatorTest"` / `"…PermissionDraftStoreTest"`; bare `test --tests` is rejected —
+[[gradle-single-test-class-task]]). No instrumented test (no UI). `ThreadViewModelTest` drives an `Open`
+modal by setting the injected `StateFlow<ModalUiState>`'s `.value` directly (via the `vmWithModal` /
+`openModal(...)` helpers — renamed in [#492](../codebase/492.md) from the pre-hoist `vmWithModalEvents` /
+`modalShown` that emitted a raw `ModalEvent.Shown`), captures the send path with recording lambdas
+(`vmWithModalSendPath`), and asserts `armedOptionId.value` + collects `modalSendErrors` (the
+`navigationEvents` pattern): default→answer, non-default→arm, second-tap→send+clear, re-tap→re-arm,
+cancel→cancel+clear, failure→error-signal, stale-arm scoping, inert-with-no-modal, and the
+`modalSend_scopeCancellationMidSend_doesNotEmitErrorSignal` regression (hosts the VM in a real
+`ViewModelStore`, suspends a send on a never-completing deferred, `store.clear()`s the scope, asserts no
+error fires). `RelayRepositoryCoordinatorTest` mirrors the `register_push_token` quartet for the
+passthrough (delegate-over-active-connection + no-connection-throws), driven with `runCurrent()`
+([[remote-repo-test-runcurrent-not-advanceuntilidle]]).
 
 `ThreadViewModelTest` (#818) extends the same recording-lambda pattern to a `Triple(modalId, optionId,
 alwaysAllow)`: accept-then-allow (default tap and the armed second confirm) sends `true`; allow without
@@ -301,6 +401,19 @@ accepting, accept-then-reject, and accept-then-cancel all send `false`; a replac
 accepting never arms or sends by itself. `RemoteConversationRepositoryTest` covers the decode
 (`toAlwaysAllowRules`, offered/malformed/oversized/over-count cases) and the encode (`alwaysAllow = true`
 adds the wire key; the default call stays exactly the three original keys).
+
+**#1306 added four `ThreadViewModelTest` cases (207/207 total) and a new `PermissionDraftStoreTest`
+(7/7).** The VM cases: a `PermissionGrantDraft` shared through a common `PermissionDraftStore` survives VM
+recreation (Back and reopen) and the recreated VM's allow carries it; `onConversationLeft` clears the arm so
+an allow after returning needs two fresh taps (the grant itself is untouched); a stale `modalId` on
+`onModalOption` / `onModalCancel` is ignored once the scoped modal has moved on; and a replaced request
+never inherits the previous one's grant. `PermissionDraftStoreTest` covers isolation by server and
+conversation, a bound collector retiring a draft on replacement / dismissal / a changed rule list / an owner
+rebind, and the matching request keeping its draft through all of that. `ThreadScreenModalTest` (31/31,
+adapted to the inline surface — see [Permission-modal overlay §
+Testing](permission-modal-overlay.md#testing)) covers the render side: no dialog, an empty thread, live
+Back, the history anchor across arrival and the grant toggle, and the two-tap flow driven through the
+rendered `modalId`.
 
 ## Related
 
@@ -311,11 +424,16 @@ adds the wire key; the default call stays exactly the three original keys).
 - [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md)) — the hoisted `currentModal` /
   `Open.defaultOptionId` this reads at tap time; the projection half.
 - [Permission-modal overlay](permission-modal-overlay.md) ([#446](../codebase/446.md) base + [#452](../codebase/452.md)
-  live) — the render of the open overlay + dismiss snackbar; the render slice **#452** extended it with the
-  armed affordance + Cancel button + send-error snackbar + tapjacking net and wired these VM hooks
-  (`vm::onModalOption` / `vm::onModalCancel`) + `armedOptionId` / `modalSendErrors` into the route host;
-  [**#818**](permission-modal-overlay.md#the-always-allow-offer-818) added `AlwaysAllowOffer`, which reflects
-  this doc's `alwaysAllowAccepted` the same way the options reflect `armedOptionId`.
+  live + [#1306](permission-modal-overlay.md) inline) — the render of the request + dismiss snackbar; the
+  render slice **#452** extended it with the armed affordance + Cancel button + send-error snackbar +
+  tapjacking net and wired these VM hooks (`vm::onModalOption` / `vm::onModalCancel`) + `armedOptionId` /
+  `modalSendErrors` into the route host; [**#818**](permission-modal-overlay.md#the-always-allow-offer-818)
+  added `AlwaysAllowOffer`, which reflects this doc's `alwaysAllowAccepted` the same way the options reflect
+  `armedOptionId`; **#1306** moved the whole render out of its dialog window into the conversation's message
+  stream and widened every decision callback to carry the rendered `modalId`.
+- [Question batch modal § Batch ownership](question-batch-modal.md#batch-ownership-process-lifetime-drafts-source--and-request-bound-sends)
+  — the process-lifetime, app-scoped draft-store precedent `PermissionDraftStore` follows for the
+  session-grant checkbox.
 - [Remote conversation repository § `answerModal` / `cancelModal`](remote-conversation-repository.md)
   ([#438](../codebase/438.md)) — the concrete outbound send methods the passthrough delegates to.
 - [Relay repository coordinator § Outbound modal-send passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-modal-send-passthrough-451)

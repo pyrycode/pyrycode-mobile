@@ -86,6 +86,24 @@ class ToolPayloadsTest {
         assertEquals("", decodeToolResult(""""parent_tool_use_id":""""").parentToolUseId)
     }
 
+    // ---- #1316: tool_result's result_detail -----------------------------------------------------------
+
+    @Test
+    fun toolResult_absentResultDetail_decodesToEmpty() {
+        assertEquals("", decodeToolResult("").resultDetail)
+    }
+
+    @Test
+    fun toolResult_emptyResultDetail_decodesToEmpty() {
+        assertEquals("", decodeToolResult(""""result_detail":""""").resultDetail)
+    }
+
+    @Test
+    fun toolResult_resultDetail_isCarriedVerbatim() {
+        assertEquals("110 of 1676 lines", decodeToolResult(""""result_detail":"110 of 1676 lines"""").resultDetail)
+        assertEquals(" 265 lines <b> ", decodeToolResult(""""result_detail":" 265 lines <b> """").resultDetail)
+    }
+
     // ---- Fixtures ---------------------------------------------------------------------------------
 
     /** Decode a `tool_use` whose base fields are fixed and [extra] (a `"key":value` fragment) is appended. */

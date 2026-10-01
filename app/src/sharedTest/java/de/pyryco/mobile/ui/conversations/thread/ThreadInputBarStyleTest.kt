@@ -62,7 +62,6 @@ class ThreadInputBarStyleTest {
         dark: Boolean,
         wallpaper: Boolean = false,
         busy: Boolean = false,
-        attachments: Boolean = false,
         sending: Boolean = false,
     ) {
         sends = 0
@@ -96,7 +95,6 @@ class ThreadInputBarStyleTest {
                                 modifier = Modifier.testTag("composer"),
                                 isBusy = busy,
                                 onInterrupt = { stops++ },
-                                hasAttachments = attachments,
                                 sending = sending,
                             )
                         }
@@ -192,15 +190,9 @@ class ThreadInputBarStyleTest {
         assertEquals(1, stops)
     }
 
-    @Test fun pendingAttachmentSendsWhileBusy() {
-        show(dark = true, busy = true, attachments = true)
-        rule.onNodeWithContentDescription("Send message").assertIsEnabled().performClick()
-        assertEquals(1, sends)
-        assertEquals(0, stops)
-    }
-
     @Test fun sendingAttachmentDisablesDuplicateTap() {
-        show(dark = true, busy = true, attachments = true, sending = true)
+        show(dark = true, sending = true)
+        rule.onNode(hasSetTextAction()).performTextInput("with files")
         rule.onNodeWithContentDescription("Send message").assertIsNotEnabled()
     }
 

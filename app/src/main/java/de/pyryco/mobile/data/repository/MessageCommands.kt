@@ -106,7 +106,7 @@ internal class MessageCommands(
     @Synchronized
     fun endAttachmentUploads() {
         uploadInboundEnded = true
-        activeUpload?.fail(AttachmentUploadResult.ReconnectRequired)
+        activeUpload?.fail(AttachmentUploadResult.ConnectionLost)
     }
 
     @Synchronized
@@ -209,6 +209,9 @@ internal class MessageCommands(
      * further chunk. No timeout: the connection's own liveness teardown ends an upload the daemon never
      * answers, through the inbound collector's `finally`.
      *
+     * After each chunk the socket accepted, and before the yield, [onProgress] gets the chunks sent so far
+     * and the total, unless the transfer has settled — as desktop's `reportProgress` (#1326).
+     *
      * Logs the attachment id, the chunk index and the total — never the bytes, filename, digest or type.
      */
     suspend fun uploadAttachment(
@@ -216,6 +219,7 @@ internal class MessageCommands(
         bytes: ByteArray,
         filename: String,
         mimeType: String,
+        onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
     ): AttachmentUploadResult {
         if (!AttachmentUploadLimit.fits(bytes.size)) return AttachmentUploadResult.TooLarge
         return uploadLock.withLock {
@@ -240,10 +244,12 @@ internal class MessageCommands(
                             false
                         }
                     if (!sent) {
-                        transfer.fail(AttachmentUploadResult.ReconnectRequired)
+                        transfer.fail(AttachmentUploadResult.SendFailed)
                         break
                     }
                     RelayLog.d { "event=attachment_chunk id=${transfer.attachmentId} index=$index total=${plan.totalChunks}" }
+                    // The same flag the loop re-reads (#1326): a settle during the send stops the report with the chunks.
+                    if (!transfer.isSettled) onProgress(index + 1, plan.totalChunks)
                     // Lets the inbound collector settle a refusal before the next chunk, and makes the loop cancellable.
                     yield()
                 }

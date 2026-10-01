@@ -73,7 +73,8 @@ sealed interface LiveSessionEvent {
 
     /** A tool invocation's result (`tool_result`), matched to its [ToolUse] by [toolUseId].
      *  [resultSummary] is a server-authored précis (not the raw output). [parentToolUseId] is as on
-     *  [ToolUse] (#810). */
+     *  [ToolUse] (#810). [resultDetail] (#1316) is the daemon's count of what the call returned, verbatim,
+     *  `""` when there is none: display text only, never parsed into a number, logged or linked. */
     data class ToolResult(
         override val conversationId: String,
         val turnId: String,
@@ -81,6 +82,7 @@ sealed interface LiveSessionEvent {
         val isError: Boolean,
         val resultSummary: String,
         val parentToolUseId: String = "",
+        val resultDetail: String = "",
     ) : LiveSessionEvent
 
     /**

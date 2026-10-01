@@ -637,15 +637,34 @@ private fun ConversationTree(
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Sorted here, not in treeHost: the placeholder is a string resource, and the drawn label and the
+    // sorted label must come from the same string.
+    val untitled = stringResource(R.string.untitled_discussion)
+    val sections =
+        remember(hostState.hosts, untitled) {
+            val comparator = conversationLabelComparator(untitled)
+            hostState.hosts.map { entry ->
+                SortedSections(
+                    channels = entry.host.channels.sortedWith(comparator),
+                    chats = entry.host.chats.sortedWith(comparator),
+                )
+            }
+        }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = TreeGutter, end = TreeGutter, bottom = TreeBottomInset),
     ) {
         hostState.hosts.forEachIndexed { index, entry ->
-            treeHost(index, entry, hostState, onEvent)
+            treeHost(index, entry, sections[index], hostState, onEvent)
         }
     }
 }
+
+/** One host's Channels and Chats rows in the sidebar's alphabetical order ([conversationLabelComparator]). */
+private class SortedSections(
+    val channels: List<Conversation>,
+    val chats: List<Conversation>,
+)
 
 /**
  * Emits a host once, followed by its two independent sections and direct conversation rows.
@@ -656,6 +675,7 @@ private fun ConversationTree(
 private fun LazyListScope.treeHost(
     index: Int,
     entry: HostChannelListEntry,
+    sections: SortedSections,
     hostState: HostChannelListState,
     onEvent: (ChannelListEvent) -> Unit,
 ) {
@@ -701,7 +721,7 @@ private fun LazyListScope.treeHost(
             )
         }
         if (sectionKey in hostState.collapsed) continue
-        val conversations = if (section == ConversationTreeSection.Channels) host.channels else host.chats
+        val conversations = if (section == ConversationTreeSection.Channels) sections.channels else sections.chats
         itemsIndexed(
             items = conversations,
             key = { _, conversation -> treeItemKey("conversation", section.name, host.serverId, conversation.id) },

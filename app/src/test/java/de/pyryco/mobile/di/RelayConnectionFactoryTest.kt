@@ -41,6 +41,7 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.HostReadingFrames
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -80,6 +81,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -533,6 +535,64 @@ class RelayConnectionFactoryTest {
             }
         }
 
+    // #1317: a thread's pushed readings outlive its host's connection but not its pairing, and stay on their host.
+    @Test
+    fun heldReadingsSurviveReconnectButNotRepairOrUnpairAndStayOnTheirHost() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            val destinations =
+                ThreadDestinationFactory(
+                    useRelay = true,
+                    registry = registry,
+                    fake = FakeConversationRepository(),
+                    store = f.store,
+                    decorateRepository = { it },
+                    attachmentReader = lazy { AttachmentReader { AttachmentRead.Unreadable } },
+                )
+            try {
+                registry.connect()
+                runCurrent()
+                HostReadingFrames.all("c", model = "opus").forEach(f.transports[0]::emit)
+                runCurrent()
+                val firstPairing = destinations.repository("A")
+                HostReadingFrames.assertHeld(firstPairing, "c", model = "opus")
+                HostReadingFrames.assertNone(destinations.repository("B"), "c")
+
+                f.transports[0].close()
+                runCurrent()
+                assertNull(
+                    registry
+                        .connectionFor("A")!!
+                        .coordinator.currentRepository.value,
+                )
+                HostReadingFrames.assertHeld(firstPairing, "c", model = "opus")
+
+                f.store.save(f.a.record.copy(token = "rotated"))
+                runCurrent()
+                HostReadingFrames.assertNone(firstPairing, "c")
+                HostReadingFrames.assertNone(destinations.repository("A"), "c")
+
+                HostReadingFrames.all("c", model = "sonnet").forEach(f.transports.last()::emit)
+                runCurrent()
+                val secondPairing = destinations.repository("A")
+                HostReadingFrames.assertHeld(secondPairing, "c", model = "sonnet")
+
+                f.store.remove("A")
+                runCurrent()
+                HostReadingFrames.assertNone(secondPairing, "c")
+                f.store.save(f.a.record)
+                runCurrent()
+                HostReadingFrames.assertNone(destinations.repository("A"), "c")
+                HostReadingFrames.assertNone(destinations.repository("B"), "c")
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
     @Test
     fun registryKeepsPeerEventsModalCursorAndPendingReplyThroughOtherHostFailure() =
         runTest {
@@ -977,6 +1037,7 @@ class RelayConnectionFactoryTest {
     fun destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect() =
         runTest {
             Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val questionScheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
             val f = Fixture(this)
             val registry = f.registry()
             val prefs =
@@ -995,6 +1056,10 @@ class RelayConnectionFactoryTest {
                         single { registry }
                         single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                         single { prefs }
+                        single {
+                            de.pyryco.mobile.ui.conversations.thread
+                                .QuestionDraftStore(StandardTestDispatcher(questionScheduler))
+                        }
                         // The thread destination now wraps its repository in the thread cache (#797), whose
                         // real binding needs a Context this container does not have.
                         single<ConversationCache> { InertConversationCache }
@@ -1134,6 +1199,23 @@ class RelayConnectionFactoryTest {
                         ?.jsonPrimitive
                         ?.content,
                 )
+                val shown =
+                    envelope(
+                        "question_shown",
+                        """{"conversation_id":"c","question_batch_id":"same-question","questions":[{"question":"Q","header":"H","options":[{"label":"A","description":"B"}],"multi_select":false}]}""",
+                    )
+                ta.emit(shown)
+                tb.emit(shown)
+                runCurrent()
+                questionScheduler.runCurrent()
+                runCurrent()
+                a.onQuestionEvent(
+                    de.pyryco.mobile.ui.conversations.thread.QuestionModalEvent
+                        .OptionToggled(0, 0),
+                )
+                runCurrent()
+                val oldQuestion = checkNotNull(a.questionModal.value)
+                assertTrue(oldQuestion.canContinue)
                 registry.connectionFor("A")!!.supervisor.close()
                 runCurrent()
                 b.onInterrupt()
@@ -1153,6 +1235,30 @@ class RelayConnectionFactoryTest {
                 runCurrent()
                 assertEquals("A reconnected", a.state.value.displayName)
                 assertEquals("B content", b.state.value.displayName)
+                nextA.emit(shown)
+                runCurrent()
+                // Keep the app-owned store queued while the real coordinator has rebuilt an equal request.
+                assertEquals(oldQuestion, a.questionModal.value)
+                a.onQuestionEvent(de.pyryco.mobile.ui.conversations.thread.QuestionModalEvent.Continue, oldQuestion.generation)
+                a.onQuestionEvent(de.pyryco.mobile.ui.conversations.thread.QuestionModalEvent.Cancel, oldQuestion.generation)
+                runCurrent()
+                assertTrue(nextA.outbound.none { it.type.startsWith("question_") })
+                assertTrue(ta.outbound.none { it.type.startsWith("question_") })
+                questionScheduler.runCurrent()
+                runCurrent()
+                val freshQuestion = checkNotNull(a.questionModal.value)
+                assertEquals(oldQuestion.batch, freshQuestion.batch)
+                assertFalse(freshQuestion.canContinue)
+                assertNotEquals(oldQuestion.generation, freshQuestion.generation)
+                a.onQuestionEvent(
+                    de.pyryco.mobile.ui.conversations.thread.QuestionModalEvent
+                        .OptionToggled(0, 0),
+                )
+                a.onQuestionEvent(de.pyryco.mobile.ui.conversations.thread.QuestionModalEvent.Continue, freshQuestion.generation)
+                b.onQuestionEvent(de.pyryco.mobile.ui.conversations.thread.QuestionModalEvent.Cancel)
+                runCurrent()
+                assertEquals(listOf("question_answer"), nextA.outbound.map { it.type }.filter { it.startsWith("question_") })
+                assertEquals(listOf("question_refused"), tb.outbound.map { it.type }.filter { it.startsWith("question_") })
                 val demoApp =
                     KoinApplication.init().modules(
                         appModule,

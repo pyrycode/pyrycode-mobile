@@ -501,7 +501,44 @@ class ThreadViewModelEffortRecallTest {
             assertEquals(listOf(SetSessionSettingsPayloadDto("sess-b", effort = "high")), repo.calls)
         }
 
+    // #1320: a reading held across a reconnect is shown but never acted on. Neither the disconnected gap nor
+    // the new connection's head sends the recall; the connection's own reply decides, at its own session.
+    @Test
+    fun aHeldReading_inTheGapAndAtTheNewHead_triggersNothing_untilTheLiveReplyArrives() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.liveSession.value = "sess-b"
+            val vm = collectedVm(repo, MemoryStore("high"), reading(effort = "", sessionId = "sess-b").asHeld())
+            val errors = mutableListOf<Unit>()
+            backgroundScope.launch { vm.sessionSettingsErrors.collect { errors += it } }
+
+            repo.readings.emit(reading(effort = "", sessionId = "sess-b").asHeld())
+            runCurrent()
+            assertTrue("no write on a held reading", repo.calls.isEmpty())
+            assertTrue("no settings-failed signal", errors.isEmpty())
+
+            repo.readings.emit(reading(effort = "", sessionId = "sess-b"))
+            runCurrent()
+            assertEquals(listOf(SetSessionSettingsPayloadDto("sess-b", effort = "high")), repo.calls)
+        }
+
+    @Test
+    fun aHeldReadingForAReplacedSession_neverAddressesIt_theLiveReplyDecides() =
+        runTest {
+            val repo = ScriptedRepo()
+            repo.liveSession.value = ""
+            collectedVm(repo, MemoryStore("high"), reading(effort = "", sessionId = SESSION).asHeld())
+
+            assertTrue(repo.calls.isEmpty())
+
+            repo.readings.emit(reading(effort = "", sessionId = "sess-b"))
+            runCurrent()
+            assertEquals(listOf(SetSessionSettingsPayloadDto("sess-b", effort = "high")), repo.calls)
+        }
+
     // ---- fixtures -------------------------------------------------------------------------------
+
+    private fun SessionSettings.asHeld() = copy(held = true)
 
     private fun newVm(
         repo: ScriptedRepo,

@@ -1,0 +1,23 @@
+Ticket: #1305; static fixture evidence for #1220.
+App: feature/1305 implementation accompanying this artifact; version 1.0.0.
+Fixture: Client planning; Language/Kotlin/Rust; Targets/Kotlin/Rust/Other Web. No live content or daemon used.
+Device: managed pixel2Api33Atd, runtime device-info reports dev33_google_atd_arm64-v8a_Pixel_2 / Android ATD built for arm64.
+Toolchain: installed Android SDK and Android Studio JDK supplied through ANDROID_HOME/JAVA_HOME.
+
+Device command (exit 0):
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest,de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalCaptureTest,de.pyryco.mobile.MainActivityInsetsDeviceTest#populatedThreadKeyboardAt412By892,de.pyryco.mobile.MainActivityInsetsDeviceTest#populatedThreadKeyboardAt360By640' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Executed: 13. Failed: 0. Skipped: 0. Fresh result retained as api33-focused.xml.
+Original evidence path: app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml.
+Selected classes prove radio/checkbox/Other answers, validation and retry, real pointer focus/selection, compact stacked action touch boundaries, automatic Other scrolling above the actual IME, keyboard-close draft retention, secure capture and rejection of obscured MotionEvents with policy restoration. Both existing populated-thread keyboard methods ran and passed.
+
+Unit/shared command (exit 0):
+./gradlew testDebugUnitTest --tests de.pyryco.mobile.ui.conversations.thread.QuestionDraftStoreTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadViewModelQuestionTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest --console=plain
+Executed: 28. Failed: 0. Skipped: 0. Fresh selected suites retained as jvm-focused.xml.
+Coverage includes destination removal/reopening, owner isolation, dismissal while away, non-null repository replacement with an equal request, stale-generation callbacks/completions, navigation cancellation during a send, empty placement, active Back, history anchoring and oldest-history demand without prompt replacement loops.
+
+Builder gates (exit 0): ./gradlew lint assembleDebug compileDebugAndroidTestKotlin; ./gradlew spotlessApply; ./gradlew spotlessCheck --rerun-tasks --console=plain.
+Lint: no errors; existing vector-path and deprecated API warnings reviewed. No shared-doc edits.
+Capture: FLAG_SECURE remains set; draw only the fixture activity view. Normal 412x892, compact 320x700 with 150% text. Keyboard crop is the app viewport above the actual 240dp test IME; dimensions/insets are retained per image in question-*.txt.
+Visual notes: Other retains the existing 48dp focus region around a 32dp well, making cards slightly taller than static Figma. The existing composer settings control and compact context truncation remain unchanged. Buttons keep expanded 48dp touch regions separate from visible bounds.
+
+Pending dispatcher: full UI/scripted gates; full rung-3 live suite. Confirm InteractiveStreamE2ETest.interactiveTurn_questionAnswer_reachesTheAskingConversation ran and passed, with fresh XML and executed/failed/skipped counts. No focused live-Claude run was performed. Documentation stage records that named live result and updates question/thread topics. #1220 remains in Inbox.

@@ -1,28 +1,44 @@
 # Question batch modal
 
-Renders the clarification batch a `AskUserQuestion` tool call holds open for the active conversation
-(#661), and wires Continue / Cancel through `ThreadViewModel`. The data layer that holds and sends batches
-predates this: #822 holds each host's outstanding batches and exposes
+Renders the clarification batch a `AskUserQuestion` tool call holds open for a conversation (#661), and
+wires Continue / Cancel through `ThreadViewModel`. The data layer that holds and sends batches predates
+this: #822 holds each host's outstanding batches and exposes
 `RelayRepositoryCoordinator.observeQuestionBatch(conversationId)`; #825 adds the sends,
-`answerQuestionBatch` / `refuseQuestionBatch`. This ticket is the first (and so far only) consumer of both.
-The live end-to-end proof — a real `AskUserQuestion` batch rendered, answered and refused against the
-daemon, closed by its `question_dismissed` — is left to #679; everything below is unit- and Compose-tested
-against fakes.
+`answerQuestionBatch` / `refuseQuestionBatch`.
+
+**#1305 moved the batch out of its own `Dialog` window and into `ThreadScreen`'s scrollable message
+stream**, reusing the same controls and wire contract. The file name `QuestionBatchModal.kt` and its test
+names (`QuestionBatchModalTest`, `QuestionBatchModalCaptureTest`) are a known naming leftover from the
+dialog era — see § Placement and § Rendering below for the current shape. The live end-to-end proof — a
+real `AskUserQuestion` batch rendered, answered and refused against the daemon, closed by its
+`question_dismissed` — landed with #966's `interactiveTurn_questionAnswer_reachesTheAskingConversation`;
+\#1305 adapted its selectors to the inline surface (see
+[Real-claude e2e coverage](../../e2e-interactive-stream.md)) without changing what it proves. Everything
+else below is unit- and Compose-tested against fakes.
 
 ## Where it lives
 
 - `ui/conversations/thread/QuestionModalState.kt` — `QuestionSelection`, `QuestionSendPhase`,
-  `QuestionModalState`, `QuestionModalEvent`; `ThreadViewModel.kt` — the `questionModal: StateFlow<QuestionModalState?>` and
-  `onQuestionEvent`.
-- `ui/conversations/thread/QuestionBatchModal.kt` (new file) — the stateless composable and its private
-  `QuestionBlock` / `ChoiceRow`.
-- `ui/components/MobileModal.kt` — `MobileGateModal` gained the submit/sending/error extension this modal
-  is the first to use; see [Shared mobile modal § The hardened gate](mobile-modal.md#the-hardened-gate-mobilegatemodal).
-- `MainActivity.kt` — collects `vm.questionModal` and draws `QuestionBatchModal` **beside** `ThreadScreen`,
-  not inside it (see § Placement below).
-- `di/AppModule.kt` — binds the coordinator's `observeQuestionBatch` / `answerQuestionBatch` /
-  `refuseQuestionBatch` into the `ThreadViewModel` constructor, the same passthrough shape
-  [Modal answer flow](modal-answer-flow.md) uses for `answerModal` / `cancelModal`.
+  `QuestionModalState` (now carrying a `generation: Long`, § State shape), `QuestionModalEvent`;
+  `ThreadViewModel.kt` — the `questionModal: StateFlow<QuestionModalState?>` and `onQuestionEvent(event,
+  generation)`.
+- `ui/conversations/thread/QuestionDraftStore.kt` (new in #1305) — the app-scoped, process-lifetime store
+  that now owns the picks; see § Batch ownership below.
+- `ui/conversations/thread/QuestionBatchModal.kt` — `QuestionBatchTitle`, `QuestionBatchActions`,
+  `QuestionBlock` / `ChoiceRow` (the rendering pieces, now drawn directly as `ThreadScreen` `LazyColumn`
+  items instead of inside a `MobileGateModal` window) and `QuestionPromptProtection` /
+  `QuestionProtectionOwners` (the capture/touch-filter guard that replaces the dialog window's own
+  protection; § Rendering).
+- `ui/conversations/thread/ThreadScreen.kt` — mounts the prompt rows, the newest-end reveal effect and the
+  composer-status "Waiting for answers" reading; see [Thread screen § list and status
+  row](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305).
+- `MainActivity.kt` — passes `questionState = questionModal` and `onQuestionEvent = vm::onQuestionEvent`
+  straight into the `ThreadScreen(...)` call (see § Placement below); no longer draws a sibling `Dialog`.
+- `di/AppModule.kt` — `single { QuestionDraftStore() } onClose { it?.dispose() }` binds the app-scoped store;
+  `ThreadDestinationFactory.thread` binds it to the destination's `RelayRepositoryCoordinator` and its
+  `submitQuestionBatch` handler (§ Batch ownership).
+- `data/repository/RelayRepositoryCoordinator.kt` — `submitQuestionBatch(source, batch, answers)`, the
+  authoritative outbound boundary the store's submission validates against (§ Batch ownership).
 
 ## State shape
 
@@ -37,8 +53,13 @@ independent on a multiple-choice question. Typing into the Other field ticks it 
 single-choice clear), so a typed answer cannot sit un-ticked and silently excluded.
 
 `QuestionModalState(batch, selections, phase: QuestionSendPhase, agent: ConversationAgent =
-ConversationAgent.Claude)` is one send's worth of state, plus the conversation's agent for the title
-(#1116, § Title below):
+ConversationAgent.Claude, generation: Long = 0)` is one send's worth of state, plus the conversation's agent
+for the title (#1116, § Title below). **`generation` is new in #1305**: a monotonically allocated, per-store
+counter (never saved or persisted) that changes on any replacement, dismissal or source reconnect, even when
+the same batch id and payload return. Every `ThreadScreen` event and outbound send now carries the
+generation it was rendered against, so a stale composition callback — a tap queued before a replacement, an
+edit landing after the batch it edited is gone — cannot act on a newer request; see § Batch ownership below
+for the full mechanism.
 `locked` is true while `phase` is `Sending` or `Sent` — **`Sent`, not just `Sending`**, because the daemon
 sends no reply to `question_answer` / `question_refused` and the batch is only truly resolved by the later
 `question_dismissed`. A modal that unlocked itself after `Sent` would let a second Continue race the first
@@ -46,28 +67,70 @@ send. `answers()` returns one `QuestionAnswer` per question — option labels in
 Other text **verbatim** when ticked and non-blank — or `null` if any question has no value; `canContinue`
 composes that with `!locked`.
 
-## Batch ownership: one modal, one batch, no stale sends
+## Batch ownership: process-lifetime drafts, source- and request-bound sends
 
-`ThreadViewModel` holds a single `viewModelScope` collector of the injected `questionBatch(conversationId)`
-flow, filtered to `batch.conversationId == conversationId` as a belt over the coordinator's own
-`batchFor` filtering (a batch held for a different conversation must never surface in this thread, let alone
-receive this thread's answers). The reconcile is a plain data-equality check: the *same* batch (by value)
-keeps whatever `phase` and `selections` the modal already has; *any other* batch — a genuine replacement, or
-the same `questionBatchId` re-sent after a reconnect's empty-then-rebuild — starts fresh at `Idle` with
-empty selections; `null` closes the modal and discards everything in it. Selections live only in this
-`MutableStateFlow`, never `SavedStateHandle` or `rememberSaveable`, so process death also discards them —
-the daemon's reconnect re-sends the batch regardless.
+**#1305 moved ownership off the destination `ThreadViewModel` and onto `QuestionDraftStore`, an app-scoped
+singleton with the same process-lifetime precedent as [`ComposerDraftStore`](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership).**
+The picks a user made before navigating away (Back to the list, opening another chat) used to live in the
+destination's own `MutableStateFlow` and were lost when that destination was popped; the store now survives
+the destination and is keyed by `(serverId, conversationId)`, so reopening the same conversation for the
+life of the app process restores the same selections and Other text for the same outstanding batch. Drafts
+are heap-only — never `SavedStateHandle`, `rememberSaveable` or disk — so process death still discards them,
+same as before.
 
-Both sends (`Continue` → `answerQuestionBatch`, `Cancel` → `refuseQuestionBatch`) go through one
-`sendQuestion(questionBatchId, kind, send)` helper: it captures `questionBatchId` from the state held **at
-the moment of the tap**, sets `Sending` synchronously (so a double tap before recomposition still sends
-once), then applies the outcome (`Sent` or `Failed`) only if the *currently held* batch's id still matches
-— a completion for a batch the modal has since moved past (dismissed, replaced) is silently dropped rather
-than reviving stale UI. `CancellationException` is rethrown before the typed `RelayErrorException` /
-`IllegalStateException` / `IllegalArgumentException` catches, matching every other guarded send in this
-view model (`sendMessage`, `launchHistoryAsk`, [modal answer flow](modal-answer-flow.md)'s
-`sendAnswer`/`sendCancel`). A `Failed` outcome keeps every selection so the user can retry without re-picking
-anything, and re-enables both footer buttons.
+**One collector per host, bound once, outliving the destination.** `ThreadDestinationFactory.thread` calls
+`questionDrafts.bind(serverId, bundle.coordinator, bundle.coordinator.currentRepository,
+liveRepository = bundle.coordinator::liveRepository, submit = bundle.coordinator::submitQuestionBatch)`.
+`bind` is a no-op if the same `owner` (the coordinator instance) is already bound for that `serverId`; a
+different owner cancels the old collector via `clearHost` before starting a new one. The collector
+`collectLatest`s the coordinator's `currentRepository` and, for each `RemoteConversationRepository` it
+sees, its `questionBatches`. A reconnect that replaces the concrete repository first reconciles with an
+empty list (clearing any stale drafts for that host) before the new repository's own batches arrive — the
+same "empty-then-rebuild" shape the pre-#1305 destination-scoped flow already had, just owned one level
+higher. `ThreadViewModel` itself keeps its old standalone-test path: when no `QuestionDraftStore` is
+injected (the default), it builds a private one and folds the injected `questionBatch(conversationId)` flow
+into it directly, so `ThreadViewModelQuestionTest`'s existing fakes need no store wiring.
+
+**Generation, not batch equality, is the identity the send path trusts.** `reconcileHost` keeps an existing
+draft's picks and generation only when `old?.batch == batch` (**structural** equality — the daemon can
+re-send a `question_shown` with an unchanged payload after a `StateFlowImpl` conflation, and a data-class
+equality check treats that as "still the same request"); any other batch — by id or content — allocates a
+fresh `QuestionModalState` with the next `nextGeneration`. `current(serverId, conversationId)` and
+`submit(...)`, by contrast, re-validate the **held instance** against the live source by identity (`!==`) —
+a retired source (`binding.liveRepository() !== source`) or a request the source no longer reports at that
+identity clears the draft and logs `event=question_draft_retired`. The verifier flagged the `==`/`!==`
+split as a non-blocking SHOULD FIX (the two checks could in principle disagree during a same-id,
+same-payload reconnect race); it was not shipped, because `QuestionBatchProjection` applies updates through
+`MutableStateFlow.update`, and `StateFlowImpl` never re-stores a value that equals the current one — so an
+unchanged batch keeps its original instance in practice, and the two checks cannot actually disagree. A
+future change to either identity rule should re-examine that assumption rather than taking it on faith.
+
+**Every event and send is generation-scoped.** `ThreadScreen`'s `onQuestionEvent(event, generation)` passes
+the generation the row was rendered against (captured from `pending.generation` at the `LazyColumn` item,
+not re-read at tap time). `ThreadViewModel.onQuestionEvent` re-fetches `questions.current(serverId,
+conversationId)` and bails if its generation no longer matches — a stale composition callback (queued before
+a replacement) is a no-op rather than a mutation of a request that no longer exists. `sendQuestion` captures
+the generation at the moment of the tap, sets `Sending` synchronously (so a double tap before recomposition
+still sends once), and checks the generation **twice more**: once before launching the send (in case the
+draft was already replaced between the tap and the coroutine starting), and again via `QuestionDraftStore.submit`,
+which re-validates against the live repository/request **at the outbound boundary**, immediately before the
+actual `answerQuestionBatch` / `refuseQuestionBatch` call. `CancellationException` is rethrown before the
+typed `RelayErrorException` / `IllegalStateException` / `IllegalArgumentException` catches, matching every
+other guarded send in this view model — a cancellation additionally marks the generation `Failed` via
+`invokeOnCompletion`, so an interrupted send (e.g. the destination cancelling on navigation) restores
+retryability instead of leaving the draft stuck at `Sending`.
+
+**The outbound boundary is the authoritative check, not the store's asynchronous projection.** This closes a
+reconnect race the first rework pass found: a reconnect can replace the coordinator's active repository and
+rebuild an equal outstanding batch (same id, same payload) while the store's `Dispatchers.Main.immediate`
+collector is still queued behind that reconnect. Without a second check, a tap from the *old* surface could
+pass the store's stale generation check and then have the injected `answerQuestionBatch` handler read the
+coordinator's *new* active repository, redirecting old picks onto the rebuilt request. `submitQuestionBatch`
+in `RelayRepositoryCoordinator` closes this: it captures the `source: RemoteConversationRepository` and
+`batch: QuestionBatch` the store validated, and re-checks both by identity — `liveRepository() === source`
+and the source's own held batch for that conversation `=== batch` — synchronously, immediately before
+sending, and always sends through the **captured** source, never a freshly selected one. Locks are always
+taken store → coordinator, so the two synchronized blocks cannot deadlock.
 
 **Verbatim, not trimmed.** The AC requires Other text sent "verbatim". Desktop's `resolveQuestionAnswers`
 trims it before sending; mobile does not — `values()` uses `otherText.isNotBlank()` only to decide whether
@@ -81,50 +144,71 @@ VM owns. `ThreadViewModelQuestionTest` asserts this directly — a passing answe
 records a call to the permission-modal's `answerModal` would be a real cross-wiring bug, not just an
 untested path.
 
+**Koin closes the store.** `single { QuestionDraftStore() } onClose { it?.dispose() }` — `dispose()` cancels
+the store's `SupervisorJob` scope, clears every binding and source, and empties the drafts map. Nothing else
+calls `dispose()`; the store is meant to outlive every destination for the app process.
+
+**Continue and refuse are gated on the host connection, not just `locked` (#1321).** `onQuestionEvent`'s
+`Continue` and `Cancel` branches both add `promptSendAllowed(kind)` — the same tap-time helper
+[modal-answer-flow.md](modal-answer-flow.md#not-connected-refuses-the-tap-before-the-arm-or-grant-change-1321)
+describes for the permission surface — ahead of the existing `!held.locked` check and before `sendQuestion`,
+which is what moves the batch to `Sending`. A refused tap therefore never locks the batch: picks and Other
+text stay exactly as drafted, and the same Continue/Cancel tap sends once the host reconnects. Option toggles
+and Other-text edits are not gated — only the two sends are.
+
 ## Title names the conversation's agent (#1116)
 
-`QuestionBatchModal`'s title picks `question_modal_title` ("Claude has questions") or
+`QuestionBatchTitle`'s title picks `question_modal_title` ("Claude has questions") or
 `question_modal_title_codex` ("Codex has questions") from `state.agent`. `QuestionBatch` itself carries no
-agent field, so `ThreadViewModel` derives it separately: while a batch for this conversation is held, a
-`flatMapLatest` subscribes to the conversation list and maps this conversation's row to its `agent` (Claude
-when the row is absent), seeded with Claude through `onStart` so a cold list never holds the modal back, and
-`distinctUntilChanged` so an unrelated list update doesn't re-emit the same agent. The batch-held fold keeps
-this agent alongside the batch's own reconcile rule (§ Batch ownership above): the same batch keeps its
-picks and gets `copy(agent = …)`; any other batch starts fresh. No held batch means no list subscription —
-a thread with no questions issues no extra `list_conversations`.
+agent field, so `ThreadViewModel` derives it separately. Through #1305's first rework pass this read its own
+`flatMapLatest` over `repository.observeConversations(ConversationFilter.All)`, restarting on every
+selection/send-phase/Other-keystroke edit and re-issuing `list_conversations` each time — flagged as a
+SHOULD FIX and fixed in the same rework: the question-agent observation now `combine`s
+`questions.observe(serverId, conversationId)` with the shared `conversationAgent` property
+[#1110](thread-screen-how-it-works-state.md#the-model-menu-agent-filter-1110) already exposes for the
+model-menu filter, seeded with Claude via `.onStart { emit(ConversationAgent.Claude) }` so a cold list still
+doesn't hold the batch back. Editing a draft no longer restarts the list subscription or transiently renames
+a known Codex conversation back to Claude. The held state keeps this agent alongside the store's own
+reconcile rule (§ Batch ownership above): `held?.copy(agent = agent)`.
 
-**Left as a known duplicate subscription, non-blocking.** This collector calls
-`repository.observeConversations(ConversationFilter.All)` directly rather than reusing the shared lookup.
-\#1110 (merged after this ticket's plan was written) added a private `conversationAgent: Flow<ConversationAgent>`
-to `ThreadViewModel` for exactly this conversation-agent lookup, built over a `conversations` flow shared
-with `state`'s own combine so every subscriber rides one upstream `list_conversations` request — see
-[Thread screen § The model-menu agent filter (#1110)](thread-screen-how-it-works-state.md#the-model-menu-agent-filter-1110).
-Because this ticket's plan predates that merge, the shipped collector opens a second, independent
-subscription instead. `RemoteConversationRepository.observeConversations`'s `StateFlow` conflation absorbs
-the duplicate, so the verifier passed it as a non-blocking SHOULD FIX rather than a blocker. A future change
-touching this collector should fold it onto `conversationAgent.onStart { emit(ConversationAgent.Claude)
-}.distinctUntilChanged()` instead of subscribing to `observeConversations` a second time.
+## Placement: inline in `ThreadScreen`, since #1305
 
-## Placement: `MainActivity`, not `ThreadScreen`
-
-Unlike `PermissionModalOverlay`, which `ThreadScreen` draws inline from `ThreadPermissionModal.kt`, the
-route host in `MainActivity` draws `QuestionBatchModal` directly, as a sibling of the `ThreadScreen` call
-rather than a parameter threaded into it. `MobileGateModal` opens its own `Dialog` window, so where in the
-composition tree it is invoked does not change what it visually sits over — and drawing it from the route
-host avoids adding a sixth production file (`ThreadScreen.kt` plus the `MainActivity` call site that would
-have to forward a new parameter into it) for what the estimate treated as one file. Keep this precedent in
-mind before adding a parameter to `ThreadScreen` for a gate-shaped surface: if the gate's own window makes
-placement irrelevant, drawing it beside the screen instead of through it can be the smaller change.
+**Superseded.** Through #1305's original plan, `QuestionBatchModal` opened its own `MobileGateModal` dialog
+window and was drawn as a `MainActivity` sibling beside `ThreadScreen`, not a parameter threaded into it —
+see § Rendering (old shape) below for why that no longer applies. The ticket's AC required the batch to
+"appear only in its owning conversation's scrollable stream" so Back, channel switching and history scrolling
+stay available without a blocking window, which a `Dialog` cannot do. `ThreadScreen` now takes
+`questionState: QuestionModalState?` and `onQuestionEvent: (QuestionModalEvent, Long) -> Unit` parameters;
+`MainActivity` passes `vm.questionModal` and `vm::onQuestionEvent` straight through instead of drawing a
+sibling. The prompt is rendered as leading `LazyColumn` items (§ Rendering) rather than an overlay, so
+placement is no longer "irrelevant because the gate owns its own window" — a future gate-shaped surface
+should treat this as the shape questions themselves have moved to, not as a second precedent alongside the
+old one.
 
 ## Rendering
 
-`QuestionBatchModal` is stateless — `(state: QuestionModalState, onEvent: (QuestionModalEvent) -> Unit,
-modifier: Modifier = Modifier)` — and keeps no selection state of its own; every edit round-trips through
-`onEvent` back into the VM. The question content follows the dark Figma questionnaire `347:6697`,
-question labels `347:6861`, radio rows `347:6476`, and checkbox rows `347:6771` (inspected
-2026-09-30). A tertiary exported glyph sits in a 14 × 16 dp slot beside the uppercase `labelSmall`
-header. The `background` card uses a 1 dp `primaryContainer` border and the 6 dp `modalControl`
-shape. Question text uses `bodyMedium`; choice labels and descriptions use `labelMedium`.
+**The batch is three independent `LazyColumn` items now, not one dialog composable.** `ThreadScreen`
+emits, for a held `questionState`, an actions item (`QuestionBatchActions`, key
+`"question-actions:${generation}"`), one item per question in original order (`QuestionBlock`, key
+`"question:${generation}:$it"`, `testTag("thread-question-row")`), and a title item last
+(`QuestionBatchTitle`, key `"question-title:${generation}"`) — under `reverseLayout = true` this source
+order draws bottom-up as actions, then questions newest-to-oldest, then the title at the top, exactly
+matching a top-down read. Each item is wrapped in the screen's existing `ComposerGutter` padding. Keys use
+the generation plus index or role, never prompt text, so a replacement (a new generation) never reuses a
+disposed row's identity. None of the three composables keep selection state of their own; every edit
+round-trips through `onEvent(event, pending.generation)` back into the VM (§ Batch ownership). The question
+content follows the dark Figma questionnaire `347:6697`, question labels `347:6861`, radio rows `347:6476`,
+and checkbox rows `347:6771` (inspected 2026-09-30). A tertiary exported glyph sits in a 14 × 16 dp slot
+beside the uppercase `labelSmall` header. The `background` card uses a 1 dp `primaryContainer` border and
+the 6 dp `modalControl` shape. Question text uses `bodyMedium`; choice labels and descriptions use
+`labelMedium`.
+
+**`QuestionBatchActions` takes a `connected: Boolean` (#1321), ANDed into Cancel's `!state.locked` and
+Continue's `state.canContinue` enabled checks.** `ThreadScreen` derives it the same way as the #1319 footer
+gate (`connectionState == ConnectionState.Connected`) and passes it alongside `pending` and `dispatch`.
+`QuestionBlock`'s own `enabled = !pending.locked` is unchanged — option rows and the Other field stay
+editable while the host is down, since only the two sends need the gate. See § Batch ownership above for the
+VM-side `promptSendAllowed` check this mirrors.
 
 Whole single-choice rows sit in one `selectableGroup()` with `Role.RadioButton`; multiple-choice
 rows use `Role.Checkbox` independently. The visible tertiary selectors are 20 dp, with a dot for a
@@ -132,18 +216,56 @@ selected radio and the exported check vector for a selected checkbox. Rows retai
 floor even though the wider Figma component example has a tighter vertical rhythm. Other is part
 of its choice row: its `BasicTextField` has the index-only `question_other_<index>` tag and an
 independent 48 dp focus region around the inset 6 dp `modalFieldContainer` well. The focus region
-matters because a row's selection target does not enlarge a separately focusable field.
+matters because a row's selection target does not enlarge a separately focusable field. On focus (and on
+every IME height change), the field issues an explicit `BringIntoViewRequester.bringIntoView()` so the
+scrollable stream — not a dialog's own scrollable shell — carries it and the actions into view above the
+keyboard; closing the keyboard leaves the draft untouched.
 
-All daemon-authored text (header, question, option label, option description) renders through plain
-`Text` with no `maxLines` or link interpretation; the shared scrolling shell lets long text wrap.
-The [shared mobile shell](mobile-modal.md) (`533:2369`) retains its secure window and Cancel/Continue
-footer. The questionnaire is a 699 dp component example with Previous, not a full-screen mobile
-question reference: **no full-screen 412 × 892 question reference exists**. The 412 × 892 emulator
-[render](../../../app/src/androidTest/assets/question-1299/emulator-question-batch-412x892.png)
-and [labelled 1 dp-to-1 px overlay](../../../app/src/androidTest/assets/question-1299/component-overlay-1dp-1px.png)
-compare component geometry rather than claim a frame match. The secure window blanks system
-screenshots, so the capture test draws that same dialog view with static fixture text into a
-bitmap while preserving `FLAG_SECURE`.
+All daemon-authored text (header, question, option label, option description) renders through plain `Text`,
+length-bounded by the file-private `MAX_QUESTION_TEXT = 8192` constant, with no `maxLines` or link
+interpretation — the same "never a key, never interpreted" posture the old `MobileGateModal` shell gave
+this content, now enforced directly by these three composables instead of inherited from the shell. The
+questionnaire is a 699 dp component example with Previous, not a full-screen mobile question reference:
+**no full-screen 412 × 892 question reference exists**. The normal, compact and keyboard captures attached
+to #1305 (`app/src/androidTest/assets/question-1305/`) compare the inline layout's component geometry
+against the linked Figma states rather than claim a frame match; Other's 48 dp focus region around the
+32 dp visible well makes the cards slightly taller than Figma, an intentional touch-floor tradeoff kept
+from #1299.
+
+**Accessibility semantics, restored after a rework.** `QuestionBatchTitle` carries `Modifier.semantics {
+heading() }`; the `question-send-failed` failure text carries `liveRegion = LiveRegionMode.Polite` and
+`error(...)`. Both were free inside the old `MobileGateModal` shell and had to be re-added explicitly once
+the batch moved to plain `LazyColumn` items — a second rework pass found and fixed the gap; a change to
+either composable should keep both.
+
+**Known gap, non-blocking: `QuestionBatchActions`' Continue button has no sending indicator.**
+`MobileGateModal`'s `ModalSubmitButton(loading = …)` used to show progress while `state.phase` was
+`Sending`/`Sent`; the inline `Continue` is a plain `Button` that is only disabled during that window, with
+no visual feedback that a send is in flight. The lock itself (`state.locked`, § Batch ownership) is intact —
+a double tap still cannot double-send — this is a missing loading affordance only. Flagged SHOULD FIX on
+the final verifier pass and left unaddressed as non-blocking; a future touch to this composable should add
+the same loading content `Continue` showed inside the gate.
+
+**`QuestionPromptProtection` replaces the dialog window's own `FLAG_SECURE` / obscured-touch guard.** While
+`questionState != null`, `ThreadScreen` mounts `QuestionPromptProtection()`, which walks up from
+`LocalContext.current` to the hosting `Activity` and acquires shared ownership of the window's
+`FLAG_SECURE`, the window **decor view's** `filterTouchesWhenObscured` and the Compose `LocalView`'s own
+`filterTouchesWhenObscured`, all through the file-private `QuestionProtectionOwners` singleton (a
+reference-counted map keyed by `Window`/`View`, Main-thread only). This protects the surface even for
+prompt rows currently scrolled offscreen, since the guard is keyed on "a batch is mounted somewhere", not on
+a specific row's visibility. **Shared ownership, not independent per-composition snapshots, is required**
+because `PyryNavHost`'s default ~700ms fade transitions can mount a second thread destination's prompt
+before the first one disposes: the first acquisition for each key records that key's *original* policy, an
+intermediate release (an overlapping owner exiting) leaves the shared policy untouched, and only the last
+release restores the recorded original. An earlier design that captured and restored the policy per
+composition failed exactly this overlap — found as a MUST FIX in the first verifier pass — because A's
+disposal could clear protection while B still displayed a prompt, and B's own disposal could then leave
+protection stuck on. The window **decor view**, not just `AndroidComposeView`, is filtered because
+`AndroidComposeView` overrides touch dispatch and setting its own flag alone does not reject an obscured
+`MotionEvent` — a second finding from the same pass. Protection ends when the last mounted batch disposes;
+while active, it also rejects obscured taps on Back and the composer (an explicit Security-review choice,
+not an oversight — a fully obscuring overlay should block every control on the surface, not just the
+question rows).
 
 ## Testing
 
@@ -153,34 +275,82 @@ bitmap while preserving `FLAG_SECURE`.
   sent, a failed send keeping selections and allowing a retry, dismissal-to-null and replacement both
   discarding selections, a late send completion not touching a newer batch, another conversation's batch
   being ignored, refusal following the same single-send/failure rules, and `answerModal` never being
-  invoked.
-- `QuestionBatchModalTest` (androidTest, a stateful host wired to a real `ThreadViewModel` over a fake
-  batch flow and recording send lambdas — not a hand-rolled reducer stand-in): radio semantics and Other
-  clearing on single choice, checkbox multi-pick plus Other text with the correct sent payload, a failed
-  refusal's error message and kept selections, and reachability at 320×640 dp with the keyboard shown.
-  The IME case finds the gate's own window with `WindowInspector.getGlobalWindowViews()` rather than
-  capturing `LocalView` from inside `content` — the composable exposes no content-side hook to do that, and
-  `MobileModalTest` established the same seam for the same reason (see the plan's Revisions and
-  [Shared mobile modal § Focus and verification](mobile-modal.md#focus-and-verification)). The test also
-  passes `modifier` through to `QuestionBatchModal`, forwarded into the gate, so
-  `DeviceConfigurationOverride.ForcedSize` — which does not by itself constrain a `Dialog`'s own window —
-  can size it. Before touching the IME, the test waits for that dialog window itself to gain focus,
-  sends `CLOSE_SYSTEM_DIALOGS` when focus is absent, and checks focus again before using the cached
-  view for inset measurements. A timeout reports the process windows' focus states. The managed API 33
-  full UI run for #1235 executed all 78 tests, including this case, with no failures or skips; the
-  intermittent external-dialog recovery path did not occur in that run.
-  The #1299 device cases also assert selector and glyph bounds, a near-edge tap in the Other field's
-  own focus region, retained draft after choice changes, inert long text at 1.5× font scale, and
-  last-field/footer reachability with a visible IME at compact width. The retained focused report
-  records six executed tests, zero failures and zero skips; the API 35 capture report records one
-  executed test, zero failures and zero skips.
+  invoked. #1305 extended it for generation-scoped events: a stale generation's Continue/Cancel/edit is a
+  no-op against a replaced batch, and a cancelled in-flight send restores retryability.
+- `QuestionDraftStoreTest` (unit, new in #1305): navigation keeps picks and owners stay isolated by
+  `(serverId, conversationId)`; dismissal, replacement and a reconnect all invalidate stale callbacks even
+  when the replacement re-sends the same batch id; host observation keeps invalidating a retired source
+  without a screen attached, and a reconnect that rebuilds an equal batch needs no null tick in between to
+  be treated as a new generation.
+- `RelayRepositoryCoordinatorTest` (unit) gained `submitQuestionBatch` coverage: it rejects a retired source
+  even when a newer source holds an equal request (closing the reconnect-redirect race, § Batch ownership),
+  and a fresh submission through the live source still works.
+- `RelayConnectionFactoryTest` (unit) extended
+  `destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect` to the real Koin
+  `QuestionDraftStore` binding: a separately paused draft-store scheduler still rejects old-generation
+  Continue/Cancel after an equal request is rebuilt, and routes fresh answers/refusals to the exact owning
+  host.
+- `ThreadInlineQuestionTest` (shared Robolectric, new in #1305, `app/src/sharedTest/.../thread/`): an empty
+  thread with a pending batch has no history-demand advance and keeps Back/composer active
+  (`empty_thread_has_inline_questions_active_back_and_composer_without_history_demand`); a reader at the
+  newest end of a populated thread is scrolled to see a newly arrived batch, while the existing
+  history-reader anchor is unchanged (`arrival_reveals_the_batch_to_a_reader_at_the_newest_end` — added in
+  the ticket's second rework after the verifier found the prompt landing off-screen below the anchored
+  newest row); the title has `heading()` and the failure text has `liveRegion = Polite` + `error(...)`
+  (`failure_feedback_is_announced_and_the_title_is_a_heading`); and a history-scrolled reader is preserved
+  across batch arrival and edits, with prompt rows never advancing the oldest-end history demand
+  (`arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand`). See
+  [Thread screen § list and status
+  row](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305)
+  for the production side of each.
+- `QuestionBatchModalTest` (androidTest — the file and class names predate #1305's move out of the dialog,
+  § Where it lives) now mounts the real inline `ThreadScreen` host over a fake batch flow and recording send
+  lambdas, not a standalone `QuestionBatchModal` call: radio semantics and Other clearing on single choice,
+  checkbox multi-pick plus Other text with the correct sent payload, a failed refusal's error message and
+  kept selections, and reachability at 320×640 dp with the keyboard shown, plus selector/glyph bounds, a
+  near-edge tap in the Other field's own focus region, retained draft after choice changes, inert long text
+  at 1.5× font scale, and last-field/footer reachability with a visible IME at compact width (from #1299).
+  #1305's rework also adds overlapping-protection coverage releasing two `QuestionPromptProtection` owners
+  in both orders, asserting secure capture and actual obscured-`MotionEvent` rejection stay active until the
+  last release (with a positive ordinary-tap control proving an unhandled event isn't mistaken for
+  rejection), and confirming the final release restores the original policy, including one starting from an
+  already-protected window. The fresh focused device run recorded 11 executed tests, 0 failures/errors/skips
+  (`app/src/androidTest/assets/question-1305/rework-api33-focused.xml`).
+- **`QuestionBatchModalCaptureTest`** (androidTest): adapted from the dialog's own secure-window bitmap
+  capture to the activity view with `FLAG_SECURE` still set — normal 412×892, compact 320×700 at 150% text,
+  and a real keyboard open. Static fixture text only; captures at
+  `app/src/androidTest/assets/question-1305/question-{normal,compact,keyboard}.png`, attached to #1305 for
+  #1220's application-wide comparison.
+- **Live, rung-3:** `InteractiveStreamE2ETest.interactiveTurn_questionAnswer_reachesTheAskingConversation`
+  (#966) still proves the phone's answer reaches the asking claude and a peer answer removes the pending
+  batch with no phone tap; #1305 adapted its selectors to the inline surface (scrolling to
+  `question-batch-title` / `question-batch-actions` tags instead of matching a dialog's title text — see
+  [Real-claude e2e coverage](../../e2e-interactive-stream.md)). The full rung-3 live suite at `7fba6c4b`
+  merged with `origin/main` `207ff366` reported **44 executed, 43 passed, 1 failed, 0 skipped**, with this
+  method executed and passed. The one failure,
+  `interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`, is an inherited, unrelated regression
+  (also fails on `origin/main` alone, traced to daemon #2699) and was isolated in the same branch
+  (`@Ignore`, removed from the LIVE list, `LIVE_MINIMUM` lowered to 43) with no production change — tracked
+  by #1369, which is expected to restore all three. See the `LIVE_MINIMUM` history in [Real-claude e2e
+  coverage](../../e2e-interactive-stream.md) for the full chain.
 
 ## Related
 
-- [Shared mobile modal](mobile-modal.md) — the `MobileGateModal` shell this modal is drawn in, and its
-  submit/sending/error extension.
+- [Shared mobile modal](mobile-modal.md) — the `MobileGateModal` shell this surface was drawn in before
+  #1305, and the submit/sending/error extension #1305's `Continue` still approximates without its loading
+  indicator (§ Rendering).
 - [Permission-modal overlay](permission-modal-overlay.md) — the sibling gate consumer this ticket's
-  ViewModel/render split and lock/send idiom mirrors.
+  ViewModel/render split and lock/send idiom mirrors; still dialog-presented, not moved inline by #1305 —
+  see that ticket's scope note and #1220 (kept in Inbox) for the application-wide comparison.
 - [Modal answer flow](modal-answer-flow.md) — the `answerModal`/`cancelModal` precedent this ticket's
   `answerQuestionBatch`/`refuseQuestionBatch` passthrough follows, and the VM this modal never calls into.
-- [Thread screen](thread-screen.md) — the screen this modal is drawn beside, not inside; see § Placement.
+- [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md) —
+  `ComposerDraftStore`, the process-lifetime, app-scoped precedent `QuestionDraftStore` follows.
+- [Thread screen](thread-screen.md) — the screen this batch now renders inside; see § Placement above and
+  [Thread screen § Destination block](thread-screen.md#destination-block) for the current wiring.
+- [Thread screen — list and status
+  row](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305)
+  — the prompt-row prefix in the oldest-end history predicate, the newest-end reveal effect, and the
+  composer-status "Waiting for answers" reading.
+- [Real-claude e2e coverage](../../e2e-interactive-stream.md) — the adapted rung-3 scenario and the
+  `LIVE_MINIMUM` / curated-list history, including #1305's temporary exclusion of an unrelated method.

@@ -21,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,11 +42,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
-import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.PairingParseResult
-import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
@@ -65,7 +63,6 @@ import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
-import de.pyryco.mobile.ui.conversations.thread.QuestionBatchModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -80,7 +77,6 @@ import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.ScannerUiState
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
-import de.pyryco.mobile.ui.onboarding.confirmPairingAndConnect
 import de.pyryco.mobile.ui.settings.AboutScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
@@ -171,30 +167,20 @@ internal fun PyryNavHost(
         }
         composable(Routes.SCANNER) {
             val context = LocalContext.current
-            val pairedServerStore = koinInject<PairedServerStore>()
-            val connectionController = koinInject<RelayConnectionController>()
-            val scope = rememberCoroutineScope()
             val vm = koinViewModel<ScannerViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
 
-            // Camera confirmation retains its existing save/connect path.
-            val confirmPairAndNavigate: (PairedServer) -> Unit = { server ->
-                scope.launch {
-                    confirmPairingAndConnect(
-                        server = server,
-                        store = pairedServerStore,
-                        controller = connectionController,
-                        onPersisted = {
-                            navController.navigate(Routes.CHANNEL_LIST) {
-                                popUpTo(Routes.SCANNER) { inclusive = true }
-                                launchSingleTop = true
-                            }
-                        },
-                        onFailed = { e ->
-                            Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
-                            vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
-                        },
-                    )
+            // #1386: Confirm saves and then waits in the VM; the channel list opens only once the host
+            // answered, and Cancel pops the scanner with the host still saved.
+            LaunchedEffect(state) {
+                when (state) {
+                    ScannerUiState.Paired ->
+                        navController.navigate(Routes.CHANNEL_LIST) {
+                            popUpTo(Routes.SCANNER) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    ScannerUiState.Cancelled -> navController.popBackStack()
+                    else -> Unit
                 }
             }
 
@@ -225,7 +211,7 @@ internal fun PyryNavHost(
             // The security gate (#343): a successful decode parses + validates the payload into a
             // real PairedServer (#320) and derives its static-key fingerprint (#342), then parks in
             // AwaitingConfirm — it does NOT persist. The persist moves behind the Confirm button
-            // (confirmPairAndNavigate); this effect never touches the store. A parse failure, or a
+            // (ScannerEvent.ConfirmPairing); this effect never touches the store. A parse failure, or a
             // derive that returns null (structurally unreachable for a Success — the stored key was
             // already proven base64-std-of-32-bytes — but handled so staticKeyFingerprint's require
             // can't throw into this coroutine), routes to the Error surface. On the AwaitingConfirm
@@ -256,6 +242,9 @@ internal fun PyryNavHost(
             BackHandler(enabled = state is ScannerUiState.AwaitingConfirm) {
                 vm.onEvent(ScannerEvent.DeclinePairing)
             }
+            BackHandler(enabled = state is ScannerUiState.Verifying || state is ScannerUiState.VerificationFailed) {
+                vm.onEvent(ScannerEvent.CancelVerification)
+            }
 
             ScannerScreen(
                 state = state,
@@ -269,14 +258,12 @@ internal fun PyryNavHost(
                     )
                 },
                 onPasteCode = { navController.navigate(Routes.PAIR_CODE) },
-                // Confirm reads the CURRENT collected state: if back/decline already moved it off
-                // AwaitingConfirm, the cast is null and confirm is a no-op — a save cannot fire after
-                // the gate closed. Persists exactly the parsed record the displayed fingerprint was
-                // derived from (no re-parse / re-derive).
-                onConfirmPairing = {
-                    (state as? ScannerUiState.AwaitingConfirm)?.let { confirmPairAndNavigate(it.server) }
-                },
+                // The VM confirms only from AwaitingConfirm, saving exactly the record whose fingerprint
+                // is shown; once back/decline moved it off, a late tap is a no-op.
+                onConfirmPairing = { vm.onEvent(ScannerEvent.ConfirmPairing) },
                 onDeclinePairing = { vm.onEvent(ScannerEvent.DeclinePairing) },
+                onRetryPairing = { vm.onEvent(ScannerEvent.RetryVerification) },
+                onCancelPairing = { vm.onEvent(ScannerEvent.CancelVerification) },
                 cameraPreview = {
                     if (state is ScannerUiState.ReadyToScan) {
                         CameraPreview(
@@ -322,6 +309,9 @@ internal fun PyryNavHost(
             }
             LaunchedEffect(vm) {
                 vm.hostNavigationEvents.collect { navController.openThread(it) }
+            }
+            LaunchedEffect(vm) {
+                vm.lastHostUnpaired.collect { navController.returnToWelcome() }
             }
             ChannelListScreen(
                 hostState = hostState,
@@ -454,6 +444,7 @@ internal fun PyryNavHost(
                 val draft by vm.draft.collectAsStateWithLifecycle()
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
                 val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
+                val attachmentUploadProgress by vm.attachmentUploadProgress.collectAsStateWithLifecycle()
                 val attachmentStates by vm.attachmentStates.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
                 val usageLimitDismissals = koinInject<UsageLimitDismissals>()
@@ -461,6 +452,9 @@ internal fun PyryNavHost(
                 // #1050: composed again means the operator is back on the thread, so a linked note's reader has
                 // closed. Its reader remembered the note, so dropping it here cannot empty that reader.
                 LaunchedEffect(vm) { vm.releaseLinkedMarkdown() }
+                // #1306: leaving this screen, by Back or by opening another thread on top, drops a half-made
+                // allow; the ViewModel keeps the session-grant draft for the same request.
+                DisposableEffect(vm) { onDispose { vm.onConversationLeft() } }
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
                         when (event) {
@@ -471,7 +465,10 @@ internal fun PyryNavHost(
                         }
                     }
                 }
+                val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 ThreadScreen(
+                    questionState = questionModal,
+                    onQuestionEvent = { event, generation -> vm.onQuestionEvent(event, generation) },
                     state = state,
                     onBack = { navController.popBackStack() },
                     onSendMessage = vm::sendMessage,
@@ -493,8 +490,8 @@ internal fun PyryNavHost(
                     archiveErrors = vm.archiveErrors,
                     changeWorkspaceErrors = vm.changeWorkspaceErrors,
                     sessionSettingsErrors = vm.sessionSettingsErrors,
-                    onModalOption = vm::onModalOption,
-                    onModalCancel = vm::onModalCancel,
+                    onModalOption = { modalId, optionId -> vm.onModalOption(optionId, modalId) },
+                    onModalCancel = { modalId -> vm.onModalCancel(modalId) },
                     alwaysAllowAccepted = alwaysAllowAccepted,
                     onAlwaysAllowChanged = vm::onAlwaysAllowChanged,
                     onDropQueued = vm::onDropQueued,
@@ -513,9 +510,11 @@ internal fun PyryNavHost(
                     // #933: the composer's attachment picker and strip, over the same per-chat draft store.
                     attachments = pendingAttachments,
                     attachmentsSending = attachmentsSending,
+                    attachmentUploadProgress = attachmentUploadProgress,
                     onAttachmentsPicked = vm::addPickedAttachments,
                     onRemoveAttachment = vm::removeAttachment,
                     attachmentRefusals = vm.attachmentRefusals,
+                    attachmentSendFailures = vm.attachmentSendFailures,
                     // #984: the thread's message attachments, loaded as their rows come on screen.
                     attachmentStates = attachmentStates,
                     onAttachmentShown = vm::onAttachmentShown,
@@ -533,9 +532,6 @@ internal fun PyryNavHost(
                     // #1050: a markdown link in an assistant reply, read live from the workspace.
                     onOpenMarkdownLink = vm::onOpenMarkdownLink,
                 )
-                // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
-                val questionModal by vm.questionModal.collectAsStateWithLifecycle()
-                questionModal?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent) }
             }
         }
         // #1027: one markdown attachment of a thread, read in-app. The route carries ids only; the file is
@@ -587,6 +583,9 @@ internal fun PyryNavHost(
         ) {
             val vm = koinViewModel<SettingsViewModel>()
             val pushNotifications by vm.pushNotifications.collectAsStateWithLifecycle()
+            LaunchedEffect(vm) {
+                vm.lastHostUnpaired.collect { navController.returnToWelcome() }
+            }
             val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
             SettingsScreen(
                 pushNotifications = pushNotifications,
@@ -687,8 +686,6 @@ private const val TAG = "MainActivity"
 // parser only emits byte-safe category labels. Generic by design — never interpolates a field value.
 private const val PARSE_FAILED_MSG =
     "That QR code isn't a valid pyrycode pairing code. Scan the code shown by `pyry pair`."
-
-private const val SAVE_FAILED_MSG = "Couldn't save the pairing. Please try again."
 
 internal object Routes {
     const val WELCOME = "welcome"
@@ -806,6 +803,17 @@ private fun HostWorkspaceRepository(
 ) {
     val repository = remember(factory, serverId) { serverId?.let { factory.repository(it) } }
     CompositionLocalProvider(LocalWorkspacePickerRepository provides repository, content = content)
+}
+
+/**
+ * Welcome as the only entry, after an unpair left no saved host (#1323): nothing paired stays behind it,
+ * so Back leaves the app, as a launch with no host starts there.
+ */
+private fun NavHostController.returnToWelcome() {
+    navigate(Routes.WELCOME) {
+        popUpTo(graph.id) { inclusive = true }
+        launchSingleTop = true
+    }
 }
 
 private fun NavHostController.openThread(target: HostConversationTarget) {

@@ -36,6 +36,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -92,6 +94,7 @@ class RelayRepositoryCoordinator(
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val deviceName: String = "",
     private val pushTokens: Flow<String?> = flowOf(null),
+    now: () -> Instant = Clock.System::now,
 ) {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(job + dispatcher)
@@ -115,6 +118,16 @@ class RelayRepositoryCoordinator(
      * to the foreground. [teardownActive] never touches it. Threaded into each repository in [onConnection].
      */
     internal val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks()
+
+    /**
+     * The five readings this host pushes and the phone never asks for again (#1317), held for the host's
+     * pairing as desktop does, so a return to the foreground does not blank them until the next turn ends.
+     * Lives here for [replayCursor]'s reason, and [teardownActive] never touches it. Threaded into each
+     * repository in [onConnection]; the thread reads it while disconnected. [close] drops it, which is the
+     * pairing-scoped clear: registry reconcile closes the coordinator on unpair and re-pair. Built with [now]
+     * so a held usage limit still lapses at its reset time.
+     */
+    internal val hostReadings: HostReadings = HostReadings(now)
 
     /**
      * The single connection-state source of truth: the pump + child scope + concrete repository of the
@@ -322,6 +335,7 @@ class RelayRepositoryCoordinator(
                 negotiatedCapabilities = { (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() },
                 replayCursor = replayCursor,
                 finishedBackgroundTasks = finishedBackgroundTasks,
+                hostReadings = hostReadings,
             )
         // Publish the whole connection as ONE object: currentRepository now derives repo and pump-state
         // from this single switched value, closing the #493 cross-StateFlow race (see [currentRepository]).
@@ -375,11 +389,12 @@ class RelayRepositoryCoordinator(
         current.pump.close()
     }
 
-    /** Tears down the active connection (wiping pump keys) and cancels the coordinator scope, ending
-     *  the collector. Idempotent. */
+    /** Tears down the active connection (wiping pump keys), drops the held [hostReadings] and cancels the
+     *  coordinator scope, ending the collector. Idempotent. */
     @Synchronized
     fun close() {
         teardownActive()
+        hostReadings.close()
         scope.cancel()
     }
 
@@ -463,6 +478,28 @@ class RelayRepositoryCoordinator(
     suspend fun refuseQuestionBatch(questionBatchId: String) {
         val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
         repo.refuseQuestionBatch(questionBatchId)
+    }
+
+    /** A draft belongs to its source/request, never a later connection that rebuilds the same nonce. Null answers refuse. */
+    internal suspend fun submitQuestionBatch(
+        source: RemoteConversationRepository,
+        batch: QuestionBatch,
+        answers: List<QuestionAnswer>?,
+    ) {
+        synchronized(this) {
+            check(liveRepository() === source) { "question source retired" }
+            check(source.questionBatches.value.firstOrNull { it.conversationId == batch.conversationId } === batch) {
+                "question request retired"
+            }
+        }
+        // These fire-and-forget calls do not suspend; retain the validated source rather than selecting another repository.
+        if (answers ==
+            null
+        ) {
+            source.refuseQuestionBatch(batch.questionBatchId)
+        } else {
+            source.answerQuestionBatch(batch.questionBatchId, answers)
+        }
     }
 
     private class Connection(

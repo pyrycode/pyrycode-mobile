@@ -118,6 +118,10 @@ class ThreadViewModel(
     questionBatch: (conversationId: String) -> Flow<QuestionBatch?> = { flowOf(null) },
     private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
     private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
+    questionDraftStore: QuestionDraftStore? = null,
+    // #1306: the app-scoped session-grant drafts, so Back keeps the checkbox for the same request. Absent in
+    // tests and the demo host, where a private store stands in.
+    permissionDraftStore: PermissionDraftStore? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
     // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
     backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
@@ -204,6 +208,15 @@ class ThreadViewModel(
      */
     val attachmentsSending: StateFlow<Boolean> = _attachmentsSending.asStateFlow()
 
+    private val _attachmentUploadProgress = MutableStateFlow<AttachmentUploadProgress?>(null)
+
+    /**
+     * The figure of the upload running now (#1327), or `null`. It names one entry and lives for one upload:
+     * cleared when that upload is stored or fails, and however the send ends. Uploads under
+     * [ATTACHMENT_PROGRESS_MIN_CHUNKS] never publish one.
+     */
+    val attachmentUploadProgress: StateFlow<AttachmentUploadProgress?> = _attachmentUploadProgress.asStateFlow()
+
     private val attachmentRefusalChannel = Channel<AttachmentRefusal>(capacity = Channel.BUFFERED)
 
     /**
@@ -211,6 +224,14 @@ class ThreadViewModel(
      * only, never a name, URI or type, so the snackbar it drives shows fixed local text.
      */
     val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
+
+    private val attachmentSendFailureChannel = Channel<AttachmentSendFailure>(capacity = Channel.BUFFERED)
+
+    /**
+     * One notice per send that stopped at a failed read or upload (#1325), naming why. A reason only, never a
+     * name, URI or the daemon's code, so the snackbar it drives shows fixed local text.
+     */
+    val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
 
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
@@ -265,14 +286,17 @@ class ThreadViewModel(
         repository
             .observeSessionSettings(conversationId)
             .onEach { reading ->
-                if (reading == null || pendingModel.value == reading.model) pendingModel.value = null
+                // #1320: a held reading heads the subscription on a same-host reconnect where `null` used to,
+                // so it ends the pending context the same way.
+                val lost = reading == null || reading.held
+                if (lost || pendingModel.value == reading?.model) pendingModel.value = null
                 pendingEffort.value = null
-                // #650: a `null` reading heads every new subscription (host switch, owning-host reconnect)
-                // and follows a failed read; a reading for another session means the session was replaced.
-                // Either way the permission write belongs to a context that is gone. The check runs before
-                // the tick below so the settle loop never sees a reading from the new context.
+                // #650: a `null` or held reading heads every new subscription (host switch, owning-host
+                // reconnect) and `null` follows a failed read; a reading for another session means the session
+                // was replaced. Either way the permission write belongs to a context that is gone. The check
+                // runs before the tick below so the settle loop never sees a reading from the new context.
                 permissionWrite?.let { write ->
-                    if (reading == null || reading.sessionId != write.sessionId) cancelPermissionWrite()
+                    if (lost || reading?.sessionId != write.sessionId) cancelPermissionWrite()
                 }
                 settingsReadings.update { SettingsReading(it.seq + 1, reading) }
             }
@@ -294,8 +318,10 @@ class ThreadViewModel(
      * What claude says it runs (#891): the announced model and its build, each made inert here. Both #890
      * readings are per conversation and cleared by the repository on a session transition, so nothing
      * here tracks staleness. `SessionFacts.permissionMode` is claude's claim and is deliberately not read.
+     * The second value is the raw announced model (#1308), the inherited mark's comparison key; a cut value
+     * is incomplete and is left out, as [toChoice] leaves out a cut `resolvedModel`.
      */
-    private val runningModel: Flow<ThreadRunningModel> =
+    private val runningModel: Flow<Pair<ThreadRunningModel, String>> =
         combine(
             repository.observeAnnouncedModel(conversationId),
             repository.observeSessionFacts(conversationId),
@@ -306,7 +332,7 @@ class ThreadViewModel(
                     facts?.let {
                         reportedText(it.claudeCodeVersion, CLAUDE_CODE_VERSION_FIELD in it.truncatedFields.orEmpty())
                     },
-            )
+            ) to announced?.takeUnless { it.truncated }?.model.orEmpty()
         }
 
     /**
@@ -343,7 +369,7 @@ class ThreadViewModel(
             pendingPermission,
         ) { settings, menuAndAgent, model, effort, permission ->
             runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission)
-        }.combine(runningModel) { config, running -> config.copy(running = running) }
+        }.combine(runningModel) { config, (running, announced) -> config.copy(running = running, announcedModel = announced) }
             .combine(repository.observeContextUsage(conversationId)) { config, usage ->
                 config.copy(contextPercent = usage?.percentage)
             }
@@ -484,14 +510,48 @@ class ThreadViewModel(
                 ),
         )
 
+    /**
+     * This thread's host connection, `Connected` once the host has answered the handshake (#1318). Started
+     * eagerly (#1319) so [connectedFor] reads the live state at tap time even when no screen collects it;
+     * a `WhileSubscribed` value stays at its initial `Connected` without a collector.
+     */
     val connectionState: StateFlow<ConnectionState> =
         connectionStateSource
             .observe()
             .stateIn(
                 scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
+                started = SharingStarted.Eagerly,
                 initialValue = ConnectionState.Connected,
             )
+
+    /**
+     * The tap-time read of this thread's host connection (#1321). Collected `Eagerly`, so it is current
+     * with no screen collecting. Unlike [connectionState] it is seeded `null` rather than an optimistic
+     * `Connected`, so a host that has not reported yet cannot be answered.
+     */
+    private val hostConnection: StateFlow<ConnectionState?> =
+        connectionStateSource.observe().stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Whether a prompt answer may be sent now (#1321): only while the host is [ConnectionState.Connected].
+     * A refused tap changes nothing, so the prompt answers as it stood once the host reconnects.
+     */
+    private fun promptSendAllowed(kind: String): Boolean {
+        if (hostConnection.value == ConnectionState.Connected) return true
+        RelayLog.d { "event=prompt_send_blocked kind=$kind reason=not_connected" }
+        return false
+    }
+
+    /**
+     * The tap-time re-check (#1319), after desktop's: the screen greys these controls while the host is not
+     * connected, and a tap that races a disconnect is dropped here before any state change or send. Logs
+     * the static [action] code only.
+     */
+    private fun connectedFor(action: String): Boolean {
+        if (connectionState.value == ConnectionState.Connected) return true
+        RelayLog.d { "event=thread_action_skipped action=$action reason=not_connected" }
+        return false
+    }
 
     /**
      * Whether the thread offers Re-pair (#843): this thread's own host is in the rejected-pairing state,
@@ -720,11 +780,12 @@ class ThreadViewModel(
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
-     * The "don't ask again this session" offer the user accepted (#818), keyed on the prompt that showed it:
-     * its [AcceptedAlwaysAllow.modalId] and the exact rules it offered. Like [armedModalOption] it is
-     * transient and never persisted, and a stale key is simply invisible (see [alwaysAllowAccepted]).
+     * The "don't ask again this session" offers the user accepted (#818), keyed on the prompt that showed
+     * each: its [PermissionGrantDraft.modalId] and the exact rules it offered. Since #1306 they live in an
+     * app-scoped store, heap only, so leaving through Back keeps this conversation's draft; a stale key is
+     * simply invisible (see [alwaysAllowAccepted]) and a bound store retires it when the request changes.
      */
-    private val acceptedAlwaysAllow = MutableStateFlow<AcceptedAlwaysAllow?>(null)
+    private val grantDrafts = permissionDraftStore ?: PermissionDraftStore()
 
     /**
      * Whether the *currently-open* prompt's offer is accepted (#818): `true` only while the scoped modal is
@@ -733,7 +794,7 @@ class ThreadViewModel(
      * construction. A sibling of [armedOptionId], started eagerly for the same reason.
      */
     val alwaysAllowAccepted: StateFlow<Boolean> =
-        combine(currentModal, acceptedAlwaysAllow) { modal, accepted ->
+        combine(currentModal, grantDrafts.observe(serverId, conversationId)) { modal, accepted ->
             modal is ModalUiState.Open && modal.offersAlwaysAllow && accepted == modal.alwaysAllowKey()
         }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -748,47 +809,37 @@ class ThreadViewModel(
      */
     val modalSendErrors: Flow<Unit> = modalSendErrorChannel.receiveAsFlow()
 
+    private val questions = questionDraftStore ?: QuestionDraftStore()
     private val mutableQuestionModal = MutableStateFlow<QuestionModalState?>(null)
-
-    /**
-     * The clarification batch held for this conversation with the operator's picks (#661), or null. The
-     * picks belong to one batch: a dismissal (null) discards them, and any batch other than the one held
-     * — a replacement, or the same id re-sent after a reconnect's empty reconcile — starts fresh.
-     * It names the conversation's agent (#1116), read from the list only while a batch is held.
-     */
     val questionModal: StateFlow<QuestionModalState?> = mutableQuestionModal
 
     init {
-        viewModelScope.launch {
-            heldQuestionBatch(questionBatch(conversationId)).collect { held ->
-                mutableQuestionModal.update { current ->
-                    val (own, agent) = held ?: return@update null
-                    if (current?.batch == own) current.copy(agent = agent) else QuestionModalState(own, agent = agent)
+        if (questionDraftStore == null) {
+            viewModelScope.launch {
+                questionBatch(conversationId).collect { batch ->
+                    questions.reconcileHost(serverId, listOfNotNull(batch?.takeIf { it.conversationId == conversationId }))
                 }
             }
+            addCloseable { questions.dispose() }
+        }
+        viewModelScope.launch {
+            questions
+                .observe(serverId, conversationId)
+                .combine(conversationAgent.onStart { emit(ConversationAgent.Claude) }) { held, agent ->
+                    held?.copy(agent = agent)
+                }.collect { mutableQuestionModal.value = it }
         }
     }
 
-    /** This conversation's held batch with its agent; the list is subscribed only while a batch is held. */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun heldQuestionBatch(batches: Flow<QuestionBatch?>): Flow<Pair<QuestionBatch, ConversationAgent>?> =
-        batches
-            .map { batch -> batch?.takeIf { it.conversationId == conversationId } }
-            .flatMapLatest { own -> if (own == null) flowOf(null) else conversationAgent().map { own to it } }
-
-    /** This conversation's agent, Claude until the list names it: a cold list must not hold the modal back. */
-    private fun conversationAgent(): Flow<ConversationAgent> =
-        repository
-            .observeConversations(ConversationFilter.All)
-            .map { rows -> rows.firstOrNull { it.id == conversationId }?.agent ?: ConversationAgent.Claude }
-            .onStart { emit(ConversationAgent.Claude) }
-            .distinctUntilChanged()
-
-    fun onQuestionEvent(event: QuestionModalEvent) {
-        val held = mutableQuestionModal.value ?: return
+    fun onQuestionEvent(
+        event: QuestionModalEvent,
+        generation: Long = questionModal.value?.generation ?: -1,
+    ) {
+        val held = questions.current(serverId, conversationId) ?: return
+        if (held.generation != generation) return
         when (event) {
             is QuestionModalEvent.OptionToggled ->
-                editSelection(event.questionIndex) { selection, question ->
+                editSelection(generation, event.questionIndex) { selection, question ->
                     if (event.optionIndex in
                         question.options.indices
                     ) {
@@ -798,30 +849,33 @@ class ThreadViewModel(
                     }
                 }
             is QuestionModalEvent.OtherToggled ->
-                editSelection(event.questionIndex) { selection, question ->
+                editSelection(generation, event.questionIndex) { selection, question ->
                     selection.withOtherTicked(!selection.otherTicked, question.multiSelect)
                 }
             is QuestionModalEvent.OtherTextChanged ->
-                editSelection(event.questionIndex) { selection, question ->
+                editSelection(generation, event.questionIndex) { selection, question ->
                     selection.copy(otherText = event.text).withOtherTicked(true, question.multiSelect)
                 }
             QuestionModalEvent.Continue -> {
                 val answers = held.answers()
-                if (!held.locked && answers != null) {
-                    sendQuestion(held.batch.questionBatchId, "answer") { answerQuestionBatch(it, answers) }
+                if (!held.locked && answers != null && promptSendAllowed("question_answer")) {
+                    sendQuestion(held, "answer", answers) { answerQuestionBatch(it, answers) }
                 }
             }
             QuestionModalEvent.Cancel ->
-                if (!held.locked) sendQuestion(held.batch.questionBatchId, "refuse") { refuseQuestionBatch(it) }
+                if (!held.locked && promptSendAllowed("question_refuse")) {
+                    sendQuestion(held, "refuse", null) { refuseQuestionBatch(it) }
+                }
         }
     }
 
     private fun editSelection(
+        generation: Long,
         questionIndex: Int,
         edit: (QuestionSelection, Question) -> QuestionSelection,
     ) {
-        mutableQuestionModal.update { held ->
-            if (held == null || held.locked || questionIndex !in held.selections.indices) return@update held
+        questions.update(serverId, conversationId, generation) { held ->
+            if (held.locked || questionIndex !in held.selections.indices) return@update held
             val question = held.batch.questions[questionIndex]
             held.copy(selections = held.selections.toMutableList().also { it[questionIndex] = edit(it[questionIndex], question) })
         }
@@ -829,41 +883,50 @@ class ThreadViewModel(
 
     /**
      * The single question send (#661): locks the modal before launching, so a second Continue or Cancel
-     * is a no-op, and applies the outcome only while [questionBatchId] is still the held batch. Catches
+     * is a no-op, and applies the outcome only while the captured generation is still held. Catches
      * only the documented throws; logs static codes only, never an id, label or value.
      */
     private fun sendQuestion(
-        questionBatchId: String,
+        held: QuestionModalState,
         kind: String,
+        answers: List<QuestionAnswer>?,
         send: suspend (questionBatchId: String) -> Unit,
     ) {
-        setQuestionPhase(questionBatchId, QuestionSendPhase.Sending)
-        viewModelScope.launch {
-            val outcome =
-                try {
-                    send(questionBatchId)
-                    QuestionSendPhase.Sent
-                } catch (e: CancellationException) {
-                    throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
-                } catch (e: RelayErrorException) {
-                    QuestionSendPhase.Failed
-                } catch (e: IllegalStateException) {
-                    QuestionSendPhase.Failed
-                } catch (e: IllegalArgumentException) {
-                    QuestionSendPhase.Failed
+        val generation = held.generation
+        setQuestionPhase(generation, QuestionSendPhase.Sending)
+        viewModelScope
+            .launch {
+                if (questions.current(serverId, conversationId)?.generation != generation) return@launch
+                val outcome =
+                    try {
+                        if (!questions.submit(serverId, conversationId, generation, answers, send)) return@launch
+                        QuestionSendPhase.Sent
+                    } catch (e: CancellationException) {
+                        setQuestionPhase(generation, QuestionSendPhase.Failed)
+                        throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+                    } catch (e: RelayErrorException) {
+                        QuestionSendPhase.Failed
+                    } catch (e: IllegalStateException) {
+                        QuestionSendPhase.Failed
+                    } catch (e: IllegalArgumentException) {
+                        QuestionSendPhase.Failed
+                    }
+                RelayLog.d { "event=question_send kind=$kind outcome=${if (outcome == QuestionSendPhase.Sent) "sent" else "failed"}" }
+                setQuestionPhase(generation, outcome)
+            }.invokeOnCompletion { cause ->
+                if (cause is CancellationException) {
+                    questions.update(serverId, conversationId, generation) {
+                        if (it.phase == QuestionSendPhase.Sending) it.copy(phase = QuestionSendPhase.Failed) else it
+                    }
                 }
-            RelayLog.d { "event=question_send kind=$kind outcome=${if (outcome == QuestionSendPhase.Sent) "sent" else "failed"}" }
-            setQuestionPhase(questionBatchId, outcome)
-        }
+            }
     }
 
     private fun setQuestionPhase(
-        questionBatchId: String,
+        generation: Long,
         phase: QuestionSendPhase,
     ) {
-        mutableQuestionModal.update { held ->
-            if (held?.batch?.questionBatchId == questionBatchId) held.copy(phase = phase) else held
-        }
+        questions.update(serverId, conversationId, generation) { it.copy(phase = phase) }
     }
 
     private val newSessionErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
@@ -1029,6 +1092,31 @@ class ThreadViewModel(
                     }
                 }
         }
+
+        // #1309: a conversation whose claude had not run yet reads no permission mode and no applied effort,
+        // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
+        // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
+        viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+    }
+
+    /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun runSettingsRereadEdges(liveSessionEvents: Flow<LiveSessionEvent>): Flow<String> =
+        merge(
+            repositoryAvailable
+                .distinctUntilChanged()
+                .flatMapLatest { available -> if (available) turnEndEdges(liveSessionEvents) else emptyFlow() }
+                .map { "turn_end" },
+            resetEndEdges(repository.observeResetting(conversationId)).map { "reset_end" },
+        )
+
+    /**
+     * Ask for a fresh reading of this thread's run settings (#1309). The repository's `flatMapLatest` cancels
+     * an in-flight read first, and a reply still replaces the whole reading. [reason] is a static code.
+     */
+    private fun rereadRunSettings(reason: String) {
+        RelayLog.d { "event=run_settings_reread reason=$reason" }
+        repository.refreshSessionSettings(conversationId)
     }
 
     /**
@@ -1191,10 +1279,12 @@ class ThreadViewModel(
      * between them.
      */
     fun sendMessage(text: String) {
+        if (!connectedFor("send")) return
         if (_attachmentsSending.value) return
+        // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
+        if (text.isBlank()) return
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
         if (attachments.isNotEmpty()) return sendWithAttachments(text, attachments)
-        if (text.isBlank()) return
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
@@ -1205,7 +1295,7 @@ class ThreadViewModel(
 
     /**
      * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
-     * (#932). Blank text is allowed here: a message may carry attachments alone.
+     * (#932). [text] is never blank: [sendMessage] refuses that before reading the attachments (#1328).
      *
      * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
      * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that
@@ -1243,11 +1333,15 @@ class ThreadViewModel(
             } finally {
                 // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
                 _attachmentsSending.value = false
+                _attachmentUploadProgress.value = null
             }
         }
     }
 
-    /** Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not. */
+    /**
+     * Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not and
+     * sending one [attachmentSendFailures] notice (#1325).
+     */
     private suspend fun upload(
         target: String,
         entry: PendingAttachment,
@@ -1255,17 +1349,29 @@ class ThreadViewModel(
         val bytes =
             when (val read = attachmentReader.read(entry.uri)) {
                 is AttachmentRead.Bytes -> read.bytes
-                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large")
-                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed")
+                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large", AttachmentSendFailure.TOO_LARGE)
+                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed", AttachmentSendFailure.UNREADABLE)
             }
-        val result = repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType)
-        if (result !is AttachmentUploadResult.Stored) return attachmentSendFailed("upload_failed")
-        draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
-        return result.attachmentId
+        val result =
+            repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType) { sent, total ->
+                _attachmentUploadProgress.value = attachmentUploadProgress(entry.key, sent, total)
+            }
+        _attachmentUploadProgress.value = null
+        when (result) {
+            is AttachmentUploadResult.Stored -> {
+                draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
+                return result.attachmentId
+            }
+            is AttachmentUploadResult.Failed -> return attachmentSendFailed("upload_failed", attachmentSendFailure(result))
+        }
     }
 
-    private fun attachmentSendFailed(outcome: String): String? {
+    private fun attachmentSendFailed(
+        outcome: String,
+        failure: AttachmentSendFailure,
+    ): String? {
         RelayLog.d { "event=composer_attachment_send outcome=$outcome" }
+        attachmentSendFailureChannel.trySend(failure)
         return null
     }
 
@@ -1433,6 +1539,7 @@ class ThreadViewModel(
      * comes this way. Logs static codes only.
      */
     fun onComposerCommand(action: ComposerAction) {
+        if (!connectedFor("composer_action")) return
         val command = action.command ?: return
         if (action in state.value.absentActions) {
             RelayLog.d { "event=composer_action action=${action.value} outcome=absent" }
@@ -1470,8 +1577,15 @@ class ThreadViewModel(
      * and requires an explicit **second** confirm of the *same* armed option before it sends; a tap of a
      * different option re-arms. No-op if no modal is open.
      */
-    fun onModalOption(optionId: String) {
+    fun onModalOption(
+        optionId: String,
+        modalId: String? = null,
+    ) {
         val open = scopedModal() as? ModalUiState.Open ?: return
+        // #1306: a tap composed for a request that has since been replaced carries the old id.
+        if (modalId != null && modalId != open.modalId) return
+        // #1321: checked before the send or the arm, so a disabled option's tap changes nothing.
+        if (!promptSendAllowed("permission_option")) return
         when {
             optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId, grantsAlwaysAllow(open, optionId))
             armedModalOption.value == ArmedModalOption(open.modalId, optionId) ->
@@ -1481,12 +1595,24 @@ class ThreadViewModel(
     }
 
     /** Cancel the currently-open modal (#451): clear any arm and send `modal_cancel`. No-op if no modal is
-     *  open. A cancel never carries the session grant, and it drops any acceptance (#818). */
-    fun onModalCancel() {
+     *  open, or if [modalId] names a request that has been replaced (#1306). A cancel never carries the
+     *  session grant, and it drops any acceptance (#818). */
+    fun onModalCancel(modalId: String? = null) {
         val open = scopedModal() as? ModalUiState.Open ?: return
+        if (modalId != null && modalId != open.modalId) return
+        // #1321: before the arm and the grant draft are dropped, so a refused cancel keeps both.
+        if (!promptSendAllowed("permission_cancel")) return
         armedModalOption.value = null
-        acceptedAlwaysAllow.value = null
+        grantDrafts.set(serverId, conversationId, null)
         sendCancel(open.modalId)
+    }
+
+    /**
+     * The reader left this conversation's screen (#1306): drop any armed non-default option, so coming back
+     * takes two fresh taps. The session-grant draft is kept; it belongs to the request, not the visit.
+     */
+    fun onConversationLeft() {
+        armedModalOption.value = null
     }
 
     /**
@@ -1502,7 +1628,7 @@ class ThreadViewModel(
     ) {
         val open = scopedModal() as? ModalUiState.Open ?: return
         if (open.modalId != modalId || !open.offersAlwaysAllow) return
-        acceptedAlwaysAllow.value = if (accepted) open.alwaysAllowKey() else null
+        grantDrafts.set(serverId, conversationId, if (accepted) open.alwaysAllowKey() else null)
     }
 
     /**
@@ -1516,7 +1642,7 @@ class ThreadViewModel(
     ): Boolean =
         optionId in ALWAYS_ALLOW_OPTION_IDS &&
             open.offersAlwaysAllow &&
-            acceptedAlwaysAllow.value == open.alwaysAllowKey()
+            grantDrafts.current(serverId, conversationId) == open.alwaysAllowKey()
 
     /**
      * The input guard's read of this thread's modal (#816). It reads the host flow synchronously instead of
@@ -1568,10 +1694,11 @@ class ThreadViewModel(
         }
     }
 
-    /** Stop this ViewModel's conversation. Always attempts the send; the daemon is authoritative on
+    /** Stop this ViewModel's conversation. Sends whenever the host is connected (#1319); the daemon is authoritative on
      *  whether its turn is running and on the interactive gate. The affordance passes no arguments:
      *  [sendInterrupt] supplies the saved open [conversationId], without changing local turn state. */
     fun onInterrupt() {
+        if (!connectedFor("interrupt")) return
         sendInterrupt()
     }
 
@@ -1753,6 +1880,7 @@ class ThreadViewModel(
      * path clears it, which is what restores the last confirmed reading.
      */
     fun onModelSelected(value: String) {
+        if (!connectedFor("model")) return
         val config = state.value.runConfig
         if (config.pending || value == config.selectedModel) return
         if (!skipUnlessWritable(config)) return
@@ -1764,6 +1892,7 @@ class ThreadViewModel(
      *  the selected row, forwarded verbatim — never `Effort.name.lowercase()`, whose five entries are this
      *  device's guess at a vocabulary the row itself publishes. */
     fun onEffortSelected(level: String) {
+        if (!connectedFor("effort")) return
         effortRecall.cancel()
         val config = state.value.runConfig
         if (config.pending || level == config.selectedEffort) return
@@ -1791,6 +1920,7 @@ class ThreadViewModel(
      * on the confirmed reading and [ThreadRunConfig.pendingPermission] only marks it pending.
      */
     fun onPermissionModeSelected(value: String) {
+        if (!connectedFor("permission")) return
         val mode = PermissionModeOption.fromWire(value) ?: return
         val config = state.value.runConfig
         if (config.permissionMode.isEmpty() || value == config.permissionMode) return
@@ -1987,8 +2117,10 @@ class ThreadViewModel(
                 pendingSaveAsChannelDialog.value = null
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
-            ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true
+            // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
+            ThreadEvent.ChannelInfo -> if (pendingChannelInfo.compareAndSet(false, true)) rereadRunSettings("channel_info_open")
             ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
+            ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
         }
@@ -2063,13 +2195,7 @@ class ThreadViewModel(
         val optionId: String,
     )
 
-    /** An accepted always-allow offer (#818), keyed on the prompt and the exact rules it offered. */
-    private data class AcceptedAlwaysAllow(
-        val modalId: String,
-        val rules: List<String>,
-    )
-
-    private fun ModalUiState.Open.alwaysAllowKey() = AcceptedAlwaysAllow(modalId, alwaysAllowRules)
+    private fun ModalUiState.Open.alwaysAllowKey() = PermissionGrantDraft(modalId, alwaysAllowRules)
 
     /** The outstanding permission write (#650): the session it addressed, and the job that sends and
      *  settles it. */
@@ -2228,6 +2354,7 @@ private fun runConfig(
         }
     return ThreadRunConfig(
         choices = visibleRows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
+        overflowChoices = visibleRows.drop(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
         inheritedChoice = defaultRow?.toChoice(agent),
         inheritedResolutionUnique =
             defaultRow != null && visibleRows.count { it.resolvedModel == defaultRow.resolvedModel } == 1,
@@ -2235,6 +2362,7 @@ private fun runConfig(
         droppedModels = menu?.droppedModels ?: 0,
         hiddenChoices = (visibleRows.size - MAX_RENDERED_MODEL_CHOICES).coerceAtLeast(0),
         settingsAvailable = settings != null,
+        settingsHeld = settings?.held == true,
         savedModel = settings?.model.orEmpty(),
         savedEffort = settings?.effort.orEmpty(),
         pendingModel = pendingModel,
@@ -2245,6 +2373,7 @@ private fun runConfig(
         appliedEffort = settings?.effectiveEffort ?: EffectiveEffort.Unavailable,
         capabilities = settings?.capabilities,
         memorySearch = settings?.memorySearch ?: MemorySearchReport.Unknown,
+        agent = agent,
     )
 }
 
@@ -2298,8 +2427,8 @@ private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
 internal fun ModelMenuRow.dropdownLabel(agent: ConversationAgent): String =
     if (agent == ConversationAgent.Claude) value.modelFamily().ifEmpty { displayName.inert() } else displayName.inert()
 
-/** Desktop's dropdown family rule over the raw published value; used only for display. */
-private fun String.modelFamily(): String {
+/** Desktop's dropdown family rule over a raw identifier; used for display and the inherited mark (#1308). */
+internal fun String.modelFamily(): String {
     val bare = removePrefix("claude-")
     val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
     return head.replaceFirstChar { it.uppercaseChar() }.inert()

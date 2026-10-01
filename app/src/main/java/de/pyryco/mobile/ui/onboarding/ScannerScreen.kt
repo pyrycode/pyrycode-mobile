@@ -66,12 +66,17 @@ fun ScannerScreen(
     modifier: Modifier = Modifier,
     onConfirmPairing: () -> Unit = {},
     onDeclinePairing: () -> Unit = {},
+    onRetryPairing: () -> Unit = {},
+    onCancelPairing: () -> Unit = {},
     cameraPreview: @Composable () -> Unit = {},
 ) {
     when (state) {
         ScannerUiState.PermissionRequesting,
         ScannerUiState.ReadyToScan,
         is ScannerUiState.Decoded,
+        // Shown only for the frame before the route navigates; the camera stays gated on ReadyToScan.
+        ScannerUiState.Paired,
+        ScannerUiState.Cancelled,
         ->
             ScannerViewport(
                 onNavigateBack = onNavigateBack,
@@ -92,13 +97,38 @@ fun ScannerScreen(
                 onPasteCode = onPasteCode,
                 modifier = modifier,
             )
-        is ScannerUiState.AwaitingConfirm ->
+        // #1386: one branch, so the same modal window stays up through confirm, the wait and a failure.
+        is ScannerUiState.AwaitingConfirm,
+        is ScannerUiState.Verifying,
+        is ScannerUiState.VerificationFailed,
+        -> {
+            val failed = state as? ScannerUiState.VerificationFailed
             PairingConfirmContent(
-                fingerprint = state.fingerprint,
-                onConfirm = onConfirmPairing,
-                onDecline = onDeclinePairing,
+                fingerprint =
+                    when (state) {
+                        is ScannerUiState.AwaitingConfirm -> state.fingerprint
+                        is ScannerUiState.Verifying -> state.fingerprint
+                        else -> failed?.fingerprint.orEmpty()
+                    },
+                onConfirm =
+                    when (state) {
+                        is ScannerUiState.AwaitingConfirm -> onConfirmPairing
+                        is ScannerUiState.VerificationFailed -> onRetryPairing
+                        else -> ({})
+                    },
+                onDecline = if (state is ScannerUiState.AwaitingConfirm) onDeclinePairing else onCancelPairing,
                 modifier = modifier,
+                cancelLabel = if (state is ScannerUiState.AwaitingConfirm) "Don't pair" else "Cancel",
+                submitLabel =
+                    when {
+                        failed == null -> "Confirm pairing"
+                        failed.retryable -> "Retry"
+                        else -> null
+                    },
+                loading = state is ScannerUiState.Verifying,
+                error = failed?.message,
             )
+        }
     }
 }
 
@@ -404,12 +434,16 @@ private fun ScannerErrorContent(
 }
 
 // The pairing security checkpoint receives only the public fingerprint and decision callbacks.
-// The pending server stays in route state so the displayed fingerprint and saved record stay bound.
+// The pending server stays in ScannerViewModel state so the displayed fingerprint and saved record stay bound.
 @Composable
 private fun PairingConfirmContent(
     fingerprint: String,
     onConfirm: () -> Unit,
     onDecline: () -> Unit,
+    cancelLabel: String,
+    submitLabel: String?,
+    loading: Boolean,
+    error: String?,
     modifier: Modifier = Modifier,
 ) {
     MobileModal(
@@ -417,8 +451,10 @@ private fun PairingConfirmContent(
         onDismissRequest = onDecline,
         onSubmit = onConfirm,
         modifier = modifier,
-        cancelLabel = "Don't pair",
-        submitLabel = "Confirm pairing",
+        loading = loading,
+        error = error,
+        cancelLabel = cancelLabel,
+        submitLabel = submitLabel,
     ) {
         // The desktop's fingerprint is colon-hex, not the older Figma mock code. Keep it verbatim.
         SelectionContainer {

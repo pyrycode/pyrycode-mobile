@@ -96,7 +96,40 @@ No other call site changed; `ThreadViewModel` consumes the unchanged interface. 
 
 ## Now derived from the relay leg (landed in [#391](../codebase/391.md))
 
-`ConnectionState` is no longer the supervisor's source of truth — it's **derived**. [#391](../codebase/391.md) introduced the relay-leg model [`RelayLinkStatus`](relay-link-status.md) (these four cases **plus** `DaemonAbsent`, for the relay's `4404 "no server"` close) as the [`RelayConnectionSupervisor`](relay-reconnect-supervisor.md)'s single hot state, and made `observe()` derive `ConnectionState` from it per-collector via `state.map { it.toConnectionState() }` (`DaemonAbsent → Offline`, the nearest legacy banner meaning). This `ConnectionState` model and the `ConnectionStateSource` interface are **unchanged** — the four cases, the product copy, and every consumer (the [`ConnectionBanner`](./connection-banner.md)'s exhaustive `when`, `ThreadViewModel`) stay exactly as before. It's a Strangler-Fig step: a richer leg model alongside the legacy single signal, the legacy one derived, until #392's combined `{relay, pyrycode}` model becomes the real banner source. See [Relay link status](relay-link-status.md) for the rationale and why `DaemonAbsent` was **not** added as a fifth `ConnectionState` case (it would have broken the banner's exhaustive `when` at compile time).
+`ConnectionState` is no longer the supervisor's source of truth — it's **derived**. [#391](../codebase/391.md) introduced the relay-leg model [`RelayLinkStatus`](relay-link-status.md) (these four cases **plus** `DaemonAbsent`, for the relay's `4404 "no server"` close) as the [`RelayConnectionSupervisor`](relay-reconnect-supervisor.md)'s single hot state, and made `observe()` derive `ConnectionState` from it per-collector via `state.map { it.toConnectionState() }` (`DaemonAbsent → Offline`, the nearest legacy banner meaning). This `ConnectionState` model and the `ConnectionStateSource` interface are **unchanged** — the four cases and the product copy stay exactly as before, and the [`ConnectionBanner`](./connection-banner.md)'s exhaustive `when` still reads this relay-only derivation. It's a Strangler-Fig step: a richer leg model alongside the legacy single signal, the legacy one derived. See [Relay link status](relay-link-status.md) for the rationale and why `DaemonAbsent` was **not** added as a fifth `ConnectionState` case (it would have broken the banner's exhaustive `when` at compile time).
+
+**#1318 moved `ThreadViewModel` off this relay-only derivation.** The thread's `ConnectionStateSource`
+(`ThreadDestinationFactory.thread` in `AppModule.kt`) now reads
+[`ConnectionStatus`](connection-status.md)`.toConnectionState()` — relay `Connected` maps to
+`ConnectionState.Connected` only once the pyrycode leg has also finished its Noise handshake, and to
+`Connecting` while the socket is up but the handshake is not — instead of `RelayLinkStatus.toConnectionState()`
+alone. Every other `RelayLinkStatus` case still falls back to the relay-only mapping documented above, so
+`Idle`, `Reconnecting(n)` and the halted states behave identically for the thread. The
+[`ConnectionBanner`](./connection-banner.md)'s own source (`RelayConnectionRegistry`) is untouched and
+stays on the relay-only mapping; #392's combined model has two independent consumers now (Settings,
+Thread), not a banner takeover.
+
+## `ThreadViewModel` holds the live value eagerly, for tap-time re-checks (#1319)
+
+`ThreadViewModel.connectionState` wraps `connectionStateSource.observe()` in `stateIn`. Before #1319 it used
+`SharingStarted.WhileSubscribed(5_000)`: with no UI collecting it — which is exactly the shape of a
+`ThreadViewModel` unit test, and briefly true in production between a screen's `onStop` and the 5s grace
+window expiring — the flow is not subscribed, so `.value` sits at its `initialValue` (`Connected`) no matter
+what the real source reports. #1319 needed a tap-time re-check (`sendMessage`, `onInterrupt`,
+`onComposerCommand`, `onModelSelected`, `onEffortSelected`, `onPermissionModeSelected` all read
+`connectionState.value` before doing anything), so a stale `Connected` would make the guard silently do
+nothing. The fix changed `started` to `SharingStarted.Eagerly`: the VM subscribes to the source for its own
+`viewModelScope` lifetime starting at construction, so `.value` tracks the real source continuously with no
+UI collector required. `initialValue` stays `Connected` — only reachable now in the narrow window before the
+eager collector's first value lands, under `Dispatchers.Main.immediate` effectively never outside a test that
+asserts before advancing the dispatcher.
+
+A `ThreadViewModel` test that wants to prove the tap-time guard must **not** collect `connectionState` itself
+(e.g. never call `.toList()` or start a `collect` on it) before flipping the fake source and tapping — doing so
+would pass against the old `WhileSubscribed` behaviour too, defeating the regression test's purpose. See
+[Thread composer footer — testing](thread-composer-footer-testing.md) and
+[Thread input bar](thread-input-bar.md) for the UI-side gating this live value now also drives via
+`ThreadScreen`'s own `connected = connectionState == ConnectionState.Connected`.
 
 ## Related
 

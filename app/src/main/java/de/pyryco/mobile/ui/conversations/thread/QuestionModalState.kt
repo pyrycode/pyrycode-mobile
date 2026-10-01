@@ -53,6 +53,7 @@ data class QuestionModalState(
     val selections: List<QuestionSelection> = List(batch.questions.size) { QuestionSelection() },
     val phase: QuestionSendPhase = QuestionSendPhase.Idle,
     val agent: ConversationAgent = ConversationAgent.Claude,
+    val generation: Long = 0,
 ) {
     val locked: Boolean get() = phase == QuestionSendPhase.Sending || phase == QuestionSendPhase.Sent
 
