@@ -83,6 +83,8 @@ LIVE_MINIMUM -= 1
 LIVE_MINIMUM -= 5
 # #1311 adds the status-band-never-empty method.
 LIVE_MINIMUM += 1
+# #1394 adds the scanner-confirm method.
+LIVE_MINIMUM += 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 
