@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
@@ -98,6 +99,7 @@ import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
+import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
@@ -130,11 +132,6 @@ private val AttachmentStripTouchOverlap = 5.dp
 // without entering the input surface. The visible controls stay in their 20dp design band.
 private val FooterTouchBottomOverflow = 12.dp
 private val FrameFooterTouchHeight = 32.dp
-
-// The three status indicators each carry their own 16dp horizontal padding, sized for the full-bleed
-// foot-of-list mount they had until #643. Inset them by the remainder so their content lands on the
-// same 20dp gutter as the input field and the footer, with their own files untouched.
-private val ComposerStatusGutter = ComposerGutter - 16.dp
 
 // Figma's top overlay shares the message area's top edge.
 private val TopOverlayTopGap = 0.dp
@@ -968,8 +965,13 @@ fun ThreadScreen(
  *
  * Notices are not turn status and are not here: claude's usage-limit report and the pairing error draw as
  * pills in the message area's [ThreadTopOverlay] (#1002), so a live reading never hides the running tool,
- * the wrap-up or "interrupted". When no signal is live every arm returns without emitting, so the band
- * contributes no node and the composer column's gap above the input field collapses with it.
+ * the wrap-up or "interrupted". When no signal is live every arm returns without emitting, but the band
+ * stays composed at its 24dp height with the snowflake alone (#1312), so the input field never moves.
+ *
+ * **The snowflake (#1312).** The band, not an arm, draws one [ThreadStatusGlyph] at its leading edge in
+ * every state, as desktop's `ComposerStatusArea` draws `PyryMark`; only waiting for answers puts its own
+ * question glyph there instead. It turns while [isBusy] or [localSendPending] holds, desktop's
+ * `isStatusIconTurning`, and is still otherwise, including an api-retry, compaction or stall while idle.
  *
  * [thinkingProgress] (#803) adds **no arm**: it decorates the daemon's thinking phase only, so every arm
  * above pre-empts a live reading for free and the local-send window never shows a stale one.
@@ -978,8 +980,7 @@ fun ThreadScreen(
  * "Working…" or "Thinking…" (#1311), never to nothing while [isBusy] holds.
  *
  * [taskCount] (#1043) is not an arm either: above zero, a pill reading it sits at the band's right end
- * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel. At zero
- * the band is exactly the reading, so with nothing live it still contributes no node.
+ * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel.
  */
 @Composable
 private fun ThreadStatusArea(
@@ -999,77 +1000,72 @@ private fun ThreadStatusArea(
     onTasksClick: () -> Unit,
     agent: ConversationAgent,
 ) {
-    val reading: @Composable (Modifier) -> Unit = { modifier ->
+    // #1312: one always-composed band. The glyph is its first child in every state, so a reading change or
+    // the task pill never gives the snowflake a new composition node and its turn never restarts.
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 24.dp).padding(horizontal = ComposerGutter),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         if (waitingForAnswers) {
-            Row(
-                modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Image(
-                    painterResource(R.drawable.ic_question_glyph),
-                    contentDescription = null,
-                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.size(14.dp, 16.dp),
-                )
+            Image(
+                painterResource(R.drawable.ic_question_glyph),
+                contentDescription = null,
+                colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.size(14.dp, 16.dp),
+            )
+        } else {
+            ThreadStatusGlyph(turning = isBusy || localSendPending)
+        }
+        // Always present, so the pill keeps the band's right end while no reading shows.
+        Box(Modifier.weight(1f)) {
+            if (waitingForAnswers) {
                 Text(
                     stringResource(R.string.question_waiting_for_answers),
+                    modifier = Modifier.padding(vertical = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
+            } else {
+                StatusReading(
+                    arm =
+                        statusArm(
+                            connectionState = connectionState,
+                            resetting = resetting != null,
+                            apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
+                            isCompacting = isCompacting,
+                            isStalled = isStalled,
+                            hasTurnOutcome = turnOutcome != null,
+                            isThinking = isThinking,
+                            isBusy = isBusy,
+                            localSendPending = localSendPending,
+                            hasOpenTool = runningTool != null,
+                        ),
+                    apiRetry = apiRetry,
+                    resetting = resetting,
+                    turnOutcome = turnOutcome,
+                    isThinking = isThinking,
+                    thinkingProgress = thinkingProgress,
+                    runningTool = runningTool,
+                    connectionState = connectionState,
+                    agent = agent,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-        } else {
-            StatusReading(
-                arm =
-                    statusArm(
-                        connectionState = connectionState,
-                        resetting = resetting != null,
-                        apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
-                        isCompacting = isCompacting,
-                        isStalled = isStalled,
-                        hasTurnOutcome = turnOutcome != null,
-                        isThinking = isThinking,
-                        isBusy = isBusy,
-                        localSendPending = localSendPending,
-                        hasOpenTool = runningTool != null,
-                    ),
-                apiRetry = apiRetry,
-                resetting = resetting,
-                turnOutcome = turnOutcome,
-                isThinking = isThinking,
-                thinkingProgress = thinkingProgress,
-                runningTool = runningTool,
-                connectionState = connectionState,
-                agent = agent,
-                modifier = modifier,
-            )
         }
-    }
-    if (taskCount <= 0) {
-        reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
-        return
-    }
-    // The reading's own 16dp padding lands its content on the 20dp gutter; the pill ends on it. A reading
-    // that emits nothing takes its weight with it, and Arrangement.End keeps the pill at the right end.
-    // The reading and pill share Figma's 24dp band at normal text scale, and can grow with text scale.
-    val bandModifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter)
-    Row(
-        modifier = bandModifier,
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        reading(Modifier.weight(1f))
-        // Figma's band is 24dp, the pill's own height. The clickable Surface would otherwise lay out at the
-        // 48dp minimum touch target; the hit test still widens its touch bounds to that minimum without it.
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            NoticePill(
-                text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount),
-                isError = false,
-                onClick = onTasksClick,
-                modifier = Modifier.sizeIn(minWidth = 104.dp, minHeight = 24.dp),
-                // Figma 568:3162 sits in the band, not over the messages, so it has no overlay shadow.
-                shadowElevation = 0.dp,
-            )
+        if (taskCount > 0) {
+            // Figma's band is 24dp, the pill's own height. The clickable Surface would otherwise lay out at the
+            // 48dp minimum touch target; the hit test still widens its touch bounds to that minimum without it.
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                NoticePill(
+                    text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount),
+                    isError = false,
+                    onClick = onTasksClick,
+                    modifier = Modifier.sizeIn(minWidth = 104.dp, minHeight = 24.dp),
+                    // Figma 568:3162 sits in the band, not over the messages, so it has no overlay shadow.
+                    shadowElevation = 0.dp,
+                )
+            }
         }
     }
 }
@@ -1116,7 +1112,7 @@ internal fun statusArm(
         else -> StatusArm.None
     }
 
-/** The band's one live reading, [arm], drawn; see [ThreadStatusArea]. Emits nothing for [StatusArm.None]. */
+/** The band's one live reading, [arm], as text or pill; see [ThreadStatusArea]. Emits nothing for [StatusArm.None]. */
 @Composable
 private fun StatusReading(
     arm: StatusArm,
@@ -1137,7 +1133,6 @@ private fun StatusReading(
         StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
         StatusArm.TurnOutcome -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
-        // One branch, so the glyph keeps its composition identity, and its pulse, across these readings.
         StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
                 isThinking = arm == StatusArm.Thinking,

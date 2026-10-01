@@ -61,3 +61,14 @@ Pending for the documentation stage:
 
 - `docs/knowledge/features/thinking-indicator.md`, sections "Shape" and "Working and stalled (#1311)": the band is always composed, one glyph drawn by the band rather than by an arm, and the rotation gate (`isBusy || localSendPending`, 1.6 s linear, still at animator scale 0).
 - `docs/knowledge/features/thread-screen-how-it-works-list-and-status-row.md`, "The arm order (#1311)": the same.
+
+## Revisions
+
+**2026-10-01, during implementation.**
+
+- The reading sits in an always-present `Box(Modifier.weight(1f))` instead of taking the weight itself. `StatusReading` emits nothing for `StatusArm.None`, which dropped the weight with it and pulled a lone task pill to the glyph (`TaskCountPillTest.pill_showsAlone_atTheBandsRightEnd`). New contract: glyph, weighted reading box, optional pill, in that order in every state.
+- The text-only readings measure 22dp on their own now that the 16dp glyph no longer sets their height. The band's `heightIn(min = 24.dp)` owns the 24dp; `ThreadActivityIndicatorVisualTest.shortReadingsUseTheInputStatusBandHeight` now checks that each text reading fits the band, and the pill still measures exactly 24dp.
+- Open question resolved: with a paused clock and no animation running, a state write from the test is applied only after `Snapshot.sendApplyNotifications()`, so the rotation test's `advance` sends it before moving the clock.
+- `ShadowValueAnimator.setDurationScale` is protected; the rotation test calls the framework's hidden `ValueAnimator.setDurationScale` through Robolectric's `ReflectionHelpers`, which is still the value `ValueAnimator.areAnimatorsEnabled()` reads.
+- `ThreadStatusBandTest` runs the per-state check with native graphics at Figma's 412dp reference width, where every reading is one line; a reading that wraps at a narrower width raises the band, as it did before. The absolute-dp checks (42dp label start, 14 × 16 slot) run at the default configuration because `ForcedSize` rescales density.
+- `ThreadScreenModalTest`: the always-present band shortens Robolectric's message area by 32dp. `context_rows_render_between_the_prompt_and_the_options_in_desktop_order` scrolls each row into view before asserting it, and the offline test taps the always-allow toggle's lower part, because the scroll now leaves that row under the Offline retry pill at the message area's top.
