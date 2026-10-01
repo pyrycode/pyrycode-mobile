@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -47,12 +48,14 @@ import kotlinx.serialization.json.encodeToJsonElement
  * into [conversationList].
  *
  * One instance per repository, and a fresh repository per connection (#351), so [settingsRevision] is
- * connection-scoped exactly as it was when it lived in the repository. Nothing here logs.
+ * connection-scoped exactly as it was when it lived in the repository. The last successful reply per
+ * conversation is held in [readings], the host's [HostReadings] (#1320). Nothing here logs.
  */
 internal class SessionSettingsCommands(
     private val requests: RelayRequests,
     private val negotiatedCapabilities: () -> Set<String>,
     private val conversationList: ConversationListProjection,
+    private val readings: HostReadings,
 ) {
     /**
      * `conversationId -> settings-read ordinal` (#590) — the **refresh trigger** for
@@ -76,9 +79,9 @@ internal class SessionSettingsCommands(
 
     /**
      * The run configuration of [conversationId]'s session over v2 `request_session_settings` (#590,
-     * daemon pyrycode#1610/#2449/#2510). A cold per-collector read that re-issues on every trigger and
-     * folds **nothing** — no projection on this class holds a [SessionSettings], so there is no stale
-     * value to invalidate and no slot for a late reply to land in.
+     * daemon pyrycode#1610/#2449/#2510). A cold per-collector read that re-issues on every trigger. Each
+     * reply is emitted as read and held in [readings] only as the next subscription's head (#1320), so
+     * there is no projection a late reply could land in.
      *
      * Reads the conversation's own [settingsRevision] slice, so a bump for **another** conversation does
      * not re-read this one; [distinctUntilChanged] means a value-identical re-emission does not either.
@@ -86,10 +89,12 @@ internal class SessionSettingsCommands(
      * one before starting the next, so a reply that arrives late has no collector to reach and its
      * deferred is already deregistered by [RelayRequests.sendAndAwaitReply]'s `finally`.
      *
-     * The [onStart] `null` is not cosmetic. It resets the reading to *unavailable* at the head of every
-     * subscription, which is what keeps a host handoff clean: the facade re-subscribes on the new
-     * connection, and without it a consumer would keep rendering the **previous host's** values until
-     * the new read landed (AC #1).
+     * The [onStart] head is not cosmetic. It resets the reading at the head of every subscription to what
+     * this host's [readings] hold for the conversation, invalidated (#1320): the model and effort stay, the
+     * permission mode and memory search are not yet known, and with nothing held it is `null`. The facade
+     * re-subscribes on every connection, so this keeps the footer filled across a reconnect while still
+     * never carrying a reading across hosts, the #590 reason for the old `null`: the holder is per host and
+     * dropped with the pairing.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
@@ -97,7 +102,7 @@ internal class SessionSettingsCommands(
             .map { it[conversationId] ?: 0L }
             .distinctUntilChanged()
             .flatMapLatest { sessionSettingsRead(conversationId) }
-            .onStart { emit(null) }
+            .onStart { emit(readings.observeHeldSessionSettings(conversationId).first()) }
 
     /**
      * One settings read as a single-emission flow (#590). Fails **closed to `null`** rather than to the
@@ -121,11 +126,18 @@ internal class SessionSettingsCommands(
      * did not negotiate it fully inert on this verb — no reply, not even a signal that the conversation
      * exists — so an ungated send would suspend until teardown. Not sending is also what keeps "the read
      * sends `request_session_settings` and nothing else" true in the degenerate case.
+     *
+     * A successful reply is held in [readings] before it is emitted (#1320); a failed or ungated read
+     * leaves the held reading as it was.
      */
     private fun sessionSettingsRead(conversationId: String): Flow<SessionSettings?> =
         flow {
             emit(
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) readSessionSettings(conversationId) else null,
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    readSessionSettings(conversationId).also { readings.holdSessionSettings(conversationId, it) }
+                } else {
+                    null
+                },
             )
         }.catch { emit(null) }
 

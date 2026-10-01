@@ -1021,6 +1021,8 @@ data class HistoryEntry(
  *   without `multi_agent`, or a reply that resolved no session. `null` narrows nothing.
  * @param memorySearch Search access reported for this session, or unknown when omitted or invalid. This
  *   says nothing about knowledge capture; only explicit aggregate `Absent` confirms no installation.
+ * @param held `true` for a reading carried across a reconnect (#1320) rather than answered on the current
+ *   connection: shown, but never acted on, and replaced by the connection's own reply.
  */
 data class SessionSettings(
     val sessionId: String,
@@ -1033,6 +1035,7 @@ data class SessionSettings(
     val windowTokens: Long,
     val capabilities: SessionCapabilities? = null,
     val memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
+    val held: Boolean = false,
 )
 
 /** Search access for the selected session's agent and workspace, not knowledge capture. */
