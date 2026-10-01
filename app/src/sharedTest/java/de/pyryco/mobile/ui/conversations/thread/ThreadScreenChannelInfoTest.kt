@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
@@ -288,7 +289,8 @@ class ThreadScreenChannelInfoTest {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
-        composeTestRule.onNodeWithText("Delete").performClick()
+        // The Session section (#1346) sits above Actions, so Delete starts below the 320dp-wide viewport.
+        composeTestRule.onNodeWithText("Delete").performScrollTo().performClick()
 
         assertEquals(listOf(ThreadEvent.Delete), events)
     }

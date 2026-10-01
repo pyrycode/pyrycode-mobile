@@ -1016,7 +1016,8 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(DELETE_ACTION).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText(DELETE_ACTION).performClick()
+        // The Session section (#1346) and, after a turn, its cost row sit above Actions, so scroll Delete in.
+        composeTestRule.onNodeWithText(DELETE_ACTION).performScrollTo().performClick()
 
         // 8. Confirm the delete. Wait for the dialog's unique title, then tap the CONFIRM "Delete" — the sheet's
         //    "Delete" is also on screen, so disambiguate by the dialog's sibling "Cancel" button (the sheet has

@@ -90,3 +90,11 @@ Pending for the documentation stage: fold the Session section (version/permissio
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-01
+
+## Revisions
+
+### 2026-10-01 — Session section shifts Actions below the fold
+
+Driven by the verifier's MUST FIX on `ThreadScreenChannelInfoTest.tapping_delete_emits_delete`. The Design said the `ChannelInfoUiModel` defaults keep existing tests unchanged, but only the cost row is optional: the Session header and its two rows render even with `sessionFacts = null`, as desktop does. At Robolectric's 320dp width the labels wrap and the Actions "Delete" row starts below the viewport. The layout stays as designed; the existing taps on the sheet's "Delete" (the Robolectric test and step 7 of `interactiveTurn_deleteConversation_removesFromListAndClosesThread`) now `performScrollTo()` first. Contract: a test that clicks a node below About in `ChannelInfoSheetContent` scrolls to it before clicking.
+
+The same rework restores `import kotlinx.coroutines.flow.mapNotNull` in `ThreadViewModel.kt`, which the main merge dropped when main removed its last other use.
