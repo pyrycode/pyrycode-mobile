@@ -28,7 +28,6 @@
     <string name="create_chat_failed">Couldn’t create the chat. Try again.</string>
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <string name="cd_tree_host_update">Update Pyrycode to use %1$s</string>
-    <string name="cd_tree_host_leg_idle">Pyrycode: idle</string>
     <string name="tree_host_update_required">Update Pyrycode to use this host.</string>
     <string name="tree_host_update_required_version">Update Pyrycode to version %1$s or newer to use this host.</string>
     <!-- A Chats row's pencil (#827); %1$s is the chat's (clamped) name or the untitled fallback. -->
