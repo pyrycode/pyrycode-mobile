@@ -19,6 +19,16 @@ Overlap: #1410 adds lines next to the #1325 comments in both scripts; additive, 
 
 ## Revisions
 
+### Manual recovery after the inherited permission-test failure, 2026-10-01
+
+The full live run executed 46 methods. All five restored settings methods passed. The permission-answer
+method failed when returning to chat A, and failed at the same navigation wait on main. Since #1313 the
+chat retains its running phase across navigation, so its empty composer shows Stop while waiting for a
+permission answer. `openChatRow` waited only for Send and timed out on a correctly opened busy chat.
+It now accepts either composer action while still requiring the conversation list to leave. All prompt,
+grant, arm and answer checks remain. This is a shared test-helper repair, with no production change.
+The affected permission method and the full live suite must pass before merging.
+
 ### 2026-10-01: the reconnect method's model mark follows the held announcement
 
 The live gate (log `2026-10-01T12-32-28-212Z_real-claude-gate_#1397`) passed 43 of 44. `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` got past the held `Cxt: N%` and the fresh reading, then failed with `run configuration 'Model' never settled on '<inherited label>'`. The cause is #1317's other held reading, not the held settings: the first turn's announced model is held across the reconnect too, and `ThreadRunConfig.selectedChoice` marks the row an inherited chat's announcement maps to (#1308), not the default row's resolution that `inheritedModelLabel` names. Before #1317 the reconnect cleared the announcement, so the old expectation held. Step 3 now reads the announced model and checks the mark with `announcedRow` and `awaitAnnouncedMark`, then `awaitFooter` on the marked label, as `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` does. Step 5's target also skips the marked row, so the pick is a real change. No production code changes.
