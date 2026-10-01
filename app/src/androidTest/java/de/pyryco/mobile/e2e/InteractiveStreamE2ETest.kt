@@ -3742,7 +3742,8 @@ class InteractiveStreamE2ETest {
      * The composer footer's readings and a model change survive a cut-and-restore of the phone's link (#967).
      * The chat is prepared as #545's are: nothing remembered and no saved model.
      *  * **The context reading is held.** After a real turn the footer shows `Cxt: N%`. The host's readings are
-     *    kept for the life of its pairing (#1317), so after the reconnect it still shows that same reading.
+     *    kept for the life of its pairing (#1317), so with the link cut it still shows that same reading. Once the
+     *    link is back the thread asks for a fresh one (#1410), and the footer shows a percentage.
      *  * **The readings come back.** Effort and permission settle, none pending, on what a fresh reading
      *    taken on the new connection reports. The model is inherited, and the first turn's announcement is
      *    held too (#1317), so the mark follows that announcement (#1308) rather than the default row.
@@ -3768,11 +3769,23 @@ class InteractiveStreamE2ETest {
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
             val held = awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
+            // The reading the first turn pushed. Its repository reads the host's readings (#1317), so it stays
+            // readable while the link is cut.
+            val preCutRepository = hostRepository()
+            val preCut =
+                runBlocking { withTimeout(REPLY_TIMEOUT_MS) { preCutRepository.observeContextUsage(chat.id).filterNotNull().first() } }
 
-            // 2. Cut and restore the link. The host's context reading is held across it (#1317).
+            // 2. Cut the link: the host's context reading is held across it (#1317). Checked while the link is down,
+            //    because once it is back the thread's reconnect ask (#1410) may replace the reading with its answer.
             setHostLink(serverId, up = false)
+            assertEquals(
+                "the held context reading while the link is cut",
+                preCut,
+                runBlocking { preCutRepository.observeContextUsage(chat.id).first() },
+            )
+            awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' while the link is cut") { it == held }
             setHostLink(serverId, up = true)
-            awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' after the reconnect") { it == held }
+            awaitContextSegment(THREAD_TIMEOUT_MS, "a percentage after the reconnect") { CONTEXT_REPORTED.matches(it) }
 
             // 3. Model, effort and permission settle on a fresh reading taken on the new connection.
             val fresh = freshSettings(chat.id)
@@ -3796,10 +3809,16 @@ class InteractiveStreamE2ETest {
             //    the Stop control has gone. Two ping replies in a two-ping thread are both composed in the list.
             //    Then the reading must be newer than the held one: the footer's percentage can round to the same
             //    text, so freshness is the repository's token count growing past the held reading's.
-            val heldUsage =
-                hostRepository().let { repository ->
-                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first() } }
-                }
+            //    The reconnect ask's answer (#1410) is a detail:"full" count, which need not agree with a post-turn
+            //    detail:"summary" push, so it is neither the baseline nor allowed to pass the growth check. The
+            //    baseline is the pre-cut push. The answer is let land first, moving the reading off the pre-cut
+            //    one; an answer equal to it emits nothing and a refused ask sends none, so that wait may time out.
+            //    The growth check then accepts only a reading other than the settled one.
+            val repository = hostRepository()
+            val settled =
+                runBlocking {
+                    withTimeoutOrNull(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first { it != preCut } }
+                } ?: preCut
             sendFromPhone(PING_PROMPT)
             val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
             try {
@@ -3811,15 +3830,16 @@ class InteractiveStreamE2ETest {
                 throw AssertionError("the turn on the new connection never ended with its reply drawn", e)
             }
             try {
-                val repository = hostRepository()
                 runBlocking {
                     withTimeout(REPLY_TIMEOUT_MS) {
-                        repository.observeContextUsage(chat.id).filterNotNull().first { it.totalTokens > heldUsage.totalTokens }
+                        repository.observeContextUsage(chat.id).filterNotNull().first {
+                            it != settled && it.totalTokens > preCut.totalTokens
+                        }
                     }
                 }
             } catch (e: TimeoutCancellationException) {
                 throw AssertionError(
-                    "no context reading newer than the held one (${heldUsage.totalTokens} tokens) after the turn on the new connection",
+                    "no context reading newer than the held one (${preCut.totalTokens} tokens) after the turn on the new connection",
                     e,
                 )
             }
