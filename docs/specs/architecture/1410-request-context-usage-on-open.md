@@ -118,6 +118,12 @@ One real-claude turn (the peer's ping) plus one on-demand reading. Added to the 
 
 Pending for the documentation stage: the thread / context-usage feature overview (the topic that documents the footer's `Cxt:` segment and #946's "no ask" rule) should record that the open thread asks on open and on each repository return (#1410), that refusals are ignored, and that `docs/e2e-interactive-stream.md`'s coverage list gains the new rung-3 method.
 
+## Revisions
+
+### 2026-10-01 — only the reconnect ask logs
+
+The planned `reason=open` log line ran inside `ThreadViewModel`'s construction, so every existing ViewModel test class that installs no `RelayLog.sink` (`ThreadViewModelContextUsageTest`, `ThreadViewModelRunningModelTest` and four more, 43 tests) hit the unmocked `android.util.Log` and failed. The open is already logged when the thread destination binds (`event=thread_destination_bound`), so the opening ask now logs nothing and only a repository return logs `event=context_usage_ask reason=reconnect`. Static code, never the id. The ViewModel log test asserts exactly that line.
+
 ## Security review
 
 **Verdict:** PASS

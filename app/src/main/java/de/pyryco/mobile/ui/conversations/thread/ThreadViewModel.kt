@@ -57,6 +57,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -1097,6 +1098,21 @@ class ThreadViewModel(
         // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
         viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+
+        // #1410: ask for a fresh context reading when the thread opens on a live host and each time the host's
+        // repository returns, as desktop does on open. Unlike the walk restart above there is no `drop(1)`: the
+        // opening availability is the open's own ask, and nothing else sends it. An opening `false` waits for the
+        // repository's arrival. Each ask is one fire-and-forget frame; the reply lands on observeContextUsage.
+        viewModelScope.launch {
+            var opened = false
+            repositoryAvailable
+                .distinctUntilChanged()
+                .filter { it }
+                .collect {
+                    askForContextUsage(reconnect = opened)
+                    opened = true
+                }
+        }
     }
 
     /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */
@@ -1117,6 +1133,16 @@ class ThreadViewModel(
     private fun rereadRunSettings(reason: String) {
         RelayLog.d { "event=run_settings_reread reason=$reason" }
         repository.refreshSessionSettings(conversationId)
+    }
+
+    /**
+     * Ask for a fresh context reading of this thread (#1410). Only a [reconnect] ask logs, with a static reason and
+     * never the id: the open is already logged as the thread destination binds, and the opening ask runs during
+     * construction.
+     */
+    private fun askForContextUsage(reconnect: Boolean) {
+        if (reconnect) RelayLog.d { "event=context_usage_ask reason=reconnect" }
+        repository.requestContextUsage(conversationId)
     }
 
     /**

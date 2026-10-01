@@ -18,9 +18,9 @@ import org.junit.Test
 
 /**
  * The context-window reading Claude reports per conversation (#945): the `context_usage` frame, decoded behind the
- * `interactive` gate and held per conversation. The phone sends no `request_context_usage` (#946): until
- * pyrycode#2563 a mid-turn ask holds up every later frame on the connection. Wire SSOT: pyrycode
- * `docs/protocol-mobile.md` § `context_usage`.
+ * `interactive` gate and held per conversation. Since #1410 the phone asks with `request_context_usage` when a
+ * thread opens or its host returns; subscribing alone still asks nothing. Wire SSOT: pyrycode
+ * `docs/protocol-mobile.md` § `context_usage` and § "Asking for a context usage reading on demand".
  */
 class RemoteConversationRepositoryContextUsageTest {
     // ---- push and reply ---------------------------------------------------------------------------
@@ -77,10 +77,9 @@ class RemoteConversationRepositoryContextUsageTest {
             )
         }
 
-    // ---- no ask (#946) ------------------------------------------------------------------------------
+    // ---- the ask (#1410) -------------------------------------------------------------------------------
 
-    // Until pyrycode#2563 a mid-turn `request_context_usage` holds up the connection's later frames, and a
-    // subscription cannot tell whether a turn is open, so subscribing, re-subscribing and unsubscribing send nothing.
+    // The thread asks through [ConversationRepository.requestContextUsage]; observing alone never sends.
     @Test
     fun subscription_sendsNothing() =
         runTest {
@@ -96,6 +95,90 @@ class RemoteConversationRepositoryContextUsageTest {
             runCurrent()
 
             assertTrue(pump.sent.isEmpty())
+        }
+
+    @Test
+    fun requestContextUsage_sendsOneAsk_namingTheConversation() =
+        runTest {
+            val (pump, repo) = repo()
+
+            repo.requestContextUsage("c1")
+            repo.requestContextUsage("c2")
+
+            assertEquals(listOf("request_context_usage", "request_context_usage"), pump.sent.map { it.type })
+            assertEquals(
+                listOf("""{"conversation_id":"c1"}""", """{"conversation_id":"c2"}"""),
+                pump.sent.map { it.payload.toString() },
+            )
+            assertEquals(
+                "each ask takes a fresh envelope id",
+                2,
+                pump.sent
+                    .map { it.id }
+                    .distinct()
+                    .size,
+            )
+        }
+
+    @Test
+    fun requestContextUsage_withAnEmptyIdOrWithoutInteractive_sendsNothing() =
+        runTest {
+            val (pump, repo) = repo()
+            repo.requestContextUsage("")
+            assertTrue(pump.sent.isEmpty())
+
+            val bare = FakeSessionPump()
+            RemoteConversationRepository(bare, backgroundScope).requestContextUsage("c1")
+            assertTrue(bare.sent.isEmpty())
+        }
+
+    @Test
+    fun requestContextUsage_aRefusedOrThrowingSend_isAbsorbed() =
+        runTest {
+            val pump = FakeSessionPump(sendThrows = true)
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+
+            repo.requestContextUsage("c1")
+
+            assertEquals(1, pump.sent.size)
+        }
+
+    @Test
+    fun theCorrelatedReply_replacesTheReading() =
+        runTest {
+            val (pump, repo) = repo()
+            val readings = collect(repo.observeContextUsage("c1"))
+            runCurrent()
+            repo.requestContextUsage("c1")
+            val ask = pump.sent.single().id
+
+            pump.push(contextUsage("c1", total = 40_000, max = 200_000, percentage = 20, inReplyTo = ask, id = 1L))
+            runCurrent()
+
+            assertEquals(listOf(null, ContextUsage(40_000, 200_000, 20, asOf = null)), readings)
+        }
+
+    // Both refusals leave the reading as it was, throw nothing into the collector, and the next frame still applies.
+    @Test
+    fun aRefusedAsk_leavesTheReadingUnchanged_andTheCollectorAlive() =
+        runTest {
+            val (pump, repo) = repo()
+            val readings = collect(repo.observeContextUsage("c1"))
+            runCurrent()
+            pump.push(contextUsage("c1", total = 50_000, max = 200_000, percentage = 25, id = 1L))
+            runCurrent()
+
+            repo.requestContextUsage("c1")
+            pump.push(refusal(pump.sent.last().id, "context_usage.unavailable", id = 2L))
+            repo.requestContextUsage("c1")
+            pump.push(refusal(pump.sent.last().id, "conversation.not_found", id = 3L))
+            runCurrent()
+
+            assertEquals(listOf(null, ContextUsage(50_000, 200_000, 25, asOf = null)), readings)
+
+            pump.push(contextUsage("c1", total = 60_000, max = 200_000, percentage = 30, id = 4L))
+            runCurrent()
+            assertEquals(ContextUsage(60_000, 200_000, 30, asOf = null), readings.last())
         }
 
     @Test
@@ -290,6 +373,19 @@ class RemoteConversationRepositoryContextUsageTest {
             id,
         )
 
+    private fun refusal(
+        inReplyTo: Long,
+        code: String,
+        id: Long,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "error",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"code":"$code","message":"static","retryable":false}"""),
+            inReplyTo = inReplyTo,
+        )
+
     private fun probe(
         type: String,
         payload: String,
@@ -297,7 +393,9 @@ class RemoteConversationRepositoryContextUsageTest {
     ): Envelope = Envelope(id = id, type = type, ts = TS, payload = MobileJson.parseToJsonElement(payload))
 
     /** Channel-backed fake of the inbound surface: unlimited buffer so pushes pre-subscription survive. */
-    private class FakeSessionPump : SessionPump {
+    private class FakeSessionPump(
+        private val sendThrows: Boolean = false,
+    ) : SessionPump {
         private val inboundChannel = Channel<Envelope>(Channel.UNLIMITED)
 
         override val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
@@ -306,6 +404,7 @@ class RemoteConversationRepositoryContextUsageTest {
 
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
+            check(!sendThrows) { "transport closed" }
             return true
         }
 

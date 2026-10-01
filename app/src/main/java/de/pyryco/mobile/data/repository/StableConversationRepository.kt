@@ -207,6 +207,11 @@ class StableConversationRepository(
         currentRepository.value?.refreshSessionSettings(conversationId)
     }
 
+    /** Ask the live repository for a fresh context reading (#1410); a no-op with no connection, like [refreshSessionSettings]. */
+    override fun requestContextUsage(conversationId: String) {
+        currentRepository.value?.requestContextUsage(conversationId)
+    }
+
     /**
      * Delegates the capability to the live repository's value, reporting `false` when no connection is
      * live (fail-safe-deny — the safe answer for a gating consumer is "hide the actions"). This is the
