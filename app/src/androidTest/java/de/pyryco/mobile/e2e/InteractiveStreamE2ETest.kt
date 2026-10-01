@@ -3309,13 +3309,9 @@ class InteractiveStreamE2ETest {
                 }
             val endedAfterMs = SystemClock.elapsedRealtime() - allowedAt
             val reply = hasText(token, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
-            // #1312: the always-present status band shortens the message area, so the reply row can sit
-            // outside the lazy list's composed window; bring it into view before judging it absent.
+            // #1449: the reply is judged where the follow rule leaves it, at the newest end, with no scroll.
             try {
                 composeTestRule.waitUntil(PHONE_TRAIL_MS) {
-                    runCatching {
-                        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText(token, substring = true))
-                    }
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
                 }
             } catch (e: ComposeTimeoutException) {
