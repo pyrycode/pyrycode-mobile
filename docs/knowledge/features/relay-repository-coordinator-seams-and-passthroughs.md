@@ -103,7 +103,7 @@ compatibility projection, `get<RelayConnectionRegistry>().connectionStatus`, int
 `SettingsViewModel`, keeping both legs on the selected host.
 
 > **Init-order gotcha.** `stateIn(scope, Eagerly, …)` runs at *property initialization*, so
-> `connectionStatus`/`pyrycodeStatus` (and `currentRepository`/`currentModal`) must be declared **after**
+> `connectionStatus`/`pyrycodeStatus` (and `currentRepository`/`hostModals`) must be declared **after**
 > `scope` and `activeConnection` in the class body — referencing an earlier-declared field is a
 > construction-time NPE (not a compile error). `activeConnection` sits just below `scope` (where the old
 > holders were), so every deriver below it satisfies this.
@@ -145,7 +145,7 @@ val liveSessionEvents: Flow<LiveSessionEvent> =
   re-plumbing this layer. `AppModule` supplies the registry projection of the
   selected coordinator's flow, exactly like `connectionStatus`.
 
-## Modal event seam (#445) and the hoisted currentModal fold (#492)
+## Modal event seam (#445) and the hoisted hostModals fold (#492)
 
 The decoded [`ModalEvent`](modal-events.md) stream ([#437](../codebase/437.md)) lives on the **concrete**
 `RemoteConversationRepository.modalEvents` (`replay = 0`, connection-scoped, **not** on the interface) —
@@ -170,10 +170,6 @@ val hostModals: StateFlow<HostModalState> =
     modalEvents
         .scan(HostModalState()) { state, event -> if (event == null) HostModalState() else state.reduce(event) }
         .stateIn(scope, SharingStarted.Eagerly, HostModalState())
-
-// #1337: the single-value view kept for the conversation-list attention readers until #1338.
-val currentModal: StateFlow<ModalUiState> =
-    hostModals.map { it.latestOutstanding }.stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 ```
 
 - **`modalEvents` is cold and now `private`** — events, no current value. The fold that holds "which
@@ -187,8 +183,9 @@ val currentModal: StateFlow<ModalUiState> =
   `Eagerly` (not `WhileSubscribed`) is load-bearing: `scan` re-emits its seed on every fresh collection, so
   a resubscribe past a stop window would overwrite retained prompts with an empty `HostModalState`, and the
   `replay = 0` source won't replay to rebuild it (full rationale in [Current-modal
-  state](current-modal-state.md#why-eagerly-not-whilesubscribed)). `currentModal` is a derived `Eagerly`
-  `stateIn` on top, for the three single-value readers that only test the `Open` case (§ below). The pure
+  state](current-modal-state.md#why-eagerly-not-whilesubscribed)). As of [#1338](current-modal-state.md#related)
+  nothing derives a single-value `currentModal` on top any more — every reader, including the
+  conversation-list attention readers (§ below), takes `hostModals.outstanding` directly. The pure
   `HostModalState.reduce` lives in `data/model` (moved there in #492, before the #1337 widening, so this
   `data`-layer coordinator can see it) and emits **no log** (modal fields may name a sensitive
   command/path).
@@ -205,11 +202,12 @@ val currentModal: StateFlow<ModalUiState> =
   (`protocol-mobile.md` § Reconcile on (re)connect) — see [Current-modal state §
   Lifecycle](current-modal-state.md#lifecycle-errors-edge-cases) for the full ordering proof.
 - `AppModule` passes the registry's selected-host `hostModals` projection into `ThreadViewModel` and
-  `PermissionDraftStore.bind` (the single-value `currentModal` stays for the conversation-list attention
-  readers — `HostAttentionState.resolve`, `HostConversationSource.promptKeys`,
-  `RelayConnectionRegistry.currentModal` — until [#1338](current-modal-state.md#related)). Every retained
-  coordinator keeps folding its own host's prompts even while another host is selected; overlapping modal
-  ids on different hosts never share an accumulator.
+  `PermissionDraftStore.bind`. As of [#1338](current-modal-state.md#related) `RelayConnectionRegistry` wires
+  each host's own `coordinator.hostModals` into that host's `HostConversationConnection` instead of a
+  selection-scoped single value — `HostAttentionState.resolve` and `HostConversationSource.promptKeys` take
+  the outstanding list directly, and `RelayConnectionRegistry.currentModal` is gone (it had no production
+  reader). Every retained coordinator keeps folding its own host's prompts even while another host is
+  selected; overlapping modal ids on different hosts never share an accumulator.
 
 ## Question-batch projection (#822)
 
@@ -232,8 +230,8 @@ fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
     questionBatches.map { it.batchFor(conversationId) }.distinctUntilChanged()
 ```
 
-- **Started `Eagerly` for the same reason as `currentModal`** (#492): a `question_shown` that arrives
-  before any thread screen subscribes must not be lost. Unlike `currentModal`'s `scan`, there is no
+- **Started `Eagerly` for the same reason as `hostModals`** (#492): a `question_shown` that arrives
+  before any thread screen subscribes must not be lost. Unlike `hostModals`' `scan`, there is no
   seed-re-emission hazard here to make `Eagerly` load-bearing in that specific way — `stateIn` on a
   switched `StateFlow` just republishes the source's current value on each subscription — but `Eagerly`
   is still required so the projection itself exists (and starts collecting the active connection's
