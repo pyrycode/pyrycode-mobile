@@ -294,10 +294,11 @@ is **not** one of the five render envelopes and does **not** flow through the de
   inline `{conversation_id}` struct; the arm reads it structurally). See
   [Remote conversation repository § the resync arm](remote-conversation-repository-live-stream-and-modals.md#the-resync-arm--reset-the-cursor--surface-the-gap-417).
 - **An observable signal a UI layer can later render** (e.g. a "messages may be missing" affordance) —
-  this slice does not render it. The current consumer, [`ThreadViewModel`](turn-state-thinking-flag.md),
-  **ignores** it: it is added to the `→ null` / `→ this` ignore-groups of the two exhaustive
-  `when (event)` blocks (`thinkingTransition` / `reduceLive`) so the build stays green and the future
-  rendering consumer is *forced* to handle it consciously (the `when`s deliberately keep no `else`).
+  this slice does not render it. The current consumers ignore it: `TurnPhaseProjection.apply`
+  ([Turn-state thinking flag](turn-state-thinking-flag.md), #1313) and `ThreadViewModel`'s own
+  `reduceLive` both add it to a no-op branch of an exhaustive `when (event)` so the build stays green and
+  the future rendering consumer is *forced* to handle it consciously (the `when`s deliberately keep no
+  `else`).
 - **Stable for Compose** (a `data class` with a single `String` field) — consumers that later render it
   stay skippable. Carries no verbatim user/tool text, so it is outside the no-payload-logging concern
   above (there is nothing sensitive to log).
@@ -321,7 +322,10 @@ is **not** one of the five render envelopes and does **not** flow through the de
   ([#406](../codebase/406.md)) surfaces the reconnection-surviving `liveSessionEvents` seam that brings
   these events to UI ViewModels.
 - [Turn-state thinking flag](turn-state-thinking-flag.md) ([#406](../codebase/406.md)) — the first
-  consumer: reduces `TurnState` to `ThreadViewModel.isThinking`.
+  consumer, originally a `ThreadViewModel` reduction of `TurnState` to `isThinking`; since
+  [#1313](turn-state-thinking-flag.md#the-data-path) the repository's own `TurnPhaseProjection` folds
+  `TurnState` / `TurnEnd` directly, and `ThreadViewModel.isThinking` / `isBusy` read that held value
+  instead of `liveSessionEvents`.
 - [Streaming assistant turns](streaming-assistant-turns.md) ([#337](../codebase/337.md)) — the
   **`AssistantDelta`/`TurnEnd` consumer**: accumulates an in-flight turn into one growing `isStreaming`
   thread row (VM-layer fold with the #313 finished-message projection).
