@@ -36,9 +36,14 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditor
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.attachmentTarget
+import de.pyryco.mobile.ui.conversations.components.loadsOnShow
 import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
@@ -249,11 +254,24 @@ class ThreadViewModel(
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
     /**
-     * Each shown message attachment's state by id (#984). An id is absent until its row is first shown,
-     * which is what starts its load ([onAttachmentShown]); the screen draws an absent id as loading. A
-     * sibling flow for the same reason as [draft].
+     * Each shown message attachment's state by id (#984). An id is absent until its load starts: when its
+     * row is first shown ([onAttachmentShown]), or for a file not fetched on sight, when it is tapped
+     * ([onAttachmentRequested], #1329). The screen draws an absent id as loading, or that file as its ready
+     * row. A sibling flow for the same reason as [draft].
      */
     val attachmentStates: StateFlow<Map<String, AttachmentViewState>> = _attachmentStates.asStateFlow()
+
+    // #1329: the action a tap asked for, by id, while that tap's load runs. Main thread only, like
+    // [_attachmentsSending]: written by [onAttachmentRequested], removed when the load settles.
+    private val pendingAttachmentRequests = mutableMapOf<String, Pair<MessageAttachment, AttachmentAction>>()
+
+    private val attachmentLoadChannel = Channel<AttachmentLoaded>(capacity = Channel.BUFFERED)
+
+    /**
+     * One open or save per tapped file that loaded ready (#1329), for the screen to run through its
+     * attachment actions. Carries the loaded source, so it never waits on [attachmentStates] recomposing.
+     */
+    val attachmentLoads: Flow<AttachmentLoaded> = attachmentLoadChannel.receiveAsFlow()
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -268,6 +286,12 @@ class ThreadViewModel(
     private val pendingSaveAsChannelDialog = MutableStateFlow<SaveAsChannelDialogState?>(null)
 
     private val pendingChannelInfo = MutableStateFlow(false)
+
+    /**
+     * The Channel info sheet's System prompt editor (#1342), present only while the sheet is open, so every
+     * open starts from a fresh read. Bound to [repository], the reconnect-surviving facade.
+     */
+    private val promptEditor = MutableStateFlow<SystemPromptEditor?>(null)
 
     private val pendingDeleteConfirm = MutableStateFlow(false)
 
@@ -653,6 +677,16 @@ class ThreadViewModel(
     val turnOutcome: StateFlow<TurnOutcomeReport?> =
         liveSessionEvents
             .runningFold(null as TurnOutcomeReport?) { current, event -> nextTurnOutcome(current, event) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
+            )
+
+    /** The open Channel info sheet's System prompt state (#1342), or `null` while the sheet is closed. */
+    val systemPrompt: StateFlow<SystemPromptEditorState?> =
+        promptEditor
+            .flatMapLatest { editor -> editor?.state ?: flowOf(null) }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -1455,11 +1489,30 @@ class ThreadViewModel(
     }
 
     /**
-     * A message attachment's row is on screen (#984): start its load unless it already has a state. The
-     * claim is a compare-and-set, so a row shown twice loads once, and a failure waits for [onRetryAttachment].
+     * A message attachment's row is on screen (#984): start its load unless it already has a state, and only
+     * when it is fetched on sight ([loadsOnShow], #1329); any other file waits for [onAttachmentRequested].
+     * The claim is a compare-and-set, so a row shown twice loads once, and a failure waits for
+     * [onRetryAttachment].
      */
-    fun onAttachmentShown(attachmentId: String) {
-        if (claimAttachment(attachmentId) { it == null }) loadAttachment(attachmentId)
+    fun onAttachmentShown(attachment: MessageAttachment) {
+        if (!loadsOnShow(attachment)) return
+        if (claimAttachment(attachment.attachmentId) { it == null }) loadAttachment(attachment.attachmentId)
+    }
+
+    /**
+     * A file not fetched yet was tapped or long-pressed (#1329): load it as a shown row would, and once it is
+     * ready deliver [action] once through [attachmentLoads]. Only a tap that claims the load records the
+     * action, so a tap on a row already loading, ready or failed does nothing here.
+     */
+    fun onAttachmentRequested(
+        attachment: MessageAttachment,
+        action: AttachmentAction,
+    ) {
+        val id = attachment.attachmentId
+        if (!claimAttachment(id) { it == null }) return
+        pendingAttachmentRequests[id] = attachment to action
+        RelayLog.d { "event=thread_attachment_request id=$id action=${action.name.lowercase()}" }
+        loadAttachment(id)
     }
 
     /** The retry control of a failed attachment (#984). Not found is final and has none. */
@@ -1502,6 +1555,11 @@ class ThreadViewModel(
                 }
             RelayLog.d { "event=thread_attachment_load id=$attachmentId outcome=$outcome" }
             _attachmentStates.update { it + (attachmentId to state) }
+            // #1329: a tap's action settles with its load, once; a load that did not end ready drops it.
+            val (attachment, action) = pendingAttachmentRequests.remove(attachmentId) ?: return@launch
+            val ready = state as? AttachmentViewState.Ready
+            ready?.let { attachmentLoadChannel.trySend(AttachmentLoaded(attachmentTarget(attachment, it), it.source, action)) }
+            RelayLog.d { "event=thread_attachment_request id=$attachmentId outcome=${if (ready != null) "delivered" else "dropped"}" }
         }
     }
 
@@ -2116,19 +2174,25 @@ class ThreadViewModel(
             }
         }
 
+    /** Closes the Channel info sheet and drops its System prompt editor; a write already sent still lands. */
+    private fun closeChannelInfo() {
+        pendingChannelInfo.value = false
+        promptEditor.value = null
+    }
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
             ThreadEvent.Archive -> {
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
                 // overflow menu, where it is already false); the send + success-only PopBack live in
                 // sendArchive, off the shared silent guard (#556).
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 sendArchive()
             }
             ThreadEvent.Delete -> pendingDeleteConfirm.value = true
             ThreadEvent.DeleteConfirm -> {
                 pendingDeleteConfirm.value = false
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 launchGuardedRepoCall {
                     repository.delete(state.value.conversationId)
                     // #790: success-only, the position [sendMessage]'s own clear occupies — each of the
@@ -2162,8 +2226,16 @@ class ThreadViewModel(
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
             // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
-            ThreadEvent.ChannelInfo -> if (pendingChannelInfo.compareAndSet(false, true)) rereadRunSettings("channel_info_open")
-            ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
+            // #1342: each open also mounts a fresh System prompt editor, whose construction reads the prompt.
+            ThreadEvent.ChannelInfo ->
+                if (pendingChannelInfo.compareAndSet(false, true)) {
+                    promptEditor.value = SystemPromptEditor(viewModelScope, repository, conversationId)
+                    rereadRunSettings("channel_info_open")
+                }
+            ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
+            is ThreadEvent.SystemPromptEdit -> promptEditor.value?.edit(event.text)
+            ThreadEvent.SystemPromptSave -> promptEditor.value?.save()
+            ThreadEvent.SystemPromptClear -> promptEditor.value?.clear()
             ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
