@@ -13,6 +13,10 @@
 
 Overlapping in-flight branches: #1350, #1351, #1355 (`ThreadProjection`), #1343, #1351, #1410 (`RemoteConversationRepository`), #1343, #1353, #1359, #1410, #1411 (`ConversationRepository`). All are additive elsewhere in those files; my edits are one new member each, so no dependency.
 
+## Design source
+
+Figma https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8 (the thread). The unread dot is the existing sidebar row dot; this ticket changes only when it is set, so there is no visual change and no visual check.
+
 ## Context
 
 Unread moves today only when a live `TurnEnd` is counted. Desktop (`isConversationUnread` with `stampLastReadFor`) counts thread rows: a conversation is unread when its thread holds rows the user has not seen. This ticket moves mobile's trigger to new rows while keeping mobile's storage, its `TurnEnd` alert and its failure mark. No decision record needed; the trigger change is described in the feature overview by the documentation stage.
