@@ -79,7 +79,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
  * Index of the [ThreadItem.MessageItem] in this thread whose [Message.id] is [id] and [Message.role]
- * is [role], or -1 if none — the row guard shared by the four id+role folds (tool / assistant). The
+ * is [role], or -1 if none — the row guard shared by the id+role tool folds. The
  * `is ThreadItem.MessageItem` type-guard namespaces message rows from [ThreadItem.SessionBoundary]
  * rows, so a fold never mistakes a boundary for a message (and the `as` after a hit is always safe).
  */
@@ -267,11 +267,7 @@ internal fun List<ThreadItem>.withAssistantDelta(
             last.copy(
                 content = last.content + event.text,
                 isStreaming = true,
-                segment =
-                    segment.copy(
-                        deltas =
-                            segment.deltas + delta,
-                    ),
+                segment = segment.copy(deltas = segment.deltas + delta),
             )
         return toMutableList().apply { this[lastIndex] = ThreadItem.MessageItem(extended) }
     }
@@ -600,15 +596,20 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  * Never joins a [HistoryEntry.id] to an `event_id` — they are different sequences that both look like
  * small integers, and neither appears here at all.
  *
- * **A segment cut by the seam is joined back** (#1350, [withJoinedSegments]): a page cut by count or
+ * **Assistant text is deduped by `(turnId, seq)`, not by id alone** (#1350). Where this thread holds
+ * segments of a turn, a page's segment of that turn keeps only the deltas below the lowest `seq` the
+ * thread holds ([olderThan]): the two lanes can split one turn into different segments, because the local
+ * echo of a send lands at the ack while the daemon logs the message at delivery, so the ids need not
+ * match. A segment cut by the seam is then joined back ([withJoinedSegments]): a page cut by count or
  * bytes can end inside an assistant segment the thread's first row continues, and the newest page can
  * hold the start of a segment the live lane joined halfway through.
  */
 internal fun List<ThreadItem>.mergeHistoryRows(rows: List<ThreadItem>): List<ThreadItem> {
     if (rows.isEmpty()) return this
-    val fresh = rows.filterNot { alreadyHolds(it) }
+    val heads = segmentHeads()
+    val fresh = rows.filterNot { alreadyHolds(it) }.mapNotNull { it.olderThan(heads) }
     val kept = withAttachmentHintsFrom(rows)
-    return if (fresh.isEmpty()) kept else (fresh + kept).withJoinedSegments()
+    return if (fresh.isEmpty()) kept else (fresh + kept).withoutSegmentsOfWholeTurns().withJoinedSegments()
 }
 
 /**
@@ -625,31 +626,100 @@ internal fun List<ThreadItem>.mergeHistoryRows(rows: List<ThreadItem>): List<Thr
  * The history walk keeps [mergeHistoryRows]: its skip-and-prepend is the deliberate answer to the
  * ask-versus-answer race described there.
  *
- * A cached segment that a newest page cut short continues is joined to it, as in [mergeHistoryRows]
- * (#1350, [withJoinedSegments]).
+ * Assistant text is deduped by `(turnId, seq)` as in [mergeHistoryRows] (#1350): a cached segment of a turn
+ * this thread holds keeps only its deltas below the thread's lowest `seq` for that turn, and goes no lower
+ * than right above the thread's first segment of it. The cache holds the turn in live order and a
+ * reconnect's newest page holds it in log order, and where a send's echo sat between them, the cached
+ * neighbour would otherwise put the older text below newer text. That cached head is then joined to the
+ * segment it continues ([withJoinedSegments]). A cached row from before segments existed holds its whole
+ * turn and keeps it, and the thread's segments of that turn give way ([withoutSegmentsOfWholeTurns]).
  */
 internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<ThreadItem> {
     if (cached.isEmpty()) return this
     val kept = withAttachmentHintsFrom(cached)
-    val leading = mutableListOf<ThreadItem>()
-    val anchored = mutableMapOf<Int, MutableList<ThreadItem>>()
-    var anchor = -1
+    val heads = segmentHeads()
+    // Slot i is in front of this thread's row i; slot size is after its last row.
+    val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
+    var slot = 0
     for (row in cached) {
         val held = indexOfFirst { listOf(it).alreadyHolds(row) }
-        when {
-            held >= 0 -> anchor = held
-            anchor < 0 -> leading += row
-            else -> anchored.getOrPut(anchor) { mutableListOf() } += row
+        if (held >= 0) {
+            slot = held + 1
+            continue
         }
+        val older = row.olderThan(heads) ?: continue
+        val ceiling = (older as? ThreadItem.MessageItem)?.message?.segment?.let { heads[it.turnId]?.index } ?: slot
+        slots.getOrPut(minOf(slot, ceiling)) { mutableListOf() } += older
     }
-    if (leading.isEmpty() && anchored.isEmpty()) return kept
+    if (slots.isEmpty()) return kept
     return buildList {
-        addAll(leading)
         kept.forEachIndexed { index, row ->
+            slots[index]?.let(::addAll)
             add(row)
-            anchored[index]?.let(::addAll)
         }
-    }.withJoinedSegments()
+        slots[kept.size]?.let(::addAll)
+    }.withoutSegmentsOfWholeTurns().withJoinedSegments()
+}
+
+/** Where a turn's text starts in a thread (#1350): the lowest `seq` its segments hold, and its first segment's row index. */
+private class SegmentHead(
+    val lowestSeq: Int,
+    val index: Int,
+)
+
+/** The [SegmentHead] of each turn this thread holds assistant segments of, by turn id (#1350). */
+private fun List<ThreadItem>.segmentHeads(): Map<String, SegmentHead> {
+    val heads = HashMap<String, SegmentHead>()
+    forEachIndexed { index, row ->
+        val segment = (row as? ThreadItem.MessageItem)?.message?.segment ?: return@forEachIndexed
+        val head = heads[segment.turnId]
+        heads[segment.turnId] = SegmentHead(minOf(head?.lowestSeq ?: Int.MAX_VALUE, segment.firstSeq), head?.index ?: index)
+    }
+    return heads
+}
+
+/**
+ * This row as it may join a thread with [heads] (#1350): an assistant segment of a turn the thread holds keeps
+ * only its deltas below the thread's lowest `seq` for that turn, and is `null` when none are. Every other row
+ * is returned unchanged.
+ *
+ * Where the thread holds a turn's text, it holds it from that `seq` on: a page or the cache adds only the
+ * older text in front of it. Deltas are recorded in increasing `seq`, so what is kept is a prefix of the
+ * record and of the content. Its id, that of its opening delta, stays. The cut is clamped to the content,
+ * so a record that does not match its text cuts short rather than throwing.
+ */
+private fun ThreadItem.olderThan(heads: Map<String, SegmentHead>): ThreadItem? {
+    val message = (this as? ThreadItem.MessageItem)?.message ?: return this
+    val segment = message.segment ?: return this
+    val below = heads[segment.turnId]?.lowestSeq ?: return this
+    val deltas = segment.deltas.takeWhile { it.seq < below }
+    if (deltas.size == segment.deltas.size) return this
+    if (deltas.isEmpty()) return null
+    val cut = deltas.sumOf { it.length }.coerceIn(0, message.content.length)
+    return ThreadItem.MessageItem(message.copy(content = message.content.substring(0, cut), segment = segment.copy(deltas = deltas)))
+}
+
+/**
+ * This thread without the segments of any turn a whole-turn row also holds (#1350), or this very list when
+ * there are none. A whole-turn row is an assistant row with no segment record, keyed by its turn's id: one
+ * cached before segments existed, which holds every delta of its ended turn, so a segment of that turn
+ * would draw its text twice. It keeps its place and its text, as drawn before #1350, and only removes rows.
+ */
+private fun List<ThreadItem>.withoutSegmentsOfWholeTurns(): List<ThreadItem> {
+    val whole =
+        mapNotNullTo(HashSet()) { row ->
+            (row as? ThreadItem.MessageItem)?.message?.takeIf { it.role == Role.Assistant && it.segment == null }?.id
+        }
+    if (whole.isEmpty()) return this
+    val kept =
+        filterNot { row ->
+            (row as? ThreadItem.MessageItem)
+                ?.message
+                ?.segment
+                ?.turnId
+                ?.let { it in whole } == true
+        }
+    return if (kept.size == size) this else kept
 }
 
 /**

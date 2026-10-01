@@ -125,6 +125,76 @@ class AssistantSegmentTest {
             assertEquals(EXPECTED, drawn.summary())
         }
 
+    @Test
+    fun cache_aRowFromBeforeSegments_underANewestPageThatMissesTheTurnStart_holdsItsTextOnce() {
+        val all = entries(FULL)
+        val toolRow = reduceHistoryPage(page(all), interactive = true)[1]
+        val legacy = assistantRow(TURN, "Let me look. Found it.")
+        for (cut in 1..all.size) {
+            val live = reduceHistoryPage(page(all.drop(cut)), interactive = true)
+
+            assertEquals(
+                "cut at $cut",
+                listOf(TURN to "Let me look. Found it.", "u1" to "Bash"),
+                live.mergeCachedRows(listOf(legacy, toolRow)).summary(),
+            )
+        }
+    }
+
+    // ---- AC 2, AC 3: the echo of a mid-turn send and its log entry sit in different places ---------
+
+    @Test
+    fun userMessageMidTurn_echoAndLogEntryInAnyOrder_mergesAddNoRow() =
+        runTest {
+            for ((live, logged) in echoAndLogOrders()) {
+                val projection = ThreadProjection()
+                projection.play(live)
+                val liveRows = projection.rows()
+                val pageRows = reduceHistoryPage(page(entries(logged)), interactive = true)
+                val label = "live $live, log $logged"
+
+                assertEquals(label, liveRows.summary(), liveRows.mergeHistoryRows(pageRows).summary())
+                assertEquals(label, liveRows.summary(), liveRows.mergeCachedRows(pageRows).summary())
+                // A reconnect: the newest page in log order, the rows drawn before it in live order.
+                assertEquals(label, pageRows.summary(), pageRows.mergeCachedRows(liveRows).summary())
+            }
+        }
+
+    @Test
+    fun userMessageMidTurn_newestPageCutInsideTheTurn_cacheHoldsEachDeltaOnce() =
+        runTest {
+            for ((live, logged) in echoAndLogOrders()) {
+                val projection = ThreadProjection()
+                projection.play(live)
+                val cached = projection.rows()
+                val all = entries(logged)
+                for (cut in 0..all.size) {
+                    val drawn = reduceHistoryPage(page(all.drop(cut)), interactive = true).mergeCachedRows(cached)
+                    val label = "live $live, log $logged, cut at $cut"
+
+                    assertEquals(label, "abcd", drawn.assistantText())
+                    assertEquals(label, 1, drawn.summary().count { it == ("m1" to "wait") })
+                    assertTrue(label, drawn.streaming().none { it })
+                }
+            }
+        }
+
+    @Test
+    fun backwardWalk_liveEchoBeforeItsLogEntry_holdsEachDeltaOnce() =
+        runTest {
+            // The verifier's case: drawn live as [a, m1, bcd], logged as [abcd, m1], walked from a newest page cut mid-turn.
+            val turn = listOf(Delta(0, "a"), Delta(1, "b"), Delta(2, "c"), Delta(3, "d"), End)
+            val logged = entries(turn + User("m1", "wait"))
+            for (cut in 1 until logged.size) {
+                val projection = ThreadProjection()
+                projection.play(listOf(turn[0], User("m1", "wait")) + turn.drop(1))
+                projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(logged.drop(cut)), "c", atStart = false), interactive = true)
+                projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(logged.take(cut)), "", atStart = true), interactive = true)
+
+                assertEquals("cut at $cut", listOf(TURN to "a", "m1" to "wait", "$TURN#1" to "bcd"), projection.rows().summary())
+            }
+        }
+
     // ---- AC 3: a page boundary inside a segment --------------------------------------------------
 
     @Test
@@ -348,6 +418,20 @@ class AssistantSegmentTest {
         assertEquals("row ids must be distinct", ids().distinct(), ids())
         return filterIsInstance<ThreadItem.MessageItem>().map { it.message.id to it.message.content }
     }
+
+    /**
+     * Every pair of placements of one user message `m1` in a four-delta turn: where the live lane drew the
+     * echo (at the ack) and where the daemon logged the message (at delivery), as two scripts.
+     */
+    private fun echoAndLogOrders(): List<Pair<List<Step>, List<Step>>> {
+        val turn = listOf(Delta(0, "a"), Delta(1, "b"), Delta(2, "c"), Delta(3, "d"), End)
+        val user = User("m1", "wait")
+        val placements = (0..turn.size).map { at -> turn.take(at) + user + turn.drop(at) }
+        return placements.flatMap { live -> placements.map { logged -> live to logged } }
+    }
+
+    private fun List<ThreadItem>.assistantText(): String =
+        filterIsInstance<ThreadItem.MessageItem>().filter { it.message.role == Role.Assistant }.joinToString("") { it.message.content }
 
     private fun List<ThreadItem>.streaming(): List<Boolean> = filterIsInstance<ThreadItem.MessageItem>().map { it.message.isStreaming }
 

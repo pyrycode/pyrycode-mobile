@@ -107,13 +107,22 @@ Existing tests that encode the old single-bubble order are updated to the new or
 - **Fold tests.** `ThreadViewModelTest` has no pure `ThreadFold` tests, so the synthetic-guard tests went into a new `ThreadFoldSegmentTest`.
 - **Gap filed as #1419, not fixed here.** A `turn_end` that arrives before the rows it ends never settles them. One case is a newest page holding only the `turn_end`. Another is a live `turn_end` arriving before the page with the turn's text. `withFinalizedTurn` sees only rows already in the list, and nothing remembers ended turns. This is pre-existing, and it is not a cut inside a segment. `AssistantSegmentTest.turnEndOnANewerPageThanItsRows_settlesThem` is `@Ignore`d on #1419, and the cut-point loops skip that one cut.
 
+### 2026-10-01: merges dedupe segment text by `(turnId, seq)` (verifier rework)
+
+- **What drove it.** The verifier's two MUST FIX findings on PR #1420. The first: the local echo of a mid-turn send lands at the ack, but the daemon logs the queued message at delivery. Live and log then split one turn into differently keyed segments, and the id skip plus the adjacent join in "Joining a segment cut by a seam" drew reply text twice. A reconnect drew it through the cache, and a walk drew it where the newest page overlapped the live rows. The second: a pre-change cached row under a newest page that does not reach `seq 0` also drew its text twice. The design assumed both lanes order rows alike, and a client-placed echo breaks that.
+- **New contract: the receiver owns a turn from its lowest `seq`.** Both merges first compute, for each turn the receiving thread holds segments of, its lowest `seq` and the index of its first segment row (`segmentHeads`). An incoming segment of that turn, from a page or the cache, keeps only its deltas below that `seq` (`olderThan`). Deltas are recorded in increasing `seq`, so this keeps a prefix of the record and the content, and the row keeps its id. A segment with nothing below is dropped. The same `seq` can therefore never be drawn twice. In the walk, a later `seq` a page holds and the live rows lack can only come from the ask-versus-answer race, which delivers it on the live lane too.
+- **Cache placement.** In `mergeCachedRows`, a trimmed cached segment goes no lower than right above the receiver's first segment of its turn. Without that, a cached head that sat below the echo in live order lands below the newer text the page holds.
+- **Pre-change rows.** An assistant row with no segment record is a whole turn's text cached before segments existed. After placement, any segment of the turn that row's id names is removed (`withoutSegmentsOfWholeTurns`). The row draws as it did before this change, and its text appears once.
+- **Unchanged.** Merges still only skip, trim or remove incoming rows, and remove receiver rows only for a whole-turn row. No key is minted. `joinSegments` still joins the trimmed head to the segment it continues.
+- **Tests.** In `AssistantSegmentTest`: every placement of the echo against every placement of the log entry, through `mergeHistoryRows`, through `mergeCachedRows` in both directions and under a newest page cut at every entry; the verifier's walk case; a pre-change row under a newest page cut at every point after `seq 0`.
+
 ## Documentation handoff
 
 Pending for the documentation stage:
 
 - `docs/knowledge/features/streaming-assistant-turns.md`: per-segment assistant rows, when a new segment starts, which segment can stream (`withOnlyLastRowStreaming` in `observe`), the synthetic guard's segment clause.
 - `docs/knowledge/features/live-tool-call.md`: text after a tool row opens a new segment below it; `withToolUse` is now role-agnostic on its repeat check.
-- `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md`: the segment key (`turnId` / `turnId#seq`), the bare key as the pre-change cached row, the seam join (`joinSegments`) for a page boundary, the page-live overlap and the cache-live join, and the cache's segment record.
+- `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md`: the segment key (`turnId` / `turnId#seq`), the bare key as the pre-change cached row, the seam join (`joinSegments`) for a page boundary, the page-live overlap and the cache-live join, the `(turnId, seq)` dedupe in both merges (the receiver owns a turn from its lowest `seq`; why the echo's position breaks an id-and-adjacency join), the removal of segments under a pre-change whole-turn row, and the cache's segment record.
 - A decision record for the segment key and seam join, if the documentation stage agrees.
 
 ## Security review
