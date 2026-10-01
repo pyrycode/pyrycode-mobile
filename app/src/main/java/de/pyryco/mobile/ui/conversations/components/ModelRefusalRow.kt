@@ -42,7 +42,7 @@ private val RefusalExpandedGap = 8.dp
 private val SwitchBackBorderWidth = 1.dp
 private val SwitchBackHorizontalPadding = 16.dp
 private val SwitchBackVerticalPadding = 7.dp
-private const val SwitchBackPendingAlpha = 0.38f
+private const val SWITCH_BACK_PENDING_ALPHA = 0.38f
 
 /**
  * The thread's offer to switch back to the model claude refused on (#1360), drawn on the refusal row that
@@ -182,7 +182,7 @@ private fun SwitchBackAction(
             contentColor = MaterialTheme.colorScheme.primary,
             border = BorderStroke(SwitchBackBorderWidth, MaterialTheme.colorScheme.primary),
             // A clickable Surface reserves Material's 48 dp touch target around the 30 dp button.
-            modifier = Modifier.alpha(if (offer.pending) SwitchBackPendingAlpha else 1f),
+            modifier = Modifier.alpha(if (offer.pending) SWITCH_BACK_PENDING_ALPHA else 1f),
         ) {
             Text(
                 text = switchBackLabel(offer.originalModel),
