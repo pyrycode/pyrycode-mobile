@@ -195,9 +195,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    freshly created chats on a live daemon, the newer-by-last-use one first and the older one second, then
    opens Archive and asserts the second-archived chat is on top — proving the daemon's `archived_at` stamp,
    not `lastUsedAt`, decides the order; the old order would put the first-archived (newer-by-last-use) chat
-   on top instead. Zero claude turns. **Not in the curated `LIVE=1` list** in `scripts/e2e-emulator.sh` — it
-   did not run in the #1332 real-claude gate evidence, which reported 38 executed tests with no entry for
-   this method (see the ticket for the resulting `needs-rework:verifier`).
+   on top instead. Zero claude turns. In the curated `LIVE=1` list in `scripts/e2e-emulator.sh`, which
+   raised `LIVE_MINIMUM` by one; an earlier #1332 gate run executed 38 tests without it, before it joined.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own

@@ -124,3 +124,9 @@ Pending for the documentation stage: update `docs/knowledge/features/archived-di
 - **Tests:** two shared screen tests in `ArchivedDiscussionsLayoutTest` — a row moved to index 0 of an at-top list is displayed above the previous first row (red before the fix), and a scrolled list keeps its visible row and does not compose the moved one.
 - **Scenario (MUST FIX, same root cause):** `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst` KDoc now states that B is stamped by the intermediate list reply and A may not be; with the screen fix the wait settles in both orderings. Step 2 reopens A through `openChatRow`.
 - **NIT:** `parseArchivedAt` comment no longer claims an out-of-range year surfaces as an arithmetic error.
+
+### 2026-10-01 — rework after verifier FAIL (live gate never ran the scenario)
+
+- **Finding (MUST FIX):** `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst` was not in the curated `LIVE=1` `TEST_TARGET` list in `scripts/e2e-emulator.sh`, so `android-test-gate.py live` never executed it and AC4 had no evidence.
+- **New contract:** the method joins the curated list beside the other Archive methods; `LIVE_MINIMUM` in `scripts/android-test-gate.py` rises by one, and `test_live_floor_matches_the_curated_list` asserts the method is selected and the floor is 41 (main had reached 40 since the finding was written). The `docs/e2e-interactive-stream.md` sentence that said the method was not in the list now says it is.
+- **NIT:** the scenario's `finally` deletes through `cleanupCreatedConversation` with a pre-create id set per chat, so a chat the daemon created before its id was read is still removed.
