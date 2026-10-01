@@ -134,8 +134,8 @@ class RemoteConversationRepository(
      */
     private val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks(),
     /**
-     * The five readings the host pushes and the phone never asks for again (#1317): announced model, session
-     * facts, context usage, usage limit and slash-command menu. [RelayRepositoryCoordinator] owns the instance
+     * The five readings the host pushes (#1317): announced model, session facts, context usage, usage limit and
+     * slash-command menu. Only context usage is also asked for, by [requestContextUsage] (#1410). [RelayRepositoryCoordinator] owns the instance
      * for the host's pairing and threads it into each repository, the [finishedBackgroundTasks] shape, so a
      * reconnect starts from the held readings rather than nothing. Every arm still applies, replaces and
      * clears through it as before. Since #1320 it also holds the model menus and the last successful

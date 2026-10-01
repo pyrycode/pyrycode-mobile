@@ -123,9 +123,9 @@ class StableConversationRepository(
         heldReadings?.observeSessionFacts(conversationId) ?: switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
-     * The context-usage reading for [conversationId] (#945), held or switched as [observeAnnouncedModel] is. The
-     * phone never asks for it, so without [heldReadings] it stays absent after a reconnect until the
-     * conversation's next turn ends.
+     * The context-usage reading for [conversationId] (#945), held or switched as [observeAnnouncedModel] is. Held,
+     * it survives a reconnect until the open thread's [requestContextUsage] answer (#1410) or the next turn's push
+     * replaces it; without [heldReadings] it stays absent until one of them lands.
      */
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
         heldReadings?.observeContextUsage(conversationId) ?: switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
