@@ -10,7 +10,6 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
-import de.pyryco.mobile.ui.theme.errorLight
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -97,7 +96,7 @@ class ScriptedStatusLineTest {
 
         harness.pushStall()
         awaitOnly(stalled)
-        assertEquals(errorLight, labelColor(string(R.string.thread_stalled_label)))
+        assertEquals(harness.colorScheme.error, labelColor(string(R.string.thread_stalled_label)))
 
         harness.pushApiRetry(active = true, current = 2, total = 10)
         awaitDisplayed(retrying)

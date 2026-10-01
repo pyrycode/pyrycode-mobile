@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -99,6 +102,8 @@ class ScriptedThreadHarness(
     fun start() {
         composeRule.setContent {
             PyrycodeMobileTheme {
+                val colors = MaterialTheme.colorScheme
+                SideEffect { colorScheme = colors }
                 // collectAsState (not collectAsStateWithLifecycle): these are StateFlows and
                 // createComposeRule has no LifecycleOwner.
                 ThreadScreen(
@@ -128,6 +133,10 @@ class ScriptedThreadHarness(
         seedConversation()
         awaitReady()
     }
+
+    /** The colour scheme the render surface resolved, so a colour assertion follows the theme (#1311). */
+    lateinit var colorScheme: ColorScheme
+        private set
 
     /** Number of times the interrupt affordance's tap invoked the VM's interrupt-send action (#459). */
     fun interruptInvocations(): Int = interruptTargets.size

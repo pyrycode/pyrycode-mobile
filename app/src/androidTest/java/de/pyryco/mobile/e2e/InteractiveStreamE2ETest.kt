@@ -467,8 +467,11 @@ class InteractiveStreamE2ETest {
      * call and the `responding` text that used to leave the band dark. From the tap on Send the band is
      * sampled inside `waitUntil` until the turn has been seen busy and then idle. "Busy" is the stop control,
      * which shows exactly while `isBusy` holds and the composer is empty. A reading is the status glyph
-     * (thinking, working, running tool, stalled) or a compaction or api-retry reading. Any busy sample
-     * without one is recorded, and the list must be empty.
+     * (thinking, working, running tool, stalled) or any other arm that can pre-empt it mid-turn: compaction,
+     * api-retry, Reset session, the connection arm during a reconnect, or waiting for answers. A sample counts
+     * as dark only when busy holds both before and after its reading checks, so `turn_state{idle}` landing
+     * between the reads at the turn's falling edge is not mistaken for an empty band. Any dark sample is
+     * recorded, and the list must be empty.
      *
      * Always-on: it asserts an absence over the whole turn rather than catching a transient label, so no
      * timing decides the outcome. Non-vacuity: at least one busy sample must have been taken.
@@ -482,10 +485,28 @@ class InteractiveStreamE2ETest {
         val compactingReading = context.getString(R.string.cd_thread_compacting)
         // Every api-retry description, counted or not, opens with this agent-named phrase.
         val retryPrefix = context.getString(R.string.cd_thread_api_retry_unknown).substringBefore(",")
+        val exactReadings =
+            setOf(
+                compactingReading,
+                context.getString(R.string.thread_resetting_wrapping_up),
+                context.getString(R.string.thread_resetting_restarting_written),
+                context.getString(R.string.thread_resetting_restarting_skipped),
+                context.getString(R.string.thread_resetting_restarting),
+                context.getString(R.string.thread_connection_connecting),
+                context.getString(R.string.question_waiting_for_answers),
+            )
+        // Unformatted, so the prefix stops before the countdown's placeholder.
+        val reconnectingPrefix = context.resources.getString(R.string.thread_connection_reconnecting).substringBefore("%")
         val otherReading =
-            SemanticsMatcher("a compaction or api-retry reading") { node ->
-                node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().any {
-                    it == compactingReading || it.startsWith(retryPrefix)
+            SemanticsMatcher("a compaction, api-retry, reset, connection or waiting reading") { node ->
+                val descriptions = node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+                val texts =
+                    node.config
+                        .getOrNull(SemanticsProperties.Text)
+                        .orEmpty()
+                        .map { it.text }
+                (descriptions + texts).any {
+                    it in exactReadings || it.startsWith(retryPrefix) || it.startsWith(reconnectingPrefix)
                 }
             }
         awaitChannelList()
@@ -512,7 +533,8 @@ class InteractiveStreamE2ETest {
                         .fetchSemanticsNodes()
                         .isNotEmpty()
                 val other = composeTestRule.onAllNodes(otherReading).fetchSemanticsNodes().isNotEmpty()
-                if (!glyph && !other) darkSamples += busySamples
+                val stillBusy = composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+                if (!glyph && !other && stillBusy) darkSamples += busySamples
             }
             seenBusy && !busy
         }

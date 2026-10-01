@@ -108,3 +108,7 @@ A failed send (thrown `IllegalStateException`, `RelayErrorException`, `Unsupport
 - Whether the live daemon emits `turn_state{responding}` before `tool_use` in every turn: irrelevant to correctness, since `isBusy` covers both phases.
 
 Overlapping in-flight branches: #1308, #1309 (ThreadViewModel, e2e test), #1341, #1359 (ThreadScreen). None changes the status band's order or the send paths; a later merge may touch those files.
+
+## Revisions
+
+- **2026-10-01, verifier rework.** The rung-3 method joins the curated live list: `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` gains it after `#interactiveTurn_toolPrompt_rendersToolStepInThread`, `android-test-gate.py` raises `LIVE_MINIMUM` by one, and `test_live_floor_matches_the_curated_list` expects 39 and asserts the method is listed (MUST FIX: the live gate never selected it). The sampler counts a sample as dark only when the stop control is present both before and after its reading checks, so `turn_state{idle}` between reads is not an empty band; its "other reading" now also covers Reset session, the connection arm and waiting for answers (SHOULD FIX). The stall-colour assertion reads the composed theme's `colorScheme.error` through `ScriptedThreadHarness.colorScheme` instead of the static light scheme.

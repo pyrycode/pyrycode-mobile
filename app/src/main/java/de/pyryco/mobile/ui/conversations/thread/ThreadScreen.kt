@@ -950,8 +950,8 @@ fun ThreadScreen(
  * One status slot, top wins, decided by [statusArm] (#1311): connecting / reconnecting → resetting →
  * api-retry → compaction → stall → turn outcome → thinking / working / running tool. While a turn runs the
  * band always has a reading, as desktop's `workingIndicatorState` keeps one up. While the link is
- * unavailable, turn readings cannot be refreshed;
- * Offline is instead shown in the Top overlay as a retry pill.
+ * unavailable, turn readings cannot be refreshed; Offline is instead shown in the Top overlay as a retry
+ * pill.
  * No two may ever stack. Single-sourcing the mutual exclusion here, in the screen, is deliberate:
  * `isThinking` stays defined as the `turn_state` phase (other tests assert it directly), so suppressing it
  * at its source would make the VM's contract lie.
