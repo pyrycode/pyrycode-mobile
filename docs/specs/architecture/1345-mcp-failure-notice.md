@@ -106,3 +106,7 @@ No new failure modes. A refused ask sets `McpStatus.unavailable` and leaves `rep
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-02
+
+## Revisions
+
+- 2026-10-02: The opening ask no longer logs; only the reconnect ask logs `event=mcp_status_requested reason=reconnect`. Driven by six existing `ThreadViewModel` suites that construct the view model without a `RelayLog` sink: the thread's construction path is otherwise log-free, so a log there threw `Log not mocked` on the JVM. The opening is already logged by the factory's `thread_destination_bound`. The ask itself is unchanged: once on opening, once per return of `repositoryAvailable`.

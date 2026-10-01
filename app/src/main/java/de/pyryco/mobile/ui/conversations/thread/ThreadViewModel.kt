@@ -132,6 +132,9 @@ class ThreadViewModel(
     // #1306: the app-scoped session-grant drafts, so Back keeps the checkbox for the same request. Absent in
     // tests and the demo host, where a private store stands in.
     permissionDraftStore: PermissionDraftStore? = null,
+    // #1345: the app-scoped acknowledgements of failed MCP servers, so a tapped notice stays quiet when the chat
+    // is reopened. Absent in tests and the demo host, where a private holder stands in.
+    mcpFailureAcknowledgements: McpFailureAcknowledgements? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
     // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
     backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
@@ -598,6 +601,24 @@ class ThreadViewModel(
      */
     private val hostConnection: StateFlow<ConnectionState?> =
         connectionStateSource.observe().stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val mcpAcknowledgements = mcpFailureAcknowledgements ?: McpFailureAcknowledgements()
+
+    /**
+     * The failed MCP server the Top overlay's notice names (#1345), desktop's `selectUnacknowledgedMcpFailureFor`:
+     * the first server in report order whose status is exactly `failed` and that this host and conversation
+     * have not acknowledged. `null` unless the host is [ConnectionState.Connected]. The name is Claude-authored:
+     * the screen renders it bounded and inert, and nothing here logs it.
+     */
+    val mcpFailure: StateFlow<String?> =
+        combine(
+            mcpStatusReading,
+            mcpAcknowledgements.observe(serverId, conversationId),
+            hostConnection,
+        ) { mcp, acknowledged, connection ->
+            if (connection == ConnectionState.Connected) firstUnacknowledgedMcpFailure(mcp.report, acknowledged) else null
+        }.distinctUntilChanged()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
      * Whether a prompt answer may be sent now (#1321): only while the host is [ConnectionState.Connected].
@@ -1156,6 +1177,34 @@ class ThreadViewModel(
         // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
         viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+
+        // #1345: the MCP reading starts empty on every connection, so the thread asks once when its repository is
+        // first available and again on each return, keyed there for the #861 reason above. Gated as Channel
+        // info's ask is. Only the reconnect ask logs: construction stays log-free, and the opening is already
+        // logged as `thread_destination_bound`.
+        viewModelScope.launch {
+            var opened = false
+            repositoryAvailable.distinctUntilChanged().collect { available ->
+                if (!available) return@collect
+                if (state.value.runConfig.mcpServersSupported) {
+                    repository.requestMcpStatus(conversationId)
+                    if (opened) RelayLog.d { "event=mcp_status_requested reason=reconnect" }
+                }
+                opened = true
+            }
+        }
+    }
+
+    /**
+     * The Top overlay's MCP notice was tapped (#1345), desktop's `openMcpFailure`: acknowledge every server the
+     * current report shows as failed, not only the one named, then open Channel info, which asks for fresh
+     * status. Logs the count only.
+     */
+    fun onMcpFailureTapped() {
+        val failed = failedMcpServerNames(state.value.mcpStatus.report)
+        mcpAcknowledgements.acknowledge(serverId, conversationId, failed)
+        RelayLog.d { "event=mcp_failure_acknowledged count=${failed.size}" }
+        onOverflowEvent(ThreadEvent.ChannelInfo)
     }
 
     private fun openLocalSendWindow() {

@@ -26,6 +26,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.NoticePill
+import de.pyryco.mobile.ui.conversations.components.boundMcpText
 import de.pyryco.mobile.ui.conversations.components.usageLimitIsWarning
 import de.pyryco.mobile.ui.conversations.components.usageLimitLabel
 
@@ -37,11 +38,14 @@ private val OverlayPillGap = 12.dp
  * to the top of the message area, drawn over the messages so it takes no layout space. Notices live here
  * rather than in the status row, so they never hide what the running turn is doing.
  *
- * Top to bottom: the usage-limit report, then a pairing error or offline retry. The report is a Default pill with an
+ * Top to bottom: the usage-limit report, a failed MCP server, then a pairing error or offline retry. The report is a Default pill with an
  * X only when [usageLimitIsWarning] says so, and it is left out once [usageLimitDismissed]; any other
  * reading is an Error pill that cannot be hidden. Pairing failure takes precedence over the offline pill
  * because a network retry cannot repair a rejected pairing. With neither, nothing is emitted. The report
  * names [agent] (#1115).
+ *
+ * [mcpFailure] (#1345) is the Claude-authored name of a failed MCP server: an Error pill with no X whose tap
+ * runs [onOpenMcpFailure]. It is never drawn beside the pairing or offline pill.
  */
 @Composable
 internal fun ThreadTopOverlay(
@@ -54,10 +58,13 @@ internal fun ThreadTopOverlay(
     connectionState: ConnectionState = ConnectionState.Connected,
     onRetryConnection: () -> Unit = {},
     agent: ConversationAgent = ConversationAgent.Claude,
+    mcpFailure: String? = null,
+    onOpenMcpFailure: () -> Unit = {},
 ) {
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     val showOffline = connectionState == ConnectionState.Offline && !showRePair
-    if (usage == null && !showRePair && !showOffline) return
+    val mcp = mcpFailure?.takeUnless { showRePair || showOffline }
+    if (usage == null && mcp == null && !showRePair && !showOffline) return
     val viewConfiguration = LocalViewConfiguration.current
     val pillTouchConfiguration =
         remember(viewConfiguration) {
@@ -84,6 +91,15 @@ internal fun ThreadTopOverlay(
                     text = usageLimitLabel(usage, agent),
                     isError = !warning,
                     onDismiss = if (warning) onDismissUsageLimit else null,
+                )
+            }
+            if (mcp != null) {
+                // Bounded, and at most two lines, so a long Claude-authored name cannot cover the thread.
+                NoticePill(
+                    text = stringResource(R.string.thread_mcp_server_failed, boundMcpText(mcp)),
+                    isError = true,
+                    onClick = onOpenMcpFailure,
+                    maxLines = 2,
                 )
             }
             if (showRePair) {
