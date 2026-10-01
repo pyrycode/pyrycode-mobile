@@ -10,7 +10,6 @@ import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -231,7 +230,6 @@ class AssistantSegmentTest {
             }
         }
 
-    @Ignore("blocked on #1419: a turn_end that arrives before its rows leaves them streaming")
     @Test
     fun turnEndOnANewerPageThanItsRows_settlesThem() =
         runTest {
@@ -241,6 +239,82 @@ class AssistantSegmentTest {
             projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(all.dropLast(1)), "", atStart = true), interactive = true)
 
             assertEquals(listOf(false, false, false), projection.rows().streaming())
+        }
+
+    // ---- #1419: a turn_end that reaches the client before its rows ------------------------------
+
+    @Test
+    fun liveTurnEndBeforeTheNewestPage_settlesItsRows() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.play(listOf(End))
+            projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(entries(FULL.dropLast(1))), "", atStart = true), interactive = true)
+
+            assertEquals(EXPECTED, projection.rows().summary())
+            assertEquals(listOf(false, false, false), projection.rows().streaming())
+        }
+
+    @Test
+    fun turnWithNoTurnEnd_stillStreamsAfterAMerge_andALaterTurnEndSettlesIt() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(entries(FULL.dropLast(1))), "", atStart = true), interactive = true)
+
+            assertEquals(listOf(false, false, true), projection.rows().streaming())
+
+            projection.play(listOf(End))
+
+            assertEquals(listOf(false, false, false), projection.rows().streaming())
+        }
+
+    @Test
+    fun turnEndOfAnotherTurn_leavesThisTurnStreaming() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd(CONVERSATION, "other", "end_turn"))
+            projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(entries(FULL.dropLast(1))), "", atStart = true), interactive = true)
+
+            assertEquals(listOf(false, false, true), projection.rows().streaming())
+        }
+
+    @Test
+    fun turnEndInAnotherConversation_leavesThisOneStreaming() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c2", TURN, "end_turn"))
+            projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(entries(FULL.dropLast(1))), "", atStart = true), interactive = true)
+
+            assertEquals(listOf(false, false, true), projection.rows().streaming())
+        }
+
+    @Test
+    fun liveDeltaAfterItsTurnEnd_landsSettled() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.play(listOf(End, Delta(0, "late")))
+
+            assertEquals(listOf(false), projection.rows().streaming())
+        }
+
+    @Test
+    fun turnEndOnANonInteractivePage_isNotRemembered() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.mergeHistoryPage(CONVERSATION, HistoryPage(page(entries(listOf(End))), "c", atStart = false), interactive = false)
+            projection.play(listOf(Delta(0, "a")))
+
+            assertEquals(listOf(true), projection.rows().streaming())
+        }
+
+    @Test
+    fun remove_forgetsTheConversationsEndedTurns() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.play(listOf(End))
+            projection.remove(CONVERSATION)
+            projection.play(listOf(Delta(0, "a")))
+
+            assertEquals(listOf(true), projection.rows().streaming())
         }
 
     @Test

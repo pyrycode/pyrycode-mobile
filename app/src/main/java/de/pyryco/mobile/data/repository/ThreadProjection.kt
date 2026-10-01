@@ -54,6 +54,19 @@ internal class ThreadProjection {
     private val threadByConversation = MutableStateFlow<Map<String, List<ThreadItem>>>(emptyMap())
 
     /**
+     * `conversationId -> the turn ids whose turn_end this conversation has seen` on either lane (#1419).
+     * A `turn_end` can reach the client before the rows it ends: the newest history page can hold only
+     * the `turn_end`, or a live one can land before the page with the turn's deltas. Any row of an ended
+     * turn that enters the thread later is settled against this set ([withSettledTurns]).
+     *
+     * Every writer records here **before** it updates the thread, and a merge reads this inside its
+     * thread `update`. A merge that misses a concurrent record is therefore followed by that writer's own
+     * flip. Grow-only, since an ended turn never streams again. Connection-scoped and in-memory like
+     * [mintedMessageIds], and dropped with the thread by [remove].
+     */
+    private val endedTurns = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+
+    /**
      * `conversationId -> the message ids this device minted and echoed into the thread` (#781) — the
      * ledger that makes a queued item's [QueuedMessage.messageId] safe to act on. Written by
      * [RemoteConversationRepository.sendMessage] through [recordMinted] after its ack (beside the confirmed insert) and consumed when a drop settles
@@ -361,7 +374,9 @@ internal class ThreadProjection {
      */
     fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
         threadByConversation.update { current ->
-            current + (event.conversationId to current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now()))
+            val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now())
+            val ended = event.turnId in endedTurns.value[event.conversationId].orEmpty()
+            current + (event.conversationId to if (ended) rows.withSettledTurns(setOf(event.turnId)) else rows)
         }
     }
 
@@ -372,9 +387,11 @@ internal class ThreadProjection {
      * row exists for the turn** — a tool-only or empty turn carries no assistant text (AC #3), and a
      * duplicate `turn_end` re-applies the same flip (idempotent). `turn_end` carries no final text, so
      * nothing is appended here; [LiveSessionEvent.TurnEnd.stopReason] is not consumed by this slice
-     * (turn-outcome mapping is a later consumer concern).
+     * (turn-outcome mapping is a later consumer concern). The turn is first recorded in [endedTurns], so
+     * a row of it that a later merge brings in lands settled too (#1419).
      */
     fun finalizeAssistantTurn(event: LiveSessionEvent.TurnEnd) {
+        recordEnded(event.conversationId, setOf(event.turnId))
         threadByConversation.update { current ->
             current + (event.conversationId to current[event.conversationId].orEmpty().withFinalizedTurn(event))
         }
@@ -484,6 +501,10 @@ internal class ThreadProjection {
      * the negotiated set), `message` / `send_message` always do. The daemon's `request_history` handler has
      * no such gate, so this is the client's fail-closed half.
      *
+     * The page's `turn_end`s are recorded in [endedTurns] first, and the merged slice then settles every
+     * turn the conversation has seen end (#1419): a page can bring the rows of a turn whose `turn_end` came
+     * earlier, on the live lane or on a newer page.
+     *
      * Emits no log on any branch, like the rest of this class.
      */
     fun mergeHistoryPage(
@@ -492,17 +513,30 @@ internal class ThreadProjection {
         interactive: Boolean,
     ) {
         if (page.entries.isEmpty()) return
+        recordEnded(conversationId, endedTurnIds(page.entries, interactive))
         threadByConversation.update { current ->
             val existing = current[conversationId].orEmpty()
-            current + (conversationId to existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive)))
+            val merged = existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive))
+            current + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty()))
         }
+    }
+
+    /** Add [turnIds] to [conversationId]'s [endedTurns]; an empty set writes nothing (#1419). */
+    private fun recordEnded(
+        conversationId: String,
+        turnIds: Set<String>,
+    ) {
+        if (turnIds.isEmpty()) return
+        endedTurns.update { it + (conversationId to (it[conversationId].orEmpty() + turnIds)) }
     }
 
     /**
      * Drop [conversationId]'s thread after a confirmed `delete` (#532), the thread third of
-     * [ConversationCommands]' `removeConversation`. Removing an absent id re-emits nothing.
+     * [ConversationCommands]' `removeConversation`, along with the turns it has seen end (#1419). Removing
+     * an absent id re-emits nothing.
      */
     fun remove(conversationId: String) {
+        endedTurns.update { it - conversationId }
         threadByConversation.update { it - conversationId }
     }
 
