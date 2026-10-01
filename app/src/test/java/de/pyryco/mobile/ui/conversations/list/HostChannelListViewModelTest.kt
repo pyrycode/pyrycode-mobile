@@ -78,6 +78,7 @@ import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -1725,58 +1726,176 @@ class HostChannelListViewModelTest {
         }
 
     @Test
-    fun chatEditorFollowsItsOwnHostsConnectionWithoutClosing() =
+    fun disconnectClosesThatHostsCreateAndEditModalsAndKeepsAnotherHostsOpen() =
         runTest(dispatcher) {
             val f = fixture()
-            f.seedCollidingChats()
+            f.seedCollidingChannelEditors()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
             runCurrent()
-            val open = f.vm.hostState.value.chatEditor
-            assertTrue(
-                f.vm.hostState.value
-                    .isHostConnected("Host"),
-            )
+
+            // Host's Edit chat and Create channel, host's Edit channel and a failed Chats create on host.
+            f.vm.openChatEditor(HostConversationTarget("Host", "a-chat"))
+            f.vm.openCreateChannel("Host")
+            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.b.repo.failure = RelayErrorException("server.error", false, "server-secret")
+            f.vm.createChat("host")
+            runCurrent()
+            f.b.repo.failure = null
+            val channelEditor = requireNotNull(f.channelEditor())
+            val failedCreate = requireNotNull(f.vm.hostState.value.createChat)
+            assertTrue(failedCreate.failed)
+            assertNotNull(f.vm.hostState.value.chatEditor)
+            assertNotNull(f.vm.hostState.value.createChannel)
 
             f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
             runCurrent()
-            assertFalse(
-                f.vm.hostState.value
-                    .isHostConnected("Host"),
-            )
-            // The other host's connection is its own.
-            assertTrue(
-                f.vm.hostState.value
-                    .isHostConnected("host"),
-            )
-            assertEquals(open, f.vm.hostState.value.chatEditor)
+            assertNull(f.vm.hostState.value.chatEditor)
+            assertNull(f.vm.hostState.value.createChannel)
+            // The other host's modal and failed create are its own.
+            assertEquals(channelEditor, f.channelEditor())
+            assertEquals(failedCreate, f.vm.hostState.value.createChat)
 
-            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking)
+            // A half-up host is not connected either, and a reconnect reopens nothing.
+            f.b.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking)
             runCurrent()
-            assertFalse(
-                f.vm.hostState.value
-                    .isHostConnected("Host"),
-            )
-
+            assertNull(f.channelEditor())
+            assertNull(f.vm.hostState.value.createChat)
             f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+            f.b.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
             runCurrent()
-            assertTrue(
-                f.vm.hostState.value
-                    .isHostConnected("Host"),
-            )
-            assertEquals(open, f.vm.hostState.value.chatEditor)
+            assertNull(f.vm.hostState.value.chatEditor)
+            assertNull(f.vm.hostState.value.createChannel)
+            assertNull(f.channelEditor())
+            assertNull(f.vm.hostState.value.createChat)
+            assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty() && f.channelCreates().isEmpty())
+        }
 
-            // Lost between the last status and the press: nothing is sent, and the modal says it failed.
-            f.a.available = false
-            f.vm.submitChatName("Renamed")
+    @Test
+    fun aDisconnectedHostRefusesEveryCreateAndEditOpen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
             runCurrent()
-            assertTrue(requireNotNull(f.vm.hostState.value.chatEditor).failed)
+
+            f.vm.createChat("Host")
+            f.vm.openCreateChannel("Host")
+            f.vm.openChatEditor(HostConversationTarget("Host", "a-chat"))
+            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+
+            val state = f.vm.hostState.value
+            assertNull(state.createChat)
+            assertNull(state.createChannel)
+            assertNull(state.chatEditor)
+            assertNull(state.channelEditor)
             assertTrue(
-                f.a.repo.renames
+                f.a.repo.workspaces
+                    .isEmpty(),
+            )
+            assertTrue(
+                f.a.repo.promptReads
+                    .isEmpty(),
+            )
+            listOf(
+                "event=create_chat_rejected code=disconnected",
+                "event=create_channel_open_rejected code=disconnected",
+                "event=chat_editor_open_rejected code=disconnected",
+                "event=channel_editor_open_rejected code=disconnected",
+            ).forEach { assertTrue(it, it in logs) }
+        }
+
+    /**
+     * Each create or edit submit racing a disconnect (#1336). Main runs on a queued dispatcher here, so the
+     * snapshot is already offline when the press lands but the view model's watcher has not closed the
+     * modal yet: the submit's own re-check is what refuses, and the write it would launch is never sent.
+     */
+    @Test
+    fun aSubmitRacingADisconnectSendsNothingAndClosesItsModal() =
+        runTest(dispatcher) {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            runCurrent()
+            val offline = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+            val online = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+
+            fun race(
+                event: String,
+                open: () -> Unit,
+                submit: () -> Unit,
+            ) {
+                open()
+                runCurrent()
+                f.a.status.value = offline
+                assertFalse(
+                    f.source.snapshots.value
+                        .single { it.serverId == "Host" }
+                        .connectionStatus == online,
+                )
+                submit()
+                runCurrent()
+                assertTrue(event, event in logs)
+                f.a.status.value = online
+                runCurrent()
+            }
+
+            race("event=create_channel_rejected code=disconnected", { f.vm.openCreateChannel("Host") }) {
+                f.vm.submitCreateChannel("New", "A prompt")
+            }
+            race("event=chat_rename_rejected code=disconnected", { f.vm.openChatEditor(HostConversationTarget("Host", "a-chat")) }) {
+                f.vm.submitChatName("Renamed")
+            }
+            race("event=chat_archive_rejected code=disconnected", { f.vm.openChatEditor(HostConversationTarget("Host", "a-chat")) }) {
+                f.vm.archiveChat()
+            }
+            race("event=channel_edit_rejected code=disconnected", { f.vm.openChannelEditor(HostConversationTarget("Host", "same")) }) {
+                f.vm.submitChannelEdit("Renamed", "New prompt", muted = true)
+            }
+            race("event=channel_archive_rejected code=disconnected", { f.vm.openChannelEditor(HostConversationTarget("Host", "same")) }) {
+                f.vm.archiveChannel()
+            }
+
+            val state = f.vm.hostState.value
+            assertNull(state.createChannel)
+            assertNull(state.chatEditor)
+            assertNull(state.channelEditor)
+            assertTrue(f.channelCreates().isEmpty())
+            assertTrue(f.channelRenames().isEmpty())
+            assertTrue(f.promptWrites().isEmpty())
+            assertTrue(f.mutes().isEmpty())
+            assertTrue(
+                f.a.repo.archives
                     .isEmpty() &&
-                    f.b.repo.renames
+                    f.b.repo.archives
                         .isEmpty(),
             )
+        }
+
+    /**
+     * A Chats-section create racing a disconnect: the press lands after the snapshot went offline and
+     * sends nothing (#1336).
+     */
+    @Test
+    fun aChatsCreateRacingADisconnectSendsNothing() =
+        runTest(dispatcher) {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            runCurrent()
+
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+            f.vm.createChat("Host")
+            runCurrent()
+
+            assertTrue(
+                f.a.repo.workspaces
+                    .isEmpty(),
+            )
+            assertNull(f.vm.hostState.value.createChat)
+            assertTrue("event=create_chat_rejected code=disconnected" in logs)
         }
 
     @Test
@@ -2549,8 +2668,8 @@ class HostChannelListViewModelTest {
             val f = fixture()
             f.seedCollidingChannelEditors()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            // Connected but its session not yet resolved (#1336: a disconnected host opens no editor).
             f.a.available = false
-            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
             runCurrent()
 
             f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
@@ -2562,7 +2681,8 @@ class HostChannelListViewModelTest {
             )
 
             f.a.available = true
-            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+            // Any snapshot re-resolves the repository; a reorder is one that changes no host's state.
+            f.hosts.value = listOf(f.b.entry, f.a.entry)
             runCurrent()
             assertEquals(ChannelPromptReading.Read("  A prompt\n", SessionPromptStatus.Matches), f.channelEditor()?.prompt)
 

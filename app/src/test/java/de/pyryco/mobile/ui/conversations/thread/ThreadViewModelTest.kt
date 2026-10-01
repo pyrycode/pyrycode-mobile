@@ -4015,10 +4015,75 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             assertEquals(1, navEvents.size)
 
-            // A second trigger produces its own single event.
-            vm.onOverflowEvent(ThreadEvent.Archive)
+            // A second trigger produces its own single event. #1399: a second Archive leaves no more than once,
+            // so the second trigger is Delete.
+            vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
             advanceUntilIdle()
             assertEquals(2, navEvents.size)
+            collector.cancel()
+            navCollector.cancel()
+        }
+
+    @Test
+    fun conversationArchivedElsewhere_popsBackOnce() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+            assertTrue(navEvents.isEmpty())
+
+            // Another client archives it: the list reply now shows the row archived.
+            repo.archive("seed-channel-personal")
+            advanceUntilIdle()
+            assertEquals(listOf(ThreadNavigation.PopBack), navEvents)
+
+            // A later list update still showing it archived does not pop again.
+            repo.rename("seed-channel-personal", "renamed")
+            advanceUntilIdle()
+            assertEquals(listOf(ThreadNavigation.PopBack), navEvents)
+            collector.cancel()
+            navCollector.cancel()
+        }
+
+    @Test
+    fun ownArchive_whoseReplyMarksTheRowArchived_popsBackOnce() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.Archive)
+            advanceUntilIdle()
+
+            assertEquals(listOf(ThreadNavigation.PopBack), navEvents)
+            collector.cancel()
+            navCollector.cancel()
+        }
+
+    @Test
+    fun conversationRenamedElsewhere_doesNotPopBack() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+
+            repo.rename("seed-channel-personal", "renamed")
+            advanceUntilIdle()
+
+            assertEquals("renamed", vm.state.value.conversationName)
+            assertTrue(navEvents.isEmpty())
             collector.cancel()
             navCollector.cancel()
         }
