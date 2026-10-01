@@ -191,6 +191,12 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    `interactiveTurn_createEditArchiveChannel_readsPromptBack` creates from an empty Channels section,
    reads the original and edited prompt, waits for a distinct reply after Reset session, then restores
    through the selected host's list-toolbar Archive entry and finds the edited name on the list.
+   **Archive order** (#1332 — `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`): archives two
+   freshly created chats on a live daemon, the newer-by-last-use one first and the older one second, then
+   opens Archive and asserts the second-archived chat is on top — proving the daemon's `archived_at` stamp,
+   not `lastUsedAt`, decides the order; the old order would put the first-archived (newer-by-last-use) chat
+   on top instead. Zero claude turns. In the curated `LIVE=1` list in `scripts/e2e-emulator.sh`, which
+   raised `LIVE_MINIMUM` by one.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -1296,6 +1302,41 @@ live selector: `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` lists it after
 (see [Pre-ship gate](#pre-ship-gate)). Its first live pass is recorded in [Verification
 status](#verification-status).
 
+The **scanner-confirm-waits-for-host** scenario ([#1394](https://github.com/pyrycode/pyrycode-mobile/issues/1394) —
+`interactiveTurn_scannerConfirm_waitsForHostThenOpensList`) is on the LIVE curated selector and counted by
+`LIVE_MINIMUM` (not `@Ignore`d): [#1386's
+PR #1391](https://github.com/pyrycode/pyrycode-mobile/pull/1391) made `ScannerViewModel` report a pairing done
+only after the host answers — `ConfirmPairing` saves the record and moves to `Verifying`, and only
+`Paired` lets the `Routes.SCANNER` composable in `MainActivity` navigate to the channel list — proven on
+the JVM and in Robolectric but not over the real relay. This drives the scanner's own confirm, not the
+paste-link path `pairHostByCode` exercises: it opens the scanner from the list's pair-another-host
+control, waits for `ScannerUiState.ReadyToScan`, injects host B's existing pair code as
+`ScannerEvent.QrDecoded` (the scanner and the paste-code path share `parsePairingPayload`, so no new
+fixture is needed), taps "Confirm pairing", then waits up to `PAIR_TIMEOUT_MS` — covering the view
+model's 30 s connection wait plus the pop — for the channel-list tag (`pairHostByScanner`). It asserts
+the scanner view model itself ended in `Paired`, so a `Cancelled` return to the list cannot pass by
+coincidence, that host B is saved, and that B's seeded conversation (`ARG_COLLISION_NAME_B`) folds away
+under B's label and not A's, with the converse check for A. A scanner pairing saves no display name, so
+both hosts would read "Unnamed host"; the scenario names B first with
+`PairedServerCollectionStore.setDisplayName` (the call the Edit host modal makes) so the two labels
+differ. **VM access.** `MainActivity` builds its `NavHostController` inside `setContent`, and Compose's
+`NavHost` does not tag the view with it, so the route's `ScannerViewModel` is unreachable by
+`nav.getBackStackEntry(...)` the way `PairCodeScreenTest` reaches its own screen-owned nav host. Instead
+`pairHostByScanner` swaps in `scannerViewModelModule { captured.set(it) }`, a mirror of `AppModule`'s
+`ScannerViewModel` definition that also records the instance Koin builds, and restores the plain mirror
+in `finally`; the VM is still created by the route's own `koinViewModel` call in the route's back-stack
+entry, so the `Paired` navigation and the pop are the production ones. Because the restore loads the
+plain mirror rather than reinstating `AppModule`'s own definition, every later live method in the same
+process resolves the scanner view model from the mirror, not from `AppModule`, until the process ends;
+keep `scannerViewModelModule` in step with `AppModule`'s definition by hand; the drift has no error if
+the two are not kept in step. Zero real-claude turns: pairing and the list are daemon round-trips. B is
+removed in `finally`. No rung-4 twin: the deterministic harness provisions one host per invocation and
+cannot pair a second, and this scenario needs the second live host that only rung 3 / `LIVE` provisions.
+The method joins `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` after
+`interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`, and `android-test-gate.py`'s `LIVE_MINIMUM`
+counts it (see [Pre-ship gate](#pre-ship-gate)). Its first live pass is recorded in [Verification
+status](#verification-status).
+
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
 token, `turn_state` flips to `responding` and `isThinking` goes false. Before [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311)
@@ -1541,72 +1582,17 @@ turns. Allow a few
 minutes of wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
-tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) rose from 20 to 21 with #965's new
-stop method, then from 21 to 22 with #981 restoring the #687 bypass method to the curated list, then from
-22 to 24 with #966 adding the permission-answer and question-answer methods on the dedicated answer daemon,
-then from 24 to 27 with #967 adding the two reconnect methods and the background-task method, then from
-27 to 29 with #955 adding the two push methods, then from
-29 to 31 with #1016 adding the attachments-from-phone and claude-offered-file methods (its third method,
-the history-reload one, stayed `@Ignore`d and out of the list until #1020), then from 31 to 32 with #1020
-adding the peer-attachment method once the reducer let its history-replayed row appear, then from 32 to 33 with #1050
-adding the markdown-link method, then from 33 to 34 with #1021 adding the zero-turn mute-channel method,
-then from 34 to 37 with #1017 adding the interrupted-upload, interrupted-retrieval and
-cross-host-attachment-recovery methods, then from 37 to 38 with #1085 adding the second-host rename
-and unpair method, then from 38 to 39 with #684 adding the Log data diagnostic-download method, then
-from 39 to 40 with #1086 adding the two-host default-workspace and Archive method, then from 40 to 41
-with #1087 adding the workspace add-rename-archive method, then from 41 to 42 with #1088 adding the
-channel create-edit-archive method, then from 42 to 43 with #1089 adding the peer-set workspace label
-method, then from 43 to 44 with #1090 adding the attention-dot method, then from 44 to 45 with #1107
-re-adding the background-task-progress method once pyrycode/pyrycode#2661 closed the daemon parser gap,
-then from 45 to 44 when #1190 retired the host-row-only #1087 method, and from 44 to 36 when
-\#1193 removed eight ignored methods from the curated selector pending #1245/#1246 and the older
-workspace-switching follow-ups, then from 36 to 37 when #1223 added the remembered-model first-turn
-scenario, and from 37 to 38 when #1246 restored the operator-bypass permission method, then from 38 to 40
-when #1249 restored the two Archive methods. #1250 retired the peer workspace-label method after its
-transient 41-method branch failed the live gate, leaving 40. #1251 restored the channel
-create-edit-archive method through reachable controls, bringing the selector and floor to 41.
-#1252 restored the host-backed diagnostic archive method, bringing both to 42. #1208 included the
-existing #481 tool-use method, bringing both to 43. #1286 adds the Offline Retry
-method, bringing both to 44. #1305 excluded the cross-host file method
-(`interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`), `@Ignore`d pointing at #1369 after
-daemon #2699 made the phone's ready-file row go missing on `main` too, bringing both back to 43; #1369
-restores all three (the method, its LIVE list entry and `LIVE_MINIMUM`). `LIVE_MINIMUM` is
-the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
-(`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
-`scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
-list and the floor cannot drift apart silently — a method dropped from either side reddens
-this test before it reaches a live run. Before #848 the floor was pinned at 8, looser than
-the then-ten-method list, specifically so raising it would not redden
-`scripts/test_android_test_gate.py`'s recorded eight-case fixture
-(`fixtures/default-workspace-live/588.xml` — plan `docs/specs/architecture/740-e2e-list-archive-entry.md`
-§ Revisions, reaffirmed for #847). #848 resolved that tension instead of extending it: the
-fixture stays byte-for-byte, and the gate's own test pads a copy of it with synthetic
-curated-method cases up to `LIVE_MINIMUM`. #849 raised `LIVE_MINIMUM` from 11 to 12, #850
-raised it again, from 12 to 13, #891 raised it once more, from 13 to 14, #946 raised it
-again, from 14 to 15, #545 raised it again, from 15 to 19, #687 raised it again, from
-19 to 20, and #950 raised it again, from 20 to 21. #977 then lowered it from 21 to 20 when it excluded
-\#687's flaky method from the list, #965 raised it again, from 20 to 21, adding the stop-running-turn
-method, #981 raised it again, from 21 to 22, restoring \#687's method once its production bug was
-fixed, and #966 raised it again, from 22 to 24, adding the permission-answer and question-answer methods
-on the dedicated answer daemon, and #967 raised it again, from 24 to 27, adding the reconnect-footer,
-reconnect-commands and background-task methods, on the same mechanism, and #955 raised it again, from 27
-to 29, adding the two push methods, #1016 raised it again, from
-29 to 31, adding the attachments-from-phone and claude-offered-file methods, and #1020 raised it again,
-from 31 to 32, adding the peer-attachment method, #1050 raised it again, from 32 to 33, and #1021 raised it again,
-from 33 to 34, adding the mute-channel method, #1017 raised it again, from 34 to 37, adding the
-interrupted-upload, interrupted-retrieval and cross-host-attachment-recovery methods, #1085 raised
-it again, from 37 to 38, adding the second-host rename and unpair method, #684 raised it again,
-from 38 to 39, adding the Log data diagnostic-download method, #1086 raised it again, from 39
-to 40, adding the two-host default-workspace and Archive method, #1087 raised it again, from 40
-to 41, adding the workspace add-rename-archive method, #1088 raised it again, from 41 to 42,
-adding the channel create-edit-archive method, #1089 raised it again, from 42 to 43, adding the
-peer-set workspace label method, and #1090 raised it again, from 43 to 44, adding the attention-dot
-method. Later tickets moved it further still, each change recorded as a `LIVE_MINIMUM += N` / `-= N` line
-with its own comment in `scripts/android-test-gate.py` — that file's comment trail, not this prose, is the
-authoritative running total. Most recently, #1311 added one, for the status-band-never-empty method (§
-*What rung 3 is made of* above). Shell cleanup
-preserves the original result and retains failure artifacts; a clean XML report with a failing process
-status is not a passing gate.
+tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is the size of
+`scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` list, counted when the script loads, so adding a live
+method means adding its list entry and nothing else. `test_live_curated_list_matches_the_runnable_methods`
+(`scripts/test_android_test_gate.py`) asserts the list holds exactly the `InteractiveStreamE2ETest`
+methods that are `@Test` and not `@Ignore`d, so a method missing from the list, or dropped from it in a
+bad merge, reddens that test before a live run. Until 2026-10-01 the floor was a hand-kept running total,
+one `LIVE_MINIMUM += N` line per ticket, and two tickets adding live methods at once always conflicted on
+it (#1332 and #1337); git keeps that history. The gate's own test pads a copy of the recorded eight-case
+fixture (`fixtures/default-workspace-live/588.xml`) with synthetic curated-method cases up to
+`LIVE_MINIMUM` (#848). Shell cleanup preserves the original result and retains failure artifacts; a
+clean XML report with a failing process status is not a passing gate.
 
 `--tests` runs a chosen subset in place of the curated list, as a comma-separated
 `de.pyryco.mobile.e2e.InteractiveStreamE2ETest#method` list, with a floor of one executed test:
@@ -2117,7 +2103,28 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-01 (#1311).** The dispatcher ran the full
+**Current live verification — 2026-10-01 (#1332).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1332` at
+`cc94a05bbc`, merged with `origin/main` at `18ea26526a` (0 commits behind before the merge):
+**41 executed, 41 passed, 0 failed, 0 skipped**, exit 0, wall clock 518.8s. This is full-suite evidence;
+no separate focused live run is claimed. `LIVE_MINIMUM` rose from 40 to 41 with this ticket's new method,
+`interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`, joining the curated selector (see
+[Pre-ship gate](#pre-ship-gate)); this is the method's first live run. An earlier attempt reported 38
+executed and did not include the new method, because the curated selector and `LIVE_MINIMUM` had not yet
+been updated for it; that gap was found in review and fixed before this run. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1332#issuecomment-5932798343).
+
+**Previous live verification — 2026-10-01 (#1394).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1394` at
+`ba11f50add`, merged with `origin/main` at `2e1e2e46cd` (0 commits behind before the merge):
+**40 executed, 40 passed, 0 failed, 0 skipped**, exit 0, wall clock 527.1s. This is full-suite evidence;
+no separate focused live run is claimed. `LIVE_MINIMUM` rose from 39 to 40 with this ticket's new method,
+`interactiveTurn_scannerConfirm_waitsForHostThenOpensList`, joining the curated selector (see
+[Pre-ship gate](#pre-ship-gate)); this is the method's first live run. An earlier attempt on PR #1424
+executed 39 and did not include the new method, because the curated selector and `LIVE_MINIMUM` had not
+yet been updated for it; that gap was found in review and fixed in commit `ba11f50a` before this run.
+
+**Previous live verification — 2026-10-01 (#1311).** The dispatcher ran the full
 `python3 scripts/android-test-gate.py live` suite against `feature/1311` at `3fae3a6dc2`,
 merged with `origin/main` at `a61c5eb4b1`: **39 executed, 39 passed, 0 failed, 0 skipped**,
 exit 0, wall clock 520.7s. The fresh XML contains a passing, unskipped

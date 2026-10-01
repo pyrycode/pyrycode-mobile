@@ -10,6 +10,7 @@ import fcntl
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -27,65 +28,21 @@ SCENARIOS = (
     "ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order",
     "refusal",
 )
-# The live gate's executed-test floor: the size of scripts/e2e-emulator.sh's LIVE curated list (#848),
-# so a method silently dropped from that list reddens the gate. Raise it with the list.
-# 20 while #977 keeps the #687 bypass method out of the list; #981 restores it and 21.
-# #965 adds the stop method on top: 21 while #687 stays out, 22 once #981 restores it.
-LIVE_MINIMUM = 22
-# #966 adds the permission-answer and question-answer methods on top of #981's 22.
-LIVE_MINIMUM += 2
-# #967 adds the two reconnect methods and the background-task method.
-LIVE_MINIMUM += 3
-# #955 adds the two push methods.
-LIVE_MINIMUM += 2
-# #1016 adds two attachment-exchange methods.
-LIVE_MINIMUM += 2
-# #1020 adds the third, the peer's file after a history reload, now that history replay names it.
-LIVE_MINIMUM += 1
-# #1050 adds the live markdown-note link method.
-LIVE_MINIMUM += 1
-# #1021 adds the Edit channel mute round trip.
-LIVE_MINIMUM += 1
-# #1017 adds the interrupted-upload, interrupted-retrieval and cross-host attachment methods.
-LIVE_MINIMUM += 3
-# #1085 adds the second-host rename and unpair method.
-LIVE_MINIMUM += 1
-# #684 originally added a diagnostic-download method; #1193 later excluded it after Settings removed the action.
-LIVE_MINIMUM += 1
-# #1086 added the two-host Archive method, temporarily excluded by #1193.
-LIVE_MINIMUM += 1
-# #1088 adds the channel create, edit and archive method.
-LIVE_MINIMUM += 1
-# #1089 adds the peer-set workspace label method.
-LIVE_MINIMUM += 1
-# #1090 adds the attention-dot method.
-LIVE_MINIMUM += 1
-# #1107 re-adds #1076's background-task progress method.
-LIVE_MINIMUM += 1
-# #1193 live-gate rework: eight ignored methods are excluded from the curated list. Six have
-# follow-ups #1245/#1246; two older workspace-switching methods were already ignored. The floor
-# tracks the runnable list and still fails if any selected method silently skips.
-LIVE_MINIMUM -= 8
-# #1223 adds the remembered-model first-turn proof.
-LIVE_MINIMUM += 1
-# #1246 restores the operator-bypass permission proof after reply-based settlement diagnosis.
-LIVE_MINIMUM += 1
-# #1249 restores the discussion round trip and two-host Archive methods through the list toolbar.
-LIVE_MINIMUM += 2
-# #1251 restores the channel create/edit/archive method through reachable list controls.
-LIVE_MINIMUM += 1
-# #1252 restores the two-host diagnostic archive proof through explicit registry requests.
-LIVE_MINIMUM += 1
-# #1208 includes #481's durable tool-row proof in the full live suite.
-LIVE_MINIMUM += 1
-# #1286 adds the live Offline Retry pill proof.
-LIVE_MINIMUM += 1
-# #1305 excludes the cross-host file method, failing on main since daemon #2699, until #1369 restores it.
-LIVE_MINIMUM -= 1
-# #1325 excludes five settings methods failing on main since #1320 until #1397 restores them.
-LIVE_MINIMUM -= 5
-# #1311 adds the status-band-never-empty method.
-LIVE_MINIMUM += 1
+
+def curated_live_methods():
+    """The method names on scripts/e2e-emulator.sh's LIVE curated list, in list order."""
+    script = (ROOT / "scripts" / "e2e-emulator.sh").read_text()
+    live = script[script.index('elif [ -n "${LIVE}" ]; then\n  # LIVE curates'):]
+    branch = live[: live.index("\nelse\n")]
+    assignments = [line for line in branch.splitlines() if line.lstrip().startswith('TEST_TARGET="')]
+    return re.findall(r"#(interactiveTurn_\w+)", "\n".join(assignments))
+
+
+# The live gate's executed-test floor: the size of the curated list, counted rather than kept by hand. Every
+# listed method must execute, so a selected method that silently skips reddens the gate. Until 2026-10-01 this
+# was a running total with one line per ticket, and two tickets adding live methods at once always conflicted
+# on it (#1332, #1337). test_live_curated_list_matches_the_runnable_methods keeps the list complete.
+LIVE_MINIMUM = len(curated_live_methods())
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

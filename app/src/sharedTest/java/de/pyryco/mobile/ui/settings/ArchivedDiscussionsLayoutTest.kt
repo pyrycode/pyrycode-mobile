@@ -11,12 +11,14 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertLeftPositionInRootIsEqualTo
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Conversation
@@ -120,6 +122,38 @@ class ArchivedDiscussionsLayoutTest {
                 bitmap.recycle()
             }
         }
+    }
+
+    // #1332: a row archived from this phone gets its stamp only from the list reply that lands
+    // after the screen first draws, so it moves in front of the row the list is anchored on.
+    @Test fun rowMovedToTheTopIsShownFirstWhenTheListWasAtTheTop() {
+        val rows = (0 until 20).map { archived("row-$it", promoted = false) }
+        var state by mutableStateOf(ArchivedDiscussionsUiState.Loaded(emptyList(), rows, ArchiveTab.Discussions))
+        compose.setContent {
+            PyrycodeMobileTheme(darkTheme = true) { ArchivedDiscussionsScreen(state = state, onEvent = {}) }
+        }
+        compose.onNodeWithContentDescription("Restore row-0").assertIsDisplayed()
+
+        compose.runOnIdle { state = state.copy(discussions = listOf(rows.last()) + rows.dropLast(1)) }
+
+        val moved = compose.onNodeWithContentDescription("Restore row-19").assertIsDisplayed()
+        val previousTop = compose.onNodeWithContentDescription("Restore row-0").getUnclippedBoundsInRoot()
+        assertTrue(moved.getUnclippedBoundsInRoot().top < previousTop.top)
+    }
+
+    @Test fun rowMovedToTheTopLeavesAScrolledListInPlace() {
+        val rows = (0 until 20).map { archived("row-$it", promoted = false) }
+        var state by mutableStateOf(ArchivedDiscussionsUiState.Loaded(emptyList(), rows, ArchiveTab.Discussions))
+        compose.setContent {
+            PyrycodeMobileTheme(darkTheme = true) { ArchivedDiscussionsScreen(state = state, onEvent = {}) }
+        }
+        compose.onNode(hasScrollAction()).performScrollToIndex(10)
+        compose.onNodeWithContentDescription("Restore row-10").assertIsDisplayed()
+
+        compose.runOnIdle { state = state.copy(discussions = listOf(rows.last()) + rows.dropLast(1)) }
+
+        compose.onNodeWithContentDescription("Restore row-10").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Restore row-19").assertDoesNotExist()
     }
 
     private fun assertPopulatedTabs(darkTheme: Boolean) {
