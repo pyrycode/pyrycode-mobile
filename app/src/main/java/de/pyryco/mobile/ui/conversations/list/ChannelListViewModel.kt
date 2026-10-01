@@ -93,10 +93,10 @@ data class HostChannelListState(
     /**
      * Whether [serverId]'s own session is up, read from the same snapshot its rows are drawn from (#827).
      *
-     * Derived rather than stored on [chatEditor], so a disconnect or a reconnect re-enables or disables
-     * the modal's OK without publishing a new editor state — the modal and its typed name stay put. Both
-     * legs are compared with `==` rather than an exhaustive `when`, so a relay state added later reads as
-     * not connected instead of needing a classification here.
+     * Derived rather than stored on a modal's state. Since #1336 it also decides whether the tree draws the
+     * host's section plus and row pens, and the view model closes the host's create and edit modals by the
+     * same rule. Both legs are compared with `==` rather than an exhaustive `when`, so a relay state added
+     * later reads as not connected instead of needing a classification here.
      */
     fun isHostConnected(serverId: String): Boolean = hosts.any { it.host.serverId == serverId && it.host.connectionStatus.isLive() }
 }
@@ -384,6 +384,36 @@ class ChannelListViewModel(
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
 
+    init {
+        // #1336, desktop's rule: a host that stops being connected closes its create and edit modals and
+        // clears its failed Chats create. A write already in flight may finish; its terminal
+        // `compareAndSet` against the cleared state is a no-op, so nothing is resurrected.
+        viewModelScope.launch {
+            hostSource.snapshots.collect { hosts ->
+                val live = hosts.filter { it.connectionStatus.isLive() }.mapTo(HashSet()) { it.serverId }
+                createChannel.clearUnless("create_channel") { it.serverId in live }
+                createChat.clearUnless("create_chat") { it.serverId in live }
+                chatEditor.clearUnless("chat_editor") { it.serverId in live }
+                if (channelEditor.clearUnless("channel_editor") { it.serverId in live }) channelPromptRead?.cancel()
+            }
+        }
+    }
+
+    /** Atomically sets this modal's state to null unless [keep] holds; true when it closed one. */
+    private fun <T : Any> MutableStateFlow<T?>.clearUnless(
+        name: String,
+        keep: (T) -> Boolean,
+    ): Boolean {
+        val before = getAndUpdate { state -> state?.takeIf(keep) }
+        val cleared = before != null && !keep(before)
+        if (cleared) RelayLog.d { "event=${name}_closed code=disconnected" }
+        return cleared
+    }
+
+    /** [serverId]'s snapshot is connected, by the same rule as [HostChannelListState.isHostConnected]. */
+    private fun isHostLive(serverId: String): Boolean =
+        hostSource.snapshots.value.any { it.serverId == serverId && it.connectionStatus.isLive() }
+
     /**
      * Folds or unfolds one host or fixed section row.
      *
@@ -530,6 +560,10 @@ class ChannelListViewModel(
         val host = hostSource.snapshots.value.firstOrNull { it.serverId == serverId }
         if (host == null) {
             RelayLog.d { "event=create_chat_rejected code=unknown_host" }
+            return
+        }
+        if (!isHostLive(serverId)) {
+            RelayLog.d { "event=create_chat_rejected code=disconnected" }
             return
         }
         if (createChat.value?.saving == true) return
@@ -722,6 +756,10 @@ class ChannelListViewModel(
             RelayLog.d { "event=chat_editor_open_rejected code=unknown_chat" }
             return
         }
+        if (!isHostLive(target.serverId)) {
+            RelayLog.d { "event=chat_editor_open_rejected code=disconnected" }
+            return
+        }
         chatEditor.value =
             ChatEditorState(
                 serverId = target.serverId,
@@ -747,6 +785,11 @@ class ChannelListViewModel(
         if (target.saving) return
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
+        if (!isHostLive(target.serverId)) {
+            RelayLog.d { "event=chat_rename_rejected code=disconnected" }
+            chatEditor.compareAndSet(target, null)
+            return
+        }
         val live = hostSource.repositoryFor(target.serverId)
         if (live == null) {
             RelayLog.d { "event=chat_rename_rejected code=unavailable" }
@@ -784,6 +827,11 @@ class ChannelListViewModel(
     fun archiveChat() {
         val target = chatEditor.value ?: return
         if (target.saving) return
+        if (!isHostLive(target.serverId)) {
+            RelayLog.d { "event=chat_archive_rejected code=disconnected" }
+            chatEditor.compareAndSet(target, null)
+            return
+        }
         val live = hostSource.repositoryFor(target.serverId)
         if (live == null) {
             RelayLog.d { "event=chat_archive_rejected code=unavailable" }
@@ -941,6 +989,10 @@ class ChannelListViewModel(
             RelayLog.d { "event=create_channel_open_rejected code=unknown_host" }
             return
         }
+        if (!isHostLive(serverId)) {
+            RelayLog.d { "event=create_channel_open_rejected code=disconnected" }
+            return
+        }
         createChannel.value = CreateChannelState(serverId)
         RelayLog.d { "event=create_channel_opened" }
     }
@@ -967,6 +1019,11 @@ class ChannelListViewModel(
         val trimmed = name.trim()
         if ((createdId == null && trimmed.isEmpty()) || !SystemPromptLimit.fits(systemPrompt)) {
             RelayLog.d { "event=create_channel_rejected code=invalid" }
+            return
+        }
+        if (!isHostLive(state.serverId)) {
+            RelayLog.d { "event=create_channel_rejected code=disconnected" }
+            createChannel.compareAndSet(state, null)
             return
         }
         val live = hostSource.repositoryFor(state.serverId)
@@ -1041,6 +1098,10 @@ class ChannelListViewModel(
             RelayLog.d { "event=channel_editor_open_rejected code=unknown_channel" }
             return
         }
+        if (!isHostLive(target.serverId)) {
+            RelayLog.d { "event=channel_editor_open_rejected code=disconnected" }
+            return
+        }
         channelPromptRead?.cancel()
         channelPrompt.value = target to ChannelPromptReading.Reading
         channelEditor.value =
@@ -1090,6 +1151,11 @@ class ChannelListViewModel(
         val draft = systemPrompt?.takeIf { read != null }
         if (trimmed.isEmpty() || (draft != null && !SystemPromptLimit.fits(draft))) {
             RelayLog.d { "event=channel_edit_rejected code=invalid" }
+            return
+        }
+        if (!isHostLive(state.serverId)) {
+            RelayLog.d { "event=channel_edit_rejected code=disconnected" }
+            closeChannelEditor(state)
             return
         }
         val live = hostSource.repositoryFor(state.serverId)
@@ -1162,6 +1228,11 @@ class ChannelListViewModel(
     fun archiveChannel() {
         val state = channelEditor.value ?: return
         if (state.saving) return
+        if (!isHostLive(state.serverId)) {
+            RelayLog.d { "event=channel_archive_rejected code=disconnected" }
+            closeChannelEditor(state)
+            return
+        }
         val live = hostSource.repositoryFor(state.serverId)
         if (live == null) {
             RelayLog.d { "event=channel_archive_rejected code=unavailable" }
@@ -1183,6 +1254,11 @@ class ChannelListViewModel(
             channelEditor.compareAndSet(pending, null)
             RelayLog.d { "event=channel_archived" }
         }
+    }
+
+    /** Closes [state]'s Edit channel modal, and stops its prompt read, unless another one replaced it. */
+    private fun closeChannelEditor(state: ChannelEditorState) {
+        if (channelEditor.compareAndSet(state, null)) channelPromptRead?.cancel()
     }
 
     /** Cancel, Close and Back: close the Edit channel modal, stop its prompt read and send nothing. */

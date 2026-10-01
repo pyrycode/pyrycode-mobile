@@ -106,7 +106,7 @@ internal class MessageCommands(
     @Synchronized
     fun endAttachmentUploads() {
         uploadInboundEnded = true
-        activeUpload?.fail(AttachmentUploadResult.ReconnectRequired)
+        activeUpload?.fail(AttachmentUploadResult.ConnectionLost)
     }
 
     @Synchronized
@@ -244,7 +244,7 @@ internal class MessageCommands(
                             false
                         }
                     if (!sent) {
-                        transfer.fail(AttachmentUploadResult.ReconnectRequired)
+                        transfer.fail(AttachmentUploadResult.SendFailed)
                         break
                     }
                     RelayLog.d { "event=attachment_chunk id=${transfer.attachmentId} index=$index total=${plan.totalChunks}" }

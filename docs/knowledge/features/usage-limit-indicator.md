@@ -81,10 +81,12 @@ when the matching helper is non-`null`.
 From #804 to #1002 this reading was a `ThreadStatusArea` arm, ranked between api-retry and resetting. It no
 longer is: [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) moved it into
 [`ThreadTopOverlay`](thread-top-overlay.md), a right-aligned stack of pills pinned over the top of the
-message area, above `ThreadStatusArea`'s six-arm ladder entirely — see
-[Resetting indicator § Placement](resetting-indicator.md#placement-in-the-thread) for the current ladder
-(`api-retry → resetting → compacting → turn outcome → thinking/running tool`), which now carries only live
-turn status. `ThreadTopOverlay` draws the usage pill above the pairing-error pill when both are showing; see
+message area, above `ThreadStatusArea`'s status ladder entirely — see [Thread screen § The arm
+order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for the current ladder
+(connection, resetting, api-retry, compacting, stall, turn outcome, then thinking/working/running tool —
+[#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) moved resetting above api-retry and added
+the stall arm), which carries only live turn status. `ThreadTopOverlay` draws the usage pill above the
+pairing-error pill when both are showing; see
 that document for the overlay's own composition and the pairing pill it shares the stack with.
 
 The reading is drawn as a [`NoticePill`](thread-top-overlay.md#the-usage-pill): Default with a dismiss X when
