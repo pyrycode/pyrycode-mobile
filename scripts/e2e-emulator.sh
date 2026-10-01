@@ -1210,6 +1210,9 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolPrompt_rendersToolStepInThread"
   # #1311: the status band keeps a reading for the whole tool-then-text turn. One turn.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy"
+  # #1394: the scanner's confirm waits for host B to answer before the list opens. Pairing over the
+  # scanner and a phone-local unpair only, so it spends no Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_scannerConfirm_waitsForHostThenOpensList"
   # #1325 excludes five settings methods (model change, inherited and remembered effort, operator
   # bypass, reconnect footer) until #1397 repairs freshSettings after #1320's held readings and restores them.
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by

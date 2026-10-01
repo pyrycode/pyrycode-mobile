@@ -135,6 +135,9 @@ import de.pyryco.mobile.ui.conversations.thread.inert
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import de.pyryco.mobile.ui.conversations.thread.slashCommandOptions
 import de.pyryco.mobile.ui.conversations.thread.slashCommandTypeAheadRows
+import de.pyryco.mobile.ui.onboarding.ScannerEvent
+import de.pyryco.mobile.ui.onboarding.ScannerUiState
+import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -166,6 +169,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
+import org.koin.core.context.loadKoinModules
+import org.koin.core.module.Module
+import org.koin.core.module.dsl.viewModel
+import org.koin.dsl.module
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
@@ -1879,6 +1886,50 @@ class InteractiveStreamE2ETest {
                 runCatching { runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverIdA).delete(id) } } }
                     .onFailure { Log.w("E2E", "diagnostic marker cleanup failed: ${it::class.simpleName}") }
             }
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
+        }
+    }
+
+    /**
+     * The scanner reports a pairing done only once the host answered (#1386), over the real relay (#1394,
+     * rung 3). No camera reads a code: once the scanner is ready, host B's pair code goes in as a decoded
+     * QR, which the scanner parses as the code path does. Confirm, then the view model's connection wait,
+     * then the list ([pairHostByScanner]).
+     *
+     * **Which label.** A scanner pairing saves no name, so both hosts would read "Unnamed host". B is named
+     * with the store call the Edit host modal makes, then each seeded conversation is folded away under its
+     * own host's label. A's is read by id, since #847 renames it.
+     *
+     * **Zero real-claude turns**: pairing and the list are daemon round-trips. B is removed in `finally`.
+     */
+    @Test
+    fun interactiveTurn_scannerConfirm_waitsForHostThenOpensList() {
+        val serverIdA = twoHostArg(ARG_SERVER_ID)
+        val serverIdB = twoHostArg(ARG_SERVER_ID_B)
+        val nameB = twoHostArg(ARG_COLLISION_NAME_B)
+        val store = GlobalContext.get().get<PairedServerCollectionStore>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val nameA =
+                checkNotNull(heldConversationName(serverIdA, twoHostArg(ARG_COLLISION_CONVERSATION_ID))) {
+                    "host A's seeded conversation has no name"
+                }
+
+            pairHostByScanner(twoHostArg(ARG_PAIR_CODE_B))
+            assertNotNull("the scanner did not save host B", runBlocking { store.loadById(serverIdB) })
+            awaitChannelRow(nameB)
+
+            runBlocking { store.setDisplayName(serverIdB, HOST_B_NAME) }
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(hasContentDescription(hostEditDescription(HOST_B_NAME))) }.isSuccess
+            }
+            val labelA = hostLabel(serverIdA)
+            val labelB = hostLabel(serverIdB)
+            assertEquals(HOST_B_NAME, labelB)
+            assertEachUnderOwnHost(labelB to nameB, labelA to nameA)
+            assertEachUnderOwnHost(labelA to nameA, labelB to nameB)
+        } finally {
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
         }
     }
@@ -6366,6 +6417,55 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
         }
     }
+
+    /**
+     * Pair a host through the scanner's own confirm (#1386), with [payload] standing in for a decoded QR. The
+     * list's pair-another-host control opens the scanner; once its view model is
+     * [ReadyToScan][ScannerUiState.ReadyToScan] the payload goes in as [ScannerEvent.QrDecoded] and the route
+     * prepares the confirmation itself. Confirm → save → wait for the host → only on
+     * [Paired][ScannerUiState.Paired] does the route open the list.
+     *
+     * `MainActivity` keeps its nav controller to itself, so the route's view model is captured where Koin
+     * builds it ([scannerViewModelModule]) and the plain definition is restored afterwards.
+     */
+    private fun pairHostByScanner(payload: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        // The scanner asks for CAMERA at runtime; granting it first keeps the system dialog off screen.
+        instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+        val captured = AtomicReference<ScannerViewModel?>()
+        loadKoinModules(scannerViewModelModule { captured.set(it) })
+        try {
+            composeTestRule.onNode(hasContentDescription(context.getString(R.string.cd_pair_another_host))).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { captured.get()?.state?.value == ScannerUiState.ReadyToScan }
+            val scanner = checkNotNull(captured.get())
+            instrumentation.runOnMainSync { scanner.onEvent(ScannerEvent.QrDecoded(payload)) }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(CONFIRM_PAIRING).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(CONFIRM_PAIRING).performClick()
+            // Save, then up to the view model's 30 s connection wait, then the navigation to the list.
+            composeTestRule.waitUntil(PAIR_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+            }
+            assertEquals(ScannerUiState.Paired, scanner.state.value)
+        } finally {
+            loadKoinModules(scannerViewModelModule {})
+        }
+    }
+
+    /**
+     * A mirror of `AppModule`'s [ScannerViewModel] definition that also hands [onCreated] each instance.
+     * The scenario's `finally` reloads this mirror, so later live methods resolve the scanner VM from it:
+     * keep it in step with `AppModule`.
+     */
+    private fun scannerViewModelModule(onCreated: (ScannerViewModel) -> Unit): Module =
+        module {
+            viewModel {
+                val registry = get<RelayConnectionRegistry>()
+                ScannerViewModel(get(), registry, registry::pairingStatus).also(onCreated)
+            }
+        }
 
     /** Both halves of "separate", for both hosts: see [assertEachUnderOwnHost] and [assertRowOpensOwnThread]. */
     private fun assertHostsStaySeparate(
