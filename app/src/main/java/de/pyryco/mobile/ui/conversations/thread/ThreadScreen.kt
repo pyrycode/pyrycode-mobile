@@ -1130,6 +1130,9 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         messageCount = items.count { it is ThreadItem.MessageItem },
         memorySearch = runConfig.memorySearch,
         channelId = conversationId,
+        agent = agent,
+        sessionFacts = reportedSessionFacts,
+        sessionCostUsd = sessionCostUsd,
     )
 
 /**

@@ -110,6 +110,8 @@ import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.conversations.components.CHANNEL_INFO_AGENT_VERSION_TAG
+import de.pyryco.mobile.ui.conversations.components.CHANNEL_INFO_SESSION_COST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
@@ -317,6 +319,10 @@ class InteractiveStreamE2ETest {
      * #891: after one real turn, the Status sheet's running-model row shows what claude announced on its
      * `system/init` line (`model_announced`). Asserts only that the row carries a non-empty value and not
      * the unavailable note — the model name depends on the operator's claude and is never hard-coded.
+     *
+     * #1346: first, Channel info's Session section shows a reported version (not "Not reported") and a cost
+     * row, which exists only once the turn's `turn_end` carried a positive `cost_usd_total`. Neither value
+     * is hard-coded; the sheet is closed with its own Close button before the Status sheet opens.
      */
     @Test
     fun interactiveTurn_pingPrompt_statusSheetShowsRunningModel() {
@@ -329,6 +335,33 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+        val versionShown = {
+            composeTestRule
+                .onAllNodes(hasTestTag(CHANNEL_INFO_AGENT_VERSION_TAG))
+                .fetchSemanticsNodes()
+                .map { node -> node.config[SemanticsProperties.Text].joinToString("") { it.text } }
+        }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            versionShown().any { it.isNotBlank() && it != SESSION_VALUE_NOT_REPORTED } &&
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_INFO_SESSION_COST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val cost =
+            composeTestRule
+                .onNode(hasTestTag(CHANNEL_INFO_SESSION_COST_TAG))
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.Text]
+                .joinToString("") { it.text }
+        assertTrue("cost row reads \"$cost\"", Regex("\\$\\d+\\.\\d{2} est\\.").matches(cost))
+        composeTestRule.onNode(hasContentDescription(CD_CLOSE_SHEET) and hasClickAction()).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CHANNEL_INFO_AGENT_VERSION_TAG)).fetchSemanticsNodes().isEmpty()
+        }
 
         composeTestRule.onNode(hasContentDescription(statusExpandDescription)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -6533,6 +6566,10 @@ class InteractiveStreamE2ETest {
         const val RENAME_ITEM = "Rename"
         const val RENAME_SAVE = "Save"
         const val CHANNEL_INFO_ITEM = "Channel info"
+
+        // #1346: Channel info's own strings — the absent-value text and the sheet's close button.
+        const val SESSION_VALUE_NOT_REPORTED = "Not reported"
+        const val CD_CLOSE_SHEET = "Close"
         const val DELETE_ACTION = "Delete"
         const val DELETE_DIALOG_TITLE = "Delete conversation?"
         const val DELETE_DIALOG_CANCEL = "Cancel"

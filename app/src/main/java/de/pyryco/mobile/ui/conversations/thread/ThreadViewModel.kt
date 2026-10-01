@@ -28,6 +28,7 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ResetStatus
+import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SystemPromptLimit
@@ -57,6 +58,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -397,6 +399,28 @@ class ThreadViewModel(
             ::Pair,
         ).distinctUntilChanged()
 
+    /**
+     * Claude's latest estimate of this session's cost (#1346): the newest positive finite `cost_usd_total`
+     * on this conversation's `turn_end`s. Each replaces the last (the value is already a running total, so
+     * it is never summed), and an absent, zero, negative or non-finite one leaves the earlier value standing.
+     * Collected eagerly so it lasts as long as this view model, as desktop keeps it while the timeline lives;
+     * `WhileSubscribed` would forget it whenever the screen stops collecting. Claude's claim: never logged.
+     */
+    private val sessionCostUsd: StateFlow<Double?> =
+        liveSessionEvents
+            .filterIsInstance<LiveSessionEvent.TurnEnd>()
+            .mapNotNull { event ->
+                event.costUsdTotal?.takeIf { event.conversationId == conversationId && it.isFinite() && it > 0 }
+            }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Channel info's Session readings (#1346): what Claude reports about its session, with the permission
+     * mode [runningModel] leaves unread, and [sessionCostUsd]. A second `observeSessionFacts` subscription is
+     * a projection read that sends nothing. None of it reaches [runConfigFlow].
+     */
+    private val channelInfoSession: Flow<Pair<SessionFacts?, Double?>> =
+        combine(repository.observeSessionFacts(conversationId), sessionCostUsd, ::Pair)
+
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
             pendingRenameDialog,
@@ -499,6 +523,8 @@ class ThreadViewModel(
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
         }.combine(backgroundTaskReading) { uiState, (roster, count) ->
             uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+        }.combine(channelInfoSession) { uiState, (facts, cost) ->
+            uiState.copy(reportedSessionFacts = facts, sessionCostUsd = cost)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
