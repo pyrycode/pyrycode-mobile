@@ -72,8 +72,8 @@ class ThreadScreenNewestRowTest {
     }
 
     /**
-     * A finger resting at the newest end holds the list's scroll at `UserInput` priority with the yield
-     * flag cleared, so a row arriving then has its pin scroll refused. The refusal must cost that one
+     * A finger resting at the newest end holds the list's scroll at `UserInput` priority while the list
+     * still follows (#1314), so a row arriving then has its pin scroll refused. The refusal must cost that one
      * scroll, not the pin: the next arrival after the finger lifts is followed again.
      */
     @Test
@@ -87,8 +87,8 @@ class ThreadScreenNewestRowTest {
         }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Row 30.").assertDoesNotExist()
-        // The last move crosses the newest edge in one event, so the at-bottom reset is the flag's final
-        // write; further moves past the edge would set it again.
+        // The last move crosses the newest edge in one event, so the drag ends at the newest end and
+        // following is recomputed as on.
         list.performTouchInput {
             repeat(9) { moveBy(Offset(0f, -150f)) }
             moveBy(Offset(0f, -600f))
@@ -109,9 +109,8 @@ class ThreadScreenNewestRowTest {
     }
 
     /**
-     * A real drag, not `performScrollToIndex`: only input through the nested-scroll chain as
-     * `NestedScrollSource.UserInput` sets the yield flag. Under reverseLayout older rows sit above, so the
-     * finger moves down to reach them. The list is selected by `ScrollToIndex` because on a device the
+     * A real drag that ends away from the newest end, so following is off by position (#1314). Under
+     * reverseLayout older rows sit above, so the finger moves down to reach them. The list is selected by `ScrollToIndex` because on a device the
      * composer's text field also exposes `ScrollBy`.
      */
     private fun scrollAwayFromTheNewestEnd() {
