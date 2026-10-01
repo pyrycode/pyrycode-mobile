@@ -6,13 +6,11 @@ import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalEvent
-import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.batchFor
-import de.pyryco.mobile.data.model.latestOutstanding
 import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.PumpState
@@ -257,16 +255,6 @@ class RelayRepositoryCoordinator(
     fun recordModalAction(action: ModalAction) {
         hostModalState.update { it.reduce(action) }
     }
-
-    /**
-     * The single-value view of [hostModals] the conversation-list attention readers still take (#1337, until
-     * #1338 switches them to the whole list): the most recently shown outstanding prompt, else
-     * [ModalUiState.Hidden]. Threads never read it; they scope [hostModals] instead.
-     */
-    val currentModal: StateFlow<ModalUiState> =
-        hostModals
-            .map { it.latestOutstanding }
-            .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 
     /**
      * Every clarification batch outstanding on this host (#822), across all its conversations. A per-

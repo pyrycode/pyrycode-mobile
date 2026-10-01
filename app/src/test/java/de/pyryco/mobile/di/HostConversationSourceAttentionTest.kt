@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ReadPosition
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
@@ -131,8 +132,8 @@ class HostConversationSourceAttentionTest {
     @Test
     fun aPromptOrQuestionForTheConversationWaitsForAnswer() =
         withSource { a, b, source ->
-            a.modal.value = ModalUiState.Open("m", "permission", "t", "p", emptyList(), "deny", "c")
-            b.modal.value = ModalUiState.Open("m", "permission", "t", "p", emptyList(), "deny", "")
+            a.prompts("c" to "m")
+            b.prompts("" to "m")
             b.batches.value = listOf(QuestionBatch("q", "batch", emptyList()))
             runCurrent()
             assertEquals(
@@ -143,10 +144,39 @@ class HostConversationSourceAttentionTest {
                 source.attention.value,
             )
 
-            a.modal.value = ModalUiState.Dismissed("m", "allow", "remote", "c")
+            a.prompts()
             b.batches.value = emptyList()
             runCurrent()
             assertEquals(mapOf("a" to emptyMap<String, ConversationAttention>(), "b" to emptyMap()), source.attention.value)
+        }
+
+    // #1338: a second prompt is never hidden behind the first, in the list or in the alerts.
+    @Test
+    fun everyChatHoldingAPromptWaitsAndAlertsOnce_andAnsweringOneLeavesTheOther() =
+        withSource { a, _, source ->
+            val alerts = collectAlerts(source)
+            a.prompts("chat-a" to "m1")
+            runCurrent()
+            a.prompts("chat-a" to "m1", "chat-b" to "m2")
+            runCurrent()
+            a.prompts("chat-a" to "m1", "chat-b" to "m2")
+            runCurrent()
+            assertEquals(
+                mapOf("chat-a" to ConversationAttention.WaitingForAnswer, "chat-b" to ConversationAttention.WaitingForAnswer),
+                source.attention.value["a"],
+            )
+            assertEquals(
+                listOf(
+                    AttentionAlert("a", "chat-a", AttentionAlert.Kind.Prompt, "modal:m1"),
+                    AttentionAlert("a", "chat-b", AttentionAlert.Kind.Prompt, "modal:m2"),
+                ),
+                alerts,
+            )
+
+            a.prompts("chat-b" to "m2")
+            runCurrent()
+            assertEquals(mapOf("chat-b" to ConversationAttention.WaitingForAnswer), source.attention.value["a"])
+            assertEquals(2, alerts.size)
         }
 
     @Test
@@ -214,11 +244,11 @@ class HostConversationSourceAttentionTest {
         withSource { a, b, source ->
             val alerts = collectAlerts(source)
             val open = ModalUiState.Open("m1", "permission", "t", "p", emptyList(), "deny", "c")
-            a.modal.value = open
+            a.modals.value = HostModalState(listOf(open))
             runCurrent()
-            a.modal.value = open.copy(prompt = "re-shown")
+            a.modals.value = HostModalState(listOf(open.copy(prompt = "re-shown")))
             a.batches.value = listOf(QuestionBatch("c", "q1", emptyList()))
-            b.modal.value = open.copy(conversationId = "")
+            b.modals.value = HostModalState(listOf(open.copy(conversationId = "")))
             b.batches.value = listOf(QuestionBatch(" ", "q0", emptyList()))
             runCurrent()
             a.batches.value = listOf(QuestionBatch("c", "q1", emptyList()), QuestionBatch("d", "q2", emptyList()))
@@ -267,9 +297,19 @@ class HostConversationSourceAttentionTest {
         val repositories = MutableStateFlow<ConversationRepository?>(FakeConversationRepository())
         val status = MutableStateFlow(ConnectionStatus(RelayLinkStatus.Idle, PyrycodeLinkStatus.Down))
         val events = MutableSharedFlow<LiveSessionEvent>(extraBufferCapacity = 16)
-        val modal = MutableStateFlow<ModalUiState>(ModalUiState.Hidden)
+        val modals = MutableStateFlow(HostModalState())
         val batches = MutableStateFlow<List<QuestionBatch>>(emptyList())
-        val entry = HostConversationConnection(id, null, repositories, status, events, modal, batches)
+        val entry = HostConversationConnection(id, null, repositories, status, events, modals, batches)
+
+        /** Holds one permission prompt per (conversationId, modalId) pair, in order. */
+        fun prompts(vararg held: Pair<String, String>) {
+            modals.value =
+                HostModalState(
+                    held.map { (conversationId, modalId) ->
+                        ModalUiState.Open(modalId, "permission", "t", "p", emptyList(), "deny", conversationId)
+                    },
+                )
+        }
     }
 
     private class MemoryCache : ConversationCache {

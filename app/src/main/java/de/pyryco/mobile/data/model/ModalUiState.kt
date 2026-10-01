@@ -210,13 +210,6 @@ fun HostModalState.scopedTo(conversationId: String): ModalUiState =
         ?: ModalUiState.Hidden
 
 /**
- * The single-value view the conversation-list attention readers still take (#1337, until #1338 reads the
- * whole list): the last outstanding prompt, else [ModalUiState.Hidden]. Never a [ModalUiState.Dismissed].
- */
-val HostModalState.latestOutstanding: ModalUiState
-    get() = outstanding.lastOrNull() ?: ModalUiState.Hidden
-
-/**
  * The host's modal as one thread with [conversationId] sees it (#816): the receiver when it is
  * [ModalUiState.Open] or [ModalUiState.Dismissed] and its conversation is non-blank and equal to
  * [conversationId], else [ModalUiState.Hidden]. A blank conversation on either side matches nothing, so
