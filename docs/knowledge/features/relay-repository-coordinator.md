@@ -25,8 +25,9 @@ drop itself. It holds the
 [background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677)
 the same reset way, except for which task ids have finished, which it retains across every reconnect so a
 completed task cannot come back as live when the daemon re-sends its retained roster. It owns one
-`HostReadings` instance (#1317) — the five readings a host pushes and the phone never asks for again
-(announced model, session facts, context usage, usage limit, slash-command menu) — held for the **life of
+`HostReadings` instance (#1317) — the five readings a host pushes (announced model, session facts,
+context usage, usage limit, slash-command menu), of which only context usage is also asked for again, by
+the open thread's `requestContextUsage` (#1410) — held for the **life of
 the host's pairing**, the `finishedBackgroundTasks` shape rather than the reset-on-reconnect one: a
 reconnect threads the same instance into the new connection's repository instead of starting empty. Since
 \#1320 the same instance also holds two readings the phone *does* ask for again on each connection: the

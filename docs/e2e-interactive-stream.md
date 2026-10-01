@@ -371,10 +371,13 @@ shows a non-empty value that is not the unavailable note, with no model name har
 **footer-context-usage** scenario (#946 — `interactiveTurn_pingPrompt_footerShowsContextUsage`: after the
 ping turn, wait until the composer footer's `CONTEXT_USAGE_TEST_TAG` node's text matches `Cxt: \d+%`, with
 no percentage hard-coded — proving the daemon's post-turn `context_usage` push reaches
-`ThreadRunConfig.contextPercent` and renders in the footer; **one** claude turn — the scenario's own ping;
-no reconnect or subscription-time ask is exercised, since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946)'s
-Rework 1 removed the phone's `request_context_usage` send outright — see [Thread composer footer § Context
-usage segment](knowledge/features/thread-composer-footer.md#context-usage-segment-946)); and a
+`ThreadRunConfig.contextPercent` and renders in the footer; **one** claude turn — the scenario's own ping.
+This method does not itself prove an ask was sent, since #1411 the footer can show a percentage from
+`SessionSettings` alone with no reading at all — see [Thread composer footer — context usage
+segment](knowledge/features/thread-composer-footer-context-usage.md) for that gap and
+[#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410)'s
+`interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`, which waits on the reading
+itself to close it; and a
 **status-band-never-empty** scenario ([#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) —
 `interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`: a prompt that makes real claude run a
 read-only `echo` and then answer in one sentence, sampled continuously from the tap on Send until the turn
@@ -2134,7 +2137,24 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-01 (#1342).** The dispatcher ran
+**Current live verification — 2026-10-01 (#1410).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1410` at
+`92ba45dd43`, merged with `origin/main` at `ab368c3bf2` in a detached worktree (9 commits behind before
+the merge): **48 executed, 47 passed, 1 failed, 0 skipped**, exit 1, wall clock 1146.3s. This is
+full-suite evidence; no separate focused live run is claimed. `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
+failed once and passed when re-run on the same merged tree, so the dispatcher treated it as a suite
+flake rather than this branch's failure — see the
+[re-run evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1410#issuecomment-5942399058). The
+fresh XML has passing testcases for the new method,
+`interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`, and for
+`interactiveTurn_pingPrompt_footerShowsContextUsage`, both required by #1410's AC-3, plus the three
+reconnect-with-open-thread methods the new ask also reaches:
+`interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive`,
+`interactiveTurn_reconnect_slashCommandsAndCompactStillWork` and
+`interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1410#issuecomment-5942043165).
+
+**Previous live verification — 2026-10-01 (#1342).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live --tests ...` against
 `feature/1342` at `bf964f0c39`, merged with `origin/main` at `599aa84bfd` in a detached worktree
 (27 commits behind before the merge): **8 executed, 8 passed, 0 failed, 0 skipped**, exit 0, wall
@@ -2855,6 +2875,32 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — added:** [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410) adds
+  `InteractiveStreamE2ETest.interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
+  to the curated LIVE `TEST_TARGET` selector in `scripts/e2e-emulator.sh`; `LIVE_MINIMUM` is counted
+  from that list (#1440), so it rises by one with no edit to `android-test-gate.py`. The method proves
+  the thread's new opening ask (`ThreadViewModel.askForContextUsage`, which calls
+  `ConversationRepository.requestContextUsage`) rather than the footer alone: the peer runs the chat's
+  only turn while the phone is offline, so the daemon holds a reading the phone never received and
+  replay cannot name (the phone's cursor had no ring events for that chat before the cut). Before the
+  reopen the method asserts the host's held reading is still `null`; after `openChatRow` it waits on
+  `hostRepository(serverId).observeContextUsage(conversationId).filterNotNull().first()` itself, not
+  only the footer text, because since [#1411](https://github.com/pyrycode/pyrycode-mobile/issues/1411)
+  the footer renders a percentage from `session_settings` alone even with no reading — a footer-only
+  check could pass without the ask. `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` now
+  also carries a reconnect ask from the same trigger: it checks the held reading and footer while the
+  link is still down, where no ask can race, takes the pre-cut reading as its growth baseline, and
+  waits for the reconnect ask's answer to settle before accepting a larger post-turn reading, so the two
+  answers (a `detail:"full"` count and a `detail:"summary"` estimate) cannot be read as the same thing.
+  `interactiveTurn_reconnect_slashCommandsAndCompactStillWork` and
+  `interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` also reconnect with a thread open and now
+  carry the ask, without asserting on it. No rung-4 twin: the scripted `fakeclaude` path has no
+  on-demand context querier to answer `request_context_usage` with a fixture. The dispatcher's
+  post-verifier `python3 scripts/android-test-gate.py live` run (branch `feature/1410` at `92ba45dd43`,
+  merged with `origin/main` at `ab368c3bf2`) executed 48, passed 47, failed 1 (a confirmed flake, not
+  this branch's) and skipped 0, including the new method and all four named methods above passing — see
+  [Verification status](#verification-status).
 
 - **Coverage — added:** [#1337](https://github.com/pyrycode/pyrycode-mobile/issues/1337) adds
   `InteractiveStreamE2ETest.interactiveTurn_permissionPrompts_heldPerConversation` to the curated LIVE
