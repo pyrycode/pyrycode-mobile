@@ -31,12 +31,16 @@ their headings and anchors intact.
   `interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched`. See
   [Camera preview](camera-preview.md) and the existing
   [live gate](../../e2e-interactive-stream.md#pre-ship-gate); #640 adds no rung-3
-  scenario or rung-4 twin. The #1386 save-then-wait behavior is proven on the JVM
-  and by `ScannerScreenTest`, not by a rung-3 scenario either — pairing a fresh QR
-  against the live daemon needs a camera the interactive-stream harness doesn't
-  drive. [#1394](https://github.com/pyrycode/pyrycode-mobile/issues/1394) (the
-  #481/#482 shape) is the follow-up: inject the host-B payload into the scanner
-  VM from the harness, confirm, and wait for the channel list under `needs-real-claude`.
+  scenario or rung-4 twin. The #1386 save-then-wait behavior is also proven over
+  the real relay by
+  [#1394](https://github.com/pyrycode/pyrycode-mobile/issues/1394)'s
+  `interactiveTurn_scannerConfirm_waitsForHostThenOpensList`: no camera read is
+  needed, since the scanner and the paste-code path share the same payload
+  parser — host B's pair code goes in as `ScannerEvent.QrDecoded` once the VM
+  reports `ReadyToScan`, then Confirm, the VM's wait, and the pop are the real
+  ones. See [the scenario's
+  description](../../e2e-interactive-stream.md#what-rung-3-is-made-of) for the
+  Koin-capture VM access and the naming it needs before a two-host label check.
 - **`ScannerScreen.kt` is foundational, not disposable.** The `ScannerViewModel` state machine, the `when(state)` renderer, and `ScannerViewport` were **consumed** by #334 (the live preview injected through the `cameraPreview` slot, `CameraError` produced on bind failure), not replaced. `Routes.SCANNER` stays a single destination.
 - **Camera double-confirm is guarded, since #1386.** `ConfirmPairing` moves state to `Verifying` synchronously before the save launches, so a fast double-tap on Confirm saves once — closing the gap [Pairing confirm gate](pairing-confirm-gate.md#edge-cases-and-limitations) used to carry as open.
 
