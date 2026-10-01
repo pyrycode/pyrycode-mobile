@@ -6454,7 +6454,11 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** A mirror of `AppModule`'s [ScannerViewModel] definition that also hands [onCreated] each instance. */
+    /**
+     * A mirror of `AppModule`'s [ScannerViewModel] definition that also hands [onCreated] each instance.
+     * The scenario's `finally` reloads this mirror, so later live methods resolve the scanner VM from it:
+     * keep it in step with `AppModule`.
+     */
     private fun scannerViewModelModule(onCreated: (ScannerViewModel) -> Unit): Module =
         module {
             viewModel {

@@ -37,3 +37,8 @@ The scenario is the test. It is device-only by nature: it needs a real host daem
 ## Documentation handoff
 
 - `docs/e2e-interactive-stream.md`, the scenario coverage list: add `interactiveTurn_scannerConfirm_waitsForHostThenOpensList` (#1394). Pending for the documentation stage.
+
+## Revisions
+
+- 2026-10-01, from the verifier's re-review MUST FIX on PR #1424: the live gate runs `scripts/e2e-emulator.sh`'s LIVE curated `TEST_TARGET`, not the PR's `## Live tests`, so the first live PASS (39 executed) never ran this method. The method now joins the LIVE `TEST_TARGET`, `scripts/android-test-gate.py` raises `LIVE_MINIMUM` by one to 40, and `scripts/test_android_test_gate.py`'s `test_live_floor_matches_the_curated_list` asserts the method is listed and the floor is 40. The test still edits only `InteractiveStreamE2ETest.kt` among Kotlin files; it adds a KDoc line on `scannerViewModelModule` that it must stay in step with `AppModule`, because the `finally` reloads the mirror for every later live method. Wording: "the scanner route is gone" is asserted as `ScannerUiState.Paired` after the list tag shows, which is equivalent because `Paired` pops `SCANNER` inclusive.
+- Documentation handoff addition: `docs/e2e-interactive-stream.md`'s #1394 paragraph calls the scenario "always-on"; it should say it is on the LIVE curated selector and counted by `LIVE_MINIMUM`, as the #1311 paragraph does. Pending for the documentation stage.
