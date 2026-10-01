@@ -28,19 +28,11 @@ enum class AttachmentSendFailure(
     UNCLASSIFIED(R.string.thread_attachment_send_unclassified),
 }
 
-/** The failure a read stopped on, or `null` when it read the bytes. */
-fun attachmentSendFailure(read: AttachmentRead): AttachmentSendFailure? =
-    when (read) {
-        is AttachmentRead.Bytes -> null
-        AttachmentRead.TooLarge -> AttachmentSendFailure.TOO_LARGE
-        AttachmentRead.Unreadable -> AttachmentSendFailure.UNREADABLE
-    }
-
 /**
  * The failure an upload settled on. A refusal's daemon-authored code is only compared against the codes
  * below; any other, the malformed-reply code included, is [AttachmentSendFailure.UNCLASSIFIED].
  */
-fun attachmentSendFailure(result: AttachmentUploadResult.Failed): AttachmentSendFailure =
+internal fun attachmentSendFailure(result: AttachmentUploadResult.Failed): AttachmentSendFailure =
     when (result) {
         AttachmentUploadResult.TooLarge -> AttachmentSendFailure.TOO_LARGE
         AttachmentUploadResult.ReconnectRequired -> AttachmentSendFailure.NOT_CONNECTED
@@ -63,13 +55,13 @@ fun attachmentSendFailure(result: AttachmentUploadResult.Failed): AttachmentSend
  * [bytes] in decimal megabytes with at most one decimal, as desktop's `formatByteLimit`: 8,010,000 is "8".
  * Integer arithmetic, so no locale changes the figure.
  */
-fun formatMegabytes(bytes: Int): String {
+internal fun formatMegabytes(bytes: Int): String {
     val tenths = (bytes.toLong() + BYTES_PER_TENTH / 2) / BYTES_PER_TENTH
     return if (tenths % 10 == 0L) "${tenths / 10}" else "${tenths / 10}.${tenths % 10}"
 }
 
 /** The sentence for this failure; the too-large one names the app's own limit. */
-fun AttachmentSendFailure.text(resources: Resources): String =
+internal fun AttachmentSendFailure.text(resources: Resources): String =
     if (this == AttachmentSendFailure.TOO_LARGE) {
         resources.getString(message, formatMegabytes(AttachmentUploadLimit.MAX_BYTES))
     } else {

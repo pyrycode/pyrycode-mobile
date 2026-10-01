@@ -119,3 +119,9 @@ Every failure of the upload phase surfaces as exactly one fixed local sentence. 
 ### 2026-10-01 — live gate rework (inherited failures)
 
 The live gate ran 43 tests: 38 passed, 5 failed, 0 skipped. `interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes` executed and passed unchanged. All five failures also fail on unmerged `main` (`ca43a4c7`). They are settings and footer scenarios, which #1325 does not touch. Cause: since #1320 the settings subscription starts with the held, invalidated reading, and the e2e helper `freshSettings` takes that head as the live reply. Filed as #1397. Repairing it belongs to #1320's area, so this branch isolates the five with `@Ignore("blocked on #1397 …")`; #1397 re-enables them. No production or design change.
+
+### 2026-10-01 — verifier rework (curated live list, read mapping)
+
+- **Curated live list.** Ignoring the five #1397 methods alone left them in `scripts/e2e-emulator.sh`'s LIVE list, so `test_live_curated_list_excludes_ignored_methods` reddened and the live gate would execute 38 against a floor of 43. Following the #1305 precedent, the five leave the list with a comment naming #1397, `LIVE_MINIMUM` drops by five to 38, and `test_live_floor_matches_the_curated_list` expects 38. #1397 restores the targets with the `@Ignore`s.
+- **Read mapping.** The design said `upload` maps a read failure through `attachmentSendFailure(read)`, but `upload`'s exhaustive `when` over `AttachmentRead` already picks both the log outcome and the failure, so the overload was a second copy used only by its test. It is removed with its test; `upload`'s `when` is the one read mapping. The remaining helpers (`attachmentSendFailure(result)`, `formatMegabytes`, `text`) are `internal`, as their neighbours are.
+- **Retry per row.** `failureNoticeFor` now also proves AC1's retry for every row: the acknowledged entry keeps its id, a second Send uploads only the missing entry, sends both ids, and emits no further notice.

@@ -4,18 +4,10 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** #1325: each way a send's read or upload can fail picks one fixed sentence, as on desktop. */
 class AttachmentSendFailureTest {
-    @Test
-    fun reads_mapToTheirSentence_andBytesIsNoFailure() {
-        assertEquals(AttachmentSendFailure.UNREADABLE, attachmentSendFailure(AttachmentRead.Unreadable))
-        assertEquals(AttachmentSendFailure.TOO_LARGE, attachmentSendFailure(AttachmentRead.TooLarge))
-        assertNull(attachmentSendFailure(AttachmentRead.Bytes(ByteArray(1))))
-    }
-
     @Test
     fun localUploadFailures_mapToTheirSentence() {
         assertEquals(AttachmentSendFailure.TOO_LARGE, attachmentSendFailure(AttachmentUploadResult.TooLarge))

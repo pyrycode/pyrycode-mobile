@@ -438,7 +438,6 @@
     <string name="thread_attachment_not_found">File not found</string>
     <string name="thread_attachment_failed">Couldn\'t load file</string>
     <string name="thread_attachment_retry">Retry</string>
-    <!-- #985: a ready attachment's tap and long-press labels, and the notices each outcome shows. -->
     <!-- #1325: why a send carrying attachments stopped at a file, one sentence per reason, as on desktop. -->
     <string name="thread_attachment_send_unreadable">That file could not be read.</string>
     <string name="thread_attachment_send_too_large">Too large to attach — this app sends files up to %1$s MB.</string>
@@ -453,6 +452,7 @@
     <string name="thread_attachment_send_host_message_too_long">The host refused the upload as too long.</string>
     <string name="thread_attachment_send_host_incomplete">The upload did not complete.</string>
     <string name="thread_attachment_send_unclassified">The upload failed for an unknown reason.</string>
+    <!-- #985: a ready attachment's tap and long-press labels, and the notices each outcome shows. -->
     <string name="thread_attachment_open">Open</string>
     <string name="thread_attachment_save">Save</string>
     <string name="thread_attachment_no_app">No app can open this file</string>

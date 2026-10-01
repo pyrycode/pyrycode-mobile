@@ -454,16 +454,20 @@ class ThreadViewModelAttachmentTest {
 
     /**
      * #1325: a send that stops on [read] failing for the second file, or on [upload] failing for it, shows
-     * exactly one notice, keeps the draft text and every tile, and returns that notice.
+     * exactly one notice, keeps the draft text and every tile, and returns that notice. A second Send, once
+     * the file reads and uploads, sends only the missing file and shows no further notice.
      */
     private fun TestScope.failureNoticeFor(
         upload: AttachmentUploadResult = AttachmentUploadResult.Stored("unused"),
         read: AttachmentRead? = null,
     ): AttachmentSendFailure {
+        var failing = true
         val repository =
-            RecordingRepository(uploadOutcome = { name -> if (name == "b") upload else AttachmentUploadResult.Stored("id-$name") })
-        val reader = FakeReader(read?.let { mapOf("content://docs/b" to it) } ?: emptyMap())
-        val vm = vm(repository, ComposerDraftStore(), reader)
+            RecordingRepository(uploadOutcome = { name ->
+                if (name == "b" && failing) upload else AttachmentUploadResult.Stored("id-$name")
+            })
+        val readFailures = read?.let { mutableMapOf("content://docs/b" to it) } ?: mutableMapOf()
+        val vm = vm(repository, ComposerDraftStore(), FakeReader(readFailures))
         val notices = mutableListOf<AttachmentSendFailure>()
         val collector = launch { vm.attachmentSendFailures.toList(notices) }
         vm.onDraftChange("text")
@@ -472,12 +476,24 @@ class ThreadViewModelAttachmentTest {
 
         vm.sendMessage("text")
         advanceUntilIdle()
-        collector.cancel()
 
         assertTrue(repository.sends.isEmpty())
         assertEquals("text", vm.draft.value)
         assertEquals(listOf("a", "b"), vm.pendingAttachments.value.map { it.displayName })
-        return notices.single()
+        assertEquals(listOf("id-a", null), vm.pendingAttachments.value.map { it.attachmentId })
+        val notice = notices.single()
+
+        failing = false
+        readFailures.clear()
+        repository.uploads.clear()
+        vm.sendMessage("text")
+        advanceUntilIdle()
+        collector.cancel()
+
+        assertEquals(listOf("b"), repository.uploads.map { it.first })
+        assertEquals(listOf("text" to listOf("id-a", "id-b")), repository.sends)
+        assertEquals(listOf(notice), notices)
+        return notice
     }
 
     private fun refused(code: String) = AttachmentUploadResult.Refused(code, retryable = false)
