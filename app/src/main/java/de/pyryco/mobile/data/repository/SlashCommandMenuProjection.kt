@@ -12,17 +12,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
- * The slash-command menu of every conversation on one connection (#882). The [ModelMenuProjection] shape
+ * The slash-command menu of every conversation on one host (#882). The [ModelMenuProjection] shape
  * without its ask: `slash_command_list` declares no inbound verb, so there is nothing to send and no refusal
  * to correlate. The repository keeps the routing: its `onInbound` arm calls [apply] only behind the negotiated
  * `interactive` gate, and [RemoteConversationRepository.observeSlashCommandMenu] reads [observe].
  *
- * One instance per repository, and a fresh repository per connection (#351), so a reconnect or host switch
- * starts empty and the daemon's connect-time snapshot fills it again. Nothing here logs.
+ * One instance per host pairing, held in [HostReadings] by the coordinator (#1317), so a reconnect keeps the
+ * menu until the daemon's connect-time snapshot replaces it. Nothing here logs.
  */
 internal class SlashCommandMenuProjection {
     /**
-     * `conversationId -> the slash-command menu this connection heard for it`. Written **only** from the
+     * `conversationId -> the slash-command menu last heard for it on this host`. Written **only** from the
      * repository's single inbound collector: each frame is a full snapshot that **replaces** that
      * conversation's entry and leaves every other conversation untouched. The atomic [MutableStateFlow.update]
      * matches the sibling projections' memory-visibility posture.
@@ -46,7 +46,7 @@ internal class SlashCommandMenuProjection {
     }
 
     /**
-     * The menu this connection heard for [conversationId], or `null` when it heard none. A cold projection of
+     * The menu last heard for [conversationId] on this host, or `null` when none was heard. A cold projection of
      * the shared map; [distinctUntilChanged] keeps a frame for another conversation, and a value-identical
      * re-snapshot, from re-emitting. Sends nothing on subscription — there is no verb to ask with.
      */

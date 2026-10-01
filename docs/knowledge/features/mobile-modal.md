@@ -22,7 +22,7 @@ internal fun MobileModal(
     loading: Boolean = false,
     error: String? = null,
     cancelLabel: String = "Cancel",
-    submitLabel: String = "OK",
+    submitLabel: String? = "OK",
     content: @Composable ColumnScope.() -> Unit,
 )
 ```
@@ -35,6 +35,12 @@ OK invokes `onSubmit` only when `submissionEnabled && !loading`; it never closes
 the modal automatically. Loading preserves the OK label beside a progress
 indicator and leaves all dismissal routes available. Set loading in the caller
 while work is in progress; the shell does not start or cancel operations.
+
+`submitLabel` is nullable (#1386): a null value omits the submit button entirely,
+leaving Cancel as the only footer action, mirroring the null-`submitLabel` case
+`MobileGateModal` already had. The [scanner's non-retryable verification
+failure](pairing-confirm-gate.md#confirm-the-wait-and-a-failure-share-one-modal-window-1386)
+is the first caller — a rejected pairing offers only Cancel, no Retry.
 
 The footer labels default to `Cancel` and `OK`. Callers can override the text
 without changing either callback: [pairing confirmation](pairing-confirm-gate.md)

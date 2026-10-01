@@ -32,7 +32,7 @@ if (sheetVisible) {
             sheetVisible = false              // auto-close on Effort pick
         },
         pending = state.runConfig.pending,
-        enabled = state.runConfig.writable,   // "" sessionId ⇒ read-only, not a failure
+        enabled = state.runConfig.writable && connected,   // "" sessionId ⇒ read-only; so is a disconnected host (#1319)
         yoloEnabled = state.yoloEnabled,
         onYoloToggled = onYoloToggled,        // passthrough; NO auto-close on toggle
         onDismiss = { sheetVisible = false },
@@ -40,7 +40,7 @@ if (sheetVisible) {
 }
 ```
 
-Through [#807](../codebase/807.md) this call passed `selectedModel: Model` / `selectedEffort: Effort` sourced from `AppPreferences.defaultModel` / `defaultEffort` with an in-memory per-conversation override. #807 deleted that sourcing outright: every argument above now reads off `state.runConfig` (a [`ThreadRunConfig`](thread-composer-footer.md#sourcing), itself folded from `ConversationRepository.observeSessionSettings` + `observeModelMenu`), `choices` / `effortChoices` are the daemon's own published rows rather than the `Model` / `Effort` enums, and `enabled` is new — an empty `SessionSettings.sessionId` means the daemon has no session to address, so the sheet goes read-only rather than sending a write the server would refuse. See [status-sheet.md](status-sheet.md) for the sheet-side signature and rendering rules.
+Through [#807](../codebase/807.md) this call passed `selectedModel: Model` / `selectedEffort: Effort` sourced from `AppPreferences.defaultModel` / `defaultEffort` with an in-memory per-conversation override. #807 deleted that sourcing outright: every argument above now reads off `state.runConfig` (a [`ThreadRunConfig`](thread-composer-footer.md#sourcing), itself folded from `ConversationRepository.observeSessionSettings` + `observeModelMenu`), `choices` / `effortChoices` are the daemon's own published rows rather than the `Model` / `Effort` enums, and `enabled` is new — an empty `SessionSettings.sessionId` means the daemon has no session to address, so the sheet goes read-only rather than sending a write the server would refuse. [#1319](https://github.com/pyrycode/pyrycode-mobile/issues/1319) added the `&& connected` term: `connected = connectionState == ConnectionState.Connected`, derived once at the top of `ThreadScreen` and reused for the input bar and footer too — see [Connection state](connection-state.md#threadviewmodel-holds-the-live-value-eagerly-for-tap-time-re-checks-1319). See [status-sheet.md](status-sheet.md) for the sheet-side signature and rendering rules.
 
 Three design points pinned in #254 + one widened in #229 (still true post-#807 — only the argument sourcing changed):
 
@@ -92,6 +92,8 @@ if (state.deleteConfirmVisible) {
 `DeleteConfirmationDialog` is a private composable in `ThreadScreen.kt` mirroring `PromotionConfirmationDialog` ([#78](../codebase/78.md), `DiscussionListScreen.kt`): `AlertDialog(onDismissRequest = onDismiss, title, text interpolating the name via `stringResource(R.string.delete_dialog_body, displayName)`, confirmButton/dismissButton as `TextButton`s)`. The destructive confirm is a **plain `TextButton`** (no `colorScheme.error` tint) per the #78 convention — code review flagged the lack of destructive emphasis as a non-blocking NIT and judged it correct. Title copy is type-neutral ("Delete conversation?") because the sheet serves both channels and discussions.
 
 **One-shot pop-back via `Channel` + `receiveAsFlow`, collected in `MainActivity`.** The VM gains `private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)` exposed as `val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()` (a new single-member `sealed interface ThreadNavigation { data object PopBack }`). The `Archive` and `DeleteConfirm` launches `send(ThreadNavigation.PopBack)` **after** the suspend repo call returns — mutation-before-`send` so the VM's `viewModelScope` cancellation (triggered when `popBackStack()` clears the destination) can't truncate the mutation; the same ordering `ChannelListViewModel.CreateDiscussionTapped` relies on. `MainActivity` collects it in the thread `composable` (the first edit to that block since the chrome):
+
+**#1399 routes `Archive`'s send through the shared `leaveForList()` latch, not a direct `navigationChannel.send`.** Its own confirmed archive reply folds into the list before `archive(...)` returns, racing the list-driven exit described in [Leaving for the list when the row turns archived from any source](thread-screen-how-it-works-state.md#leaving-for-the-list-when-the-row-turns-archived-from-any-source-1399) — the latch is what keeps that race to exactly one `PopBack`. `DeleteConfirm` keeps sending `PopBack` directly, since a deleted row never shows archived.
 
 ```kotlin
 LaunchedEffect(vm) {

@@ -13,7 +13,7 @@ owning `serverId` and the host-local `conversationId`.
 - **`pair_code`** — renders [PairCodeScreen](paste-code-dialog.md) with a destination-scoped `PairCodeViewModel`. Its optional-name form, fingerprint confirmation and saved-target connection wait stay within one route. Cancel returns to the caller; success clears the previous graph entries and opens `channel_list` only after both target connection legs are ready. Since #842 the destination pattern (`Routes.PAIR_CODE_ROUTE`) takes an optional `serverId` query argument, shaped like Settings' own below; when present, the flow is scoped to re-pair exactly that host instead of naming a new one — see [manual pairing entry and return](#manual-pairing-entry-and-return).
 - **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md), fed entirely by host-qualified state since #738 retired the flat compatibility model and its `selectedServerId()` adapter for this screen. Its single top-right toolbar control, “Pair another host”, opens `scanner` (`ChannelListEvent.PairHostTapped → navController.navigate(Routes.SCANNER)`). Both empty and populated lists expose this entry. Camera confirmation and successful manual pairing via `pair_code` land back on the list; see [manual pairing entry and return](#manual-pairing-entry-and-return). Unpairing the list's last saved host leaves `welcome` instead — see [Returning to Welcome after the last host](#returning-to-welcome-after-the-last-host-1323).
 - **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md). Unreachable since #731 retired the channel list's "see all" link that was its only entry point; the route, screen and its adapter (captures host-qualified row and promotion targets, consumes only `hostNavigationEvents`) stay in the graph regardless — removing them is out of scope for both #731 and #738.
-- **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack. Also reachable from outside the graph entirely since [#685](../../specs/architecture/685-mobile-attention-alerts.md): a notification tap parses to the same `HostConversationTarget` and `PyryNavHost` pushes it on top of `channel_list` via its `openTarget` param, gated by `ThreadDestinationFactory.isSavedHost` — see [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685).
+- **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack. Also reachable from outside the graph entirely since [#685](../../specs/architecture/685-mobile-attention-alerts.md): a notification tap parses to the same `HostConversationTarget` and `PyryNavHost` pushes it on top of `channel_list` via its `openTarget` param, gated by `ThreadDestinationFactory.isSavedHost`. Since [#1400](../../specs/architecture/1400-notification-tap-active-conversation.md), a saved host alone is not enough: the tap opens only once the host's `HostConversationSnapshot` holds the conversation among its (unarchived) `channels` or `chats`, waiting up to `NOTIFICATION_TAP_ROW_WAIT` (5 s) for a cold-start snapshot before giving up and staying on the list — see [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685).
 - **`markdown_reader/{serverId}/{conversationId}/{attachmentId}`** — renders the [Markdown reader screen](markdown-reader-screen.md) (#1027), reached only from the thread destination above: tapping a ready file row whose name ends in `.md`/`.markdown` reads and strictly decodes it first, then routes `ThreadNavigation.OpenMarkdown(attachmentId)` to `navController.navigate(Routes.markdownReader(target, event.attachmentId))`. Wrapped in `HostDestination` like the thread route; the back arrow and system back both pop back to the same thread entry.
 - **`markdown_link/{serverId}/{conversationId}`** — since #1050, renders the same [Markdown reader screen](markdown-reader-screen.md#linked-note-live-since-1050) for a markdown-path link tapped in an assistant reply, but for a note read live from the workspace rather than a stored attachment. Ids only, deliberately: the path itself never travels in the route (it would put assistant-authored text in the saved back stack), so `Routes.markdownReader`'s own "ids only: never a file name, path or URI" KDoc holds unchanged, and the sibling `markdown_reader` route above is untouched. `ThreadNavigation.OpenLinkedMarkdown` (carrying nothing — the document lives in the thread's `ThreadViewModel`) routes to `navController.navigate(Routes.markdownLink(target))`. The destination resolves the thread's own `ThreadViewModel` with `navController.getBackStackEntry(Routes.CONVERSATION_THREAD)` + `koinViewModel(viewModelStoreOwner = …)` and reads its held document once. Wrapped in `HostDestination` like the two routes above.
 - **`settings?serverId={serverId}`** — renders the [notifications-only Settings modal](settings-screen.md). The existing gear opens it through `Routes.settings(destinations.selectedServerId())`; the optional owner remains in the route for compatibility but supplies no modal content. The route collects the persisted push preference, requests Android notification permission on enable, and pops to the prior view for Close, Done or Back.
@@ -98,17 +98,21 @@ the exact case-sensitive server id; names and relay URLs never identify a host.
 | Saving credentials/name | Dismissal and editing are blocked until persistence finishes. |
 | Connecting | Cancel the wait, enter Cancelled and pop; later readiness cannot navigate. |
 
-Credential-save failure cannot start a new connection. Name-write or connection
-failure after saving returns to the draft with explicit retained-pairing feedback
-and Retry. Retry crosses the fingerprint gate again and upserts the same host for
-an unchanged code. Cancel does not undo saved credentials or a successful name
-write. See [failure behavior](paste-code-dialog.md#failure-and-cancellation).
+Credential-save failure cannot start a new connection, and Retry for it crosses
+the fingerprint gate again and upserts the same host for an unchanged code, as
+before. A connection-verification failure is different (#1385): Retry does not
+re-parse, re-confirm or save again — it waits on the already-saved record for a
+fresh 30 s. See [the shared verification rule](paste-code-dialog.md#target-readiness-and-retry)
+for the three outcomes and their texts. Cancel does not undo saved credentials or
+a successful name write. See [failure behavior](paste-code-dialog.md#failure-and-cancellation).
 
 The connection wait follows the complete saved record through registry
 reconciliation, including replacement credentials on re-pairing. Another host's
 connection, a stale bundle or bare relay readiness cannot complete it. Both relay
-and encrypted-session status must be Connected within 30 seconds; a new
-unavailable status ends the wait earlier.
+and encrypted-session status must be Connected within 30 seconds; relay blips
+(`Offline`, `Connecting`, `Reconnecting`) keep the wait going, while
+`PairingRejected`, `UpdateRequired` or an absent daemon end it earlier — see
+[the shared verification rule](paste-code-dialog.md#target-readiness-and-retry).
 
 `LaunchedEffect(state.phase)` translates Cancelled to `popBackStack()` and Complete
 to `navigate(CHANNEL_LIST)` with `popUpTo(navController.graph.id) { inclusive = true }`
@@ -315,6 +319,20 @@ this paragraph describes, since extended for #904/#899/#685. #883 took out the
 literal-screen steps — the overflow-menu trip to `LITERAL_SCREEN` in the back-reopen
 test (host B now restores the thread itself instead) and the `Routes.literal`
 navigation in the invalid-host test — and left the rest of the harness unchanged.
+
+`flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges` (#1392) flaked under
+full-suite load because `HostConversationSource.reconcile` publishes `snapshots` from a
+`Dispatchers.Default` coroutine, the one step on the `openAddWorkspace` → `recent_workspaces`
+path that isn't `Main.immediate`, so Compose idling (`waitForIdle`/`runOnIdle`) does not drain
+it. Under load that coroutine can lag past the test's `openAddWorkspace(a)` call; the ViewModel
+then rejects A as `unknown_host` and sends nothing, so an idle-only wait on the peer's outbound
+frame can pass or fail depending on scheduling, not on the production behavior under test. The
+fix is test-only: wait on `HostConversationSource.snapshots` holding the host before opening the
+picker, then replace the idle-then-assert check on `NavigationPeer.outbound` with a bounded
+`compose.waitUntil`; `NavigationPeer.outbound` became a `CopyOnWriteArrayList` since the send and
+a device-side `waitUntil` read it from different threads. A test asserting on a value fed by a
+non-`Main` coroutine must wait on that value directly — `waitForIdle` only proves the main
+dispatcher is quiet, not that every producer has run.
 
 `SettingsNavigationTest` mounts the production `PyryNavHost` and checks the gear-to-modal path, dismissal to the previous view, persisted push state after reopening, and opening without a paired host. `SettingsDensityDeviceTest` sends a real Back key to the focused dialog. Espresso Back aimed at the unfocused Activity root in the graph harness and could miss the dialog window; a real focused-window key tests that dismissal route.
 

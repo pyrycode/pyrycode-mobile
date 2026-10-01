@@ -65,10 +65,12 @@ private const val MAX_PERMISSION_TEXT = 8192
  *
  * [onOption] forwards every tapped option id verbatim: the ViewModel decides arm-vs-send (#451), and
  * [armedOptionId] only reflects its armed non-default. Toggling the grant never arms or answers (#818).
+ * While the host is not [connected] (#1321) the options and Cancel are disabled; the grant stays usable.
  */
 internal fun LazyListScope.permissionRequestItems(
     open: ModalUiState.Open,
     armedOptionId: String?,
+    connected: Boolean,
     onOption: (modalId: String, optionId: String) -> Unit,
     onCancel: (modalId: String) -> Unit,
     alwaysAllowAccepted: Boolean,
@@ -77,12 +79,16 @@ internal fun LazyListScope.permissionRequestItems(
 ) {
     item(key = "permission-cancel:${open.modalId}") {
         Box(gutter.testTag("permission-request-cancel"), contentAlignment = Alignment.Center) {
-            ModalCancelButton(label = stringResource(R.string.modal_cancel), onClick = { onCancel(open.modalId) })
+            ModalCancelButton(
+                label = stringResource(R.string.modal_cancel),
+                onClick = { onCancel(open.modalId) },
+                enabled = connected,
+            )
         }
     }
     item(key = "permission-card:${open.modalId}") {
         Box(gutter) {
-            PermissionRequestCard(open, armedOptionId, onOption, alwaysAllowAccepted, onAlwaysAllowChanged)
+            PermissionRequestCard(open, armedOptionId, connected, onOption, alwaysAllowAccepted, onAlwaysAllowChanged)
         }
     }
     item(key = "permission-title:${open.modalId}") {
@@ -102,6 +108,7 @@ internal fun LazyListScope.permissionRequestItems(
 private fun PermissionRequestCard(
     open: ModalUiState.Open,
     armedOptionId: String?,
+    connected: Boolean,
     onOption: (modalId: String, optionId: String) -> Unit,
     alwaysAllowAccepted: Boolean,
     onAlwaysAllowChanged: (modalId: String, accepted: Boolean) -> Unit,
@@ -138,6 +145,7 @@ private fun PermissionRequestCard(
                         label = option.label.take(MAX_PERMISSION_TEXT),
                         isDefault = option.id == open.defaultOptionId,
                         isArmed = option.id == armedOptionId,
+                        enabled = connected,
                         onClick = { onOption(open.modalId, option.id) },
                     )
                 }
@@ -259,6 +267,9 @@ private fun ModalContextRow(
  *   deny/safe option (it answers on a single tap).
  * - neither → an [OutlinedButton], no marker (a first tap arms it via the VM).
  *
+ * Not [enabled] while the host is not connected (#1321): Material's disabled colours, and no tap reaches
+ * the VM, so a disabled option neither sends nor arms.
+ *
  * The `stateDescription` markers are accessible + test-observable (a screen reader announces them; the AC#4
  * test locates the armed / default option by these, not by colour). Only the local markers are added — the
  * verbatim server [label] stays the sole server text, rendered through plain [Text].
@@ -268,6 +279,7 @@ private fun ModalOptionButton(
     label: String,
     isDefault: Boolean,
     isArmed: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     val defaultDesc = stringResource(R.string.modal_default_option_desc)
@@ -286,6 +298,7 @@ private fun ModalOptionButton(
             FilledTonalButton(
                 onClick = onClick,
                 modifier = modifier,
+                enabled = enabled,
                 shape = shape,
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
             ) {
@@ -301,6 +314,7 @@ private fun ModalOptionButton(
             Button(
                 onClick = onClick,
                 modifier = modifier,
+                enabled = enabled,
                 shape = shape,
                 colors =
                     ButtonDefaults.buttonColors(
@@ -326,6 +340,7 @@ private fun ModalOptionButton(
                     ),
                 onClick = onClick,
                 modifier = modifier,
+                enabled = enabled,
                 shape = shape,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                 contentPadding = PaddingValues(horizontal = 19.dp, vertical = 7.dp),

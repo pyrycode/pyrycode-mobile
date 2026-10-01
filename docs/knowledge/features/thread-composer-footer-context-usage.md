@@ -33,8 +33,12 @@ a wide enough set of button labels could still starve them to nothing — [#1032
 PR #970 was the reading's first production subscriber, and the daemon's `handleRequestContextUsage`
 blocks the connection's serial frame worker until the open turn ends — a mid-turn ask deadlocked the
 scripted `reconnect` scenario. The ask was removed outright; the reading now arrives only from the
-daemon's post-turn `context_usage` push. A conversation shows `Cxt: n/a` until its next turn ends on the
-current connection, including an idle conversation opened for the first time. See [Remote conversation
+daemon's post-turn `context_usage` push. A conversation shows `Cxt: n/a` until its next turn ends,
+including an idle conversation opened for the first time. Since
+[#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317) this reading is held for the life of the
+host's pairing rather than one connection — a background/foreground reconnect no longer blanks a reading
+already shown, and `n/a` persists only until the *first* turn ends, not every connection's first. See
+[Relay repository coordinator § `HostReadings`](relay-repository-coordinator.md) and [Remote conversation
 repository — live stream, modal seams and the replay cursor §
 `context_usage`](remote-conversation-repository-live-stream-and-modals.md#context_usage--the-context-usage-reading-945)
 for the wire contract and pyrycode/pyrycode#2563, the daemon fix that would let a future ticket restore

@@ -108,6 +108,31 @@ authoritative deny-on-timeout / first-answer-wins / per-device-grant enforcement
 (pyrycode#702/#703/#717); this is the phone-side UX belt **only** — it can make the action *harder* (never
 easier) than the wire allows.
 
+### Not connected refuses the tap, before the arm or grant change (#1321)
+
+A permission decision must not reach a closed socket believing it sent. `onModalOption` and `onModalCancel`
+each gate on `promptSendAllowed(kind)` right after the #1306 stale-id guard and before anything else changes:
+`onModalOption` before the default-send, the second-confirm send and the (re-)arm; `onModalCancel` before
+`armedModalOption.value = null` and the grant-draft clear. A refused tap is a pure early return — the arm,
+the grant draft and the rendered state are exactly as they were, so the same tap answers once the host
+reconnects. `AlwaysAllowOffer` (the session-grant checkbox) is a local choice and is not gated.
+
+`promptSendAllowed` reads a private `hostConnection: StateFlow<ConnectionState?>`, collected `Eagerly` in
+`viewModelScope` and seeded `null` — never the optimistic `Connected` that the public `connectionState`
+(used only for the banner) starts with. `null`, `Connecting`, `Reconnecting` and `Offline` all refuse; only
+`ConnectionState.Connected` allows. This is deliberately a **second** eager connection collector alongside
+[`connectedFor`](thread-composer-footer.md) (#1319, the composer/footer's own tap-time gate) rather than a
+shared helper: `connectedFor` seeds optimistically `Connected` to match the footer's pre-#1319 behavior, and
+changing that seed to fail closed would alter #1319's footer gating, which is out of this ticket's scope.
+Merging the two was flagged by the verifier as a follow-up, not done here.
+
+On the UI side, `permissionRequestItems`/`PermissionRequestCard`/`ModalOptionButton` and `ModalCancelButton`
+all take a `connected: Boolean` that `ThreadScreen` derives the same way as the #1319 footer gate
+(`connectionState == ConnectionState.Connected`) and pass straight to each control's `enabled`; a disabled
+button never calls back into the VM, so a tap on a greyed-out option neither sends nor arms. The VM-side gate
+is still required — the race this closes is the tap landing in the instant *after* the screen read
+`connected = true` but *before* `ThreadViewModel` observes the drop.
+
 ## The arm state — transient, modalId-scoped, structurally stale-safe
 
 The arm lives in a single private `MutableStateFlow<ArmedModalOption?>` (the private `data class

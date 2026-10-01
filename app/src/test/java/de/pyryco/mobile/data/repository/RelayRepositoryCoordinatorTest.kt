@@ -31,6 +31,8 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -1109,6 +1111,283 @@ class RelayRepositoryCoordinatorTest {
             hostB.coordinator.close()
         }
 
+    // #1317: the five pushed readings belong to the host's pairing, not one connection, so a background and
+    // foreground cycle neither blanks them in the gap nor makes the next connection start from nothing.
+    @Test
+    fun hostReadings_surviveTheDisconnectedGapAndTheNextConnection() =
+        runTest {
+            val env = newEnv()
+            val first = openInteractiveConnection(env)
+            HostReadingFrames.all("conv-1", model = "opus").forEach(first::push)
+            runCurrent()
+            HostReadingFrames.assertHeld(env.coordinator.hostReadings, "conv-1", model = "opus")
+
+            env.connections.value = null
+            runCurrent()
+            assertNull(env.coordinator.currentRepository.value)
+            HostReadingFrames.assertHeld(env.coordinator.hostReadings, "conv-1", model = "opus")
+
+            openInteractiveConnection(env)
+            val second = env.coordinator.currentRepository.value
+            assertNotNull(second)
+            HostReadingFrames.assertHeld(env.coordinator.hostReadings, "conv-1", model = "opus")
+            HostReadingFrames.assertHeld(second!!, "conv-1", model = "opus")
+
+            env.coordinator.close()
+        }
+
+    @Test
+    fun hostReadings_takeReplacementsAndClearsFromTheNextConnection() =
+        runTest {
+            val env = newEnv()
+            val readings = env.coordinator.hostReadings
+            HostReadingFrames.all("conv-1", model = "opus").forEach(openInteractiveConnection(env)::push)
+            runCurrent()
+            env.connections.value = null
+            runCurrent()
+
+            val second = openInteractiveConnection(env)
+            second.push(HostReadingFrames.modelAnnounced("conv-1", "sonnet"))
+            second.push(HostReadingFrames.contextUsage("conv-1", total = 80_000))
+            second.push(HostReadingFrames.slashCommandList("conv-1", name = "review"))
+            runCurrent()
+            assertEquals(AnnouncedModel("sonnet", truncated = false), readings.observeAnnouncedModel("conv-1").first())
+            assertEquals(80_000L, readings.observeContextUsage("conv-1").first()?.totalTokens)
+            assertEquals(
+                listOf("review"),
+                readings
+                    .observeSlashCommandMenu("conv-1")
+                    .first()
+                    ?.rows
+                    ?.map { it.name },
+            )
+
+            second.push(HostReadingFrames.sessionTransition("conv-1"))
+            runCurrent()
+            assertNull(readings.observeAnnouncedModel("conv-1").first())
+            assertNull(readings.observeSessionFacts("conv-1").first())
+            assertNull(readings.observeContextUsage("conv-1").first())
+            assertNotNull(readings.observeUsageLimit("conv-1").first())
+            assertNotNull(readings.observeSlashCommandMenu("conv-1").first())
+
+            second.push(HostReadingFrames.rateLimited("conv-1", status = "allowed"))
+            runCurrent()
+            assertNull(readings.observeUsageLimit("conv-1").first())
+            assertNotNull(readings.observeSlashCommandMenu("conv-1").first())
+
+            env.coordinator.close()
+        }
+
+    // The usage-limit expiry is read against the coordinator's clock, so a reading held across a reconnect
+    // still lapses at its reset time.
+    @Test
+    fun hostReadings_expireAHeldUsageLimitOnTheCoordinatorClock() =
+        runTest {
+            var clock = Instant.fromEpochSeconds(1_000)
+            val env = newEnv(now = { clock })
+            openInteractiveConnection(env).push(HostReadingFrames.rateLimited("conv-1", resetsAt = 2_000))
+            runCurrent()
+            openInteractiveConnection(env)
+            assertNotNull(
+                env.coordinator.hostReadings
+                    .observeUsageLimit("conv-1")
+                    .first(),
+            )
+
+            clock = Instant.fromEpochSeconds(2_000)
+            assertNull(
+                env.coordinator.hostReadings
+                    .observeUsageLimit("conv-1")
+                    .first(),
+            )
+
+            env.coordinator.close()
+        }
+
+    @Test
+    fun hostReadings_areHeldPerHostAndDroppedWhenThePairingEnds() =
+        runTest {
+            val hostA = newEnv()
+            val hostB = newEnv()
+            HostReadingFrames.all("conv-1", model = "opus").forEach(openInteractiveConnection(hostA)::push)
+            openInteractiveConnection(hostB)
+            runCurrent()
+            HostReadingFrames.assertHeld(hostA.coordinator.hostReadings, "conv-1", model = "opus")
+            HostReadingFrames.assertNone(hostB.coordinator.hostReadings, "conv-1")
+
+            hostA.coordinator.close()
+            runCurrent()
+            HostReadingFrames.assertNone(hostA.coordinator.hostReadings, "conv-1")
+
+            hostB.coordinator.close()
+        }
+
+    // #1320: the run settings are held for the pairing too, but a held reading is only shown invalidated, so the
+    // footer keeps its model and effort through a reconnect while the permission mode waits for the new reply.
+    @Test
+    fun hostReadings_holdTheSettingsInvalidatedAcrossAReconnect_untilTheNewConnectionReplies() =
+        runTest {
+            val env = newEnv()
+            val facade = env.facade()
+            val first = openInteractiveConnection(env)
+            val readings = collect(facade.observeSessionSettings("conv-1"))
+            assertEquals("nothing held: the head is still null", listOf<SessionSettings?>(null), readings)
+
+            first.push(HostReadingFrames.sessionSettings(first.settingsAsks().single().id, model = "opus"))
+            runCurrent()
+            val confirmed = readings.last()
+            assertEquals("plan", confirmed?.permissionMode)
+            assertEquals(MemorySearchAvailability.Available, confirmed?.memorySearch?.availability)
+            val held = confirmed?.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown, held = true)
+
+            env.connections.value = null
+            runCurrent()
+            assertEquals("the gap shows the held reading, unconfirmed", held, readings.last())
+
+            val second = openInteractiveConnection(env)
+            assertEquals("the new connection starts from the held reading", held, readings.last())
+            assertEquals("never blank after the first reply", 1, readings.count { it == null })
+
+            second.push(
+                HostReadingFrames.sessionSettings(
+                    second.settingsAsks().single().id,
+                    model = "sonnet",
+                    permissionMode = "acceptEdits",
+                    memorySearch = "unavailable",
+                ),
+            )
+            runCurrent()
+            assertEquals("sonnet", readings.last()?.model)
+            assertEquals("the new reply replaces the whole reading", "acceptEdits", readings.last()?.permissionMode)
+            assertEquals(MemorySearchAvailability.Unavailable, readings.last()?.memorySearch?.availability)
+
+            env.coordinator.close()
+        }
+
+    // #1320: the existing re-read triggers still ask the live connection, and their replies replace the held reading.
+    @Test
+    fun hostReadings_reReadTriggersStillReplaceTheHeldSettings() =
+        runTest {
+            val env = newEnv()
+            val facade = env.facade()
+            val first = openInteractiveConnection(env)
+            val readings = collect(facade.observeSessionSettings("conv-1"))
+            first.push(HostReadingFrames.sessionSettings(first.settingsAsks().single().id, model = "opus"))
+            runCurrent()
+            env.connections.value = null
+            runCurrent()
+            val second = openInteractiveConnection(env)
+            second.push(HostReadingFrames.sessionSettings(second.settingsAsks().single().id, model = "opus"))
+            runCurrent()
+
+            second.push(HostReadingFrames.sessionTransition("conv-1"))
+            runCurrent()
+            second.push(HostReadingFrames.sessionSettings(second.settingsAsks().last().id, model = "haiku"))
+            runCurrent()
+            assertEquals(2, second.settingsAsks().size)
+            assertEquals("haiku", readings.last()?.model)
+
+            facade.refreshSessionSettings("conv-1")
+            runCurrent()
+            second.push(HostReadingFrames.sessionSettings(second.settingsAsks().last().id, model = "sonnet"))
+            runCurrent()
+            assertEquals(3, second.settingsAsks().size)
+            assertEquals("sonnet", readings.last()?.model)
+            assertEquals(
+                "the latest reply is what the next connection starts from",
+                "sonnet",
+                env.coordinator.hostReadings
+                    .observeHeldSessionSettings("conv-1")
+                    .first()
+                    ?.model,
+            )
+
+            env.coordinator.close()
+        }
+
+    // #1320: a held model menu is still offered after a reconnect, and the new connection still asks for its own.
+    @Test
+    fun hostReadings_holdTheModelMenuAcrossAReconnect_andTheNewConnectionAsksAgain() =
+        runTest {
+            val env = newEnv()
+            val facade = env.facade()
+            val first = openInteractiveConnection(env)
+            val menus = collect(facade.observeModelMenu("conv-1"))
+            first.push(HostReadingFrames.modelList("conv-1", "opus", inReplyTo = first.modelListAsks().single().id))
+            runCurrent()
+            assertEquals(listOf("opus"), menus.last()?.rows?.map { it.value })
+
+            env.connections.value = null
+            runCurrent()
+            assertEquals("the gap keeps the menu", listOf("opus"), menus.last()?.rows?.map { it.value })
+
+            val second = openInteractiveConnection(env)
+            assertEquals("the new connection starts from the held menu", listOf("opus"), menus.last()?.rows?.map { it.value })
+            val ask = second.modelListAsks().single()
+            assertEquals(
+                "conv-1",
+                ask.payload.jsonObject["conversation_id"]
+                    ?.jsonPrimitive
+                    ?.content,
+            )
+
+            second.push(HostReadingFrames.modelList("conv-1", "sonnet", inReplyTo = ask.id))
+            runCurrent()
+            assertEquals("a model_list on the new connection replaces it", listOf("sonnet"), menus.last()?.rows?.map { it.value })
+            assertEquals("never blank after the first menu", 1, menus.count { it == null })
+
+            env.coordinator.close()
+        }
+
+    // #1320: a held settings reading and model menu stay on their host, and unpair or re-pair drops both.
+    @Test
+    fun hostReadings_heldSettingsAndMenuStayOnTheirHost_andDropWithThePairing() =
+        runTest {
+            val hostA = newEnv()
+            val hostB = newEnv()
+            val facadeA = hostA.facade()
+            val facadeB = hostB.facade()
+            val pumpA = openInteractiveConnection(hostA)
+            val pumpB = openInteractiveConnection(hostB)
+            val settingsA = collect(facadeA.observeSessionSettings("conv-1"))
+            val menusA = collect(facadeA.observeModelMenu("conv-1"))
+            val settingsB = collect(facadeB.observeSessionSettings("conv-1"))
+            val menusB = collect(facadeB.observeModelMenu("conv-1"))
+            pumpA.push(HostReadingFrames.sessionSettings(pumpA.settingsAsks().single().id, model = "opus"))
+            pumpA.push(HostReadingFrames.modelList("conv-1", "opus"))
+            runCurrent()
+            assertEquals("opus", settingsA.last()?.model)
+            assertNotNull(menusA.last())
+
+            hostB.connections.value = null
+            runCurrent()
+            openInteractiveConnection(hostB)
+            assertTrue("host B never shows host A's settings", settingsB.all { it == null })
+            assertTrue("host B never shows host A's menu", menusB.all { it == null })
+
+            hostA.connections.value = null
+            runCurrent()
+            assertEquals("opus", settingsA.last()?.model)
+            assertNotNull(menusA.last())
+
+            hostA.coordinator.close()
+            runCurrent()
+            assertNull("the pairing ended: a collector in the gap drops the settings", settingsA.last())
+            assertNull("the pairing ended: a collector in the gap drops the menu", menusA.last())
+            assertNull(
+                hostA.coordinator.hostReadings
+                    .observeHeldSessionSettings("conv-1")
+                    .first(),
+            )
+            assertNull(
+                hostA.coordinator.hostReadings
+                    .observeModelMenu("conv-1")
+                    .first(),
+            )
+
+            hostB.coordinator.close()
+        }
+
     @Test
     fun questionSends_reachOnlyTheHostTheyAreMadeOn() =
         runTest {
@@ -1384,6 +1663,7 @@ class RelayRepositoryCoordinatorTest {
         deviceName: String = "",
         pushTokens: Flow<String?> = flowOf(null),
         relayStatus: MutableStateFlow<RelayLinkStatus> = MutableStateFlow(RelayLinkStatus.Connected),
+        now: () -> Instant = Clock.System::now,
     ): Env {
         val connections = MutableStateFlow<RelayTransport?>(null)
         val pumps = mutableListOf<FakeManagedPump>()
@@ -1395,6 +1675,7 @@ class RelayRepositoryCoordinatorTest {
                 dispatcher = StandardTestDispatcher(testScheduler),
                 deviceName = deviceName,
                 pushTokens = pushTokens,
+                now = now,
             )
         coordinator.start()
         return Env(connections, pumps, coordinator, relayStatus)
@@ -1405,7 +1686,21 @@ class RelayRepositoryCoordinatorTest {
         val pumps: MutableList<FakeManagedPump>,
         val coordinator: RelayRepositoryCoordinator,
         val relayStatus: MutableStateFlow<RelayLinkStatus>,
-    )
+    ) {
+        /** The facade the thread holds for this host, as `AppModule` builds it (#1317). */
+        fun facade() = StableConversationRepository(coordinator.currentRepository, coordinator.hostReadings)
+    }
+
+    private fun <T> TestScope.collect(flow: Flow<T>): MutableList<T> {
+        val emissions = mutableListOf<T>()
+        backgroundScope.launch { flow.collect { emissions += it } }
+        runCurrent()
+        return emissions
+    }
+
+    private fun FakeManagedPump.settingsAsks(): List<Envelope> = sent.filter { it.type == "request_session_settings" }
+
+    private fun FakeManagedPump.modelListAsks(): List<Envelope> = sent.filter { it.type == "request_model_list" }
 
     private fun messageIds(thread: List<ThreadItem>): List<String> = thread.map { (it as ThreadItem.MessageItem).message.id }
 

@@ -41,6 +41,7 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.HostReadingFrames
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -528,6 +529,64 @@ class RelayConnectionFactoryTest {
                 assertNull(registry.connectionFor("A"))
                 assertSame(b, registry.selected.value)
                 assertFalse(f.transports[1].closed)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    // #1317: a thread's pushed readings outlive its host's connection but not its pairing, and stay on their host.
+    @Test
+    fun heldReadingsSurviveReconnectButNotRepairOrUnpairAndStayOnTheirHost() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            val destinations =
+                ThreadDestinationFactory(
+                    useRelay = true,
+                    registry = registry,
+                    fake = FakeConversationRepository(),
+                    store = f.store,
+                    decorateRepository = { it },
+                    attachmentReader = lazy { AttachmentReader { AttachmentRead.Unreadable } },
+                )
+            try {
+                registry.connect()
+                runCurrent()
+                HostReadingFrames.all("c", model = "opus").forEach(f.transports[0]::emit)
+                runCurrent()
+                val firstPairing = destinations.repository("A")
+                HostReadingFrames.assertHeld(firstPairing, "c", model = "opus")
+                HostReadingFrames.assertNone(destinations.repository("B"), "c")
+
+                f.transports[0].close()
+                runCurrent()
+                assertNull(
+                    registry
+                        .connectionFor("A")!!
+                        .coordinator.currentRepository.value,
+                )
+                HostReadingFrames.assertHeld(firstPairing, "c", model = "opus")
+
+                f.store.save(f.a.record.copy(token = "rotated"))
+                runCurrent()
+                HostReadingFrames.assertNone(firstPairing, "c")
+                HostReadingFrames.assertNone(destinations.repository("A"), "c")
+
+                HostReadingFrames.all("c", model = "sonnet").forEach(f.transports.last()::emit)
+                runCurrent()
+                val secondPairing = destinations.repository("A")
+                HostReadingFrames.assertHeld(secondPairing, "c", model = "sonnet")
+
+                f.store.remove("A")
+                runCurrent()
+                HostReadingFrames.assertNone(secondPairing, "c")
+                f.store.save(f.a.record)
+                runCurrent()
+                HostReadingFrames.assertNone(destinations.repository("A"), "c")
+                HostReadingFrames.assertNone(destinations.repository("B"), "c")
             } finally {
                 registry.dispose()
                 runCurrent()

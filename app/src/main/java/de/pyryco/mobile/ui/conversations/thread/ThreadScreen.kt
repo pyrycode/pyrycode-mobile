@@ -183,6 +183,8 @@ fun ThreadScreen(
     turnOutcome: TurnOutcomeReport? = null, // #805: how the last turn failed or was interrupted, above thinking
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
+    isStalled: Boolean = false, // #1311: the daemon reported a stall; the band's stall arm
+    localSendPending: Boolean = false, // #1311: a send is with the daemon, which has not spoken yet → "Thinking…"
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
@@ -242,9 +244,13 @@ fun ThreadScreen(
     // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
     attachments: List<PendingAttachment> = emptyList(),
     attachmentsSending: Boolean = false,
+    // #1327: the running upload's figure (ThreadViewModel.attachmentUploadProgress), drawn on its tile.
+    attachmentUploadProgress: AttachmentUploadProgress? = null,
     onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
     onRemoveAttachment: (Long) -> Unit = {},
     attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
+    // #1325: the one-shot notice of why a send stopped at a file (ThreadViewModel.attachmentSendFailures).
+    attachmentSendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
     // row is on screen, and a failed one's retry. Bound by MainActivity; defaulted so other screens and tests
     // draw attachments as loading and start nothing.
@@ -318,6 +324,10 @@ fun ThreadScreen(
             }
         }
     }
+    // #1325: a send that stopped at a file says why in one fixed sentence — never a name or the daemon's code.
+    LaunchedEffect(attachmentSendFailures, snackbarHostState) {
+        attachmentSendFailures.collect { failure -> snackbarHostState.showSnackbar(failure.text(resources)) }
+    }
     val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
     // #985: a ready message attachment opens in another app or saves to a picked document; each outcome the
     // user should hear about is one static sentence, never a name, URI or path.
@@ -336,6 +346,9 @@ fun ThreadScreen(
     // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
     // closes when the control stops offering anything (a write goes pending, a reading drops the menu).
+    // #1319: Send, Stop, Actions and the run settings wait for the host's handshake, as on desktop.
+    // #1321: so do the inline permission and question answers.
+    val connected = connectionState == ConnectionState.Connected
     var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
     // #678: the read-only background-task panel the Actions menu opens. Local and keyed like [openControl]:
     // closing it only flips this flag, so nothing is sent and no conversation or task changes.
@@ -344,7 +357,7 @@ fun ThreadScreen(
     var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     val openMenu =
         openControl
-            ?.takeIf { footerControlEnabled(it, state.runConfig) }
+            ?.takeIf { footerControlEnabled(it, state.runConfig, connected) }
             ?.let { control ->
                 footerMenu(
                     control,
@@ -427,8 +440,11 @@ fun ThreadScreen(
                         apiRetry = apiRetry,
                         resetting = resetting,
                         isCompacting = isCompacting,
+                        isStalled = isStalled,
                         turnOutcome = turnOutcome,
                         isThinking = isThinking,
+                        isBusy = isBusy,
+                        localSendPending = localSendPending,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
                         waitingForAnswers = shownQuestion != null && connectionState == ConnectionState.Connected,
@@ -444,6 +460,7 @@ fun ThreadScreen(
                             attachments = attachments,
                             sending = attachmentsSending,
                             onRemove = onRemoveAttachment,
+                            uploadProgress = attachmentUploadProgress,
                             modifier =
                                 Modifier
                                     .padding(horizontal = ComposerGutter)
@@ -464,6 +481,7 @@ fun ThreadScreen(
                         onAnchorChanged = { inputAnchor = it },
                         sending = attachmentsSending,
                         onImagesReceived = onImagesPasted,
+                        enabled = connected,
                     )
                     // The design puts the model/effort controls in the footer, below the input field, not
                     // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
@@ -471,7 +489,10 @@ fun ThreadScreen(
                     ThreadComposerFooter(
                         runConfig = state.runConfig,
                         onOpen = { openControl = it },
-                        onStatusClick = { sheetVisible = true },
+                        onStatusClick = {
+                            sheetVisible = true
+                            onOverflowEvent(ThreadEvent.RunConfigOpen)
+                        },
                         onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
                         modifier =
                             Modifier
@@ -481,6 +502,7 @@ fun ThreadScreen(
                         agent = state.agent,
                         touchHeight = FrameFooterTouchHeight,
                         contentBottomPadding = FooterTouchBottomOverflow,
+                        connected = connected,
                     )
                 }
             },
@@ -654,6 +676,7 @@ fun ThreadScreen(
                                 permissionRequestItems(
                                     open = open,
                                     armedOptionId = armedOptionId,
+                                    connected = connected,
                                     onOption = onModalOption,
                                     onCancel = onModalCancel,
                                     alwaysAllowAccepted = alwaysAllowAccepted,
@@ -665,7 +688,7 @@ fun ThreadScreen(
                                 val dispatch: (QuestionModalEvent) -> Unit = { onQuestionEvent(it, pending.generation) }
                                 val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp)
                                 item(key = "question-actions:${pending.generation}") {
-                                    Box(gutter) { QuestionBatchActions(pending, dispatch) }
+                                    Box(gutter) { QuestionBatchActions(pending, connected, dispatch) }
                                 }
                                 items(pending.batch.questions.size, key = { "question:${pending.generation}:$it" }) { reversedIndex ->
                                     val index = pending.batch.questions.lastIndex - reversedIndex
@@ -866,7 +889,8 @@ fun ThreadScreen(
             },
             pending = state.runConfig.pending,
             // An empty session id means the daemon has no session to address, so the controls read only.
-            enabled = state.runConfig.writable,
+            // So does a host that is not connected (#1319).
+            enabled = state.runConfig.writable && connected,
             onDismiss = { sheetVisible = false },
             effortNote = state.runConfig.effortNote?.text(state.agent),
             running = state.runConfig.running,
@@ -926,17 +950,21 @@ fun ThreadScreen(
  * Figma `16:8`'s `Status area` (`111:3525`) — the composer's top band, carrying whichever live turn-status
  * signal is current (#643 moved this block here from the foot of the content `Column`).
  *
- * One status slot, top wins: connecting / reconnecting → api-retry → resetting → compaction → turn
- * outcome → thinking / running tool. While the link is unavailable, turn readings cannot be refreshed;
- * Offline is instead shown in the Top overlay as a retry pill.
+ * One status slot, top wins, decided by [statusArm] (#1311): connecting / reconnecting → resetting →
+ * api-retry → compaction → stall → turn outcome → thinking / working / running tool. While a turn runs the
+ * band always has a reading, as desktop's `workingIndicatorState` keeps one up. While the link is
+ * unavailable, turn readings cannot be refreshed; Offline is instead shown in the Top overlay as a retry
+ * pill.
  * No two may ever stack. Single-sourcing the mutual exclusion here, in the screen, is deliberate:
  * `isThinking` stays defined as the `turn_state` phase (other tests assert it directly), so suppressing it
  * at its source would make the VM's contract lie.
  *
- * api-retry (#594) keeps the top arm because it is the "something is going wrong" signal, and the benign
- * affordances below must never mask it. A running Reset session's phase (#872) sits next: the wrap-up is
- * itself a claude turn, so without this ordering the reset the user started would read as generic thinking
- * or as a compaction inside it, and it outranks a turn outcome lingering from before the reset. A phase
+ * A running Reset session's phase (#872) is the top turn arm, above api-retry since #1311 as on desktop:
+ * the wrap-up is itself a claude turn, so without this ordering the reset the user started would read as
+ * generic thinking or as a compaction inside it, and it outranks a turn outcome lingering from before the
+ * reset. api-retry (#594) is the "something is going wrong" signal, and the benign affordances below must
+ * never mask it. A stall (#395, #1311) is client-owned copy in the error colour; it clears on the next live
+ * event through `StallProjection`, and outranks every reading of the running turn. A phase
  * change replaces the reading in this one arm; the falling edge and the session transition clear it
  * upstream. Compaction (#597) is mid-turn and outlives the thinking phase. A failed or interrupted turn's
  * outcome (#805) is post-turn and clears when the next turn starts.
@@ -946,14 +974,11 @@ fun ThreadScreen(
  * the wrap-up or "interrupted". When no signal is live every arm returns without emitting, so the band
  * contributes no node and the composer column's gap above the input field collapses with it.
  *
- * [thinkingProgress] (#803) adds **no arm**: it decorates the thinking arm's label and rides the `else`
- * branch, so every arm above pre-empts a live reading for free. Visibility stays governed by [isThinking]
- * alone — `turn_state` owns the thinking phase (#406).
+ * [thinkingProgress] (#803) adds **no arm**: it decorates the daemon's thinking phase only, so every arm
+ * above pre-empts a live reading for free and the local-send window never shows a stale one.
  *
- * [runningTool] (#897) rides the same `else` branch and does raise it: a tool claude is running during
- * the `responding` phase is exactly the signal the band otherwise lacks. The screen passes it only while
- * the turn is busy, so every arm above still pre-empts it and a closed call drops the band back to what
- * it would otherwise show.
+ * [runningTool] (#897) names the open call while the turn is busy; closing it drops the band back to
+ * "Working…" or "Thinking…" (#1311), never to nothing while [isBusy] holds.
  *
  * [taskCount] (#1043) is not an arm either: above zero, a pill reading it sits at the band's right end
  * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel. At zero
@@ -964,8 +989,11 @@ private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
     isCompacting: Boolean,
+    isStalled: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
+    isBusy: Boolean,
+    localSendPending: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
     waitingForAnswers: Boolean,
@@ -995,16 +1023,28 @@ private fun ThreadStatusArea(
             }
         } else {
             StatusReading(
-                apiRetry,
-                resetting,
-                isCompacting,
-                turnOutcome,
-                isThinking,
-                thinkingProgress,
-                runningTool,
-                connectionState,
-                agent,
-                modifier,
+                arm =
+                    statusArm(
+                        connectionState = connectionState,
+                        resetting = resetting != null,
+                        apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
+                        isCompacting = isCompacting,
+                        isStalled = isStalled,
+                        hasTurnOutcome = turnOutcome != null,
+                        isThinking = isThinking,
+                        isBusy = isBusy,
+                        localSendPending = localSendPending,
+                        hasOpenTool = runningTool != null,
+                    ),
+                apiRetry = apiRetry,
+                resetting = resetting,
+                turnOutcome = turnOutcome,
+                isThinking = isThinking,
+                thinkingProgress = thinkingProgress,
+                runningTool = runningTool,
+                connectionState = connectionState,
+                agent = agent,
+                modifier = modifier,
             )
         }
     }
@@ -1037,12 +1077,54 @@ private fun ThreadStatusArea(
     }
 }
 
-/** The band's one live reading, top wins; see [ThreadStatusArea]. Emits nothing when no signal is live. */
+/** Which one reading the status band shows (#1311); see [statusArm]. */
+internal enum class StatusArm { None, Connection, Resetting, ApiRetry, Compacting, Stalled, TurnOutcome, Thinking, Working, RunningTool }
+
+/**
+ * The status band's one arm order (#1311), desktop's `workingIndicatorState` and
+ * `workingIndicatorStateWithLocalSend` with Mobile's connection arm at the top and its turn-outcome arm
+ * above the turn's own readings. Top wins: connection, Reset session, api-retry, compaction, stall, turn
+ * outcome, then the running turn — an open tool while busy, else thinking, else working — and last the
+ * local-send window, which reads as thinking. Offline returns [StatusArm.None]: the Top overlay's retry
+ * pill owns it.
+ *
+ * A pending local send hides a turn outcome: that outcome belongs to the turn before the send, and the new
+ * turn's first `thinking` / `responding` would clear it anyway. An `idle` answer closes the window and the
+ * outcome shows again, since the outcome fold keeps it on `idle`.
+ */
+internal fun statusArm(
+    connectionState: ConnectionState,
+    resetting: Boolean,
+    apiRetrying: Boolean,
+    isCompacting: Boolean,
+    isStalled: Boolean,
+    hasTurnOutcome: Boolean,
+    isThinking: Boolean,
+    isBusy: Boolean,
+    localSendPending: Boolean,
+    hasOpenTool: Boolean,
+): StatusArm =
+    when {
+        connectionState == ConnectionState.Offline -> StatusArm.None
+        connectionState != ConnectionState.Connected -> StatusArm.Connection
+        resetting -> StatusArm.Resetting
+        apiRetrying -> StatusArm.ApiRetry
+        isCompacting -> StatusArm.Compacting
+        isStalled -> StatusArm.Stalled
+        hasTurnOutcome && !localSendPending -> StatusArm.TurnOutcome
+        isBusy && hasOpenTool -> StatusArm.RunningTool
+        isThinking -> StatusArm.Thinking
+        isBusy -> StatusArm.Working
+        localSendPending -> StatusArm.Thinking
+        else -> StatusArm.None
+    }
+
+/** The band's one live reading, [arm], drawn; see [ThreadStatusArea]. Emits nothing for [StatusArm.None]. */
 @Composable
 private fun StatusReading(
+    arm: StatusArm,
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
@@ -1051,20 +1133,24 @@ private fun StatusReading(
     agent: ConversationAgent,
     modifier: Modifier = Modifier,
 ) {
-    when {
-        connectionState == ConnectionState.Offline -> Unit
-        connectionState != ConnectionState.Connected -> ConnectionStatusIndicator(state = connectionState, modifier = modifier)
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
-        resetting != null -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
-        else ->
+    when (arm) {
+        StatusArm.None -> Unit
+        StatusArm.Connection -> ConnectionStatusIndicator(state = connectionState, modifier = modifier)
+        StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
+        StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
+        StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
+        StatusArm.TurnOutcome -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
+        // One branch, so the glyph keeps its composition identity, and its pulse, across these readings.
+        StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
-                isThinking = isThinking,
+                isThinking = arm == StatusArm.Thinking,
                 modifier = modifier,
-                progress = thinkingProgress,
-                runningTool = runningTool,
+                // The token reading belongs to the daemon's thinking phase, never to the local-send window.
+                progress = thinkingProgress.takeIf { isThinking },
+                runningTool = runningTool.takeIf { arm == StatusArm.RunningTool },
                 agent = agent,
+                isWorking = arm == StatusArm.Working,
+                isStalled = arm == StatusArm.Stalled,
             )
     }
 }
