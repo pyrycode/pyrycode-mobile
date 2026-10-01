@@ -148,6 +148,14 @@ untested path.
 the store's `SupervisorJob` scope, clears every binding and source, and empties the drafts map. Nothing else
 calls `dispose()`; the store is meant to outlive every destination for the app process.
 
+**Continue and refuse are gated on the host connection, not just `locked` (#1321).** `onQuestionEvent`'s
+`Continue` and `Cancel` branches both add `promptSendAllowed(kind)` — the same tap-time helper
+[modal-answer-flow.md](modal-answer-flow.md#not-connected-refuses-the-tap-before-the-arm-or-grant-change-1321)
+describes for the permission surface — ahead of the existing `!held.locked` check and before `sendQuestion`,
+which is what moves the batch to `Sending`. A refused tap therefore never locks the batch: picks and Other
+text stay exactly as drafted, and the same Continue/Cancel tap sends once the host reconnects. Option toggles
+and Other-text edits are not gated — only the two sends are.
+
 ## Title names the conversation's agent (#1116)
 
 `QuestionBatchTitle`'s title picks `question_modal_title` ("Claude has questions") or
@@ -194,6 +202,13 @@ and checkbox rows `347:6771` (inspected 2026-09-30). A tertiary exported glyph s
 beside the uppercase `labelSmall` header. The `background` card uses a 1 dp `primaryContainer` border and
 the 6 dp `modalControl` shape. Question text uses `bodyMedium`; choice labels and descriptions use
 `labelMedium`.
+
+**`QuestionBatchActions` takes a `connected: Boolean` (#1321), ANDed into Cancel's `!state.locked` and
+Continue's `state.canContinue` enabled checks.** `ThreadScreen` derives it the same way as the #1319 footer
+gate (`connectionState == ConnectionState.Connected`) and passes it alongside `pending` and `dispatch`.
+`QuestionBlock`'s own `enabled = !pending.locked` is unchanged — option rows and the Other field stay
+editable while the host is down, since only the two sends need the gate. See § Batch ownership above for the
+VM-side `promptSendAllowed` check this mirrors.
 
 Whole single-choice rows sit in one `selectableGroup()` with `Role.RadioButton`; multiple-choice
 rows use `Role.Checkbox` independently. The visible tertiary selectors are 20 dp, with a dot for a
