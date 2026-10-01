@@ -244,6 +244,8 @@ fun ThreadScreen(
     // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
     attachments: List<PendingAttachment> = emptyList(),
     attachmentsSending: Boolean = false,
+    // #1327: the running upload's figure (ThreadViewModel.attachmentUploadProgress), drawn on its tile.
+    attachmentUploadProgress: AttachmentUploadProgress? = null,
     onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
     onRemoveAttachment: (Long) -> Unit = {},
     attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
@@ -452,6 +454,7 @@ fun ThreadScreen(
                             attachments = attachments,
                             sending = attachmentsSending,
                             onRemove = onRemoveAttachment,
+                            uploadProgress = attachmentUploadProgress,
                             modifier =
                                 Modifier
                                     .padding(horizontal = ComposerGutter)
