@@ -1115,7 +1115,8 @@ class RemoteConversationRepository(
         bytes: ByteArray,
         filename: String,
         mimeType: String,
-    ): AttachmentUploadResult = messageCommands.uploadAttachment(conversationId, bytes, filename, mimeType)
+        onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
+    ): AttachmentUploadResult = messageCommands.uploadAttachment(conversationId, bytes, filename, mimeType, onProgress)
 
     /** Fetch one stored file over `request_attachment` (#899); see [AttachmentRetrievals.fetch]. */
     override suspend fun fetchAttachment(

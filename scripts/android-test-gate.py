@@ -77,6 +77,8 @@ LIVE_MINIMUM += 1
 LIVE_MINIMUM += 1
 # #1286 adds the live Offline Retry pill proof.
 LIVE_MINIMUM += 1
+# #1305 excludes the cross-host file method, failing on main since daemon #2699, until #1369 restores it.
+LIVE_MINIMUM -= 1
 
 LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
 

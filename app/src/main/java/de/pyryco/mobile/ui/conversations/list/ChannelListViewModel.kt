@@ -699,6 +699,9 @@ class ChannelListViewModel(
 
     fun confirmHostUnpair() = hostEditor.confirmUnpair()
 
+    /** Fires after an unpair here leaves no saved host (#1323). */
+    val lastHostUnpaired: Flow<Unit> = hostEditor.lastHostUnpaired
+
     fun dismissHostEditor() = hostEditor.dismiss()
 
     /**

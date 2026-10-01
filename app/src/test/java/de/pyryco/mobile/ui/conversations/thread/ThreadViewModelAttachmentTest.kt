@@ -70,6 +70,7 @@ class ThreadViewModelAttachmentTest {
             bytes: ByteArray,
             filename: String,
             mimeType: String,
+            onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
         ): AttachmentUploadResult {
             beforeUpload()
             uploads += filename to bytes.decodeToString()
@@ -199,7 +200,7 @@ class ThreadViewModelAttachmentTest {
         }
 
     @Test
-    fun send_withBlankTextAndAttachments_isSent() =
+    fun send_withBlankTextAndAttachments_sendsNothing_andKeepsTheFilesForTheNextSend() =
         runTest {
             val store = ComposerDraftStore()
             val repository = RecordingRepository()
@@ -207,9 +208,18 @@ class ThreadViewModelAttachmentTest {
             vm.attach("a")
 
             vm.sendMessage("")
+            vm.sendMessage("  ")
             advanceUntilIdle()
 
-            assertEquals(listOf("" to listOf("id-a")), repository.sends)
+            assertTrue(repository.sends.isEmpty())
+            assertTrue(repository.uploads.isEmpty())
+            assertFalse(vm.attachmentsSending.value)
+            assertEquals(listOf("a"), vm.pendingAttachments.value.map { it.displayName })
+
+            vm.sendMessage("with text")
+            advanceUntilIdle()
+
+            assertEquals(listOf("with text" to listOf("id-a")), repository.sends)
             assertTrue(vm.pendingAttachments.value.isEmpty())
         }
 
@@ -343,7 +353,7 @@ class ThreadViewModelAttachmentTest {
             vm.addAttachment("content://private.provider/secret-doc", "secret-name.pdf", "application/pdf", Long.MAX_VALUE)
             vm.addAttachment("content://private.provider/secret-doc", "secret-name.pdf", "application/pdf", 1L)
 
-            vm.sendMessage("")
+            vm.sendMessage("hi")
             advanceUntilIdle()
 
             assertTrue(logs.isNotEmpty())
@@ -404,17 +414,17 @@ class ThreadViewModelAttachmentTest {
             vm.attach("a")
             assertFalse(vm.attachmentsSending.value)
 
-            vm.sendMessage("")
+            vm.sendMessage("hi")
             advanceUntilIdle()
             assertTrue(vm.attachmentsSending.value)
 
-            vm.sendMessage("")
+            vm.sendMessage("hi")
             gate.complete(Unit)
             advanceUntilIdle()
 
             assertFalse(vm.attachmentsSending.value)
             assertEquals(listOf("a"), repository.uploads.map { it.first })
-            assertEquals(listOf("" to listOf("id-a")), repository.sends)
+            assertEquals(listOf("hi" to listOf("id-a")), repository.sends)
         }
 
     @Test
@@ -426,7 +436,7 @@ class ThreadViewModelAttachmentTest {
                 val vm = vm(repository, ComposerDraftStore())
                 vm.attach("a")
 
-                vm.sendMessage("")
+                vm.sendMessage("hi")
                 advanceUntilIdle()
 
                 assertFalse(vm.attachmentsSending.value)

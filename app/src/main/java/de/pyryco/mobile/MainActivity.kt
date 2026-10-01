@@ -21,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,7 +66,6 @@ import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
-import de.pyryco.mobile.ui.conversations.thread.QuestionBatchModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -323,6 +323,9 @@ internal fun PyryNavHost(
             LaunchedEffect(vm) {
                 vm.hostNavigationEvents.collect { navController.openThread(it) }
             }
+            LaunchedEffect(vm) {
+                vm.lastHostUnpaired.collect { navController.returnToWelcome() }
+            }
             ChannelListScreen(
                 hostState = hostState,
                 onEvent = { event ->
@@ -461,6 +464,9 @@ internal fun PyryNavHost(
                 // #1050: composed again means the operator is back on the thread, so a linked note's reader has
                 // closed. Its reader remembered the note, so dropping it here cannot empty that reader.
                 LaunchedEffect(vm) { vm.releaseLinkedMarkdown() }
+                // #1306: leaving this screen, by Back or by opening another thread on top, drops a half-made
+                // allow; the ViewModel keeps the session-grant draft for the same request.
+                DisposableEffect(vm) { onDispose { vm.onConversationLeft() } }
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
                         when (event) {
@@ -471,7 +477,10 @@ internal fun PyryNavHost(
                         }
                     }
                 }
+                val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 ThreadScreen(
+                    questionState = questionModal,
+                    onQuestionEvent = { event, generation -> vm.onQuestionEvent(event, generation) },
                     state = state,
                     onBack = { navController.popBackStack() },
                     onSendMessage = vm::sendMessage,
@@ -493,8 +502,8 @@ internal fun PyryNavHost(
                     archiveErrors = vm.archiveErrors,
                     changeWorkspaceErrors = vm.changeWorkspaceErrors,
                     sessionSettingsErrors = vm.sessionSettingsErrors,
-                    onModalOption = vm::onModalOption,
-                    onModalCancel = vm::onModalCancel,
+                    onModalOption = { modalId, optionId -> vm.onModalOption(optionId, modalId) },
+                    onModalCancel = { modalId -> vm.onModalCancel(modalId) },
                     alwaysAllowAccepted = alwaysAllowAccepted,
                     onAlwaysAllowChanged = vm::onAlwaysAllowChanged,
                     onDropQueued = vm::onDropQueued,
@@ -533,9 +542,6 @@ internal fun PyryNavHost(
                     // #1050: a markdown link in an assistant reply, read live from the workspace.
                     onOpenMarkdownLink = vm::onOpenMarkdownLink,
                 )
-                // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
-                val questionModal by vm.questionModal.collectAsStateWithLifecycle()
-                questionModal?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent) }
             }
         }
         // #1027: one markdown attachment of a thread, read in-app. The route carries ids only; the file is
@@ -587,6 +593,9 @@ internal fun PyryNavHost(
         ) {
             val vm = koinViewModel<SettingsViewModel>()
             val pushNotifications by vm.pushNotifications.collectAsStateWithLifecycle()
+            LaunchedEffect(vm) {
+                vm.lastHostUnpaired.collect { navController.returnToWelcome() }
+            }
             val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
             SettingsScreen(
                 pushNotifications = pushNotifications,
@@ -806,6 +815,17 @@ private fun HostWorkspaceRepository(
 ) {
     val repository = remember(factory, serverId) { serverId?.let { factory.repository(it) } }
     CompositionLocalProvider(LocalWorkspacePickerRepository provides repository, content = content)
+}
+
+/**
+ * Welcome as the only entry, after an unpair left no saved host (#1323): nothing paired stays behind it,
+ * so Back leaves the app, as a launch with no host starts there.
+ */
+private fun NavHostController.returnToWelcome() {
+    navigate(Routes.WELCOME) {
+        popUpTo(graph.id) { inclusive = true }
+        launchSingleTop = true
+    }
 }
 
 private fun NavHostController.openThread(target: HostConversationTarget) {

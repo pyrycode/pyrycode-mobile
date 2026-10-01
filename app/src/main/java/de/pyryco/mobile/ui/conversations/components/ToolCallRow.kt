@@ -87,8 +87,8 @@ internal const val TOOL_DESCRIPTION_CHEVRON_TAG = "tool-description-chevron"
 internal const val TOOL_EXPANDED_BODY_TAG = "tool-expanded-body"
 
 /**
- * One tool call in the thread: the supplied description takes the described Figma header, otherwise the
- * verbatim name and [toolRowSubject] take the simple header. Tapping expands the input, the output once
+ * One tool call in the thread: a `Bash` description takes the described Figma header, otherwise the
+ * simple header draws [toolHeadline]'s lead and subject. Tapping expands the input, the output once
  * resolved and, on a denied row, claude's reason.
  *
  * Every string on the row — tool name, input fields, précis, output, denial — is claude's or the daemon's
@@ -174,72 +174,74 @@ private fun HeaderRow(
     toolCall: ToolCall,
     expanded: Boolean,
 ) {
-    val description = toolCall.inputFields["description"]?.takeIf { it.isNotEmpty() }
+    val headline = toolHeadline(toolCall.toolName, toolCall.inputFields, toolCall.input)
     Row(
         modifier = Modifier.fillMaxWidth().heightIn(min = ToolCallHeaderMinHeight),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
     ) {
-        if (description != null) {
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ToolCallDescriptionGap),
-            ) {
-                Text(
-                    text = description,
-                    modifier = Modifier.weight(1f, fill = false),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Box(
-                    modifier = Modifier.size(ToolCallChevronSlotWidth, ToolCallChevronSlotHeight),
-                    contentAlignment = Alignment.Center,
+        when (headline) {
+            is ToolHeadline.Described ->
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ToolCallDescriptionGap),
                 ) {
-                    Icon(
-                        painter =
-                            painterResource(
-                                if (expanded) R.drawable.tool_row_chevron_down else R.drawable.tool_row_chevron_right,
-                            ),
-                        contentDescription = null,
-                        modifier =
-                            Modifier
-                                .size(
-                                    width = if (expanded) ToolCallChevronDownWidth else ToolCallChevronRightWidth,
-                                    height = if (expanded) ToolCallChevronDownHeight else ToolCallChevronRightHeight,
-                                ).testTag(TOOL_DESCRIPTION_CHEVRON_TAG),
-                        tint = MaterialTheme.colorScheme.onBackground,
-                    )
-                }
-            }
-        } else {
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
-            ) {
-                Text(
-                    text = toolCall.toolName,
-                    modifier = Modifier.widthIn(max = ToolNameMaxWidth),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                    color = MaterialTheme.colorScheme.tertiary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val subject = toolRowSubject(toolCall.toolName, toolCall.inputFields, toolCall.input)
-                if (subject.isNotEmpty()) {
                     Text(
-                        text = subject,
-                        modifier = Modifier.weight(1f),
+                        text = headline.description,
+                        modifier = Modifier.weight(1f, fill = false),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    Box(
+                        modifier = Modifier.size(ToolCallChevronSlotWidth, ToolCallChevronSlotHeight),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter =
+                                painterResource(
+                                    if (expanded) R.drawable.tool_row_chevron_down else R.drawable.tool_row_chevron_right,
+                                ),
+                            contentDescription = null,
+                            modifier =
+                                Modifier
+                                    .size(
+                                        width = if (expanded) ToolCallChevronDownWidth else ToolCallChevronRightWidth,
+                                        height = if (expanded) ToolCallChevronDownHeight else ToolCallChevronRightHeight,
+                                    ).testTag(TOOL_DESCRIPTION_CHEVRON_TAG),
+                            tint = MaterialTheme.colorScheme.onBackground,
+                        )
+                    }
                 }
-            }
+            is ToolHeadline.Simple ->
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
+                ) {
+                    val subject = headline.subject
+                    // The cap leaves room for a subject; a lead alone, such as a shell command, takes the row.
+                    Text(
+                        text = headline.lead,
+                        modifier = if (subject.isNotEmpty()) Modifier.widthIn(max = ToolNameMaxWidth) else Modifier,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.tertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (subject.isNotEmpty()) {
+                        Text(
+                            text = subject,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
         }
         TrailingStatus(toolCall)
     }
