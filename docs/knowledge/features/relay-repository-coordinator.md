@@ -24,7 +24,12 @@ completed task cannot come back as live when the daemon re-sends its retained ro
 `HostReadings` instance (#1317) — the five readings a host pushes and the phone never asks for again
 (announced model, session facts, context usage, usage limit, slash-command menu) — held for the **life of
 the host's pairing**, the `finishedBackgroundTasks` shape rather than the reset-on-reconnect one: a
-reconnect threads the same instance into the new connection's repository instead of starting empty.
+reconnect threads the same instance into the new connection's repository instead of starting empty. Since
+\#1320 the same instance also holds two readings the phone *does* ask for again on each connection: the
+model menu of each conversation and the last successful `session_settings` reply. Only the ask ledgers
+(`askedModelMenus`, `modelListAsks`, `heardModelMenus`) stay per connection; a held settings reading is only
+ever read back invalidated (permission mode unknown, memory search `Unknown`, marked `held = true`) so
+nothing automatic acts on it until the new connection's own reply replaces it whole.
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the
@@ -397,6 +402,17 @@ invisible on B) and a reconnect-through-production-wiring case, plus a drop on r
 fresh (empty) read after re-adding it. `StableConversationRepositoryTest` covers the facade's disconnected
 gap separately — see [its own Testing section](stable-conversation-repository.md#testing).
 
+[#1320](https://github.com/pyrycode/pyrycode-mobile/issues/1320) added coordinator cases for the two new
+held readings, through a `StableConversationRepository(coordinator.currentRepository, coordinator.hostReadings)`:
+a full `session_settings` reply on connection 1, the invalidated reading (model/effort/session kept,
+permission `""`, memory search `Unknown`, `held = true`) showing through the gap and at connection 2's head,
+connection 2 sending its own `request_session_settings`, and that reply replacing the whole reading; a
+model menu held through the gap and into connection 2 while connection 2 still sends `request_model_list`
+and a `model_list` on connection 2 replaces it; a `session_transition` on connection 2 re-reading and the
+reply replacing the held reading (the existing trigger unchanged); and the two-host case, where host A's
+held settings and menu never appear through host B and `close()` on A drops both, including for a collector
+sitting in the gap. A fresh coordinator's first subscription head is still `null`.
+
 ## Related
 
 - Tickets: [#351](../codebase/351.md) — the coordinator + `ManagedSessionPump` (files, line refs,
@@ -442,7 +458,16 @@ gap separately — see [its own Testing section](stable-conversation-repository.
   facts, context usage, usage limit and slash-command menu survive a reconnect and the
   [`StableConversationRepository`](stable-conversation-repository.md) facade reads them directly while
   disconnected. `close()` drops it after `teardownActive()`, which is the pairing-scoped clear registry
-  reconcile gets for free on unpair or re-pair.
+  reconcile gets for free on unpair or re-pair ·
+  [#1320](https://github.com/pyrycode/pyrycode-mobile/issues/1320) — extends the same `HostReadings`
+  instance to the per-conversation model menu and the last successful `session_settings` reply, the two
+  readings the phone itself asks for again on every connection. The ask ledgers
+  (`SessionSettingsCommands`'s re-read triggers, `ModelMenuProjection`'s `askedModelMenus`/`modelListAsks`/
+  `heardModelMenus`) stay per connection, so a new connection still asks; only the last answer is held. A
+  held settings reading is exposed **only** invalidated and marked `SessionSettings.held`, so the
+  [#686 effort recall](thread-composer-footer-effort-recall.md#remembered-effort-recall-686) and the #650
+  permission-settle/pending-model logic treat it as the lost context the old `null` head was, never as a
+  live reply to act on.
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status

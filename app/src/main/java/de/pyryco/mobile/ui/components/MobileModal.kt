@@ -86,7 +86,8 @@ internal fun MobileModal(
     loading: Boolean = false,
     error: String? = null,
     cancelLabel: String = "Cancel",
-    submitLabel: String = "OK",
+    // Null omits the submit, leaving Cancel as the only action (#1386), as on [MobileGateModal].
+    submitLabel: String? = "OK",
     content: @Composable ColumnScope.() -> Unit,
 ) {
     MobileModalShell(
@@ -97,7 +98,9 @@ internal fun MobileModal(
         error = error,
         footer = { dismiss ->
             ModalCancelButton(label = cancelLabel, onClick = dismiss)
-            ModalSubmitButton(label = submitLabel, onClick = onSubmit, enabled = submissionEnabled && !loading, loading = loading)
+            if (submitLabel != null) {
+                ModalSubmitButton(label = submitLabel, onClick = onSubmit, enabled = submissionEnabled && !loading, loading = loading)
+            }
         },
         content = content,
     )

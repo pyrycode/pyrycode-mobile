@@ -65,6 +65,34 @@ internal object HostReadingFrames {
                 """"occurred_at":"$TS","workspace_cwd":null}""",
         )
 
+    /** A one-row `model_list` for [conversationId] (#1320), the row's identifier [value]. */
+    fun modelList(
+        conversationId: String,
+        value: String,
+        inReplyTo: Long? = null,
+    ): Envelope =
+        frame(
+            "model_list",
+            """{"conversation_id":"$conversationId","models":[{"resolved_model":"$value","value":"$value",""" +
+                """"display_name":"$value","effort_levels":["high"],"supports_auto_mode":false}],"dropped_models":0}""",
+        ).copy(inReplyTo = inReplyTo)
+
+    /**
+     * The correlated `session_settings` reply to [inReplyTo] (#1320). [memorySearch] is the report's
+     * availability, always carried so an invalidation has something to reset.
+     */
+    fun sessionSettings(
+        inReplyTo: Long,
+        model: String,
+        permissionMode: String = "plan",
+        memorySearch: String = "available",
+    ): Envelope =
+        frame(
+            "session_settings",
+            """{"session_id":"sess-a","model":"$model","effort":"high","yolo":false,"permission_mode":"$permissionMode",""" +
+                """"used_tokens":0,"window_tokens":200000,"memory_search":{"availability":"$memorySearch","providers":[]}}""",
+        ).copy(inReplyTo = inReplyTo)
+
     /** One frame of each held reading for [conversationId], the announced model naming [model]. */
     fun all(
         conversationId: String,
