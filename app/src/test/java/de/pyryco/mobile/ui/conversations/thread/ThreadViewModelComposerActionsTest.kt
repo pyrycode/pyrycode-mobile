@@ -2,8 +2,10 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
@@ -12,6 +14,7 @@ import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SlashCommandMenuRow
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -57,7 +60,31 @@ class ThreadViewModelComposerActionsTest {
         val fake: FakeConversationRepository = FakeConversationRepository(),
     ) : ConversationRepository by fake {
         val sent = mutableListOf<Pair<String, String>>()
+        val sentWithFiles = mutableListOf<Pair<String, List<String>>>() // text to attachment ids
+        val uploads = mutableListOf<String>()
         var failure: Throwable? = null
+        var beforeUpload: suspend () -> Unit = {}
+
+        override suspend fun uploadAttachment(
+            conversationId: String,
+            bytes: ByteArray,
+            filename: String,
+            mimeType: String,
+            onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
+        ): AttachmentUploadResult {
+            beforeUpload()
+            uploads += filename
+            return AttachmentUploadResult.Stored("id-$filename")
+        }
+
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+            attachments: List<MessageAttachment>,
+        ): Message {
+            sentWithFiles += text to attachments.map { it.attachmentId }
+            return fake.sendMessage(conversationId, text)
+        }
 
         override suspend fun sendMessage(
             conversationId: String,
@@ -78,10 +105,13 @@ class ThreadViewModelComposerActionsTest {
                 repo,
                 FakeConnectionStateSource(),
                 draftStore,
+                attachmentReader = { AttachmentRead.Bytes("bytes-of-$it".toByteArray()) },
             )
         backgroundScope.launch { vm.state.collect {} }
         return vm
     }
+
+    private fun ThreadViewModel.attach(name: String) = addAttachment("content://docs/$name", name, "text/plain", 5L)
 
     private fun row(
         name: String,
@@ -259,6 +289,67 @@ class ThreadViewModelComposerActionsTest {
             assertEquals(emptySet<ComposerAction>(), vm.state.value.absentActions)
             vm.onComposerCommand(ComposerAction.CompactSession)
             assertEquals(listOf(CONV to "/compact"), repo.sent)
+        }
+
+    // #1348: a command carries the pending files, as desktop's sendText hands takeAttachments to both callers.
+    @Test
+    fun compactWithPendingFiles_sendsThemWithTheCommand_clearsTheStrip_andLeavesTheDraft() =
+        runTest {
+            val repo = RecordingRepo()
+            val vm = collectedVm(repo)
+            vm.onDraftChange("/compact")
+            vm.attach("a")
+            vm.attach("b")
+
+            vm.onComposerCommand(ComposerAction.CompactSession)
+            advanceUntilIdle()
+
+            assertEquals(listOf("a", "b"), repo.uploads)
+            assertEquals(listOf("/compact" to listOf("id-a", "id-b")), repo.sentWithFiles)
+            assertEquals(emptyList<Pair<String, String>>(), repo.sent)
+            assertEquals(emptyList<PendingAttachment>(), draftStore.attachmentsFor(SERVER, CONV))
+            assertEquals("/compact", draftStore.draftFor(SERVER, CONV))
+            assertFalse(vm.attachmentsSending.value)
+            assertTrue(logs.contains("event=composer_action action=compact outcome=sent"))
+        }
+
+    @Test
+    fun aGreyedCommandWithPendingFiles_sendsNothing_andKeepsTheFiles() =
+        runTest {
+            val repo = RecordingRepo()
+            val vm = collectedVm(repo)
+            repo.fake.setSlashCommandMenu(CONV, SlashCommandMenu(rows = listOf(row("knowledge-capture")), droppedCommands = 0))
+            advanceUntilIdle()
+            vm.attach("a")
+
+            vm.onComposerCommand(ComposerAction.CompactSession)
+            advanceUntilIdle()
+
+            assertEquals(emptyList<String>(), repo.uploads)
+            assertEquals(emptyList<Pair<String, List<String>>>(), repo.sentWithFiles)
+            assertEquals(listOf("a"), draftStore.attachmentsFor(SERVER, CONV).map { it.displayName })
+        }
+
+    @Test
+    fun aCommandWhileFilesAreSending_isRefused_soTheFilesAreNotSentTwice() =
+        runTest {
+            val repo = RecordingRepo()
+            val gate = CompletableDeferred<Unit>()
+            repo.beforeUpload = { gate.await() }
+            val vm = collectedVm(repo)
+            vm.onDraftChange("look")
+            vm.attach("a")
+            vm.sendMessage("look")
+            assertTrue(vm.attachmentsSending.value)
+
+            vm.onComposerCommand(ComposerAction.CompactSession)
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(listOf("a"), repo.uploads)
+            assertEquals(listOf("look" to listOf("id-a")), repo.sentWithFiles)
+            assertEquals(emptyList<Pair<String, String>>(), repo.sent)
+            assertTrue(logs.contains("event=composer_action action=compact outcome=busy"))
         }
 
     private fun settings(capabilities: SessionCapabilities?) =
