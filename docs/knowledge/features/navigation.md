@@ -320,6 +320,20 @@ literal-screen steps — the overflow-menu trip to `LITERAL_SCREEN` in the back-
 test (host B now restores the thread itself instead) and the `Routes.literal`
 navigation in the invalid-host test — and left the rest of the harness unchanged.
 
+`flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges` (#1392) flaked under
+full-suite load because `HostConversationSource.reconcile` publishes `snapshots` from a
+`Dispatchers.Default` coroutine, the one step on the `openAddWorkspace` → `recent_workspaces`
+path that isn't `Main.immediate`, so Compose idling (`waitForIdle`/`runOnIdle`) does not drain
+it. Under load that coroutine can lag past the test's `openAddWorkspace(a)` call; the ViewModel
+then rejects A as `unknown_host` and sends nothing, so an idle-only wait on the peer's outbound
+frame can pass or fail depending on scheduling, not on the production behavior under test. The
+fix is test-only: wait on `HostConversationSource.snapshots` holding the host before opening the
+picker, then replace the idle-then-assert check on `NavigationPeer.outbound` with a bounded
+`compose.waitUntil`; `NavigationPeer.outbound` became a `CopyOnWriteArrayList` since the send and
+a device-side `waitUntil` read it from different threads. A test asserting on a value fed by a
+non-`Main` coroutine must wait on that value directly — `waitForIdle` only proves the main
+dispatcher is quiet, not that every producer has run.
+
 `SettingsNavigationTest` mounts the production `PyryNavHost` and checks the gear-to-modal path, dismissal to the previous view, persisted push state after reopening, and opening without a paired host. `SettingsDensityDeviceTest` sends a real Back key to the focused dialog. Espresso Back aimed at the unfocused Activity root in the graph harness and could miss the dialog window; a real focused-window key tests that dismissal route.
 
 `UnpairNavigationTest` (#1323) reuses `SettingsNavigationTest`'s fixture shape (in-memory
