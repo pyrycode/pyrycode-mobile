@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.model.ArchiveOrder
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -92,8 +93,9 @@ class ArchivedDiscussionsViewModel(
             repository.observeConversations(ConversationFilter.Archived),
             selectedTab,
         ) { conversations, tab ->
-            val channels = conversations.filter { it.isPromoted }
-            val discussions = conversations.filter { !it.isPromoted }
+            // Each tab sorts on its own, newest-archived first (#1332), whatever order the repository keeps.
+            val channels = conversations.filter { it.isPromoted }.sortedWith(ArchiveOrder)
+            val discussions = conversations.filter { !it.isPromoted }.sortedWith(ArchiveOrder)
             ArchivedDiscussionsUiState.Loaded(
                 channels = channels,
                 discussions = discussions,
