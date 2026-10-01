@@ -120,6 +120,9 @@ class RemoteConversationRepository(
      * nothing. `Instant.epochSeconds` is the only route to a number here, so the unit cannot be got
      * wrong. **Defaulted** so every existing construction (tests, the coordinator, the scripted
      * harness) compiles unchanged; only a test supplies its own.
+     *
+     * Used only to build the default [hostReadings] (#1317). A caller that supplies [hostReadings], as the
+     * coordinator does, supplies the clock with it, and this one is unused.
      */
     now: () -> Instant = Clock.System::now,
     /**
