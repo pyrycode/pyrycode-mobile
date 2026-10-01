@@ -32,12 +32,12 @@ data class QuestionSelection(
         multiSelect: Boolean,
     ): QuestionSelection = copy(otherTicked = ticked, optionIndices = if (ticked && !multiSelect) emptySet() else optionIndices)
 
-    /** The values sent for this question: option labels in option order, then Other text verbatim. */
+    /** The values sent for this question: option labels in option order, then Other text trimmed (desktop's `resolveQuestionAnswers`). */
     fun values(question: Question): List<String> =
         question.options.indices
             .filter { it in optionIndices }
             .map { question.options[it].label } +
-            listOfNotNull(otherText.takeIf { otherTicked && it.isNotBlank() })
+            listOfNotNull(otherText.trim().takeIf { otherTicked && it.isNotEmpty() })
 }
 
 /** Where the one answer-or-refusal send of a question batch stands (#661). */
