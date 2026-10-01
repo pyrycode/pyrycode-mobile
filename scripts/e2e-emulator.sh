@@ -1223,6 +1223,9 @@ elif [ -n "${LIVE}" ]; then
   # #1337: two chats on the answer daemon hold a real prompt each at once; answering A leaves B's in place.
   # Two real-claude turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_permissionPrompts_heldPerConversation"
+  # #1344: after one ping turn, Channel info's MCP section lists the daemon's pyry_approve once Show built-in
+  # is ticked. One turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

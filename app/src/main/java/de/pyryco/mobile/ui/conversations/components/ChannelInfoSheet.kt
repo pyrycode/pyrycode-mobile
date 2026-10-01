@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchAvailability
 import de.pyryco.mobile.data.repository.MemorySearchProvider
 import de.pyryco.mobile.data.repository.MemorySearchReport
@@ -76,6 +77,8 @@ internal data class ChannelInfoUiModel(
     val messageCount: Int,
     val memorySearch: MemorySearchReport,
     val channelId: String,
+    // #1344: the MCP server reading, or `null` when the session reports it cannot answer — which hides the section.
+    val mcpServers: McpStatus? = null,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -97,6 +100,10 @@ internal fun ChannelInfoSheet(
     onSystemPromptChange: (String) -> Unit = {},
     onSystemPromptSave: () -> Unit = {},
     onSystemPromptClear: () -> Unit = {},
+    // #1344: a row's Reconnect and its switch, with the row's Claude-authored server name and, for the switch, the
+    // state asked for. Defaulted for previews/tests only — production wires both.
+    onMcpReconnect: (String) -> Unit = {},
+    onMcpToggle: (String, Boolean) -> Unit = { _, _ -> },
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 ) {
     ModalBottomSheet(
@@ -133,6 +140,8 @@ internal fun ChannelInfoSheet(
             onSystemPromptChange = onSystemPromptChange,
             onSystemPromptSave = onSystemPromptSave,
             onSystemPromptClear = onSystemPromptClear,
+            onMcpReconnect = onMcpReconnect,
+            onMcpToggle = onMcpToggle,
         )
     }
 }
@@ -150,6 +159,8 @@ internal fun ChannelInfoSheetContent(
     onSystemPromptChange: (String) -> Unit = {},
     onSystemPromptSave: () -> Unit = {},
     onSystemPromptClear: () -> Unit = {},
+    onMcpReconnect: (String) -> Unit = {},
+    onMcpToggle: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         TitleRow(title = model.conversationName, onClose = onDismiss)
@@ -173,6 +184,11 @@ internal fun ChannelInfoSheetContent(
                 onSave = onSystemPromptSave,
                 onClear = onSystemPromptClear,
             )
+        }
+
+        model.mcpServers?.let { mcp ->
+            SectionHeader(text = "MCP servers")
+            McpServersSection(status = mcp, onReconnect = onMcpReconnect, onToggle = onMcpToggle)
         }
 
         if (mutationsSupported) {
