@@ -1187,6 +1187,79 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * The Archive lists the most recently archived chat first (#1332). Chat A is created before chat B, so B
+     * has the newer `last_used_at`; B is archived first and A second. Rename and archive do not bump
+     * `last_used_at` on the daemon, so the old last-use order would put B on top and only the daemon's
+     * `archived_at` puts A there — the scenario fails on the pre-#1332 order.
+     *
+     * When the screen opens, B already carries its stamp from the `list_conversations` reply that confirmed its
+     * archive, while A may still hold none: that confirming read can match on the held list, where A was folded
+     * in from `conversation_updated`, before its own reply lands. A can therefore first draw below B and move
+     * in front of it when the screen's own list reply arrives; the screen keeps an at-top list on its new first
+     * row, so the order is waited for rather than read once. Zero real-claude turns; both chats are deleted
+     * afterwards.
+     */
+    @Test
+    fun interactiveTurn_archiveTwoChats_listsSecondArchivedFirst() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val stamp = System.currentTimeMillis()
+        val nameA = "${ARCHIVE_ORDER_PREFIX}a-$stamp"
+        val nameB = "${ARCHIVE_ORDER_PREFIX}b-$stamp"
+        var beforeA: Set<String>? = null
+        var beforeB: Set<String>? = null
+        var idA: String? = null
+        var idB: String? = null
+        try {
+            // 1. A, then B: B is the newer by last use.
+            beforeA = hostConversationIds(serverId)
+            idA = createChatOn(serverId)
+            renameOpenThread(nameA)
+            leaveThread()
+            beforeB = hostConversationIds(serverId)
+            idB = createChatOn(serverId)
+            renameOpenThread(nameB)
+
+            // 2. Archive B from its open thread, then A from its reopened thread.
+            archiveOpenThread()
+            archivedIds(serverId) { idB in it }
+            openChatRow(nameA)
+            archiveOpenThread()
+            archivedIds(serverId) { idA in it }
+
+            // 3. Open Archive on its default Discussions tab: A, archived last, is the first row.
+            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+            }
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val restoreA = hasContentDescription(context.getString(R.string.cd_restore_archive, nameA))
+            val restoreB = hasContentDescription(context.getString(R.string.cd_restore_archive, nameB))
+            val anyRestore = hasContentDescription(context.getString(R.string.cd_restore_archive, ""), substring = true)
+
+            fun topOf(matcher: SemanticsMatcher): Float? =
+                composeTestRule
+                    .onAllNodes(matcher)
+                    .fetchSemanticsNodes()
+                    .firstOrNull()
+                    ?.boundsInRoot
+                    ?.top
+
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                val a = topOf(restoreA)
+                val b = topOf(restoreB)
+                a != null && b != null && a < b
+            }
+            val topmost = composeTestRule.onAllNodes(anyRestore).fetchSemanticsNodes().minOf { it.boundsInRoot.top }
+            assertEquals("the second-archived chat is not the Archive's first row", topmost, topOf(restoreA))
+        } finally {
+            beforeA?.let { cleanupCreatedConversation(serverId, it, idA, "archive order cleanup failed") }
+            beforeB?.let { cleanupCreatedConversation(serverId, it, idB, "archive order cleanup failed") }
+        }
+    }
+
+    /**
      * Change-workspace twin of the create-workspace-folder scenario (#562, Layer 3): drive the real
      * "Change workspace…" overflow flow end to end against a real daemon, exercising the already-shipped
      * #560 `change_workspace` wire and #561 surfacing. Create a plain discussion, then via the **real**
@@ -6372,6 +6445,16 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** Archive the open thread's conversation from its overflow and wait for the pop back to the list. */
+    private fun archiveOpenThread() {
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(ARCHIVE_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText(ARCHIVE_ITEM).performClick()
+        awaitChannelList()
+    }
+
     /** The first archived-id set [serverId]'s live repository lists that satisfies [ready]. */
     private fun archivedIds(
         serverId: String,
@@ -6759,6 +6842,9 @@ class InteractiveStreamE2ETest {
         // cannot pre-exist on screen — the presence check (step 5), its inversion after archive (step 8), and
         // the re-appearance after restore (step 13) are all genuine; also keeps repeated LIVE gate runs clean.
         const val ARCHIVE_NAME_PREFIX = "e2e551-"
+
+        // #1332 archive-order scenario: runtime-unique names for its two chats.
+        const val ARCHIVE_ORDER_PREFIX = "e2e1332-"
 
         // #537 rename-conversation scenario. Reuses the #554 rename constants (RENAME_ITEM, RENAME_SAVE) and
         // the overflow opener (CD_MORE_ACTIONS); adds only this prefix. Runtime-unique rename target:
