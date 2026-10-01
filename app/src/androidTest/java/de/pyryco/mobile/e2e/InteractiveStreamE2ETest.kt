@@ -3189,6 +3189,82 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * Two chats on one host each hold a real permission prompt at once, and each shows its own (#1337, rung 3),
+     * on the dedicated answer daemon of [interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation].
+     *  * **Both held.** A raises a prompt, then B raises one while A's is still outstanding. B shows its own, and
+     *    returning to A still shows A's: B's prompt no longer replaces it.
+     *  * **Answering A leaves B.** The phone allows A's prompt; the daemon dismisses A's id from the phone, never
+     *    B's, and B's thread still shows its prompt. The peer then allows B's and B's dialog closes.
+     *
+     * Both prompts carry the same command, so which prompt the phone answered is proven by the peer's frames:
+     * the phone's one answer, sent from A, resolves A's `modal_id` with source `remote`, and B's thread still
+     * shows a prompt afterwards, which the phone drops once the daemon dismisses B's id.
+     *
+     * **Two real-claude turns**: A's and B's commands.
+     */
+    @Test
+    fun interactiveTurn_permissionPrompts_heldPerConversation() {
+        val (serverId, peer) = answerHostPeer()
+        try {
+            pairAnswerHost()
+            val (chatA, nameA) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pa-")
+            val (chatB, nameB) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pb-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 1. A raises a prompt in A.
+            openChatRow(nameA)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            val shownA =
+                runBlocking {
+                    MobileJson.decodeFromJsonElement(
+                        ModalShownPayloadDto.serializer(),
+                        peer.awaitFrame(chatA, "modal_shown", REPLY_TIMEOUT_MS).payload,
+                    )
+                }
+            val promptA = shownA.modalId
+            awaitPromptDialog()
+
+            // 2. B raises its own prompt while A's is outstanding, and B shows it.
+            leaveThread()
+            openChatRow(nameB)
+            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            val promptB = runBlocking { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) }
+            assertNotEquals("the two chats' prompts", promptA, promptB)
+            awaitPromptDialog()
+
+            // 3. Back in A, A's prompt is still shown: B's did not replace it.
+            leaveThread()
+            openChatRow(nameA)
+            awaitPromptDialog()
+
+            // 4. Allowing in A (a non-default option arms first) resolves A's prompt from the phone, not B's.
+            val allow = hasText(shownA.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
+            val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
+            tapInPrompt(allow)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
+            }
+            tapInPrompt(allow)
+            val dismissedA = runBlocking { peer.awaitModalDismissed(promptA, THREAD_TIMEOUT_MS) }
+            assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissedA, "source"))
+            assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissedA, "outcome"))
+            awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
+            awaitTurnEnd(peer, chatA, 1, "A's allowed turn")
+
+            // 5. B's prompt is still shown in B, so A's answer left it; the peer allows it and B's dialog closes untouched.
+            leaveThread()
+            openChatRow(nameB)
+            awaitPromptDialog()
+            runBlocking { peer.allowOnce(promptB, THREAD_TIMEOUT_MS) }
+            awaitNoPromptDialog("B's dialog stayed after the peer allowed it")
+            awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn")
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
+    /**
      * A clarification answer from the phone reaches the conversation that asked (#966, rung 3), on the same
      * dedicated answer daemon as [interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation]; the
      * daemon gates a question answer on the same `--allow-remote-permissions` bit as a permission answer.

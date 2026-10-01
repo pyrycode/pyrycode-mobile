@@ -1,6 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
-import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -23,8 +23,9 @@ internal data class PermissionGrantDraft(
 
 /**
  * Process-only session-grant drafts (#1306), keyed by server and conversation, so leaving a chat through Back
- * keeps the checkbox for the same outstanding request. A bound host's collector retires a draft as soon as its
- * modal stops being that request with that offer, including while no thread for the conversation is open.
+ * keeps the checkbox for the same outstanding request. A bound host's collector retires a draft as soon as the
+ * host no longer holds that request with that offer for the draft's conversation, including while no thread for
+ * the conversation is open. Another conversation's prompt never retires it (#1337).
  */
 class PermissionDraftStore(
     dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
@@ -39,12 +40,12 @@ class PermissionDraftStore(
 
     private val bindings = mutableMapOf<String, Binding>()
 
-    /** Follow [serverId]'s host modal. The same [owner] rebinds as a no-op; a new one starts that host afresh. */
+    /** Follow [serverId]'s host prompts. The same [owner] rebinds as a no-op; a new one starts that host afresh. */
     @Synchronized
     fun bind(
         serverId: String,
         owner: Any,
-        modals: StateFlow<ModalUiState>,
+        modals: StateFlow<HostModalState>,
     ) {
         if (bindings[serverId]?.owner === owner) return
         bindings.remove(serverId)?.job?.cancel()
@@ -56,18 +57,17 @@ class PermissionDraftStore(
     private fun retireStale(
         serverId: String,
         owner: Any,
-        modal: ModalUiState,
+        modals: HostModalState,
     ) {
         if (bindings[serverId]?.owner !== owner) return
         val next =
             drafts.value.filter { (key, draft) ->
                 key.first != serverId ||
-                    (
-                        modal is ModalUiState.Open &&
-                            modal.offersAlwaysAllow &&
+                    modals.outstanding.any { modal ->
+                        modal.offersAlwaysAllow &&
                             modal.conversationId == key.second &&
                             draft == PermissionGrantDraft(modal.modalId, modal.alwaysAllowRules)
-                    )
+                    }
             }
         if (next.size != drafts.value.size) {
             RelayLog.d { "event=permission_grant_draft action=retired" }
