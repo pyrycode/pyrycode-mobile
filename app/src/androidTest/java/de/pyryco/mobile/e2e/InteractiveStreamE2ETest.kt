@@ -1027,6 +1027,8 @@ class InteractiveStreamE2ETest {
         // 7. Open Channel info → tap the sheet's Delete. "Channel info" is ungated; the sheet's Delete
         //    ActionCell is unique while only the sheet is open. Tapping it opens the confirm dialog OVER the
         //    still-composed sheet (ThreadEvent.Delete leaves pendingChannelInfo true) → two "Delete" nodes.
+        //    The System prompt and MCP servers sections push Actions below the fold, so scroll to Delete
+        //    before tapping; an off-screen tap lands outside the sheet and opens nothing (#1344).
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1035,7 +1037,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(DELETE_ACTION).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText(DELETE_ACTION).performClick()
+        composeTestRule.onNodeWithText(DELETE_ACTION).performScrollTo().performClick()
 
         // 8. Confirm the delete. Wait for the dialog's unique title, then tap the CONFIRM "Delete" — the sheet's
         //    "Delete" is also on screen, so disambiguate by the dialog's sibling "Cancel" button (the sheet has
