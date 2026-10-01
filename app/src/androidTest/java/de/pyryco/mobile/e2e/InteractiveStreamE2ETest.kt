@@ -3535,7 +3535,8 @@ class InteractiveStreamE2ETest {
      *  * **The readings come back.** Effort and permission settle, none pending, on what a fresh reading
      *    taken on the new connection reports. The model is inherited, and the first turn's announcement is
      *    held too (#1317), so the mark follows that announcement (#1308) rather than the default row.
-     *  * **A context reading after a turn.** After a turn on the new connection the footer shows `Cxt: N%`.
+     *  * **A context reading after a turn.** A turn on the new connection pushes a reading newer than the held
+     *    one, its token count grown past the held reading's, and the footer shows `Cxt: N%`.
      *  * **A change is confirmed.** A published model picked from the footer is the saved model a fresh
      *    reading reports. It is picked after the last turn, so no turn runs on a model the account may not serve.
      *
@@ -3581,7 +3582,13 @@ class InteractiveStreamE2ETest {
 
             // 4. A turn on the new connection leaves a context reading, pushed when the turn ends. The held
             //    reading already shows a percentage, so the wait is on the turn itself: its reply is drawn and
-            //    the Stop control has gone.
+            //    the Stop control has gone. Two ping replies in a two-ping thread are both composed in the list.
+            //    Then the reading must be newer than the held one: the footer's percentage can round to the same
+            //    text, so freshness is the repository's token count growing past the held reading's.
+            val heldUsage =
+                hostRepository().let { repository ->
+                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first() } }
+                }
             sendFromPhone(PING_PROMPT)
             val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
             try {
@@ -3591,6 +3598,19 @@ class InteractiveStreamE2ETest {
                 }
             } catch (e: ComposeTimeoutException) {
                 throw AssertionError("the turn on the new connection never ended with its reply drawn", e)
+            }
+            try {
+                val repository = hostRepository()
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        repository.observeContextUsage(chat.id).filterNotNull().first { it.totalTokens > heldUsage.totalTokens }
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw AssertionError(
+                    "no context reading newer than the held one (${heldUsage.totalTokens} tokens) after the turn on the new connection",
+                    e,
+                )
             }
             awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the turn on the new connection") { CONTEXT_REPORTED.matches(it) }
 
