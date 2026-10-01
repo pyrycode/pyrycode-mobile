@@ -3410,6 +3410,10 @@ class InteractiveStreamE2ETest {
      * the phone's one answer, sent from A, resolves A's `modal_id` with source `remote`, and B's thread still
      * shows a prompt afterwards, which the phone drops once the daemon dismisses B's id.
      *
+     * A's turn end is not awaited. The daemon streams turn frames only for the conversation a message was last
+     * routed to (its follow-active cursor), which is B from step 2 on, so A's frames after the allow never reach
+     * any client. That A's allowed turn ends is proven by the sibling method, where no other chat is routed.
+     *
      * **Two real-claude turns**: A's and B's commands.
      */
     @Test
@@ -3459,7 +3463,6 @@ class InteractiveStreamE2ETest {
             assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissedA, "source"))
             assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissedA, "outcome"))
             awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
-            awaitTurnEnd(peer, chatA, 1, "A's allowed turn")
 
             // 5. B's prompt is still shown in B, so A's answer left it; the peer allows it and B's dialog closes untouched.
             leaveThread()
