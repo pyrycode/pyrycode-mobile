@@ -27,6 +27,7 @@ data class ToolCall(
     val parentToolUseId: String = "",                   // #810
     val denial: ToolDenial? = null,                     // #811
     val elapsedSeconds: Int? = null,                    // #812
+    val resultDetail: String? = null,                   // #1316
 )
 
 data class ToolDenial(                                  // #811
@@ -52,9 +53,9 @@ new exported type in the slice. See [Data model](data-model.md).
 | Event | Fold | Effect |
 |---|---|---|
 | **`tool_use`** (start) | `applyToolUse` | append a `Running` `Role.Tool` row, `id = toolUseId`, `toolCall = ToolCall(name, inputSummary, output="", Running, inputFields, parentToolUseId)` — **if absent** |
-| **`tool_result`** (`isError == false`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Done` unless already `Denied`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
-| **`tool_result`** (`isError == true`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Failed` unless already `Denied`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
-| **`tool_denied`** ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | `withToolDenied` | update the matching row in place: `status = Denied`, `denial = ToolDenial(...)` verbatim — **wins over whatever status the row held**, output/input/parent/position untouched; **no matching row → no-op**, a denial never adds a row |
+| **`tool_result`** (`isError == false`) | `applyToolResult` | update the matching row in place, **first result only** ([#1316](#first-result-wins-and-first-denial-wins-1316)): `output = resultSummary`, `resultDetail = resultDetail`, `status = Done` unless already `Denied`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
+| **`tool_result`** (`isError == true`) | `applyToolResult` | update the matching row in place, **first result only** ([#1316](#first-result-wins-and-first-denial-wins-1316)): `output = resultSummary`, `resultDetail = resultDetail`, `status = Failed` unless already `Denied`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
+| **`tool_denied`** ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | `withToolDenied` | update the matching row in place, **first denial only** ([#1316](#first-result-wins-and-first-denial-wins-1316)): `status = Denied`, `denial = ToolDenial(...)` verbatim — wins over whatever status the row held, output/input/parent/position untouched; **no matching row → no-op**, a denial never adds a row |
 | **`tool_progress`** ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) | `withToolProgress` | update the matching **`Running`** row in place: `elapsedSeconds = elapsedSeconds` verbatim (zero/negative/backwards kept as sent); **no matching row, or the row is no longer `Running` → no-op** — a heartbeat never adds a row, reopens a closed call, or overwrites its outcome |
 
 `failed ⟺ ToolResult.isError == true`; `done` otherwise; a row already `Denied` stays `Denied`
@@ -63,16 +64,46 @@ position** — and the match is namespaced `id == toolUseId && role == Role.Tool
 `toolUseId` can never collide with a real `message_id` and clobber a message. The `toolUseId` is the
 row's `Message.id`.
 
+### First result wins and first denial wins (#1316)
+
+Before #1316, both `withToolResult` and `withToolDenied` were last-write-wins: any later frame for
+the same `toolUseId` re-applied its own fold. Desktop (`fillResult` / the `toolDenied` arm in
+`threadTimeline.ts`) is first-write-wins instead, so #1316 brought mobile's reducer in line:
+
+- **`withToolResult`** now folds a `tool_result` only when the row is still `Running`, or is
+  `Denied` with no result yet (`ToolCall.resultDetail == null`). Any other case — a second result on
+  an already-`Done`/`Failed` row, or a result on a `Denied` row that already attached one — returns
+  the list **unchanged**: output, `resultDetail`, status and `parentToolUseId` all stay at their
+  first-result values. A row restored from the disk cache has `resultDetail == null` regardless of
+  its status, but its status is never `Running`/`Denied`-with-no-result unless genuinely reopened by
+  a later `tool_use`, so a duplicate result against a cache-restored `Done`/`Failed` row is still
+  rejected by the status gate, not the `resultDetail` check.
+- **`withToolDenied`** now folds a `tool_denied` only when the row holds no denial yet
+  (`ToolCall.denial == null`). A row already `Denied` returns the list unchanged on a second denial.
+
+The two folds still compose the same way they did before #1316: a denial **after** a result still
+marks the row `Denied` and keeps the result's output and `resultDetail` (the `Denied` status check
+inside `withToolResult`'s `status` branch, unchanged); a result **after** a denial still fills output
+and `resultDetail` on that `Denied` row, because the row's `resultDetail` is still `null` at that
+point — a refused call is never turned back into a merely failed one by the result claude writes
+after refusing, and the result it does carry is still shown. A result, then a second result, then a
+denial still lands the denial (first-result-wins governs the two results; the denial's own
+first-denial check only looks at `denial`, so it still applies on top). See [ToolCallRow § Result
+count](tool-call-row.md#trailing-status) for how `resultDetail` renders, and
+`HistoryPageReducerTest`'s result→result / denial→denial / result→denial / denial→result /
+denial→result→result cases for the fold's full order matrix.
+
 ### Denied ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811))
 
 claude's refusal reaches mobile as a separate `tool_denied` frame — sent on a line *before* the
 `tool_result`, and also emitted by the daemon's result-line recovery for a call whose `tool_result`
 already shipped — rather than as fields on `tool_result`, because either arrival order must produce
-the same retained state. `withToolDenied` therefore **always wins**: whatever the row's prior status
-(`Running`, `Done`, `Failed`, or already `Denied`), a denial sets it to `Denied`. `withToolResult`'s
-one change is the mirror of that: when a row is already `Denied`, a `tool_result` for the same
-`toolUseId` still attaches `output`, but leaves `status` and `denial` alone — a refused call is never
-turned back into a merely failed one by the result claude writes after refusing.
+the same retained state. Before #1316, `withToolDenied` always won regardless of repeat frames;
+since #1316 it is **first-denial-wins** instead (see above) — a row already `Denied` ignores a
+second `tool_denied`. `withToolResult`'s denial-interaction rule is unchanged: when a row is already
+`Denied`, a `tool_result` for the same `toolUseId` still attaches `output` (and, since #1316,
+`resultDetail`) when none has arrived yet, but leaves `status` and `denial` alone — a refused call is
+never turned back into a merely failed one by the result claude writes after refusing.
 
 `ToolDenial` carries `toolName`, `decisionReasonType`, `decisionReason`, `message`, and the two report
 arrays `truncatedFields` / `droppedFields`, all copied **verbatim** from the wire frame — no trim,
@@ -99,7 +130,9 @@ glyph and content description — see [ToolCallRow § Trailing status](tool-call
 
 The disk cache (`FileConversationCache.CachedToolCall`) persists `status` by enum name, so a `Denied`
 row survives a cache round-trip; `denial` itself is not persisted (out of scope, the #810
-`inputFields` precedent), so a row restored from cache is `Denied` with `denial = null`.
+`inputFields` precedent), so a row restored from cache is `Denied` with `denial = null`. `resultDetail`
+(#1316) is likewise not persisted, so a cache-restored row's `resultDetail` is always `null`
+regardless of status — see [§ First result wins and first denial wins](#first-result-wins-and-first-denial-wins-1316).
 
 ### Progress ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812))
 
@@ -178,7 +211,8 @@ crash, a duplicate row, or an orphan:
 | `tool_result` with no matching `tool_use` | `applyToolResult` finds no row → **no-op** (no orphan half-row) |
 | Result **before** use (out-of-order) | same as above — the early result is **dropped**; the later `tool_use` opens a fresh `Running` row (left permanently `Running`, see Limitations) |
 | Duplicate `tool_use` (same id) | existing row left **untouched** — no second row, and a finished row is **not** reset to `Running` |
-| Duplicate `tool_result` (same id) | in-place update **re-applied** (idempotent / last-write-wins, one row) |
+| Duplicate `tool_result` (same id) | **no-op since #1316** (first-result-wins, one row) — the row's output/`resultDetail`/status/`parentToolUseId` stay at their first-result values |
+| Duplicate `tool_denied` (same id) | **no-op since #1316** (first-denial-wins) — the row stays `Denied` with its first denial's fields |
 | Malformed `tool_use`/`tool_result` payload | dropped at the existing `decodeLiveSessionEvent` `catch` (a missing/wrong-typed field fails the strict decode) → the fold never runs, the single inbound collector survives |
 | `tool_denied` naming no known row ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | `withToolDenied` finds no row → **no-op**, no row is added |
 | Malformed `tool_denied` payload ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | dropped at `applyToolDenied`'s own `catch (IllegalArgumentException)` (live lane) or the replay lane's existing `try` — that one envelope/entry is dropped, the collector survives |
@@ -296,6 +330,15 @@ unseen `conversation_id`, the same guard `applyToolDenied` needed. Decode failur
 discarded without logging, matching this seam's standing posture; `elapsedSeconds` is never persisted
 to the disk cache.
 
+[#1316](https://github.com/pyrycode/pyrycode-mobile/issues/1316) (`result_detail`, first-result/
+first-denial-wins) adds one more verbatim-copied string (`resultDetail`) on the same no-trim/parse
+posture as `output`/`input` — it is daemon-authored display text, never parsed into a number, logged
+or treated as a link. The first-result/first-denial-wins change is a **pure fold-order** change: it
+narrows which frames a fold accepts (an already-resolved row's later frames become no-ops instead of
+re-applying) but adds no new parse point, no new persisted field, and no new unbounded-growth surface
+— the existing `indexOfMessage` match and the existing per-conversation map guards are unchanged.
+`resultDetail` is never persisted to the disk cache, the same posture as `denial` and `elapsedSeconds`.
+
 ## Related
 
 - [#387 implementation notes](../codebase/387.md) — files, line refs, design choices, verification.
@@ -323,5 +366,10 @@ to the disk cache.
   the `tool_progress` frame (see [§ Progress](#progress-812) above), folded on both the live lane
   (`applyToolProgress`) and the replay lane (`HistoryPageReducer`'s `TYPE_TOOL_PROGRESS` arm). Rendering
   the reading is [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658).
+- [#1316](https://github.com/pyrycode/pyrycode-mobile/issues/1316) — adds `ToolCall.resultDetail`
+  from `tool_result`'s `result_detail` field, and makes `withToolResult`/`withToolDenied`
+  first-result-wins / first-denial-wins instead of last-write-wins (see [§ First result wins and
+  first denial wins](#first-result-wins-and-first-denial-wins-1316) above). Rendering the count is
+  [ToolCallRow § Trailing status](tool-call-row.md#trailing-status).
 - Server SSOT: pyrycode#607 (wire types + capabilities), #616 (capability-gated fan-out), ADR 025
-  § Phase 2 structured streaming, EPIC pyrycode#596.
+  § Phase 2 structured streaming, EPIC pyrycode#596, pyrycode#2024 (`result_detail`).

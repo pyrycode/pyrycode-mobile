@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -85,6 +86,9 @@ private const val COMMAND_FIELD = "command"
 internal const val TOOL_ELAPSED_TAG = "tool-row-elapsed"
 internal const val TOOL_DESCRIPTION_CHEVRON_TAG = "tool-description-chevron"
 internal const val TOOL_EXPANDED_BODY_TAG = "tool-expanded-body"
+
+/** Tags a resolved row's result count (#1316), so tests can assert its absence and measure its bound. */
+internal const val TOOL_RESULT_DETAIL_TAG = "tool-row-result-detail"
 
 /**
  * One tool call in the thread: a `Bash` description takes the described Figma header, otherwise the
@@ -251,14 +255,31 @@ private fun HeaderRow(
  * Each status has its own glyph and content description, so the four can be told apart without colour.
  * `cd_tool_running` and `cd_tool_failed` are matched by the scripted `tool` / `tool-failed` scenarios and
  * `ScriptedToolRowTest`. Only a running row shows claude's elapsed reading; the row runs no timer of its
- * own, and Figma's result-count slot stays empty because `tool_result` carries no count.
+ * own.
+ *
+ * A resolved row draws its result count (#1316, Figma's "184 lines") before the glyph when the daemon sent
+ * one; an empty or missing count draws nothing and leaves no gap. The group is capped at half the width the
+ * header offers it, as desktop caps `.tool-row__right`, and the count is its only shrinkable child, so an
+ * unbounded value ellipsizes rather than pushing the glyph or the tool name off the row.
  */
 @Composable
 private fun TrailingStatus(toolCall: ToolCall) {
     Row(
+        modifier = Modifier.maxHalfWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ToolCallTrailingGap),
     ) {
+        val resultDetail = toolCall.resultDetail
+        if (toolCall.status != ToolCallStatus.Running && !resultDetail.isNullOrEmpty()) {
+            Text(
+                text = resultDetail,
+                modifier = Modifier.weight(1f, fill = false).testTag(TOOL_RESULT_DETAIL_TAG),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         when (toolCall.status) {
             ToolCallStatus.Running -> {
                 toolCall.elapsedSeconds?.let { seconds ->
@@ -300,6 +321,14 @@ private fun TrailingStatus(toolCall: ToolCall) {
         }
     }
 }
+
+/** Measures the content against half of the incoming maximum width, so it can take at most half the row. */
+private fun Modifier.maxHalfWidth(): Modifier =
+    layout { measurable, constraints ->
+        val maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth / 2 else constraints.maxWidth
+        val placeable = measurable.measure(constraints.copy(minWidth = minOf(constraints.minWidth, maxWidth), maxWidth = maxWidth))
+        layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+    }
 
 @Composable
 private fun StatusGlyph(
@@ -428,6 +457,7 @@ private val PreviewReadToolCall =
                 }
             }
             """.trimIndent(),
+        resultDetail = "184 lines",
     )
 
 private val PreviewBashToolCall =
@@ -458,6 +488,7 @@ private val PreviewFailedToolCall =
             > Task :app:compileDebugKotlin FAILED
             """.trimIndent(),
         status = ToolCallStatus.Failed,
+        resultDetail = "2 lines",
     )
 
 private val PreviewDeniedToolCall =
