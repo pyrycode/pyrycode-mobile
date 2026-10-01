@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalUiState
@@ -10,6 +11,7 @@ import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.batchFor
+import de.pyryco.mobile.data.model.latestOutstanding
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -132,7 +135,7 @@ class RelayRepositoryCoordinator(
     /**
      * The single connection-state source of truth: the pump + child scope + concrete repository of the
      * connection currently being served, or `null` between connections. **Every** connection-derived seam
-     * ([currentRepository], [pyrycodeStatus], [liveSessionEvents], [modalEvents]/[currentModal],
+     * ([currentRepository], [pyrycodeStatus], [liveSessionEvents], [modalEvents]/[hostModals],
      * [connectionStatus]) is a projection of this one [StateFlow], and the outbound passthroughs
      * ([answerModal]/[cancelModal]/[interrupt]) read its `.value` — so repo and pump-state can never be
      * paired across two different connections (the #493 fix; see [currentRepository]). Written only on the
@@ -198,48 +201,50 @@ class RelayRepositoryCoordinator(
         activeConnection.flatMapLatest { conn -> conn?.repo?.liveSessionEvents ?: emptyFlow() }
 
     /** The decoded v2 interactive **modal** lifecycle events (#437) for the current connection, surfaced
-     *  off the connection-scoped concrete [RemoteConversationRepository] — a byte-for-byte mirror of the
-     *  [liveSessionEvents] seam. Like it, modal events live on the concrete repo, not the
-     *  [ConversationRepository] interface, so this reaches them through [activeConnection]'s
-     *  [Connection.repo]. A cold `Flow` (events, `replay = 0`, no "current value" → no [stateIn]);
-     *  [flatMapLatest] switches to the fresh repo's stream on each connection and cancels the prior, so the
-     *  seam survives reconnection. Empty between connections. **Private** (#492): its sole consumer is
-     *  [currentModal], which folds it into the process-scoped "which modal is open" projection — no consumer
-     *  reads the raw event stream. */
+     *  off the connection-scoped concrete [RemoteConversationRepository] through [activeConnection]'s
+     *  [Connection.repo], like [liveSessionEvents]. Each connection's stream starts with one `null`, the
+     *  reconnect marker (#1337): [flatMapLatest] emits it as the first value of the new connection's inner
+     *  flow, after the prior connection's collection is cancelled and before any of the new connection's
+     *  frames. Empty between connections, so a teardown folds nothing. **Private** (#492): its sole consumer
+     *  is [hostModals]. */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val modalEvents: Flow<ModalEvent> =
-        activeConnection.flatMapLatest { conn -> conn?.repo?.modalEvents ?: emptyFlow() }
+    private val modalEvents: Flow<ModalEvent?> =
+        activeConnection.flatMapLatest { conn ->
+            conn?.repo?.modalEvents?.onStart<ModalEvent?> { emit(null) } ?: emptyFlow()
+        }
 
     /**
-     * The single hoisted "current modal" projection (#492): which permission/choice modal is currently
-     * outstanding, folded **once at this process-scoped layer** from the `replay = 0` [modalEvents] stream
-     * (#437) via [ModalUiState.reduce] (`Shown` → `Open`; matching `Dismissed` → `Dismissed`; non-matching
-     * `Dismissed` → no-op; last-shown wins). Because modal events carry **no** `conversation_id`
-     * ([ModalEvent] keys on `modalId` only), this is **app-level** — a single active modal across the app.
+     * Every prompt this host holds (#1337): each outstanding prompt across all its conversations, and the ones
+     * dismissed on this connection, folded **once at this process-scoped layer** from [modalEvents] via
+     * [HostModalState.reduce]. A thread reads its own conversation's prompt through [HostModalState.scopedTo].
      *
-     * **Hoisted from [ThreadViewModel] (#492).** The fold used to live per-thread-screen inside the
-     * ViewModel, whose collection only began when a thread screen was navigated into. A `modal_shown` fired
-     * before any subscriber existed was dropped ([modalEvents] is `replay = 0`), so an outstanding prompt
-     * stayed stuck daemon-side while the phone showed nothing. Folding here — on the process-scoped [scope]
-     * that already owns the reconnection-surviving seam and outlives any screen — accumulates the projection
-     * whether or not a thread screen is subscribed; the ViewModel re-exposes this instead. It sits downstream
-     * of the [flatMapLatest] in [modalEvents], so across a reconnect the inner source switches but this
-     * outer `scan` is **not** restarted — the accumulator survives connection churn (a still-`Open` modal is
-     * **retained**, not reset to `Hidden`: the answer path is guarded by the deterministic
-     * [answerModal]/[cancelModal] null-guard, never by this projection).
+     * **Cleared on every new connection.** The reconnect marker resets the fold to empty before the new
+     * connection's first modal frame, so a prompt answered on desktop or timed out while the phone was away
+     * does not linger: the daemon re-sends every still-outstanding `modal_shown` with its original `modal_id`
+     * on each (re)connection (protocol-mobile § Reconcile on (re)connect), and those re-sends are the only way
+     * a prompt returns. A teardown alone clears nothing, so prompts held while disconnected stay until the
+     * next connection is published; the deterministic [answerModal]/[cancelModal] null-guard keeps a tap on
+     * one from reaching a dead connection. Desktop #415/#510/#1140.
      *
-     * **Started [SharingStarted.Eagerly], mirroring [currentRepository] / [connectionStatus].** `scan`
-     * re-emits its initial accumulator on every fresh upstream collection; under `WhileSubscribed` a
-     * resubscription past the stop window would restart the `scan` and overwrite a retained `Open` with
-     * `Hidden`, and because [modalEvents] is `replay = 0` the prior events do not replay to rebuild it — a
-     * still-open modal would silently clear. `Eagerly` on the process-scoped [scope] runs the accumulator
-     * exactly once for the process lifetime, so `.value` is always the true current projection. Cost is
-     * negligible — modals are one-at-a-time, user-driven, low-rate. Adds **no log**: the moved [reduce] and
-     * this `stateIn` both emit nothing (the modal fields may name a sensitive command/path).
+     * **Hoisted from [ThreadViewModel] (#492)** so a `modal_shown` that arrives before any thread screen
+     * subscribes is held. **Started [SharingStarted.Eagerly]:** `scan` re-emits its initial accumulator on
+     * every fresh upstream collection, so under `WhileSubscribed` a resubscription would blank held prompts
+     * that the `replay = 0` source cannot rebuild. Adds **no log**: the modal fields may name a sensitive
+     * command/path.
+     */
+    val hostModals: StateFlow<HostModalState> =
+        modalEvents
+            .scan(HostModalState()) { state, event -> if (event == null) HostModalState() else state.reduce(event) }
+            .stateIn(scope, SharingStarted.Eagerly, HostModalState())
+
+    /**
+     * The single-value view of [hostModals] the conversation-list attention readers still take (#1337, until
+     * #1338 switches them to the whole list): the most recently shown outstanding prompt, else
+     * [ModalUiState.Hidden]. Threads never read it; they scope [hostModals] instead.
      */
     val currentModal: StateFlow<ModalUiState> =
-        modalEvents
-            .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
+        hostModals
+            .map { it.latestOutstanding }
             .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 
     /**
@@ -248,8 +253,8 @@ class RelayRepositoryCoordinator(
      * never shown in another's thread.
      *
      * Switched to the active connection's [RemoteConversationRepository.questionBatches] and started
-     * [SharingStarted.Eagerly] for [currentModal]'s reason (#492): a batch that arrives before any thread
-     * screen subscribes is held. Unlike [currentModal] it is **not** retained across a reconnect:
+     * [SharingStarted.Eagerly] for [hostModals]' reason (#492): a batch that arrives before any thread
+     * screen subscribes is held. Unlike [hostModals], which keeps its prompts through a teardown, it is **not** retained:
      * [teardownActive] nulls [activeConnection] (empty) and the next connection's repository starts empty,
      * so the old connection's batches are gone before the new one's first frame folds, and the daemon's
      * connect-time reconcile rebuilds only the batches still outstanding. No log: the batch strings are
