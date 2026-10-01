@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -74,6 +75,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.BannerNoticeRow
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
@@ -247,10 +249,14 @@ fun ThreadScreen(
     attachmentSendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
     // row is on screen, and a failed one's retry. Bound by MainActivity; defaulted so other screens and tests
-    // draw attachments as loading and start nothing.
+    // draw attachments as loading, or a file not fetched on sight (#1329) as its ready row, and start nothing.
     attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
-    onAttachmentShown: (String) -> Unit = {},
+    onAttachmentShown: (MessageAttachment) -> Unit = {},
     onRetryAttachment: (String) -> Unit = {},
+    // #1329: a file not fetched yet, tapped or long-pressed, and the one-shot open or save once it loaded.
+    // Bound by MainActivity → vm::onAttachmentRequested / vm.attachmentLoads.
+    onRequestAttachment: (MessageAttachment, AttachmentAction) -> Unit = { _, _ -> },
+    attachmentLoads: Flow<AttachmentLoaded> = emptyFlow(),
     // #1027: a ready markdown attachment's tap, and the one-shot signal that it could not be read. Bound by
     // MainActivity → vm::onOpenMarkdownAttachment / vm.markdownOpenFailures.
     onOpenMarkdownAttachment: (String) -> Unit = {},
@@ -330,6 +336,8 @@ fun ThreadScreen(
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
             noticeScope.launch { snackbarHostState.showSnackbar(resources.getString(notice.message)) }
         }
+    // #1329: a tapped file that loaded ready opens or saves once, through the same actions as a ready row.
+    LaunchedEffect(attachmentLoads, attachmentActions) { attachmentLoads.collect(attachmentActions.loaded) }
     // #1027: a markdown file that cannot be read says what any failed open says.
     LaunchedEffect(markdownOpenFailures, snackbarHostState) {
         markdownOpenFailures.collect { snackbarHostState.showSnackbar(resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
@@ -646,6 +654,7 @@ fun ThreadScreen(
                                                         onRetryAttachment = onRetryAttachment,
                                                         onOpenAttachment = attachmentActions.open,
                                                         onSaveAttachment = attachmentActions.save,
+                                                        onRequestAttachment = onRequestAttachment,
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
