@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.SerializationException
 
 /**
  * One conversation's system prompt as its editor sees it (#824).
@@ -67,13 +68,16 @@ enum class SystemPromptRefusal { Malformed, NotFound, Unclassified }
 
 /**
  * Classifies a failed write by its code alone; the exception's message is never read. `conversation.not_found`
- * reaches here as an [IllegalArgumentException], because `RelayRequests.mapError` converts it; the only other
- * one, the length pre-flight in `setSystemPrompt`, cannot fire behind [SystemPromptEditorState.Loaded.canSave].
+ * reaches here as an [IllegalArgumentException], because `RelayRequests.mapError` converts it. Two other
+ * [IllegalArgumentException]s are not that refusal: a [SerializationException] from an ack that failed to
+ * decode, after which the daemon has probably applied the write, so it is [SystemPromptRefusal.Unclassified];
+ * and the length pre-flight in `setSystemPrompt`, which cannot fire behind [SystemPromptEditorState.Loaded.canSave].
  */
 internal fun refusalFor(error: Exception): SystemPromptRefusal =
     when {
         error is RelayErrorException && error.code == "protocol.malformed" -> SystemPromptRefusal.Malformed
         error is RelayErrorException && error.code == "conversation.not_found" -> SystemPromptRefusal.NotFound
+        error is SerializationException -> SystemPromptRefusal.Unclassified
         error is IllegalArgumentException -> SystemPromptRefusal.NotFound
         else -> SystemPromptRefusal.Unclassified
     }

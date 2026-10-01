@@ -3,7 +3,10 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
@@ -18,13 +21,11 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
-import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.ui.conversations.components.CHANNEL_INFO_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState.Loaded
 import de.pyryco.mobile.ui.conversations.components.SystemPromptRefusal
-import de.pyryco.mobile.ui.conversations.components.refusalFor
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -125,6 +126,10 @@ class ThreadScreenSystemPromptTest {
         inSheet("Over the 8192-byte limit. Shorten it before saving.").performScrollTo()
         button("Save").assertIsNotEnabled()
         button("Clear").assertIsEnabled()
+        // TalkBack announces the over-limit state on the field itself, as Edit channel's prompt field does.
+        composeTestRule
+            .onNodeWithTag(CHANNEL_INFO_PROMPT_FIELD_TAG)
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Error, "Over the 8192-byte limit. Shorten it before saving."))
     }
 
     @Test
@@ -155,12 +160,5 @@ class ThreadScreenSystemPromptTest {
             prompt = base.copy(saveFailed = true, refusal = refusal)
             inSheet(line).performScrollTo()
         }
-    }
-
-    @Test
-    fun refusalsComeFromTheErrorCodeOnly() {
-        assertEquals(SystemPromptRefusal.Malformed, refusalFor(RelayErrorException("protocol.malformed", false, "x")))
-        assertEquals(SystemPromptRefusal.NotFound, refusalFor(IllegalArgumentException("Unknown conversation")))
-        assertEquals(SystemPromptRefusal.Unclassified, refusalFor(RelayErrorException("other", false, "x")))
     }
 }

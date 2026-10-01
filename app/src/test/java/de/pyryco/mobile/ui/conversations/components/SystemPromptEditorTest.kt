@@ -13,6 +13,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.SerializationException
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -268,6 +269,8 @@ class SystemPromptEditorTest {
                     RelayErrorException("conversation.not_found", retryable = false, message = "x") to SystemPromptRefusal.NotFound,
                     RelayErrorException("server.busy", retryable = true, message = "x") to SystemPromptRefusal.Unclassified,
                     IllegalStateException("not connected") to SystemPromptRefusal.Unclassified,
+                    // An undecodable ack is an IllegalArgumentException too, but the write probably landed.
+                    SerializationException("bad ack") to SystemPromptRefusal.Unclassified,
                 )
             for ((error, refusal) in cases) {
                 val repo =

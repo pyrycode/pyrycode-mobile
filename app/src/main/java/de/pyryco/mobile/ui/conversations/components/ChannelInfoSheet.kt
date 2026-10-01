@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -61,7 +62,10 @@ import de.pyryco.mobile.data.repository.MemorySearchProvider
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SystemPromptLimit
+import de.pyryco.mobile.ui.components.PROMPT_MIN_LINES
+import de.pyryco.mobile.ui.components.PromptWellHeight
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 
 internal data class ChannelInfoUiModel(
     val conversationName: String,
@@ -478,10 +482,12 @@ private fun SystemPromptSection(
                     Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .semantics { contentDescription = SYSTEM_PROMPT_FIELD_LABEL }
-                        .testTag(CHANNEL_INFO_PROMPT_FIELD_TAG),
+                        .semantics {
+                            contentDescription = SYSTEM_PROMPT_FIELD_LABEL
+                            if (state.overLimit) error(SYSTEM_PROMPT_OVER_LIMIT)
+                        }.testTag(CHANNEL_INFO_PROMPT_FIELD_TAG),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-                minLines = 4,
+                minLines = PROMPT_MIN_LINES,
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 decorationBox = { innerTextField ->
                     // Edit channel's prompt well (ChannelFormFields), on the sheet's own container token.
@@ -489,8 +495,8 @@ private fun SystemPromptSection(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 112.dp)
-                                .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(6.dp))
+                                .heightIn(min = PromptWellHeight)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.shapes.modalControl)
                                 .padding(16.dp),
                     ) {
                         innerTextField()

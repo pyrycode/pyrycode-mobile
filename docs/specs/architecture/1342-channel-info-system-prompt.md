@@ -94,3 +94,13 @@ Read failure → `Unavailable` line. Write failure → `saveFailed` + classified
 - `docs/knowledge/features/system-prompt-editor.md`: the editor is now mounted in Channel info via `ThreadViewModel`; `canSave`/`canClear` follow desktop; refusal classification; clear rule.
 - `docs/knowledge/features/channel-info-sheet.md`: the System prompt section, its order and states.
 - Edit channel's clear rule (emptied box → `null`) wherever `submitChannelEdit` is described (`channel-list-viewmodel.md` § Wiring / `mobile-modal-callers.md`).
+
+## Revisions
+
+### 2026-10-01 — rework after the first review
+
+- **Screen test location.** The section's screen coverage lives in a new `ThreadScreenSystemPromptTest` (shared/Robolectric) instead of `ThreadScreenChannelInfoTest`, so the System prompt cases set up their own `ThreadScreen` host with a `systemPrompt` state. Same assertions as the Testing strategy lists; no behaviour change.
+- **Copy as constants.** The section's copy is held in private `const val`s in `ChannelInfoSheet.kt` (plus `SystemPromptRefusal.line()`) rather than inline literals, because the write line and the over-limit field semantics both read the same strings. Still desktop's copy verbatim.
+- **Well shape and size (review MUST FIX).** The well's corner is `MaterialTheme.shapes.modalControl`, not a literal 6 dp shape; its minimum lines and height are `ChannelFormFields`' `PROMPT_MIN_LINES` and `PromptWellHeight`, now `internal`, so the two prompt wells share one size.
+- **Over-limit semantics.** Over the limit, the field carries `error(...)` semantics with the over-limit line, as Edit channel's prompt field does.
+- **`SerializationException` is Unclassified (review SHOULD FIX).** `kotlinx.serialization.SerializationException` extends `IllegalArgumentException` and is what `setSystemPrompt` throws for an undecodable ack, after which the daemon has probably applied the write. `refusalFor` maps it to `Unclassified` before the `IllegalArgumentException` → `NotFound` branch. Contract: `protocol.malformed` → Malformed; `conversation.not_found` (as `RelayErrorException` or a non-serialization `IllegalArgumentException`) → NotFound; everything else → Unclassified. Covered in `SystemPromptEditorTest`; the duplicate pure-unit check in the screen test is removed.
