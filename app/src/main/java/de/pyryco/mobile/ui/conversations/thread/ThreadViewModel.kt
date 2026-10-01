@@ -36,9 +36,12 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.attachmentTarget
+import de.pyryco.mobile.ui.conversations.components.loadsOnShow
 import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
@@ -249,11 +252,24 @@ class ThreadViewModel(
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
     /**
-     * Each shown message attachment's state by id (#984). An id is absent until its row is first shown,
-     * which is what starts its load ([onAttachmentShown]); the screen draws an absent id as loading. A
-     * sibling flow for the same reason as [draft].
+     * Each shown message attachment's state by id (#984). An id is absent until its load starts: when its
+     * row is first shown ([onAttachmentShown]), or for a file not fetched on sight, when it is tapped
+     * ([onAttachmentRequested], #1329). The screen draws an absent id as loading, or that file as its ready
+     * row. A sibling flow for the same reason as [draft].
      */
     val attachmentStates: StateFlow<Map<String, AttachmentViewState>> = _attachmentStates.asStateFlow()
+
+    // #1329: the action a tap asked for, by id, while that tap's load runs. Main thread only, like
+    // [_attachmentsSending]: written by [onAttachmentRequested], removed when the load settles.
+    private val pendingAttachmentRequests = mutableMapOf<String, Pair<MessageAttachment, AttachmentAction>>()
+
+    private val attachmentLoadChannel = Channel<AttachmentLoaded>(capacity = Channel.BUFFERED)
+
+    /**
+     * One open or save per tapped file that loaded ready (#1329), for the screen to run through its
+     * attachment actions. Carries the loaded source, so it never waits on [attachmentStates] recomposing.
+     */
+    val attachmentLoads: Flow<AttachmentLoaded> = attachmentLoadChannel.receiveAsFlow()
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -1455,11 +1471,30 @@ class ThreadViewModel(
     }
 
     /**
-     * A message attachment's row is on screen (#984): start its load unless it already has a state. The
-     * claim is a compare-and-set, so a row shown twice loads once, and a failure waits for [onRetryAttachment].
+     * A message attachment's row is on screen (#984): start its load unless it already has a state, and only
+     * when it is fetched on sight ([loadsOnShow], #1329); any other file waits for [onAttachmentRequested].
+     * The claim is a compare-and-set, so a row shown twice loads once, and a failure waits for
+     * [onRetryAttachment].
      */
-    fun onAttachmentShown(attachmentId: String) {
-        if (claimAttachment(attachmentId) { it == null }) loadAttachment(attachmentId)
+    fun onAttachmentShown(attachment: MessageAttachment) {
+        if (!loadsOnShow(attachment)) return
+        if (claimAttachment(attachment.attachmentId) { it == null }) loadAttachment(attachment.attachmentId)
+    }
+
+    /**
+     * A file not fetched yet was tapped or long-pressed (#1329): load it as a shown row would, and once it is
+     * ready deliver [action] once through [attachmentLoads]. Only a tap that claims the load records the
+     * action, so a tap on a row already loading, ready or failed does nothing here.
+     */
+    fun onAttachmentRequested(
+        attachment: MessageAttachment,
+        action: AttachmentAction,
+    ) {
+        val id = attachment.attachmentId
+        if (!claimAttachment(id) { it == null }) return
+        pendingAttachmentRequests[id] = attachment to action
+        RelayLog.d { "event=thread_attachment_request id=$id action=${action.name.lowercase()}" }
+        loadAttachment(id)
     }
 
     /** The retry control of a failed attachment (#984). Not found is final and has none. */
@@ -1502,6 +1537,11 @@ class ThreadViewModel(
                 }
             RelayLog.d { "event=thread_attachment_load id=$attachmentId outcome=$outcome" }
             _attachmentStates.update { it + (attachmentId to state) }
+            // #1329: a tap's action settles with its load, once; a load that did not end ready drops it.
+            val (attachment, action) = pendingAttachmentRequests.remove(attachmentId) ?: return@launch
+            val ready = state as? AttachmentViewState.Ready
+            ready?.let { attachmentLoadChannel.trySend(AttachmentLoaded(attachmentTarget(attachment, it), it.source, action)) }
+            RelayLog.d { "event=thread_attachment_request id=$attachmentId outcome=${if (ready != null) "delivered" else "dropped"}" }
         }
     }
 

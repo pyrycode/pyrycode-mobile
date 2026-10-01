@@ -4451,6 +4451,8 @@ class InteractiveStreamE2ETest {
      *    the content's digest.
      * The offer is live-only, with no replay: after the restart the row comes from the phone's own thread
      * cache. A fresh device, or a cleared cache, would not show it, by design, and that is not asserted.
+     * The offer names a `.txt` file with no type, so the row is not fetched until [assertOpensAndSaves] taps it
+     * (#1329): the tap loads the file and opens it, and the long-press then saves the loaded file.
      *
      * The name places it before the background-task scenario in JUnit's default order, which sorts by name
      * hash. In two live runs every peer opened before that point carried frames.
@@ -5006,7 +5008,10 @@ class InteractiveStreamE2ETest {
         runBlocking { requirePeerAnswer(THREAD_TIMEOUT_MS) { peer.history(conversationId, THREAD_TIMEOUT_MS) } }
     }
 
-    /** A message attachment's file row named [name] that is ready to act: tap opens, long-press saves. */
+    /**
+     * A message attachment's file row named [name] that is ready to act: tap opens, long-press saves. Since
+     * #1329 a named file other than an image is not fetched until that tap, so the row acts before it is fetched.
+     */
     private fun readyAttachmentRow(name: String): SemanticsMatcher =
         hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG) and hasText(name) and hasClickAction()
 
@@ -5024,7 +5029,9 @@ class InteractiveStreamE2ETest {
 
     /**
      * Tap the ready row named [name] and read what `ACTION_VIEW` was handed; then long-press it and read what
-     * was written to the `ACTION_CREATE_DOCUMENT` target. Both must have [digest]. [stub] answers both.
+     * was written to the `ACTION_CREATE_DOCUMENT` target. Both must have [digest]. [stub] answers both. The tap
+     * comes first: for a named file other than an image it is what fetches the file (#1329), so its wait
+     * allows a retrieval.
      */
     private fun assertOpensAndSaves(
         stub: ActivityIntentStub,
@@ -5035,7 +5042,7 @@ class InteractiveStreamE2ETest {
         stub.answer(Intent.ACTION_VIEW) { Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null) }
         val views = stub.answered.count { it.action == Intent.ACTION_VIEW }
         composeTestRule.onNode(readyAttachmentRow(name)).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { stub.answered.count { it.action == Intent.ACTION_VIEW } > views }
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { stub.answered.count { it.action == Intent.ACTION_VIEW } > views }
         val view = stub.answered.last { it.action == Intent.ACTION_VIEW }
         val opened = checkNotNull(view.data) { "ACTION_VIEW carried no URI" }
         assertEquals("the scheme of the URI handed to the viewer", ContentResolver.SCHEME_CONTENT, opened.scheme)

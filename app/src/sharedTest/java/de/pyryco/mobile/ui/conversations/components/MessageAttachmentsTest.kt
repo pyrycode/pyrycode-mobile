@@ -70,10 +70,11 @@ class MessageAttachmentsTest {
     private fun render(
         message: Message,
         decoder: AttachmentThumbnailDecoder = decodes,
-        onShown: (String) -> Unit = {},
+        onShown: (MessageAttachment) -> Unit = {},
         onRetry: (String) -> Unit = {},
         onOpen: (AttachmentTarget) -> Unit = {},
         onSave: (AttachmentTarget) -> Unit = {},
+        onRequest: (MessageAttachment, AttachmentAction) -> Unit = { _, _ -> },
         fontScale: Float = 1f,
         states: () -> Map<String, AttachmentViewState>,
     ) {
@@ -89,6 +90,7 @@ class MessageAttachmentsTest {
                                 onRetryAttachment = onRetry,
                                 onOpenAttachment = onOpen,
                                 onSaveAttachment = onSave,
+                                onRequestAttachment = onRequest,
                             )
                         }
                     }
@@ -202,10 +204,79 @@ class MessageAttachmentsTest {
 
     @Test
     fun loading_saysSo() {
-        render(message(MessageAttachment(A1, "notes.txt", "text/plain"))) { emptyMap() }
+        // #1329: with no state, only a reference that is fetched on show is loading; this one has no type or name.
+        render(message(MessageAttachment(A1))) { emptyMap() }
 
-        composeTestRule.onNodeWithText("notes.txt").assertExists()
+        composeTestRule.onNodeWithText("Attachment").assertExists()
         composeTestRule.onNodeWithText("Loading…").assertExists()
+        composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).assertHasNoClickAction()
+    }
+
+    @Test
+    fun aFileNotFetchedYet_drawsAsItsReadyRow_andItsTapAndLongPressAskForIt() {
+        val pdf = MessageAttachment(A1, "report.pdf", "application/pdf")
+        val offer = MessageAttachment(A2, "offer.txt")
+        val requested = mutableListOf<Pair<MessageAttachment, AttachmentAction>>()
+        val acted = mutableListOf<AttachmentTarget>()
+        render(
+            message(pdf, offer),
+            states = { emptyMap() },
+            onRequest = { attachment, action -> requested += attachment to action },
+            onOpen = { acted += it },
+            onSave = { acted += it },
+        )
+
+        composeTestRule.onNodeWithText("report.pdf").assertExists()
+        composeTestRule.onNodeWithText("offer.txt").assertExists()
+        composeTestRule.onAllNodesWithText("Loading…").assertCountEquals(0)
+        val rows = composeTestRule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)
+        rows.assertCountEquals(2)
+        rows[0].assertHasClickAction()
+        rows[0].performClick()
+        rows[1].performTouchInput { longClick() }
+
+        assertEquals(listOf(pdf to AttachmentAction.OPEN, offer to AttachmentAction.SAVE), requested)
+        assertEquals(emptyList<AttachmentTarget>(), acted)
+    }
+
+    @Test
+    fun anImageByTypeOrName_isLoadingUntilItArrives_andAsksForNothing() {
+        val requested = mutableListOf<AttachmentAction>()
+        render(
+            message(MessageAttachment(A1, "photo.png", "image/png"), MessageAttachment(A2, "offer.PNG")),
+            states = { emptyMap() },
+            onRequest = { _, action -> requested += action },
+        )
+
+        composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).assertHasNoClickAction()
+        // A name-only image has no type to draw a slot from until it is retrieved; it is a loading file row.
+        composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).assertHasNoClickAction()
+        composeTestRule.onNodeWithText("Loading…").assertExists()
+        composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).performClick()
+        assertEquals(emptyList<AttachmentAction>(), requested)
+    }
+
+    @Test
+    fun aRequestedFileThatLoads_thenFails_offersRetry_andNeitherOpensNorSaves() {
+        var states by mutableStateOf<Map<String, AttachmentViewState>>(mapOf(A1 to AttachmentViewState.Loading))
+        val acted = mutableListOf<Any>()
+        render(
+            message(MessageAttachment(A1, "report.pdf", "application/pdf")),
+            states = { states },
+            onRequest = { attachment, _ -> acted += attachment },
+            onOpen = { acted += it },
+            onSave = { acted += it },
+        )
+
+        composeTestRule.onNodeWithText("Loading…").assertExists()
+        composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).assertHasNoClickAction()
+        states = mapOf(A1 to AttachmentViewState.Failed)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Couldn't load file").assertExists()
+        composeTestRule.onNodeWithText("Retry").assertExists()
+        composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).assertHasNoClickAction()
+        assertEquals(emptyList<Any>(), acted)
     }
 
     @Test
@@ -255,7 +326,7 @@ class MessageAttachmentsTest {
 
     @Test
     fun eachComposedAttachment_isReportedShownByItsId() {
-        val shown = mutableListOf<String>()
+        val shown = mutableListOf<MessageAttachment>()
         render(
             message(MessageAttachment(A1, "a.txt", "text/plain"), MessageAttachment(A2, "b.txt", "text/plain")),
             states = { emptyMap() },
@@ -263,7 +334,8 @@ class MessageAttachmentsTest {
         )
         composeTestRule.waitForIdle()
 
-        assertEquals(listOf(A1, A2), shown)
+        // Every row reports itself; the thread decides which are fetched on show (#1329).
+        assertEquals(listOf(A1, A2), shown.map { it.attachmentId })
     }
 
     @Test
@@ -312,7 +384,7 @@ class MessageAttachmentsTest {
                 MessageAttachment(A3, "gone.zip", "application/zip"),
                 MessageAttachment(A4, "later.txt", "text/plain"),
             ),
-            states = { mapOf(A2 to AttachmentViewState.Failed, A3 to AttachmentViewState.NotFound) },
+            states = { mapOf(A2 to AttachmentViewState.Failed, A3 to AttachmentViewState.NotFound, A4 to AttachmentViewState.Loading) },
             onOpen = { acted += it },
             onSave = { acted += it },
         )
