@@ -3579,18 +3579,29 @@ class InteractiveStreamE2ETest {
             awaitFooter(changeEffortLabel, effortLabel) { it == effortNote }
             awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
 
-            // 4. A turn on the new connection leaves a context reading, pushed when the turn ends.
+            // 4. A turn on the new connection leaves a context reading, pushed when the turn ends. The held
+            //    reading already shows a percentage, so the wait is on the turn itself: its reply is drawn and
+            //    the Stop control has gone.
             sendFromPhone(PING_PROMPT)
+            val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
+            try {
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).fetchSemanticsNodes().size >= 2 &&
+                        composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the turn on the new connection never ended with its reply drawn", e)
+            }
             awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the turn on the new connection") { CONTEXT_REPORTED.matches(it) }
 
             // 5. A model picked from the published menu is confirmed by a fresh reading.
             val target =
                 checkNotNull(
-                    usableRows(menu).firstOrNull {
+                    usableRows(publishedMenu(chat.id)).firstOrNull {
                         it.value != INHERITED_MODEL_VALUE && it.value != fresh.model && it.value != marked?.value
                     },
                 ) {
-                    "the menu publishes no usable model besides the inherited default"
+                    "the menu publishes no usable model besides the inherited default and the marked row"
                 }
             pickFooterOption(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
