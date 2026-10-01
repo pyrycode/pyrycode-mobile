@@ -205,8 +205,11 @@ class PermissionDraftStore(dispatcher: CoroutineDispatcher = Dispatchers.Main.im
 `ThreadViewModel` takes an optional `permissionDraftStore: PermissionDraftStore? = null` constructor
 parameter (a private store stands in for direct test/preview construction, mirroring `questionDraftStore`);
 `AppModule`'s `single { PermissionDraftStore() } onClose { it?.dispose() }` supplies the real one, and
-`ThreadDestinationFactory.thread` binds it to `bundle.coordinator.currentModal` beside the question-draft
-binding.
+`ThreadDestinationFactory.thread` binds it to `bundle.coordinator.hostModals` beside the question-draft
+binding. **[#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) changed `bind`'s
+`modals` parameter from `StateFlow<ModalUiState>` to `StateFlow<HostModalState>`** so the store follows
+every outstanding prompt on the host, not the single most-recent one — see the retirement rule below for
+why that matters.
 
 ```kotlin
 val alwaysAllowAccepted: StateFlow<Boolean> =
@@ -234,14 +237,21 @@ private fun grantsAlwaysAllow(open: ModalUiState.Open, optionId: String): Boolea
   conversationId)`; the stored value additionally carries `(modalId, rules)`, so two conversations, two
   servers, or the same conversation's next request can never read each other's draft.
 - **A bound host retires a stale draft on its own, including while the chat is closed.** `bind(serverId,
-  owner, modals)` starts one `SupervisorJob`-scoped collector per host over the coordinator's `currentModal`;
-  on every emission it drops any draft for that server whose conversation's current modal is no longer an
-  `Open` offering that exact `(modalId, rules)` pair — replacement, resolution, cancellation, or the same
-  request re-offered with different rules all retire it, whether or not a thread for that conversation is
-  open. `bind` is idempotent per `owner` (the coordinator instance); a different owner cancels the old
-  collector and clears that host's drafts before starting fresh. An **unbound** store (a test, the demo
-  host) keeps every entry — the VM's own `(modalId, rules)` equality check in `grantsAlwaysAllow` still hides
-  a stale one from actually being used, so an unbound store is inert-but-correct, never unsafe.
+  owner, modals)` starts one `SupervisorJob`-scoped collector per host over the coordinator's
+  `hostModals: StateFlow<HostModalState>` ([#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)
+  — before it, `currentModal: StateFlow<ModalUiState>`, the host's single most-recent prompt); on every
+  emission `retireStale` drops any draft for that server whose conversation has **no** entry in
+  `modals.outstanding` that is `Open`, offers always-allow, has that conversation's id, and matches the
+  draft's exact `(modalId, rules)` pair — replacement, resolution, cancellation, or the same request
+  re-offered with different rules all retire it, whether or not a thread for that conversation is open.
+  **Because the check scans the whole `outstanding` list instead of one value, a second conversation's
+  prompt arriving no longer retires the first's draft** — the #1337 fix: before it, `retireStale` compared
+  against the host's single current modal, so chat B's `modal_shown` evicted chat A's tick the instant it
+  replaced A's entry in the old fold, even though A's prompt was still open. `bind` is idempotent per
+  `owner` (the coordinator instance); a different owner cancels the old collector and clears that host's
+  drafts before starting fresh. An **unbound** store (a test, the demo host) keeps every entry — the VM's
+  own `(modalId, rules)` equality check in `grantsAlwaysAllow` still hides a stale one from actually being
+  used, so an unbound store is inert-but-correct, never unsafe.
 - **`onAlwaysAllowChanged`'s `modalId` argument is a guard, never a target.** It only stops a tap that lands
   after the rendered prompt was replaced from silently accepting the replacement's offer — the toggle can
   never accept a prompt other than the one currently open. This was a security-review MUST FIX on #818 and
@@ -344,7 +354,7 @@ viewModel {
     ThreadViewModel(
         get(), get(), get(), get(),
         coordinator.liveSessionEvents,
-        coordinator.currentModal, // #492: the hoisted projection (was coordinator.modalEvents)
+        coordinator.hostModals, // #1337: every outstanding prompt (was coordinator.currentModal, #492's single projection)
         // #818: a lambda, not a bare method reference, since the VM's answerModal now takes the grant.
         answerModal = { modal, option, grant -> coordinator.answerModal(modal, option, grant) },
         cancelModal = coordinator::cancelModal,
@@ -370,11 +380,13 @@ Taps on a VM with no open modal no-op via the `as? Open ?: return` guard.
   so a stale `Open` can persist. Answering it is rejected server-side (stale `modalId`) and surfaces via the
   error signal, so a proactive stale-clear is a UX nicety, **not** a correctness requirement — **not built
   here** (no observed failure; the daemon validation is the deterministic backstop).
-- **Scoped to this thread's conversation (#816), not app-level.** The coordinator's fold still holds one
-  outstanding modal per host, but `onModalOption` / `onModalCancel` read it through a private
+- **Scoped to this thread's conversation (#816), not app-level.** The coordinator's fold holds every
+  outstanding prompt per host, keyed on `modalId` ([#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)
+  — before it, one modal per host), but `onModalOption` / `onModalCancel` read it through a private
   `scopedModal()` helper (`hostModal.value.scopedTo(conversationId)`) rather than through the collected
   `currentModal`, so a tap in one thread can never answer a modal raised by another conversation on the
-  same host — not even in the instant before `currentModal`'s own `stateIn` catches up. See [Current-modal
+  same host — not even in the instant before `currentModal`'s own `stateIn` catches up, and (since #1337)
+  not even while that other conversation's own prompt is simultaneously held. See [Current-modal
   state](current-modal-state.md).
 
 ## Testing

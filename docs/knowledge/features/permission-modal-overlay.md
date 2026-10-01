@@ -103,7 +103,7 @@ for what still reaches the old `Scaffold`-sibling `when` block (`Dismissed` only
 ## The render path
 
 ```
-ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (host-level, modalId-keyed), scoped to this thread's own conversation since #816
+ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (host-level, modalId-keyed; #1337 holds every outstanding prompt, not one), scoped to this thread's own conversation since #816
 ThreadViewModel.armedOptionId : StateFlow<String?>          ◀── #451 arm projection (VM-scoped)
 ThreadViewModel.alwaysAllowAccepted : StateFlow<Boolean>    ◀── #818 offer-acceptance projection, now backed by PermissionDraftStore (#1306)
 ThreadViewModel.modalSendErrors : Flow<Unit>                ◀── #451 payload-free one-shot
@@ -140,11 +140,15 @@ taps](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306)). `ThreadScr
 while `navigationEvents` stays in `MainActivity` because navigation is a host concern. `modalSendErrors` is a
 single-consumer `Channel.receiveAsFlow()`, so `MainActivity` only forwards the reference.
 
-Host-level by construction: the coordinator's fold holds **one** modal per host, keyed on `modalId`, not a
-per-conversation map. Since [#816](current-modal-state.md), `ThreadViewModel` filters that single modal
-down to its own conversation (`ModalUiState.scopedTo`, driven by `Shown.conversationId` — see [Modal
-events](modal-events.md)) before this overlay ever sees it, so the overlay only draws in the thread whose
-conversation raised the modal — never in a second open thread for another conversation on the same host.
+Host-level by construction: the coordinator's fold holds **every outstanding prompt** on a host in one
+[`HostModalState`](current-modal-state.md#the-hostmodalstate-fold-1337), keyed on `modalId`
+([#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) — before it, the fold held a single
+modal and a second chat's prompt replaced the first's). `ThreadViewModel` filters the host's prompts down to
+its own conversation (`HostModalState.scopedTo`, driven by `Shown.conversationId` — see [Modal
+events](modal-events.md)) before this overlay ever sees them, so the overlay only draws in the thread whose
+conversation raised a given prompt — never in a second open thread for another conversation on the same
+host, and (since #1337) never pre-empted by a second chat's prompt arriving: chat A's card stays mounted
+while chat B raises and even resolves its own.
 
 ## The inline request (`Open`)
 
@@ -314,10 +318,16 @@ rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyM
 
 When `currentModal` transitions to `Dismissed`, **no overlay renders** (it is removed — AC #3) and a
 snackbar surfaces the resolution reason via a `LaunchedEffect(modalState.modalId)`. Keying on `modalId`
-fires it **exactly once** per resolution (`Dismissed` is a sticky terminal state in #445's fold) and never
-re-fires on unrelated recomposition. The Scaffold gains a `snackbarHostState = remember {
-SnackbarHostState() }` + `snackbarHost`, mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md)
-dismiss-reason precedent.
+fires it **exactly once per composition of that `LaunchedEffect`** — not once per resolution overall.
+Through #1337, `Dismissed` was a sticky terminal state that a thread, once scoped onto it, never left until
+superseded by a new `Open`; since #1337, `HostModalState.scopedTo` keeps returning that conversation's most
+recent `Dismissed` from `resolved` (see [Current-modal state § the `HostModalState`
+fold](current-modal-state.md#the-hostmodalstate-fold-1337)) for as long as the **current connection** lasts,
+so **leaving the thread and reopening it re-runs `LaunchedEffect(modalId)` with the same id and the snackbar
+fires again.** This is a deliberate consequence of #1337's reconnect-only clear, not a regression: the
+snackbar is a one-shot *per view*, not a one-shot *per device*, and it stops the moment a reconnect empties
+`resolved`. The Scaffold gains a `snackbarHostState = remember { SnackbarHostState() }` + `snackbarHost`,
+mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent.
 
 `dismissReasonText(source)` maps the verbatim wire token to a **local** string resource:
 
@@ -430,9 +440,12 @@ same outstanding request. See [Modal answer flow § Leaving the conversation cle
 grant](modal-answer-flow.md#leaving-the-conversation-clears-the-arm-not-the-grant-1306).
 
 The [#445 open question](current-modal-state.md#lifecycle-errors-edge-cases) — should a connection drop clear
-a stale `Open`? — is **not** built here, nor in #451/#452/#1306: the daemon validates `modalId` server-side so a
-stale answer is rejected (surfacing via #451's error signal), so a proactive stale-clear is a UX nicety
-deferred to **#440** + the connection signal.
+a stale `Open`? — stayed unbuilt through #451/#452/#1306: the daemon validates `modalId` server-side so a
+stale answer is rejected (surfacing via #451's error signal). [#1337](current-modal-state.md#lifecycle-errors-edge-cases)
+answers the related question for a **new connection** (not a drop): the daemon's guaranteed connect-time
+re-send of every still-outstanding prompt means a held prompt can be safely cleared the moment a fresh
+connection is published, so it is cleared then — but a plain teardown with no new connection yet still
+retains, exactly as #445/#492 left it.
 
 ## Testing
 
@@ -495,6 +508,15 @@ prompt text), returns to A (grant still checked, arm cleared), and then needs tw
 phone's answer, A's session grant and B's peer resolution survive the inline move. The dispatcher's
 post-verifier live run recorded **43 executed, 43 passed, 0 failed, 0 skipped** for the full
 `InteractiveStreamE2ETest` suite on 2026-09-30, with this method present and passing among them. See [Real-claude e2e coverage](../../e2e-interactive-stream.md).
+
+**[#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) added a sibling method,
+`interactiveTurn_permissionPrompts_heldPerConversation`:** A and B each raise a real prompt at once, both
+show in their own chats, and answering A from the phone resolves only A's id while B's card stays mounted —
+proving the `HostModalState` hold-all fold against a real daemon, not just the single-prompt-replacement
+case the older method covers. As of this writing the method is **not yet in `scripts/e2e-emulator.sh`'s
+curated `LIVE` method list**, so a no-`--tests` `android-test-gate.py live` run does not execute it even
+when it passes overall — see [the real-claude e2e ladder](../../e2e-interactive-stream.md) for the curated
+list and how a method joins it.
 
 > **Known test-strength NIT (code review, optional):** the send-error confidentiality test drives the error
 > over a `Hidden` modal, so the `prompt` (`rm -rf …`) is never composed and the `assertDoesNotExist("rm -rf")`
