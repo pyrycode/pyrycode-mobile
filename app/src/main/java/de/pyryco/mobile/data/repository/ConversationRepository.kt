@@ -151,8 +151,9 @@ interface ConversationRepository {
      * transition clears it, and a reconnect or host switch starts from nothing, so it stays absent until the next
      * turn ends. The implementation sends no `request_context_usage` until pyrycode#2563 (#946).
      *
-     * **Not [SessionSettings.usedTokens] / [SessionSettings.windowTokens].** Those are transcript-derived; this is
-     * Claude's own arithmetic, and neither stands in for the other.
+     * **Preferred over [SessionSettings.usedTokens] / [SessionSettings.windowTokens].** Those are
+     * transcript-derived; the thread shows this reading's token totals while one exists and falls back to the
+     * settings pair only when it is absent (#1411).
      *
      * Default `flowOf(null)`, the same cascade-avoidance as [observeSessionFacts].
      */
@@ -1459,8 +1460,9 @@ data class SessionFacts(
  * element type of [ConversationRepository.observeContextUsage]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
  * § `context_usage`.
  *
- * [percentage] is **Claude's own number**, held verbatim and never derived from [totalTokens] / [maxTokens]; the
- * three need not agree. It is never negative (the decoder drops a frame that says otherwise). [asOf] is non-null
+ * [percentage] is **Claude's own number**, held verbatim; the three need not agree. It is never negative (the
+ * decoder drops a frame that says otherwise). The thread does not show it: since #1411 the displayed percentage is
+ * computed from [totalTokens] / [maxTokens], as desktop does, so the footer and the Status sheet share one clamp. [asOf] is non-null
  * only on a **remembered** answer, the daemon's record of when Claude last reported it for a dormant
  * conversation; the figure is still the last one Claude gave, so it is held like any other.
  *
