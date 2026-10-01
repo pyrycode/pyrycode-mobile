@@ -121,8 +121,12 @@ internal fun ThreadFold.render(): List<ThreadItem> {
     // equal a persisted message's id and the structural finalise can miss the collision (when the colliding
     // id was already in the turn's baseline). The thread keys every MessageItem as "msg:<id>", so two items
     // sharing an id crash LazyColumn. Append the synthetic only when no finished message already carries
-    // this turn's id — render-time, source-independent, total over every interleaving.
-    if (finished.any { it is ThreadItem.MessageItem && it.message.id == turn.turnId }) return finished
+    // this turn's id — render-time, source-independent, total over every interleaving. Nor while it holds
+    // any assistant segment of the turn (#1350): a later segment is keyed "<turnId>#<seq>", and the synthetic
+    // would draw the turn's text a second time beside it.
+    if (finished.any { it is ThreadItem.MessageItem && (it.message.id == turn.turnId || it.message.isSegmentOf(turn.turnId)) }) {
+        return finished
+    }
     val lastMessage = finished.lastOrNull { it is ThreadItem.MessageItem } as? ThreadItem.MessageItem
     val synthetic =
         Message(
@@ -135,6 +139,8 @@ internal fun ThreadFold.render(): List<ThreadItem> {
         )
     return finished + ThreadItem.MessageItem(synthetic)
 }
+
+private fun Message.isSegmentOf(turnId: String): Boolean = role == Role.Assistant && segment?.turnId == turnId
 
 private fun List<ThreadItem>.assistantIds(): Set<String> =
     asSequence()

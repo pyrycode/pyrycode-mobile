@@ -25,38 +25,54 @@ import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import java.io.File
 
 /** Real fixed-dark pixels for the thread's five status readings at the Figma viewport. */
 @RunWith(AndroidJUnit4::class)
 class ThreadActivityIndicatorCaptureTest {
-    @get:Rule val rule = createComposeRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private var oldSize = "reset"
-    private var oldDensity = "reset"
     private var reading by mutableIntStateOf(0)
     private var contentView: View? = null
 
-    @Before fun setViewport() {
-        oldSize = overrideOf(shell("wm size"))
-        oldDensity = overrideOf(shell("wm density"))
-        shell("wm density 160")
-        shell("wm size 412x892")
-        instrumentation.waitForIdleSync()
-    }
+    /** The display size a test captures at; without it the viewport rule applies 412x892. */
+    @Retention(AnnotationRetention.RUNTIME)
+    @Target(AnnotationTarget.FUNCTION)
+    private annotation class Viewport(
+        val size: String,
+    )
 
-    @After fun restoreViewport() {
-        shell("wm size $oldSize")
-        shell("wm density $oldDensity")
-        instrumentation.waitForIdleSync()
-    }
+    // Resizing under a running activity can recreate or refocus it, so the final size is
+    // applied here before the compose rule launches its activity, and restored after it ends.
+    @get:Rule(order = 0)
+    val viewport =
+        TestRule { base, description ->
+            object : Statement() {
+                override fun evaluate() {
+                    val size = overrideOf(shell("wm size"))
+                    val density = overrideOf(shell("wm density"))
+                    shell("wm density 160")
+                    shell("wm size ${description.getAnnotation(Viewport::class.java)?.size ?: "412x892"}")
+                    try {
+                        instrumentation.waitForIdleSync()
+                        base.evaluate()
+                    } finally {
+                        shell("wm size $size")
+                        shell("wm density $density")
+                        instrumentation.waitForIdleSync()
+                    }
+                }
+            }
+        }
+
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
 
     @Test fun fiveReadingsAndMenuAt412By892() {
         showThread()
@@ -80,9 +96,9 @@ class ThreadActivityIndicatorCaptureTest {
         capture("412x892-menu.png", 412, 892, 1f)
     }
 
-    @Test fun compactLargeTextKeepsOutcomeInTheStatusArea() {
-        shell("wm size 320x692")
-        instrumentation.waitForIdleSync()
+    @Viewport("320x692")
+    @Test
+    fun compactLargeTextKeepsOutcomeInTheStatusArea() {
         showThread(fontScale = 1.5f)
         listOf(
             Triple(6, "Agent is thinking", "thinking"),

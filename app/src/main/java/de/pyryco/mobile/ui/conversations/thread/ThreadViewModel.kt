@@ -65,7 +65,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
@@ -77,6 +76,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
@@ -97,8 +97,9 @@ class ThreadViewModel(
     // defaults below: a default would hand every ViewModel its own store, which is exactly the
     // destination-scoped ownership this ticket removes — and a miswire would reproduce it invisibly.
     private val draftStore: ComposerDraftStore,
-    // #406: the coordinator's reconnection-surviving live-event seam, reduced to [isThinking]. Defaulted
-    // to an empty flow so the fake-backed graph + existing tests stay inert (the flag holds `false`).
+    // #406: the coordinator's reconnection-surviving live-event seam, folded into the thread rows and
+    // [turnOutcome]; the turn flags read the repository's held phase instead (#1313). Defaulted
+    // to an empty flow so the fake-backed graph + existing tests stay inert.
     liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
     // #492: the host coordinator's process-scoped, reconnection-surviving "current modal" projection
     // (#437/#445), folded once at the coordinator layer. It holds the host's single modal whichever
@@ -228,6 +229,14 @@ class ThreadViewModel(
      */
     val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
 
+    private val attachmentSendFailureChannel = Channel<AttachmentSendFailure>(capacity = Channel.BUFFERED)
+
+    /**
+     * One notice per send that stopped at a failed read or upload (#1325), naming why. A reason only, never a
+     * name, URI or the daemon's code, so the snackbar it drives shows fixed local text.
+     */
+    val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
+
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
     /**
@@ -268,6 +277,16 @@ class ThreadViewModel(
 
     private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)
     val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()
+
+    /** Set once the thread has left for an archived row (#1399), so its own archive pops only once. */
+    private val leftArchived = AtomicBoolean(false)
+
+    /** Sends the archive exit's [ThreadNavigation.PopBack] the first time only; returns whether it sent. */
+    private suspend fun leaveForList(): Boolean {
+        if (!leftArchived.compareAndSet(false, true)) return false
+        navigationChannel.send(ThreadNavigation.PopBack)
+        return true
+    }
 
     /** A model tap whose write has not settled, or `null`. A matching fresh settings reading confirms it;
      *  a rejected write or lost settings context clears it. */
@@ -346,11 +365,18 @@ class ThreadViewModel(
     /**
      * The conversation list, shared (#1110) so [state] and [conversationAgent] ride one upstream
      * subscription: the remote repository sends a `list_conversations` request on every subscription.
+     *
+     * #1399: a list showing this row archived, from any client, leaves for the list. Upstream of `shareIn`
+     * so it runs once per emission. A row that disappears, or is only renamed or moved, stays (desktop #653).
      */
     private val conversations: Flow<List<Conversation>> =
         repository
             .observeConversations(ConversationFilter.All)
-            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+            .onEach { list ->
+                if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
+                    RelayLog.d { "event=thread_left_archived" }
+                }
+            }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
 
     /** The agent that runs this conversation (#1110); Claude while the list does not hold it yet. */
     private val conversationAgent: Flow<ConversationAgent> =
@@ -577,17 +603,23 @@ class ThreadViewModel(
             )
 
     /**
+     * This conversation's turn phase as the repository holds it (#1313): the latest `turn_state`, back to
+     * idle on `turn_end`, kept per conversation for the connection rather than folded here. A thread
+     * opened mid-turn or resubscribing after [SharingStarted.WhileSubscribed] lapsed reads the current
+     * phase at once, and a new connection reads idle until the daemon reports again.
+     */
+    private val turnPhase = repository.observeTurnPhase(conversationId)
+
+    /**
      * Whether this conversation's agent is currently in its `thinking` phase (#406) — `true` only while
-     * the latest `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking],
-     * `false` for `responding` / `idle` / `turn_end` or before any event. A sibling [StateFlow] beside
+     * the held phase is [LiveSessionEvent.TurnState.Phase.Thinking]. A sibling [StateFlow] beside
      * [connectionState] (not a [ThreadUiState] field): like the connection signal it is a transient,
-     * connection-scoped cross-cutting signal the stateless screen takes as a separate parameter. The
-     * reduction emits only on a phase transition, so [stateIn]'s last value is retained for events that
-     * leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow default.
+     * connection-scoped cross-cutting signal the stateless screen takes as a separate parameter. `false`
+     * covers idle, `responding` and the fake's idle default.
      */
     val isThinking: StateFlow<Boolean> =
-        liveSessionEvents
-            .mapNotNull { event -> thinkingTransition(event) }
+        turnPhase
+            .map { it == LiveSessionEvent.TurnState.Phase.Thinking }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -595,21 +627,14 @@ class ThreadViewModel(
             )
 
     /**
-     * Whether this conversation's agent is currently **running a turn** (#459) — `true` while the latest
-     * `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking] **or**
-     * [LiveSessionEvent.TurnState.Phase.Responding], `false` for `idle` / `turn_end` or before any event.
-     * The broader sibling of [isThinking] (which is `true` for `thinking` only): the interrupt affordance
-     * (#459) must stay visible across the whole in-flight turn, not just the thinking phase. Same posture
-     * and lifecycle as [isThinking] — a hoisted [StateFlow] beside [connectionState] the stateless screen
-     * takes as a separate parameter, backed by its own [busyTransition] reducer (a dedicated reducer is
-     * simpler than combining [isThinking] with a second flow and matches the established sibling pattern).
-     * The reduction emits only on a busy/not-busy transition, so [stateIn]'s last value is retained for
-     * events that leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow
-     * default.
+     * Whether this conversation's agent is currently **running a turn** (#459) — `true` while the held
+     * phase is [LiveSessionEvent.TurnState.Phase.Thinking] **or** [LiveSessionEvent.TurnState.Phase.Responding].
+     * The broader sibling of [isThinking]: the interrupt affordance must stay visible across the whole
+     * in-flight turn, not just the thinking phase. Same posture and lifecycle as [isThinking].
      */
     val isBusy: StateFlow<Boolean> =
-        liveSessionEvents
-            .mapNotNull { event -> busyTransition(event) }
+        turnPhase
+            .map { it == LiveSessionEvent.TurnState.Phase.Thinking || it == LiveSessionEvent.TurnState.Phase.Responding }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -651,6 +676,18 @@ class ThreadViewModel(
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = false,
             )
+
+    private val _localSendPending = MutableStateFlow(false)
+
+    /**
+     * The local-send window (#1311), desktop's `localSendPending`: `true` from the moment a send is handed
+     * to the daemon until the daemon first speaks, so the status band reads "Thinking…" across the round
+     * trip instead of going dark. Opened in [sendMessage] and [sendWithAttachments] immediately before the
+     * repository send, so a blank, refused or upload-failed send never opens it. Closed by any `turn_state`
+     * for this conversation, by a failed send, and by a change of connection ([closeLocalSendWindow]).
+     * Not [isBusy]: a window the daemon has not confirmed must never arm the stop control.
+     */
+    val localSendPending: StateFlow<Boolean> = _localSendPending.asStateFlow()
 
     /**
      * Whether this conversation's remote claude is stuck retrying an API error, and at which attempt
@@ -1011,48 +1048,6 @@ class ThreadViewModel(
      */
     val sessionSettingsErrors: Flow<Unit> = sessionSettingsErrorChannel.receiveAsFlow()
 
-    /**
-     * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
-     * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
-     * phase: `thinking` ⇒ `true`; `responding` / `idle` / `turn_end` ⇒ `false`; the non-phase events
-     * (`assistant_delta` / `tool_use` / `tool_result`) are not transitions ⇒ `null`.
-     */
-    private fun thinkingTransition(event: LiveSessionEvent): Boolean? {
-        if (event.conversationId != conversationId) return null
-        return when (event) {
-            is LiveSessionEvent.TurnState -> event.phase == LiveSessionEvent.TurnState.Phase.Thinking
-            is LiveSessionEvent.TurnEnd -> false
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> null
-        }
-    }
-
-    /**
-     * Folds one live event to the next [isBusy] value, or `null` to leave the flag unchanged. Mirrors
-     * [thinkingTransition] exactly; the **only** difference is the phase predicate — a turn is "running"
-     * across the `thinking` **and** `responding` phases. Routes by [conversationId] first (other
-     * conversations never move the flag), then maps the turn phase: `thinking` / `responding` ⇒ `true`;
-     * `idle` / `turn_end` ⇒ `false`; the non-phase events (`assistant_delta` / `tool_use` / `tool_result`
-     * / replay-gap) are not transitions ⇒ `null`.
-     */
-    private fun busyTransition(event: LiveSessionEvent): Boolean? {
-        if (event.conversationId != conversationId) return null
-        return when (event) {
-            is LiveSessionEvent.TurnState ->
-                event.phase == LiveSessionEvent.TurnState.Phase.Thinking ||
-                    event.phase == LiveSessionEvent.TurnState.Phase.Responding
-            is LiveSessionEvent.TurnEnd -> false
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> null
-        }
-    }
-
     /** Folds one live event into [turnOutcome]; events for other conversations leave it unchanged. */
     private fun nextTurnOutcome(
         current: TurnOutcomeReport?,
@@ -1094,6 +1089,8 @@ class ThreadViewModel(
                 .distinctUntilChanged()
                 .drop(1)
                 .collect { available ->
+                    // #1311: a drop and the return both end the round trip the window was waiting on.
+                    closeLocalSendWindow("reconnect")
                     if (available) {
                         RelayLog.d { "event=history_walk_restart reason=reconnect" }
                         restartHistoryWalk(fromWalk = historyDemand.value.walk)
@@ -1101,10 +1098,42 @@ class ThreadViewModel(
                 }
         }
 
+        // #1311: the daemon's first `turn_state` for this conversation, of any phase, closes the local-send
+        // window. Collected here rather than behind a subscriber-bound stateIn, so it closes even while the
+        // screen is not collecting.
+        viewModelScope.launch {
+            liveSessionEvents.collect { event ->
+                if (event is LiveSessionEvent.TurnState && event.conversationId == conversationId) {
+                    closeLocalSendWindow("turn_state")
+                }
+            }
+        }
+
         // #1309: a conversation whose claude had not run yet reads no permission mode and no applied effort,
         // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
         viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+    }
+
+    private fun openLocalSendWindow() {
+        if (!_localSendPending.value) RelayLog.d { "event=local_send_window state=open" }
+        _localSendPending.value = true
+    }
+
+    private fun closeLocalSendWindow(reason: String) {
+        if (_localSendPending.value) RelayLog.d { "event=local_send_window state=closed reason=$reason" }
+        _localSendPending.value = false
+    }
+
+    /** Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. */
+    private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
+        openLocalSendWindow()
+        try {
+            return send()
+        } catch (e: Throwable) {
+            closeLocalSendWindow("send_failed")
+            throw e
+        }
     }
 
     /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */
@@ -1296,7 +1325,7 @@ class ThreadViewModel(
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
-            repository.sendMessage(state.value.conversationId, text)
+            sendInLocalWindow { repository.sendMessage(state.value.conversationId, text) }
             if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
         }
     }
@@ -1335,7 +1364,7 @@ class ThreadViewModel(
                 draftStore.recordSentOriginals(serverId, conversationId, originals)
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
-                repository.sendMessage(target, text, references)
+                sendInLocalWindow { repository.sendMessage(target, text, references) }
                 if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
                 draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
             } finally {
@@ -1346,7 +1375,10 @@ class ThreadViewModel(
         }
     }
 
-    /** Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not. */
+    /**
+     * Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not and
+     * sending one [attachmentSendFailures] notice (#1325).
+     */
     private suspend fun upload(
         target: String,
         entry: PendingAttachment,
@@ -1354,21 +1386,29 @@ class ThreadViewModel(
         val bytes =
             when (val read = attachmentReader.read(entry.uri)) {
                 is AttachmentRead.Bytes -> read.bytes
-                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large")
-                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed")
+                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large", AttachmentSendFailure.TOO_LARGE)
+                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed", AttachmentSendFailure.UNREADABLE)
             }
         val result =
             repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType) { sent, total ->
                 _attachmentUploadProgress.value = attachmentUploadProgress(entry.key, sent, total)
             }
         _attachmentUploadProgress.value = null
-        if (result !is AttachmentUploadResult.Stored) return attachmentSendFailed("upload_failed")
-        draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
-        return result.attachmentId
+        when (result) {
+            is AttachmentUploadResult.Stored -> {
+                draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
+                return result.attachmentId
+            }
+            is AttachmentUploadResult.Failed -> return attachmentSendFailed("upload_failed", attachmentSendFailure(result))
+        }
     }
 
-    private fun attachmentSendFailed(outcome: String): String? {
+    private fun attachmentSendFailed(
+        outcome: String,
+        failure: AttachmentSendFailure,
+    ): String? {
         RelayLog.d { "event=composer_attachment_send outcome=$outcome" }
+        attachmentSendFailureChannel.trySend(failure)
         return null
     }
 
@@ -1803,7 +1843,8 @@ class ThreadViewModel(
         viewModelScope.launch {
             try {
                 repository.archive(conversationId)
-                navigationChannel.send(ThreadNavigation.PopBack)
+                // #1399: the reply may already have popped through [conversations]; leave once.
+                leaveForList()
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {

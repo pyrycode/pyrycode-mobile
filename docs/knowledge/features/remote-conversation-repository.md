@@ -76,7 +76,13 @@ retrieval](attachment-retrieval.md).
 Since 2026-09-22 the status events the thread observes each live in their own small internal class
 beside the repository: `StallProjection` (#395), `QueueProjection` (#460), `ApiRetryProjection` (#593),
 `CompactingProjection` (#596), `ThinkingProgressProjection` (#801), `UsageLimitProjection` (#802),
-`AnnouncedModelProjection` (#890) and `SessionFactsProjection` (#890).
+`AnnouncedModelProjection` (#890), `SessionFactsProjection` (#890) and `McpStatusProjection` (#1343).
+`McpStatusProjection` is the one member of this family that also owns three outbound sends and their own
+refusal-correlation ledger — the `ModelMenuProjection`/`request_model_list` shape, not the simpler
+read-only siblings — and, like `ModelMenuProjection`, it is deliberately **not** promoted into
+[`HostReadings`](relay-repository-coordinator.md): a reconnect starts the MCP reading from nothing on
+purpose, so #1345's failure notice knows to ask again. See [Remote conversation repository — the MCP
+status reading and the reconnect/toggle sends](remote-conversation-repository-mcp-status.md).
 Each holds the state, the decoder and the cold read that used to sit in `RemoteConversationRepository`,
 under the same names, so the per-event sections in the
 [thread-observables document](remote-conversation-repository-thread-observables.md) and the
@@ -165,8 +171,8 @@ What the repository still owns, after #916:
   `StallProjection`, `QueueProjection`, `ApiRetryProjection`, `CompactingProjection`, `UsageLimitProjection`,
   `ThinkingProgressProjection`, `ResettingProjection`, `ModelMenuProjection`, `SlashCommandMenuProjection`,
   `QuestionBatchProjection`,
-  `BackgroundTaskProjection`, `AnnouncedModelProjection`, `SessionFactsProjection` and
-  `AttachmentOfferProjection` — each its own small class, constructed once per repository instance, per
+  `BackgroundTaskProjection`, `AnnouncedModelProjection`, `SessionFactsProjection`,
+  `AttachmentOfferProjection` and `McpStatusProjection` (#1343) — each its own small class, constructed once per repository instance, per
   the split described above in § Status projections.
   `SlashCommandMenuProjection` (#882) is the one member with no send and no capabilities supplier of its
   own — the frame it retains declares no inbound verb, so it takes the `ApiRetryProjection` minimal shape,
@@ -179,7 +185,9 @@ What the repository still owns, after #916:
   `observeConversations`, `observeMessages`, `observeLastMessage`, `observeStall`, `observeQueue`,
   `observeApiRetry`, `observeCompacting`, `observeResetting`, `observeUsageLimit`,
   `observeThinkingProgress`, `observeModelMenu`, `observeSlashCommandMenu`, `observeAnnouncedModel`,
-  `observeSessionFacts` and `observeAttachmentOffers` (#898).
+  `observeSessionFacts`, `observeAttachmentOffers` (#898) and `observeMcpStatus` (#1343, plus its three
+  request sends and two end-wait calls, all on `McpStatusProjection` directly, with no command-class
+  indirection).
 - **`requestHistory`** — the on-disk history page read; kept here because it folds its page straight into
   `ThreadProjection`, and #916 explicitly left it in place.
 - **The v2 structured-stream and modal decode seams** — `liveSessionEvents`, `modalEvents`,

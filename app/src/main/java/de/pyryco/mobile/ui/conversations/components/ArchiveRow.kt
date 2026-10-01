@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.archiveKey
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlin.time.Duration.Companion.days
@@ -58,7 +59,7 @@ fun ArchiveRow(
                 text =
                     stringResource(
                         R.string.archived_relative_subtitle,
-                        formatArchiveRelativeTime(conversation.lastUsedAt),
+                        formatArchiveRelativeTime(conversation.archiveKey),
                     ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -81,14 +82,17 @@ fun ArchiveRow(
     }
 }
 
-/** The Archive reference uses elapsed weeks and months where the thread uses calendar dates. */
+/**
+ * The Archive reference uses elapsed weeks and months where the thread uses calendar dates. [instant] is the
+ * row's [archiveKey], the same instant the screen orders by.
+ */
 internal fun formatArchiveRelativeTime(
-    lastUsedAt: kotlinx.datetime.Instant,
+    instant: kotlinx.datetime.Instant,
     now: kotlinx.datetime.Instant = Clock.System.now(),
 ): String {
-    val age = now - lastUsedAt
+    val age = now - instant
     return when {
-        age < 7.days -> formatRelativeTime(lastUsedAt, now)
+        age < 7.days -> formatRelativeTime(instant, now)
         age < 30.days -> {
             val weeks = age.inWholeDays / 7
             "$weeks ${if (weeks == 1L) "week" else "weeks"} ago"
@@ -97,7 +101,7 @@ internal fun formatArchiveRelativeTime(
             val months = age.inWholeDays / 30
             "$months ${if (months == 1L) "month" else "months"} ago"
         }
-        else -> formatRelativeTime(lastUsedAt, now)
+        else -> formatRelativeTime(instant, now)
     }
 }
 

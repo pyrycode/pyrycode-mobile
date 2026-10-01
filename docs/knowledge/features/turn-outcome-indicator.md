@@ -129,16 +129,25 @@ a later change could consolidate on one of them; not done here.
 ## Placement in the thread
 
 Joins [`ThreadScreen`](thread-screen.md)'s single mutually-exclusive status slot (`ThreadStatusArea`,
-`ThreadScreen.kt`), directly **below compaction and above thinking** — the current ladder, turn status
-only: `api-retry → resetting → compaction → turn outcome → thinking/running tool`. Compaction is mid-turn
-progress and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed; no AC
-is spent on the combination, and `ScriptedTurnOutcomeTest.compaction_winsTheSlotOverTheOutcome` pins that
-compaction still wins the slot when both are somehow live. Claude's usage-limit report shared this ladder
-between #804 and #1002; it now draws as a pill in [Thread top overlay](thread-top-overlay.md) instead,
-pinned over the message area rather than a `ThreadStatusArea` arm, because a live reading was masking
-every arm below it including this one. See [API-retry indicator §
-Placement](api-retry-indicator.md#placement-in-the-thread) and [Compacting indicator §
-Placement](compacting-indicator.md#placement-in-the-thread) for the rest of the ladder's rationale, and
+`ThreadScreen.kt`), directly below compaction — **since [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311)
+with the new stall arm between the two**, and above the turn-level tail (an open tool, thinking, working,
+or the local-send window). Through #1310 the ladder read, turn status only: `api-retry → resetting →
+compaction → turn outcome → thinking/running tool`; #1311 moved resetting above api-retry and inserted the
+stall arm directly below compaction, so the turn outcome now sits below both of those: `connection →
+resetting → api-retry → compaction → stall → turn outcome → thinking/working/running tool`. See [Thread
+screen § The arm order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for the
+current `statusArm` precedence table. Compaction is mid-turn progress and a turn outcome is necessarily
+post-turn, so the two co-occurring has not been observed; no AC is spent on the combination, and
+`ScriptedTurnOutcomeTest.compaction_winsTheSlotOverTheOutcome` pins that compaction still wins the slot
+when both are somehow live. **A pending local send also hides a turn outcome since #1311** — the outcome
+belongs to the turn before the send, and the new turn's first `thinking`/`responding` would clear it
+anyway; see [Thinking indicator § Working and stalled](thinking-indicator.md#working-and-stalled-1311).
+Claude's usage-limit report shared this ladder between #804 and #1002; it now draws as a pill in
+[Thread top overlay](thread-top-overlay.md) instead, pinned over the message area rather than a
+`ThreadStatusArea` arm, because a live reading was masking every arm below it including this one. See
+[API-retry indicator § Placement](api-retry-indicator.md#placement-in-the-thread) and [Compacting
+indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the rest of the ladder's
+history, and
 [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
 for the `ThreadStatusArea` composable this arm was added to.
 
@@ -166,10 +175,12 @@ frame order alone. Only `Thinking`/`Responding` mean a new turn has actually sta
 `turnOutcome_clearsWhenTheNextTurnStarts_butNotOnIdle` in `ThreadViewModelTest` pins this against `Idle`,
 an `AssistantDelta`, and a `ReplayGap` in sequence.
 
-**`isThinking` and `isBusy` are pinned, not changed.** They already turn off on any `turn_end` via their
-existing `thinkingTransition`/`busyTransition` reducers; #805 adds
-`failedAndCancelledTurnEnds_clearIsThinkingAndIsBusy` to guard that a failed or cancelled `turn_end` can
-never leave the spinner or the Stop affordance on, now that a `turn_end` can carry a non-clean shape.
+**`isThinking` and `isBusy` are pinned, not changed.** They already turn off on any `turn_end` — at the
+time (#805), via their own `thinkingTransition`/`busyTransition` reducers; since #1313, via
+`TurnPhaseProjection.apply`, which returns a conversation to idle on `TurnEnd` of any outcome. #805's
+`failedAndCancelledTurnEnds_clearIsThinkingAndIsBusy`, guarding that a failed or cancelled `turn_end`
+never leaves the spinner or the Stop affordance on, moved to `TurnPhaseProjectionTest` with that change,
+since the behaviour it pins now lives in the projection, not in a per-ViewModel reducer.
 
 `MainActivity` collects `vm.turnOutcome.collectAsStateWithLifecycle()` beside `apiRetry`/`usageLimit`/
 `isCompacting` and forwards it; `ThreadScreen` threads it as a defaulted `turnOutcome: TurnOutcomeReport? =

@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -257,6 +258,8 @@ class ThreadViewModelAttachmentTest {
             vm.attach("a")
             vm.attach("b")
             vm.attach("c")
+            val notices = mutableListOf<AttachmentSendFailure>()
+            val collector = launch { vm.attachmentSendFailures.toList(notices) }
 
             vm.sendMessage("both")
             advanceUntilIdle()
@@ -277,6 +280,9 @@ class ThreadViewModelAttachmentTest {
             assertEquals(listOf("both" to listOf("id-a", "id-b", "id-c")), repository.sends)
             assertEquals("", vm.draft.value)
             assertTrue(vm.pendingAttachments.value.isEmpty())
+            // #1325: the failed send said why once; the successful retry says nothing.
+            assertEquals(listOf(AttachmentSendFailure.NOT_CONNECTED), notices)
+            collector.cancel()
         }
 
     @Test
@@ -360,6 +366,8 @@ class ThreadViewModelAttachmentTest {
 
             assertTrue(logs.isNotEmpty())
             assertFalse("no provider text in logs: $logs", logs.any { "secret" in it || "application/pdf" in it })
+            // #1325: the daemon's code picks the notice and goes no further.
+            assertFalse("no daemon code in logs: $logs", logs.any { "attachment.bad" in it })
         }
 
     @Test
@@ -444,6 +452,120 @@ class ThreadViewModelAttachmentTest {
                 assertFalse(vm.attachmentsSending.value)
                 assertEquals(listOf("a"), vm.pendingAttachments.value.map { it.displayName })
             }
+        }
+
+    /**
+     * #1325: a send that stops on [read] failing for the second file, or on [upload] failing for it, shows
+     * exactly one notice, keeps the draft text and every tile, and returns that notice. A second Send, once
+     * the file reads and uploads, sends only the missing file and shows no further notice.
+     */
+    private fun TestScope.failureNoticeFor(
+        upload: AttachmentUploadResult = AttachmentUploadResult.Stored("unused"),
+        read: AttachmentRead? = null,
+    ): AttachmentSendFailure {
+        var failing = true
+        val repository =
+            RecordingRepository(uploadOutcome = { name ->
+                if (name == "b" && failing) upload else AttachmentUploadResult.Stored("id-$name")
+            })
+        val readFailures = read?.let { mutableMapOf("content://docs/b" to it) } ?: mutableMapOf()
+        val vm = vm(repository, ComposerDraftStore(), FakeReader(readFailures))
+        val notices = mutableListOf<AttachmentSendFailure>()
+        val collector = launch { vm.attachmentSendFailures.toList(notices) }
+        vm.onDraftChange("text")
+        vm.attach("a")
+        vm.attach("b")
+
+        vm.sendMessage("text")
+        advanceUntilIdle()
+
+        assertTrue(repository.sends.isEmpty())
+        assertEquals("text", vm.draft.value)
+        assertEquals(listOf("a", "b"), vm.pendingAttachments.value.map { it.displayName })
+        assertEquals(listOf("id-a", null), vm.pendingAttachments.value.map { it.attachmentId })
+        val notice = notices.single()
+
+        failing = false
+        readFailures.clear()
+        repository.uploads.clear()
+        vm.sendMessage("text")
+        advanceUntilIdle()
+        collector.cancel()
+
+        assertEquals(listOf("b"), repository.uploads.map { it.first })
+        assertEquals(listOf("text" to listOf("id-a", "id-b")), repository.sends)
+        assertEquals(listOf(notice), notices)
+        return notice
+    }
+
+    private fun refused(code: String) = AttachmentUploadResult.Refused(code, retryable = false)
+
+    @Test
+    fun failureNotice_unreadableFile() =
+        runTest {
+            assertEquals(AttachmentSendFailure.UNREADABLE, failureNoticeFor(read = AttachmentRead.Unreadable))
+        }
+
+    @Test
+    fun failureNotice_fileTooLargeToRead() =
+        runTest {
+            assertEquals(AttachmentSendFailure.TOO_LARGE, failureNoticeFor(read = AttachmentRead.TooLarge))
+        }
+
+    @Test
+    fun failureNotice_fileTooLargeToUpload() =
+        runTest { assertEquals(AttachmentSendFailure.TOO_LARGE, failureNoticeFor(AttachmentUploadResult.TooLarge)) }
+
+    @Test
+    fun failureNotice_notConnected() =
+        runTest { assertEquals(AttachmentSendFailure.NOT_CONNECTED, failureNoticeFor(AttachmentUploadResult.ReconnectRequired)) }
+
+    @Test
+    fun failureNotice_connectionLost() =
+        runTest { assertEquals(AttachmentSendFailure.CONNECTION_LOST, failureNoticeFor(AttachmentUploadResult.ConnectionLost)) }
+
+    @Test
+    fun failureNotice_chunkNotSent() =
+        runTest {
+            assertEquals(AttachmentSendFailure.SEND_FAILED, failureNoticeFor(AttachmentUploadResult.SendFailed))
+        }
+
+    @Test
+    fun failureNotice_hostRejectedAChunk() =
+        runTest { assertEquals(AttachmentSendFailure.HOST_INVALID_CHUNK, failureNoticeFor(refused("attachment.invalid_chunk"))) }
+
+    @Test
+    fun failureNotice_hostCouldNotVerify() =
+        runTest { assertEquals(AttachmentSendFailure.HOST_INTEGRITY_FAILED, failureNoticeFor(refused("attachment.integrity_failed"))) }
+
+    @Test
+    fun failureNotice_hostRefusedAsTooLarge() =
+        runTest { assertEquals(AttachmentSendFailure.HOST_TOO_LARGE, failureNoticeFor(refused("attachment.too_large"))) }
+
+    @Test
+    fun failureNotice_hostHasTooManyUploads() =
+        runTest { assertEquals(AttachmentSendFailure.HOST_TOO_MANY_UPLOADS, failureNoticeFor(refused("attachment.too_many_uploads"))) }
+
+    @Test
+    fun failureNotice_hostCouldNotStore() =
+        runTest { assertEquals(AttachmentSendFailure.HOST_STORAGE_FAILED, failureNoticeFor(refused("attachment.storage_failed"))) }
+
+    @Test
+    fun failureNotice_hostRefusedAsTooLong() =
+        runTest { assertEquals(AttachmentSendFailure.HOST_MESSAGE_TOO_LONG, failureNoticeFor(refused("message.too_long"))) }
+
+    @Test
+    fun failureNotice_uploadDidNotComplete() =
+        runTest {
+            assertEquals(AttachmentSendFailure.HOST_INCOMPLETE, failureNoticeFor(refused("attachment.not_found")))
+            assertEquals(AttachmentSendFailure.HOST_INCOMPLETE, failureNoticeFor(refused("attachment.stream_aborted")))
+        }
+
+    @Test
+    fun failureNotice_unknownOrMalformedRefusal() =
+        runTest {
+            assertEquals(AttachmentSendFailure.UNCLASSIFIED, failureNoticeFor(refused("attachment.something_new")))
+            assertEquals(AttachmentSendFailure.UNCLASSIFIED, failureNoticeFor(refused("error.malformed_reply")))
         }
 
     @Test

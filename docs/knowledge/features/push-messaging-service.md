@@ -243,22 +243,60 @@ conversation reads exactly as before (`notification_turn_completed` / `notificat
 conversation gets `notification_turn_completed_codex` / `notification_prompt_codex`, and a conversation the
 agent lookup above returns `null` for gets the neutral `notification_turn_completed_neutral` /
 `notification_prompt_neutral` ("A reply finished" / "An answer is needed") — a lookup miss reads as unknown,
-never as an assumed Claude. Title is still the app name. No daemon-authored conversation name or
-push-message field ever reaches it; the agent name is one of these fixed, client-owned strings. Tag =
-`SHA-256(serverId, conversationId)`, id `0`: one notification per conversation per host, so the same
-conversation id on two hosts posts two notifications, and a later alert for the same conversation replaces
-the earlier one instead of stacking.
+never as an assumed Claude. The agent name is one of these fixed, client-owned strings; no daemon-authored
+field drives the body text. The **title** is the conversation's own name (#1330, below) when one is known,
+and the app name otherwise. Tag = `SHA-256(serverId, conversationId)`, id `0`: one notification per
+conversation per host, so the same conversation id on two hosts posts two notifications, and a later alert
+for the same conversation replaces the earlier one instead of stacking.
+
+### The name lookup and title (#1330)
+
+`nameOf: (serverId, conversationId) -> String?` is wired exactly like `agentOf` above — a constructor
+parameter over a top-level `internal fun List<HostConversationSnapshot>.nameOf(serverId, conversationId):
+String?` (`AttentionNotifier.kt`), host-first then `channels + chats`, null on a missing host or row. The
+conversation name is daemon-authored and untrusted, so it crosses into the notification only through
+`notificationTitle(name: String?): String?`, which copies desktop's `notificationTitle` (`fireNotification.ts`,
+\#1593): walk by code point, drop `\p{Cc}` control characters, keep at most `MAX_TITLE_CODE_POINTS` (80) code
+points without ever splitting a surrogate pair, then trim both whitespace and U+FEFF (Kotlin's `trim()`
+doesn't strip U+FEFF the way JS's does, so the contract spells it out — see the #1330 plan's Revisions). Null
+input or an empty result after cleaning both return null, and `post` falls back to `getString(R.string.app_name)`.
+The name is never logged — `handle`'s log line carries only the static `outcome`/`kind` codes.
 
 **The tap** carries only a server id and a conversation id, via `NotificationTap`'s explicit-component,
 `FLAG_IMMUTABLE` `PendingIntent` naming `MainActivity` and `ACTION_OPEN_CONVERSATION`. `MainActivity` is
 exported, so `NotificationTap.target(intent)` treats every extra as untrusted: wrong action, missing
 extras, a blank id, or an id over `MAX_TAP_ID_CHARS` (256) all parse to `null`. `PyryNavHost` then accepts
 the parsed target only when `ThreadDestinationFactory.isSavedHost(serverId)` — the saved-host store, not
-the live connection registry — and opens `Routes.thread(target)` **above** `CHANNEL_LIST`, so Back (or a
-conversation deleted since the alert) always lands on a usable list. The read happens once, in
-`MainActivity.onCreate`, only when `savedInstanceState == null` — a rotation does not re-navigate. The
-tap only navigates: it never sends a command or answers a prompt. See
-[Navigation § What it does](navigation.md#what-it-does) for the route itself.
+the live connection registry. The read happens once, in `MainActivity.onCreate`, only when
+`savedInstanceState == null` — a rotation does not re-navigate (and so drops a tap mid-wait, below; this
+is accepted, never an unchecked open). The tap only navigates: it never sends a command or answers a
+prompt. See [Navigation § What it does](navigation.md#what-it-does) for the route itself.
+
+**Since [#1400](../../specs/architecture/1400-notification-tap-active-conversation.md), a saved host is
+gate one, not the whole gate.** Desktop resolves a click through `notificationRowFor`
+(`pushNotifyBridge.ts`): it opens a row only when the host's list still holds it, unarchived, and
+otherwise opens nothing. Mobile's equivalent list is
+[`HostConversationSource.snapshots`](dependency-injection-host-conversation-source.md): `PyryNavHost`
+waits `withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT)` (5 s, `internal val` beside `PyryNavHost` in
+`MainActivity.kt`) for `snapshots.first { it.holdsActive(target) }` — some snapshot whose `serverId`
+matches and whose `channels + chats` (both already exclude archived rows) hold the conversation id. A
+snapshot cannot tell "not loaded yet" from "loaded and empty," and a cache restore can predate a
+conversation created since, so waiting for the row to *appear* is the only rule that never opens a
+conversation the tap couldn't check while still opening one that lands late; a cached or warm snapshot
+resolves `first {}` at once; only a cold start with nothing cached waits out the timeout. A timeout — an
+archived, deleted or unknown conversation — stays on `CHANNEL_LIST`.
+
+A row arriving inside the wait is not, by itself, enough: the effect also requires
+`navController.currentDestination?.route == Routes.CHANNEL_LIST` at the moment the row resolves. Without
+that check, a user who tapped into another thread, Settings or Archive during a cold-start wait could have
+the notification's thread pushed on top of wherever they went; the check makes a late-arriving row open
+the thread only while the user is still sitting on the list it left them on. `openThread` otherwise still
+pushes `Routes.thread(target)` **above** `CHANNEL_LIST`, so Back (or a conversation deleted since the
+alert) always lands on a usable list.
+
+The wait runs inside `LaunchedEffect(openTarget)`, in the nav host's composition scope, so leaving the nav
+host (there is none other than `MainActivity`'s) cancels it; `snapshots` is a hot, app-wide `StateFlow`
+only read here.
 
 **The permission prompt** is Android's own `POST_NOTIFICATIONS` request, asked from two places sharing
 `MainActivity.rememberNotificationPermissionRequest`: the Settings switch (turning
@@ -286,6 +324,7 @@ single(createdAtStart = true) {
         notificationsEnabled = get<AppPreferences>().notificationsEnabled,
         isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
         agentOf = { serverId, conversationId -> source.snapshots.value.agentOf(serverId, conversationId) },
+        nameOf = { serverId, conversationId -> source.snapshots.value.nameOf(serverId, conversationId) },
         isForeground = { ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) },
         ledgerFile = File(androidContext().noBackupFilesDir, "attention_alerts"),
     )
@@ -303,7 +342,9 @@ requires the runtime prompt above regardless of the manifest entry).
 ### Logging (#685)
 
 `event=attention_alert outcome=posted|duplicate|foreground|disabled|muted|no_permission kind=turn|prompt`,
-`event=notification_tap_accepted`, `event=notification_tap_rejected code=unknown_host`,
+`event=notification_tap_accepted`,
+`event=notification_tap_rejected code=unknown_host|inactive_conversation|navigated_away` (the latter two
+since #1400: a timed-out wait, and a row that resolved after the user left `CHANNEL_LIST`),
 `event=notification_permission_answered granted=…`, `event=attention_alert_ledger outcome=read_failed|write_failed`.
 No id, digest or notification text appears in any of these lines.
 
@@ -324,9 +365,24 @@ No id, digest or notification text appears in any of these lines.
   as before, and the channel description reads neutrally.
   `List<HostConversationSnapshot>.agentOf`'s own table (Codex in `channels`, Codex in `chats`, a Claude
   row, id missing from the host's rows, host missing entirely) is a plain unit test beside `isMuted`'s.
+  (#1330) A named conversation's alert is titled with its own host's name and keeps its body unchanged
+  (`aNamedConversationsAlertIsTitledWithItsOwnHostsNameAndKeepsItsBody`); an unnamed or blank-after-cleaning
+  conversation gets the app name (`anUnnamedOrBlankNamedConversationIsTitledWithTheAppName`);
+  `notificationTitle` drops controls, caps at 80 code points without splitting a surrogate pair, and trims
+  whitespace and U+FEFF (`theTitleDropsControlsCapsAt80CodePointsAndNeverSplitsASurrogatePair`); and
+  `nameOf` reads only the alert's own host (`theNameLookupReadsOnlyTheAlertsOwnHostAndIsNullWhenMissing`).
 - `NotificationTapNavigationTest` (`app/src/sharedTest`) drives `PyryNavHost` on the production Koin
   graph, per the `SettingsNavigationTest` pattern: a saved host's target opens the thread above
-  `CHANNEL_LIST`; an unsaved host's target stays on `CHANNEL_LIST`.
+  `CHANNEL_LIST`; an unsaved host's target stays on `CHANNEL_LIST`. Since #1400 it also rebinds
+  `HostConversationSource` (on `Dispatchers.Main.immediate`, like the registry binding beside it — the
+  test's effect dispatcher resumes on the emitting thread, so a `Dispatchers.Default` publish would
+  navigate off it) and the test's `ConversationCache` delegates `readConversations(SAVED)` to a
+  `CompletableDeferred<List<Conversation>>`, so rows land through the real cache-restore path on whatever
+  schedule a test chooses. It covers: an active channel or chat row opens the thread; an archived-only or
+  unknown row stays on the list once the clock is advanced past `NOTIFICATION_TAP_ROW_WAIT`; a row that
+  arrives mid-wait still opens; a row released only *after* the wait (proving the timeout actually
+  elapsed, not just a still-pending real-time wait) stays on the list; and a row arriving after the user
+  navigated off `CHANNEL_LIST` (e.g. to `Routes.ABOUT`) opens nothing, leaving them where they went.
 - `NotificationPermissionPromptTest` stays in `app/src/test`, not `app/src/sharedTest`, even though it
   drives a Composable (`rememberNotificationPermissionRequest`, made `internal` for this): a
   `sharedTest`/device run would raise Android's real permission dialog, which Robolectric's shadow
@@ -361,6 +417,9 @@ No id, digest or notification text appears in any of these lines.
   prompt piggybacks on; no new row was added.
 - Spec: `docs/specs/architecture/685-mobile-attention-alerts.md` (§ Design, § Security review — verdict
   PASS, § Revisions for the blank-conversation-prompt fix and the two rework rounds' device-test fixes).
+- Spec: `docs/specs/architecture/1400-notification-tap-active-conversation.md` (§ Design, § Security
+  review — verdict PASS) — the row-active gate, the bounded cold-start wait and the navigated-away guard
+  above.
 - Spec: `docs/specs/architecture/1022-attention-notifier-muted-gate.md` — the muted gate's design and its
   fail-open rationale.
 - [Data model § `Conversation`](data-model.md#conversation) — the `muted` field (#999) this gate reads,
@@ -370,4 +429,7 @@ No id, digest or notification text appears in any of these lines.
 - Spec: `docs/specs/architecture/1102-request-current-fcm-token.md` — `PushTokenRefresher`'s design,
   the #1076 gate flake it fixes, and the Phase B revision resolving the `Task` listener/executor
   question.
+- Spec: `docs/specs/architecture/1330-alert-title-conversation-name.md` — the name lookup and
+  `notificationTitle`'s design, and § Security review (verdict PASS) on the untrusted-name trust
+  boundary.
 - README `### Firebase` — where `app/google-services.json` and the conditional plugin are recorded.
