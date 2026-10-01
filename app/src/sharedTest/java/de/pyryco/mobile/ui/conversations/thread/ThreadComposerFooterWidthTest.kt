@@ -9,6 +9,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertWidthIsEqualTo
@@ -122,8 +123,9 @@ class ThreadComposerFooterWidthTest {
             PyrycodeMobileTheme(darkTheme = true) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
                     CompositionLocalProvider(LocalDensity provides Density(1f, 1.5f)) {
+                        // An ordinary reading (#1412 gives 70 and above the longer "Cxt high:" text).
                         ThreadComposerFooter(
-                            runConfig = fullConfig.copy(contextPercent = 84),
+                            runConfig = fullConfig.copy(contextPercent = 37),
                             onOpen = { actions++ },
                             onStatusClick = { statusClicks++ },
                             onAnchorChanged = { _, _ -> },
@@ -142,7 +144,7 @@ class ThreadComposerFooterWidthTest {
         val contextText = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true)
         val actionsBounds = actionsText.getUnclippedBoundsInRoot()
         val contextBounds = contextText.getUnclippedBoundsInRoot()
-        for ((label, node) in listOf("Actions" to actionsText, "Cxt: 84%" to contextText)) {
+        for ((label, node) in listOf("Actions" to actionsText, "Cxt: 37%" to contextText)) {
             val layouts = mutableListOf<TextLayoutResult>()
             node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
             val layout = layouts.single()
@@ -164,6 +166,59 @@ class ThreadComposerFooterWidthTest {
         assertEquals(1, actions)
         assertEquals(1, attaches)
         assertEquals(1, statusClicks)
+    }
+
+    // The high reading (#1412) is the longest context text; at 320dp and default font it still fits whole.
+    @Test
+    fun compactWidth_highReadingFitsOnOneLine() {
+        renderCompactFooter(contextPercent = 100, fontScale = 1f)
+        val layout = contextLayout()
+        assertEquals("Cxt high: 100%", layout.layoutInput.text.text)
+        assertEquals("high reading wraps at 320dp", 1, layout.lineCount)
+        assertFalse("high reading ellipsizes at 320dp", layout.isLineEllipsized(0))
+        assertTrue("high reading clips on the right at 320dp", layout.getLineRight(0) <= layout.size.width)
+    }
+
+    // Accepted trade-off (#1412): at 320dp and 1.5× font the longer "Cxt high:" text no longer fits and
+    // ellipsizes, while the content description keeps the full figure. A layout change that makes it fit
+    // can drop the ellipsis assertion.
+    @Test
+    fun compactWidthAndEnlargedText_highReadingKeepsTheFigureInItsDescription() {
+        renderCompactFooter(contextPercent = 84, fontScale = 1.5f)
+        assertTrue("high reading now fits at enlarged text", contextLayout().isLineEllipsized(0))
+        composeTestRule
+            .onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true)
+            .assertContentDescriptionEquals("Context usage high, 84%")
+    }
+
+    private fun renderCompactFooter(
+        contextPercent: Int,
+        fontScale: Float,
+    ) {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
+                    CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
+                        ThreadComposerFooter(
+                            runConfig = fullConfig.copy(contextPercent = contextPercent),
+                            onOpen = {},
+                            onStatusClick = {},
+                            onAnchorChanged = { _, _ -> },
+                            onAttach = {},
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun contextLayout(): TextLayoutResult {
+        val layouts = mutableListOf<TextLayoutResult>()
+        composeTestRule
+            .onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        return layouts.single()
     }
 
     // The paperclip and run configuration opener keep their full tap targets inside the footer.

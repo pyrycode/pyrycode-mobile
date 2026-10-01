@@ -136,8 +136,10 @@
     <string name="status_sheet_context_unavailable">Not reported yet</string>
     <string name="thread_footer_context">Cxt: %1$d%%</string>
     <string name="thread_footer_context_unavailable">Cxt: n/a</string>
+    <string name="thread_footer_context_high">Cxt high: %1$d%%</string>
     <string name="cd_context_usage">Context usage %1$d%%</string>
     <string name="cd_context_usage_unavailable">Context usage unavailable</string>
+    <string name="cd_context_usage_high">Context usage high, %1$d%%</string>
     <string name="thread_effort_note_selected_unavailable">Selected effort. The running effort is unavailable.</string>
     <string name="thread_effort_note_default_unavailable">%1$s\'s default applies. The running effort is unavailable.</string>
     <string name="thread_effort_note_not_reported">%1$s reports no effort parameter.</string>

@@ -118,6 +118,17 @@ interface ConversationRepository {
     fun observeResetting(conversationId: String): Flow<ResetStatus?> = flowOf(null)
 
     /**
+     * Emits the ids of every conversation on this connection that is busy outside a running turn (#1452):
+     * stalled, retrying the API, compacting or resetting. Each fact rises and clears on exactly the edges of
+     * [observeStall], [observeApiRetry], [observeCompacting] and [observeResetting]. Cold flow; re-emits on
+     * every change. The host's list observes this to blink a busy chat's status dot, as desktop's `isWorking`.
+     *
+     * Default `flowOf(emptySet())` — implementations without an interactive wire (the fake, inline test
+     * doubles) inherit "nothing busy" and need no override, the same cascade-avoidance as [observeStall].
+     */
+    fun observeBusyConversations(): Flow<Set<String>> = flowOf(emptySet())
+
+    /**
      * Emits the model claude last announced for [conversationId]'s turn (#890), or **`null` until an
      * announcement arrives**. Cold flow; re-emits on every change. Each `model_announced` frame replaces the
      * reading, because claude announces on every turn and a `/model` turn still names the old model: a
@@ -147,9 +158,9 @@ interface ConversationRepository {
     /**
      * Emits the context-window reading Claude last reported for [conversationId] (#945), or **`null` while
      * there is none**, which reads as "unavailable", never as zero. Cold flow; re-emits on every change. Each
-     * `context_usage` frame the daemon pushes after a turn replaces the reading. The conversation's session
-     * transition clears it, and a reconnect or host switch starts from nothing, so it stays absent until the next
-     * turn ends. The implementation sends no `request_context_usage` until pyrycode#2563 (#946).
+     * `context_usage` frame replaces the reading: the daemon's push after a turn, or the answer to
+     * [requestContextUsage]. The conversation's session transition clears it. Observing sends nothing; the open
+     * thread asks through [requestContextUsage] (#1410).
      *
      * **Preferred over [SessionSettings.usedTokens] / [SessionSettings.windowTokens].** Those are
      * transcript-derived; the thread shows this reading's token totals while one exists and falls back to the
@@ -785,6 +796,18 @@ interface ConversationRepository {
      * Default is a no-op, so no test double needs to override it.
      */
     fun refreshSessionSettings(conversationId: String) = Unit
+
+    /**
+     * Ask for a fresh [observeContextUsage] reading of [conversationId] now rather than at the next turn end
+     * (#1410, `request_context_usage`). The answer arrives on the flow the caller already collects.
+     *
+     * **Fire-and-forget, non-suspending and non-throwing.** With no live connection it is a no-op. A refusal
+     * (`conversation.not_found`, `context_usage.unavailable`) leaves the current reading as it is and surfaces
+     * nothing, and nothing retries.
+     *
+     * Default is a no-op, so no test double needs to override it.
+     */
+    fun requestContextUsage(conversationId: String) = Unit
 }
 
 enum class ConversationFilter { All, Channels, Discussions, Archived }

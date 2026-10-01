@@ -947,6 +947,27 @@ class StableConversationRepositoryTest {
             facade.refreshSessionSettings("c1")
         }
 
+    // ---- #1410: requestContextUsage forwards to the live connection, silent while none is live --------
+
+    @Test
+    fun requestContextUsage_delegatesToLiveRepo() =
+        runTest {
+            val repo = RecordingConversationRepository()
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(repo))
+
+            facade.requestContextUsage("c1")
+
+            assertEquals(listOf("c1"), repo.requestContextUsageCalls)
+        }
+
+    @Test
+    fun requestContextUsage_whileAbsent_isSilentNoOp() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            facade.requestContextUsage("c1")
+        }
+
     // ---- #507: mutationsSupported capability — delegates to the live value, fail-safe-deny false --
 
     @Test
@@ -1200,6 +1221,12 @@ class StableConversationRepositoryTest {
 
         override fun refreshSessionSettings(conversationId: String) {
             refreshSessionSettingsCalls += conversationId
+        }
+
+        val requestContextUsageCalls = mutableListOf<String>()
+
+        override fun requestContextUsage(conversationId: String) {
+            requestContextUsageCalls += conversationId
         }
 
         override suspend fun createDiscussion(workspace: String?): Conversation {

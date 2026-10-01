@@ -69,6 +69,9 @@ internal class StallProjection {
      */
     fun observe(conversationId: String): Flow<Boolean> = stalledConversations.map { conversationId in it }.distinctUntilChanged()
 
+    /** Every conversation stalled right now (#1452), for the host's list. Same edges as [observe]. */
+    fun observeIds(): Flow<Set<String>> = stalledConversations
+
     /**
      * Decode one v2 `stall` envelope (#395) to its conversation id, or **null** when it cannot be
      * read. Decodes the untrusted [Envelope.payload] through the single configured [MobileJson]; the
