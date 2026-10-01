@@ -455,6 +455,8 @@ internal fun PyryNavHost(
                 val attachmentUploadProgress by vm.attachmentUploadProgress.collectAsStateWithLifecycle()
                 val attachmentStates by vm.attachmentStates.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
+                // #1360: the refusal row's way back to the refused model.
+                val switchBackOffer by vm.switchBackOffer.collectAsStateWithLifecycle()
                 val usageLimitDismissals = koinInject<UsageLimitDismissals>()
                 val dismissedUsageLimits by usageLimitDismissals.dismissed.collectAsStateWithLifecycle()
                 // #1050: composed again means the operator is back on the thread, so a linked note's reader has
@@ -507,6 +509,8 @@ internal fun PyryNavHost(
                     onDropQueued = vm::onDropQueued,
                     onOverflowEvent = vm::onOverflowEvent,
                     onModelSelected = vm::onModelSelected,
+                    switchBackOffer = switchBackOffer,
+                    onSwitchBack = vm::onSwitchBack,
                     onEffortSelected = vm::onEffortSelected,
                     onPermissionModeSelected = vm::onPermissionModeSelected,
                     onComposerCommand = vm::onComposerCommand,

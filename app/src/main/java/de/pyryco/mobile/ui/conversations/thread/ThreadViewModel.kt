@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -36,6 +37,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
@@ -74,6 +76,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.datetime.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -278,6 +281,13 @@ class ThreadViewModel(
 
     /** The [pendingModel] twin for effort (#807). */
     private val pendingEffort = MutableStateFlow<String?>(null)
+
+    /**
+     * This thread's switch-back offer (#1360), or `null`: at most one, armed only by a live session-scoped
+     * fallback refusal ([onLiveRefusalEvent]), never by a row, so a restored refusal cannot arm it. Written on
+     * Main only.
+     */
+    private val refusalOffer = MutableStateFlow<RefusalOffer?>(null)
 
     /** This opening's recall of the remembered effort (#686); its write is [startEffortRecall]. */
     private val effortRecall = EffortRecall(viewModelScope, rememberedEffort, ::startEffortRecall)
@@ -527,6 +537,31 @@ class ThreadViewModel(
                     mutationsSupported = mutationsSupported,
                 ),
         )
+
+    /**
+     * The switch-back offer as the refusal row draws it (#1360), or `null`. Pending while any model write is
+     * outstanding, the switch-back's own or the menu's. Eager, so it holds while no screen collects it.
+     */
+    val switchBackOffer: StateFlow<SwitchBackOffer?> =
+        combine(refusalOffer, pendingModel) { offer, pending ->
+            offer?.let { SwitchBackOffer(it.occurredAt, it.originalModel, pending = pending != null, failed = it.failed) }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    init {
+        // #1360: the offer's live inputs, for the life of the thread. A reconnect is neither, so it keeps
+        // the offer. The announced model is a held reading; `distinctUntilChanged` keeps the same model handed
+        // over again on a reconnect from counting as a new announcement.
+        viewModelScope.launch { repository.observeLiveRefusalEvents(conversationId).collect(::onLiveRefusalEvent) }
+        viewModelScope.launch {
+            repository
+                .observeAnnouncedModel(conversationId)
+                .mapNotNull { it?.model }
+                .distinctUntilChanged()
+                .collect { model ->
+                    if (model.isNotEmpty() && model != refusalOffer.value?.fallbackModel) clearRefusalOffer("announced")
+                }
+        }
+    }
 
     /**
      * This thread's host connection, `Connected` once the host has answered the handshake (#1318). Started
@@ -1949,8 +1984,75 @@ class ThreadViewModel(
         val config = state.value.runConfig
         if (config.pending || value == config.selectedModel) return
         if (!skipUnlessWritable(config)) return
+        // #1360: a model the user picks replaces the way back to the refused one.
+        clearRefusalOffer("menu")
         pendingModel.value = value
         sendSessionSettings(config.sessionId, model = value) { pendingModel.value = null }
+    }
+
+    /**
+     * Switch back to the model claude refused on (#1360, desktop's `switchBack`): one write of the offer's
+     * original model, verbatim, to the session the settings reading names. Unlike [onModelSelected] there is no
+     * equal-value guard: after a session-scoped fallback the reading can still name the original model while
+     * claude runs the fallback, so the write must go out anyway.
+     *
+     * Dropped while the host is not connected, without an offer, while any model write is pending, or without
+     * a session to address. An acknowledged write ends the offer; a refused or failed one keeps it, marked
+     * failed until the next tap. Both act only on the offer the write was sent for. Logs static codes only:
+     * the model is claude's text.
+     */
+    fun onSwitchBack() {
+        if (!connectedFor("switch_back")) return
+        val offer = refusalOffer.value ?: return
+        if (pendingModel.value != null) {
+            RelayLog.d { "event=refusal_switch_back outcome=skipped reason=pending" }
+            return
+        }
+        val config = state.value.runConfig
+        if (!skipUnlessWritable(config)) return
+        refusalOffer.value = offer.copy(failed = false)
+        pendingModel.value = offer.originalModel
+        RelayLog.d { "event=refusal_switch_back outcome=sent" }
+        sendSessionSettings(
+            config.sessionId,
+            model = offer.originalModel,
+            onAcked = {
+                RelayLog.d { "event=refusal_switch_back outcome=acked" }
+                refusalOffer.update { if (it?.occurredAt == offer.occurredAt) null else it }
+            },
+        ) {
+            RelayLog.d { "event=refusal_switch_back outcome=failed" }
+            pendingModel.value = null
+            refusalOffer.update { if (it?.occurredAt == offer.occurredAt) it.copy(failed = true) else it }
+        }
+    }
+
+    /**
+     * Fold one live refusal event into the offer (#1360), after desktop's `reduceRefusalOffer`. Only a fallback
+     * refusal whose `scope` is exactly `session` and that names both models arms; any other fallback refusal
+     * clears; a no-fallback refusal changes nothing; a session transition clears. `scope` is claude's open
+     * string, compared and never shown: a value this client does not know can only withhold the offer.
+     */
+    private fun onLiveRefusalEvent(event: LiveRefusalEvent) {
+        when (event) {
+            is LiveRefusalEvent.Refused -> {
+                val refusal = event.refusal
+                val fallbackModel = refusal.fallbackModel ?: return
+                if (event.scope == SESSION_SCOPE && refusal.originalModel.isNotEmpty() && fallbackModel.isNotEmpty()) {
+                    refusalOffer.value = RefusalOffer(refusal.originalModel, fallbackModel, refusal.occurredAt)
+                    RelayLog.d { "event=refusal_offer outcome=armed" }
+                } else {
+                    clearRefusalOffer("unqualified")
+                }
+            }
+            LiveRefusalEvent.SessionReplaced -> clearRefusalOffer("session")
+        }
+    }
+
+    private fun clearRefusalOffer(reason: String) {
+        if (refusalOffer.value == null) return
+        refusalOffer.value = null
+        RelayLog.d { "event=refusal_offer outcome=cleared reason=$reason" }
     }
 
     /** The [onModelSelected] twin for effort (#807). [level] is a published [ThreadEffortChoice.value] of
@@ -2114,6 +2216,7 @@ class ThreadViewModel(
         sessionId: String,
         model: String? = null,
         effort: String? = null,
+        onAcked: () -> Unit = {},
         revert: () -> Unit,
     ): Job =
         viewModelScope.launch {
@@ -2126,6 +2229,8 @@ class ThreadViewModel(
                 // asks for a fresh reading rather than promoting the optimistic one. The pending survives
                 // until that reading lands (see [sessionSettings]); only the failure paths below clear it.
                 repository.refreshSessionSettings(conversationId)
+                // #1360: the switch-back's ack ends its offer.
+                onAcked()
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
@@ -2498,6 +2603,20 @@ internal fun String.modelFamily(): String {
     val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
     return head.replaceFirstChar { it.uppercaseChar() }.inert()
 }
+
+/**
+ * The ViewModel's switch-back offer (#1360): the arming refusal's two models, verbatim, and its row identity.
+ * [failed] marks the last write for this offer as refused or failed.
+ */
+private data class RefusalOffer(
+    val originalModel: String,
+    val fallbackModel: String,
+    val occurredAt: Instant,
+    val failed: Boolean = false,
+)
+
+/** The one `model_refusal_fallback.scope` that arms a switch-back offer (#1360, desktop's rule). */
+private const val SESSION_SCOPE = "session"
 
 private fun Conversation.displayName(): String =
     name?.takeIf { it.isNotBlank() }

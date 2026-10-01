@@ -239,6 +239,9 @@
     <string name="thread_refusal_hide_details">Hide details</string>
     <string name="cd_thread_refusal_expand">Show %1$s\'s explanation</string>
     <string name="cd_thread_refusal_collapse">Hide %1$s\'s explanation</string>
+    <!-- #1360: the switch-back button's client copy; the model follows as its own span. -->
+    <string name="thread_refusal_switch_back">"Switch back to "</string>
+    <string name="thread_refusal_switch_back_failed">Could not change the model — try again.</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="cd_tool_done">Tool call done</string>
