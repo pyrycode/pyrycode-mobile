@@ -120,6 +120,31 @@ class ConversationAttentionTest {
         assertEquals(emptyMap<String, ConversationAttention>(), idle.resolve(emptyList(), emptyList()))
     }
 
+    // #1452: a stalled, retrying, compacting or resetting chat is busy, and busy reads as Running.
+    @Test
+    fun aBusyConversationRunsBelowAPromptAndAboveUnread() {
+        val busy = HostAttentionState().withBusy(setOf("b"))
+        assertEquals(mapOf("b" to ConversationAttention.Running), busy.resolved())
+        assertEquals(mapOf("b" to ConversationAttention.WaitingForAnswer), busy.resolve(listOf(modal("b")), emptyList()))
+        assertEquals(
+            mapOf("b" to ConversationAttention.WaitingForAnswer),
+            busy.resolve(emptyList(), listOf(QuestionBatch("b", "q", emptyList()))),
+        )
+        val unread = HostAttentionState().onEvent(end("b", "t1"), viewing = false).withBusy(setOf("b"))
+        assertEquals(mapOf("b" to ConversationAttention.Running), unread.resolved())
+        assertEquals(mapOf("b" to ConversationAttention.Unread), unread.withBusy(emptySet()).resolved())
+    }
+
+    @Test
+    fun disconnectClearsBusyAndRunning() {
+        val state = HostAttentionState().onEvent(state("r", Phase.Thinking), viewing = false).withBusy(setOf("b"))
+        assertEquals(
+            mapOf("r" to ConversationAttention.Running, "b" to ConversationAttention.Running),
+            state.resolved(),
+        )
+        assertEquals(HostAttentionState(), state.disconnected())
+    }
+
     private fun HostAttentionState.resolved() = resolve(emptyList(), emptyList())
 
     private fun state(
