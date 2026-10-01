@@ -55,9 +55,10 @@ val state: StateFlow<ArchivedDiscussionsUiState> =
         repository.observeConversations(ConversationFilter.Archived),
         selectedTab,
     ) { conversations, tab ->
+        // Each tab sorts on its own, newest-archived first (#1332: ArchiveOrder = archiveKey desc, then id asc).
         ArchivedDiscussionsUiState.Loaded(
-            channels    = conversations.filter { it.isPromoted },
-            discussions = conversations.filter { !it.isPromoted },
+            channels    = conversations.filter { it.isPromoted }.sortedWith(ArchiveOrder),
+            discussions = conversations.filter { !it.isPromoted }.sortedWith(ArchiveOrder),
             selectedTab = tab,
         ) as ArchivedDiscussionsUiState   // widening cast is required — see Lessons learned in 176.md
     }.catch { e ->
@@ -67,11 +68,12 @@ val state: StateFlow<ArchivedDiscussionsUiState> =
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), Loading)
 ```
 
-Three things to know:
+Four things to know:
 
 1. **There is no top-level `Empty` state since #176.** AC §5's "tab header stays visible while one tier is empty" requires `Loaded` to render even when `channels` or `discussions` is empty — the chrome (tab row) needs counts from both lists at all times, so a single top-level `Empty` couldn't carry them. Per-tab emptiness is computed in the body from `Loaded.channels.isEmpty()` / `Loaded.discussions.isEmpty()`.
 2. **`Loaded` carries both lists.** Tab switching is a pure UI re-render — the `combine` re-emits with the new tab slot while the data side stays cached at its last value. No re-collection of the upstream cold flow.
 3. **The `!isPromoted` post-filter from #94 is gone.** The pre-#176 VM applied `it.filter { !it.isPromoted }` to drop archived channels client-side; #176 keeps both partitions because the screen now needs them. The repository's `Archived` filter (#93) is still `isPromoted`-agnostic, as designed for this exact composition.
+4. **The sort is per-tier, in the view model, not in `ConversationListProjection.project` (#1332).** `ArchiveOrder` (`archiveKey` descending, then id ascending — `data/model/Conversation.kt`) runs here because this view model is the sole consumer that shows the Archive order and the acceptance test is written against it; `project`'s `Archived` arm is untouched. `archiveKey` is `archivedAt ?: lastUsedAt` — a row archived before the daemon shipped `archived_at` (pyrycode#2698), or whose stamp failed to parse, falls back to `lastUsedAt`, the same key [`ArchiveRow`](#archiverow-since-177)'s subtitle reads.
 
 `onEvent` handles three cases:
 
@@ -112,6 +114,8 @@ Body branches on the `UiState`:
    - **No explicit `indicator =` override.** `SecondaryTabRow`'s default indicator is already a 2dp `colorScheme.primary` underline matching Figma 18:2 — the spec's drafted `SecondaryIndicator(Modifier.tabIndicatorOffset(…), color = MaterialTheme.colorScheme.primary, height = 2.dp)` override is dropped. Chosen over `PrimaryTabRow` because Primary's M3 rounded-pill indicator doesn't match the flat 2dp underline Figma specifies.
 2. **Body.** Selected tab → `val items = when (state.selectedTab) { Channels -> state.channels; Discussions -> state.discussions }`. If `items.isEmpty()`, renders a centered `stringResource(R.string.archived_empty_<variant>)` ("No archived channels" or "No archived discussions") **below the tab header** — the header stays mounted, satisfying AC §5. Otherwise renders a `LazyColumn` keyed by `it.id` of [`ArchiveRow`](#archiverow-since-177) for each item. The row's `displayName` argument and the `RestoreRequested(id, displayName)` payload both read from a file-private `Conversation.displayName(): String` extension (`name?.takeIf { it.isNotBlank() } ?: if (isPromoted) "Untitled channel" else "Untitled discussion"`) — same fallback `ConversationRow` carries inline, deliberately duplicated rather than refactored shared per the #177 spec.
 
+**Scroll anchor for a newly-top row (#1332).** `conversation_updated` carries no `archived_at`, so a row archived from this phone is held with `archivedAt = null` and sorts by `lastUsedAt` until the screen's own `list_conversations` reply lands with the daemon's stamp — at which point it moves to index 0 in a `LazyColumn` already anchored on whatever drew first there, landing above the viewport instead of visibly on top. `LoadedBody` hoists `val listState = rememberLazyListState()` and calls a private `KeepNewTopRowInView(listState, items)` composable before building the `LazyColumn`: a `LaunchedEffect(listState, firstId)` compares `items.first().id` against the previously-shown first id and, only when the list was at the top (`firstVisibleItemScrollOffset == 0` and the visible index is either `0` or still the previous first row — the anchor may already have moved the index while `layoutInfo` still describes the old layout), calls `listState.requestScrollToItem(0)`. A list the user had scrolled away from the top keeps its place and never composes the moved row into view. Caught by the verifier on PR #1398 because no `ArchivedDiscussionsViewModelTest` exercises a `LazyColumn`; the regression tests are shared-screen ones (`ArchivedDiscussionsLayoutTest`: a row moved to index 0 of an at-top list is displayed above the previous first row; a scrolled list keeps its visible row) plus the live e2e scenario.
+
 The same `ArchiveRow` is reused for both tabs (the row composable takes any `Conversation` and renders the archived treatment regardless of `isPromoted`).
 
 ### `ArchiveRow` (since #177)
@@ -134,7 +138,7 @@ Row(fillMaxWidth, padding(horizontal = 16.dp, vertical = 12.dp),
     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
     Column(Modifier.weight(1f), Arrangement.spacedBy(2.dp)) {
         Text(displayName, titleMedium, onSurface, maxLines=1, Ellipsis)
-        Text("Archived ${formatRelativeTime(lastUsedAt)}",
+        Text("Archived ${formatArchiveRelativeTime(conversation.archiveKey)}",
              bodySmall, onSurfaceVariant,
              Modifier.alpha(0.75f), maxLines=1, Ellipsis)
     }
