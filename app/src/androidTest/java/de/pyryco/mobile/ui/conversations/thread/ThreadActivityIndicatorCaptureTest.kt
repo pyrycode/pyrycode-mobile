@@ -18,13 +18,13 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import de.pyryco.mobile.design.Viewport
-import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals

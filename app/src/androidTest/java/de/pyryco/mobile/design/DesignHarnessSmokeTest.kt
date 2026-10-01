@@ -16,11 +16,14 @@ import org.junit.runner.RunWith
 /** Proves the harness itself: compact large-text viewport, real bars, the Koin override and the menu helper. */
 @RunWith(AndroidJUnit4::class)
 class DesignHarnessSmokeTest {
-    @get:Rule(order = 0) val viewport = ViewportRule()
+    @get:Rule(order = 0)
+    val viewport = ViewportRule()
 
-    @get:Rule(order = 1) val rule = createEmptyComposeRule()
+    @get:Rule(order = 1)
+    val rule = createEmptyComposeRule()
 
-    @get:Rule(order = 2) val design = DesignCapture(rule)
+    @get:Rule(order = 2)
+    val design = DesignCapture(rule)
 
     @Viewport("320x700", fontScale = 1.5f)
     @Test
@@ -40,7 +43,9 @@ class DesignHarnessSmokeTest {
         rule.onNodeWithText("Pyrycode Mobile").performScrollTo().performClick()
         rule.waitUntil(5_000) { design.inputs.thread.value != null }
         val inputs = design.inputs.threadInputs
-        rule.waitUntil(5_000) { inputs.values.all { it.subscriptionCount.value > 0 } }
+        val unsubscribed = { inputs.filterValues { it.subscriptionCount.value == 0 }.keys }
+        runCatching { rule.waitUntil(5_000) { unsubscribed().isEmpty() } }
+        assertEquals("thread inputs without a subscriber", emptySet<String>(), unsubscribed())
         val thread = checkNotNull(design.inputs.thread.value)
         rule.waitUntil(5_000) { thread.state.value.backgroundTaskCount == 2 }
         rule.waitUntil(5_000) { thread.connectionState.value == ConnectionState.Offline }

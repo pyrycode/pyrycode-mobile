@@ -60,7 +60,10 @@ class DesignInputs {
     val thread = MutableStateFlow<ThreadViewModel?>(null)
     val scanner = MutableStateFlow<ScannerViewModel?>(null)
 
-    /** Every input flow, for checks that the opened screen subscribes to each one. */
+    /**
+     * Every input flow the open thread collects, for checks that the override reaches it. [attachmentOffers]
+     * is left out: at this commit no thread code reads `observeAttachmentOffers`, so nothing subscribes.
+     */
     val threadInputs: Map<String, MutableSharedFlow<*>>
         get() =
             mapOf(
@@ -71,7 +74,6 @@ class DesignInputs {
                 "backgroundTasks" to backgroundTasks,
                 "backgroundTaskCount" to backgroundTaskCount,
                 "pairingRejected" to pairingRejected,
-                "attachmentOffers" to attachmentOffers,
                 "sessionFacts" to sessionFacts,
                 "contextUsage" to contextUsage,
             )
@@ -105,8 +107,8 @@ class DesignInputs {
                     get(),
                     liveSessionEvents = liveSessionEvents,
                     hostModal = hostModal,
-                    questionDraftStore = get(),
-                    permissionDraftStore = get(),
+                    // No app draft stores: production binds them to a host coordinator, and only without one
+                    // does the view model read questionBatch itself, as on the demo host.
                     questionBatch = { questionBatch },
                     backgroundTasks = { backgroundTasks },
                     backgroundTaskCount = { backgroundTaskCount },
@@ -152,5 +154,4 @@ class DesignInputs {
                 ScannerViewModel(get(), registry, registry::pairingStatus)
             }
         }
-
 }

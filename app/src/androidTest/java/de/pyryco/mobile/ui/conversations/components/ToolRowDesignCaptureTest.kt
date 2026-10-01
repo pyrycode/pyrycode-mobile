@@ -32,11 +32,11 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import de.pyryco.mobile.design.Viewport
-import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

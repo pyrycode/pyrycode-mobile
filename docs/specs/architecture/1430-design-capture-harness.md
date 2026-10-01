@@ -59,3 +59,7 @@ covering the two migrated classes (AC1), the smoke class (AC2) and the onboardin
 
 - Whether Koin 4.0.4's `loadKoinModules` overrides a `viewModel` definition the way it overrides `single` (it keys both by type and qualifier). Settled by the smoke test's subscriber assertions.
 - Whether every thread input is collected without extra UI state (for example the question batch only while a batch exists). Settled by the smoke test; an input that needs a precondition is documented in the README.
+
+## Revisions
+
+- **2026-10-01, smoke run:** the first device run found two thread inputs without a subscriber, which settles both Open Questions. Koin 4.0.4 does override the `viewModel` definitions. (1) `ThreadViewModel` reads `questionBatch` only when it gets no `QuestionDraftStore`, because production binds the app store to a host coordinator. The override therefore passes no draft stores, as the demo host does. (2) No thread code reads `observeAttachmentOffers` at this commit. `DesignInputs.attachmentOffers` is still overridden, but it is left out of `threadInputs`, the subscriber check, and the README says so. The smoke test now names any unsubscribed input when it fails. Uninstalling reloads copies of `appModule`'s two view-model definitions, because reloading `appModule` itself would re-create its eager singletons.

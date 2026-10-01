@@ -17,11 +17,14 @@ import org.junit.runner.RunWith
 /** Onboarding states of the assembled app at the Figma frames' 412x892 viewport (design-1220/onboarding). */
 @RunWith(AndroidJUnit4::class)
 class OnboardingDesignCaptureTest {
-    @get:Rule(order = 0) val viewport = ViewportRule()
+    @get:Rule(order = 0)
+    val viewport = ViewportRule()
 
-    @get:Rule(order = 1) val rule = createEmptyComposeRule()
+    @get:Rule(order = 1)
+    val rule = createEmptyComposeRule()
 
-    @get:Rule(order = 2) val design = DesignCapture(rule)
+    @get:Rule(order = 2)
+    val design = DesignCapture(rule)
 
     @Test fun onboardingFramesAt412By892() {
         design.launch()
@@ -61,7 +64,12 @@ class OnboardingDesignCaptureTest {
     }
 
     private fun awaitScanner(predicate: (ScannerUiState) -> Boolean): ScannerViewModel {
-        rule.waitUntil(5_000) { design.inputs.scanner.value?.state?.value?.let(predicate) == true }
+        rule.waitUntil(5_000) {
+            design.inputs.scanner.value
+                ?.state
+                ?.value
+                ?.let(predicate) == true
+        }
         rule.waitForIdle()
         return checkNotNull(design.inputs.scanner.value)
     }
