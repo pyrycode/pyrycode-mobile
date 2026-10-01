@@ -58,12 +58,16 @@ ThreadViewModel.currentModal : StateFlow<ModalUiState>   ◀── #1337 scoped 
 ThreadScreen → modal overlay (#446 renders it; #451 answers it, #452 renders the armed affordance)
 ```
 
-`RelayRepositoryCoordinator.currentModal : StateFlow<ModalUiState>` still exists as a **single-value view**
-over `hostModals` — `hostModals.map { it.latestOutstanding }` — kept for the conversation-list attention
-readers (`HostAttentionState.resolve`, `HostConversationSource.promptKeys`,
-`RelayConnectionRegistry.currentModal`) until [#1338](#related) moves them onto the whole list. No thread
-screen reads it; threads scope `hostModals` directly. See [§ The `HostModalState`
-fold](#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure) below.
+**As of [#1338](#related) the conversation-list attention readers take the whole `hostModals.outstanding`
+list, not a single-value projection.** `RelayRepositoryCoordinator.currentModal` and
+`RelayConnectionRegistry.currentModal` (the `hostModals.map { it.latestOutstanding }` view) and
+`HostModalState.latestOutstanding` itself are gone; `HostAttentionState.resolve` and
+`HostConversationSource.promptKeys` now take `List<ModalUiState.Open>` directly, matching desktop's
+`selectHasOutstandingFor` — a chat waits while *any* outstanding prompt belongs to it, not only the most
+recent one. No thread screen ever read `currentModal`; threads scope `hostModals` directly, unaffected by
+this change. See [§ The `HostModalState` fold](#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure)
+below, and [Dependency injection — host conversation
+source](dependency-injection-host-conversation-source.md) for the reader side.
 
 The coordinator's fold is **host-level**, holding every outstanding prompt across all of that host's
 conversations in one `HostModalState`, keyed on `modalId` (not a separate fold per conversation). Since
@@ -99,12 +103,6 @@ val hostModals: StateFlow<HostModalState> =
     modalEvents
         .scan(HostModalState()) { state, event -> if (event == null) HostModalState() else state.reduce(event) }
         .stateIn(scope, SharingStarted.Eagerly, HostModalState())
-
-// #1337: the single-value view kept for the conversation-list attention readers until #1338.
-val currentModal: StateFlow<ModalUiState> =
-    hostModals
-        .map { it.latestOutstanding }
-        .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 ```
 
 `flatMapLatest` switches to the fresh connection's repo and cancels the prior on reconnect; `emptyFlow()`
@@ -155,9 +153,6 @@ fun HostModalState.scopedTo(conversationId: String): ModalUiState =
     outstanding.firstOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }
         ?: resolved.lastOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }
         ?: ModalUiState.Hidden
-
-val HostModalState.latestOutstanding: ModalUiState
-    get() = outstanding.lastOrNull() ?: ModalUiState.Hidden
 ```
 
 `scopedTo(conversationId)` — what `ThreadViewModel.currentModal` is built from — is **first outstanding,
@@ -166,10 +161,7 @@ a blank or non-matching `conversationId` always yields `Hidden`). The "most rece
 why `ThreadScreen`'s `LaunchedEffect(modalState.modalId)` resolved-snackbar can fire again: reopening a
 conversation re-reads the same `Dismissed` from `resolved` until the next reconnect clears it — see [§
 Permission-modal overlay](permission-modal-overlay.md#the-dismissal-dismissed) for the render-side
-consequence. `latestOutstanding` is `currentModal`'s basis: the single most-recently-shown prompt across the
-whole host, `Hidden` when nothing is outstanding, never a `Dismissed` — the shape the three remaining
-single-value readers (`HostAttentionState.resolve`, `HostConversationSource.promptKeys`,
-`RelayConnectionRegistry.currentModal`) need, since all three only test the `Open` case.
+consequence.
 
 ### The `alwaysAllowRules` field (#818)
 
@@ -334,9 +326,11 @@ to a thread that isn't its own.
 - `docs/specs/architecture/1337-hold-every-outstanding-prompt.md` — the #1337 plan: the `HostModalState`
   design, the reconnect-marker ordering proof, and the security review for holding an unbounded list per
   host.
-- #1338 (open) — plans to move `HostAttentionState.resolve`, `HostConversationSource.promptKeys` and
-  `RelayConnectionRegistry.currentModal` off the single-value `currentModal` view onto the full
-  `HostModalState`, so the conversation list can show attention for more than the most recent prompt.
+- [#1338](../../specs/architecture/1338-every-prompt-waits.md) (shipped) — moved `HostAttentionState.resolve`
+  and `HostConversationSource.promptKeys` off the single-value `currentModal` view onto the full
+  `hostModals.outstanding` list, so the conversation list shows attention for every held prompt, not only the
+  most recent one. See [Dependency injection — host conversation
+  source](dependency-injection-host-conversation-source.md).
 - [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the other sibling transient signal
   (`isStalled`).
 - [Guarded repo launch](guarded-repo-launch.md) ([#490](../codebase/490.md)) — the deterministic
