@@ -86,3 +86,7 @@ Pending for the documentation stage:
 
 - The verifier's MUST FIX: the `@Ignore` on `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` left the method in the curated LIVE `TEST_TARGET` list in `scripts/e2e-emulator.sh`, which `scripts/test_android_test_gate.py` requires to match the runnable methods. The method leaves the list with a #1445 exclusion comment; `LIVE_MINIMUM` follows from the list.
 - The PR's `## Live tests` now reads `all`, so the live gate runs the full suite after the ignore. That run is AC4's evidence and covers the band-driving methods the verifier named.
+
+**2026-10-01, rework after the second live gate.**
+
+- The full live suite ran 45 methods: 44 passed, including `interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`. `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild` failed on the merged branch and passed on `origin/main`. The phone's repository held the token reply (`threadHeldToken=true`), but only three bubbles were composed. The always-present band shortens the message area by 32dp, so the reply row fell outside the lazy list's composed window. The test now scrolls the token into view inside its wait, the same way `awaitPromptDialog` handles offscreen rows. No production code changes.
