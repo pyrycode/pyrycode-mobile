@@ -132,7 +132,11 @@ the host; the section fold and plus have separate targets, and the plus does not
 
 ## Host row edit control (#744)
 
-`TreeHostRow` draws a persistent `TreeRowControl` pencil beside `ConnectionLegPair`. Tap emits
+Host rows drew the two connection dots beside this pencil (`ConnectionLegPair`) from #744 through #1009;
+\#1333 removed them, and the paragraphs below describe the current, dot-free row. The thread's
+`ConnectionStatusLine` still shows both legs.
+
+`TreeHostRow` draws a persistent `TreeRowControl` pencil. Tap emits
 `TreeHostEditTapped(serverId)` (the route calls `vm.openHostEditor(serverId)`) for that row's host. The
 former trailing plus is gone; the pencil has one click action and no long press.
 
@@ -169,7 +173,7 @@ branches on `host.connectionStatus.relay == RelayLinkStatus.PairingRejected` and
 than retrying. The row's visual treatment and classification are unchanged — only the tap target differs.
 See [pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-842).
 
-**`UpdateRequired` gets its own control, dot and caption (#1009).** The row-level Play Store action
+**`UpdateRequired` gets its own control and caption (#1009).** The row-level Play Store action
 \#1008 deferred has landed, the way #842 changed the target for `PairingRejected`. `TreeHostRow` computes
 `val update = connectionStatus.relay as? RelayLinkStatus.UpdateRequired` and, when non-null, swaps the
 plug for `TreeRowControl(icon = Icons.Filled.Download, …)` tagged `treeHostUpdateTestTag(serverId)`
@@ -186,12 +190,6 @@ a log line), else `TreeHostReconnectTapped`. `PyryNavHost` maps the new event to
 debug build sets no such suffix, but the constant stays a literal on principle, not because of that build
 detail). It never calls `reconnectHost`/`retry()`.
 
-`ConnectionLegPair` gained `hostIdle: Boolean = false`, true only for `UpdateRequired`: the inboard
-(host) dot then draws as a private `IdleLegDot` — `ConversationStatusDot`'s idle drawing (transparent
-fill, 1dp `primary` ring), described "Pyrycode: idle" (`cd_tree_host_leg_idle`) — instead of the shared
-`LegDot`/`toLegVisual` mapping. The outboard relay dot is untouched and keeps the mapping it shares with
-the Settings status line.
-
 A caption `Text` (`bodySmall`/`onSurfaceVariant`, start-aligned with the host name) sits below the row,
 inside the host's own lazy item — folding the host only drops the rows below it, so the caption stays
 visible while folded. It reads `tree_host_update_required_version` when `update.minClientVersion` is
@@ -204,8 +202,8 @@ disconnected state, and dropping that affordance for one state was left out of s
 `TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
 today's `onSurfaceVariant`/`onSurface` tints); the host row passes `colorScheme.error` for both the glyph
-and the name when disconnected. A `TreeRowControl` with `Icons.Filled.Power` is drawn inboard of
-`ConnectionLegPair`, tagged `treeHostReconnectTestTag(serverId)` (sharing `boundedTagId`'s clamp with
+and the name when disconnected. A `TreeRowControl` with `Icons.Filled.Power` is drawn before the pencil,
+tagged `treeHostReconnectTestTag(serverId)` (sharing `boundedTagId`'s clamp with
 the edit tag). Tap emits `TreeHostReconnectTapped(serverId)` for the row's own host. There is no long press.
 
 Its content description is `R.string.cd_tree_host_reconnect` ("Reconnect %1$s") formatted with the row's
@@ -362,7 +360,8 @@ the dot's layer and never recomposes `TreeConversationRow` or its `Text`.
 **The state names itself.** `ConversationStatusDot` sets `Modifier.clearAndSetSemantics { contentDescription
 = … }` from an exhaustive `ConversationAttention` → string-resource map (`cd_conversation_attention_idle` /
 `_running` / `_unread` / `_waiting` / `_failed`, `strings.xml`) — the same self-describing-dot-in-a-merging-row
-shape `LegDot` already used. The row's own `selectable` merges that description with the conversation name,
+shape the host row's connection legs used before #1333 removed them. The row's own `selectable` merges
+that description with the conversation name,
 so TalkBack reads e.g. "Running, kitchenclaw refactor" — the meaning never rests on colour alone.
 
 **Wiring.** `treeHost` passes `attention = entry.attentionFor(conversation.id)` —
