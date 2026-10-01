@@ -571,6 +571,7 @@ fun ThreadScreen(
                         FollowNewestEnd(
                             listState = listState,
                             newestRowKey = rows.lastOrNull()?.listKey(rows.lastIndex),
+                            newestRow = rows.lastOrNull(),
                             promptIdentity = questionState?.generation to openRequest?.modalId,
                             promptPresent = questionState != null || openRequest != null,
                             sentMessages = sentMessages,

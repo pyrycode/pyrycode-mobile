@@ -88,3 +88,9 @@ Pending for the documentation stage: update § *Streaming auto-scroll (since #18
 ## Revisions
 
 - **2026-10-01 — Open question resolved as planned.** The anchor key is read from the visible item whose index equals `firstVisibleItemIndex` (inside `FollowNewestEnd`'s `snapshotFlow`), so key, index and offset come from the same frame. A traced run of the refused-mid-stream screen test showed the expected sequence: the tool row's arrival moves only the anchor's index and pins, the pin is refused under the resting finger, the next anchor-size change pins again and lands on the tool row. No design change.
+
+- **2026-10-01 — A refused pin is retried by any non-scroll frame (verifier MUST FIX on PR #1423).** The rule missed the case where the refused pin was for the reply that had just arrived. That reply sat at index 0 below the viewport, so its streamed deltas changed no visible row, `distinctUntilChanged` dropped every frame and the reply streamed out of sight. The traced test above passed only because the row that grew was the anchor, not the refused row. New contract:
+  - `ListFrame` gains `scrolling`, which is `isScrollInProgress`, so the finger lifting is a frame.
+  - The content signature now also carries the newest `ThreadRow` itself, passed to `FollowNewestEnd` as `newestRow`. A delta to a row below the viewport is growth. Like the anchor size, it is masked while a prompt is mounted (#1304).
+  - In `followStep`, a frame that is not a scroll pins when `following && (grew || anchorIndex != 0)`. While following, the list can only be off index 0 because a pin was refused, so the next delta or the finger lifting retries it. A successful pin changes the anchor key, so it reads as a scroll, which ends the retries without a loop.
+  - Covered by `ThreadScreenFollowTest.a_reply_whose_pin_is_refused_at_arrival_is_followed_once_the_finger_lifts`, which is red on the previous rule. `ThreadListFollowTest` covers the delta retry and the lift retry.
