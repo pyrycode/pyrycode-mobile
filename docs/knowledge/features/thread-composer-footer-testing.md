@@ -28,4 +28,11 @@ heading, so its anchor is unchanged; the parent's own `## Testing` heading now j
 
 ## Related
 
+The five live settings scenarios restored by [#1397](https://github.com/pyrycode/pyrycode-mobile/issues/1397)
+cover per-conversation model changes, inherited effort, remembered effort, operator bypass and footer
+readings after reconnect. Their shared settings helper ignores a held reply and waits for the live
+connection's reply. The reconnect scenario keeps the context percentage and announced model across the
+reconnect. Its next turn must finish and increase the context token count, proving that the connection
+delivered fresh data even when the displayed percentage stays the same.
+
 Part of [Thread composer footer](thread-composer-footer.md); see that document for the component's shape, sourcing and wiring.

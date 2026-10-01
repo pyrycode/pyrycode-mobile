@@ -961,11 +961,13 @@ lifecycle. They reuse #545's settings helpers and #850's `setHostLink` / `cycleH
 `SecondClientPeer` approval path, rather than repeating those scenarios.
 
 `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` runs a ping, cuts and restores the link,
-and confirms the footer's `Cxt:` segment reads `n/a` on the new connection — the reading belongs to the
-connection and nothing asks for it again since #946's Rework 1 — while model, effort and permission settle
-on what a fresh reading taken on the new connection reports. A second ping brings the context percentage
-back, proving the post-turn push is the fresh reading, and a model picked from the footer after that turn
-is confirmed by a further fresh reading. The #545 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
+and confirms that the footer keeps its context percentage across the reconnect, matching #1317. The
+inherited model's selected row follows the held model announcement. Effort and permission settle on a
+live settings reply. Since #1397, `freshSettings` skips the held reply that #1320 emits first. The second
+ping must finish and deliver a context reading with a token count greater than the held reading. A saved
+percentage alone cannot prove freshness, because both turns can round to the same percentage. A model
+picked from the footer after that turn is confirmed by another live settings reply.
+The #545 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
 method's effort-label mapping moved into a shared `appliedEffortFooter` helper both methods call, with no
 behaviour change. Two real claude turns: the ping before the cut and the ping after it.
 
