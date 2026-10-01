@@ -135,7 +135,7 @@ internal fun footerMenu(
     backgroundTaskCount: Int = 0,
 ): FooterMenu?
 
-internal fun footerControlEnabled(control: FooterControl, runConfig: ThreadRunConfig): Boolean
+internal fun footerControlEnabled(control: FooterControl, runConfig: ThreadRunConfig, connected: Boolean): Boolean
 
 @Composable
 fun ThreadComposerFooter(
@@ -146,6 +146,7 @@ fun ThreadComposerFooter(
     modifier: Modifier = Modifier,
     onAttach: () -> Unit = {},
     agent: ConversationAgent = ConversationAgent.Claude,
+    connected: Boolean = true,
 )
 ```
 
@@ -160,14 +161,15 @@ fun ThreadComposerFooter(
 - **Permission** (#650) — `null` when `runConfig.permissionMode` is `""`. Options are every `PermissionModeOption` `runConfig.offersPermission` allows (#1111) — `Auto` filtered out unless `runConfig.selectedMetadata?.supportsAutoMode == true` (the same field the [Status sheet](status-sheet.md)'s Model section reads for its own rows), and, with a `capabilities` list present, every mode but `Bypass` must be in `capabilities.permissionModes`; `selectedValue = runConfig.permissionMode` — an unrecognised value therefore selects nothing in the overlay, since it matches no `PermissionModeOption.wire`; `notListed = 0` always, since the vocabulary is closed and client-owned. See [§ Sourcing — Permission mode](#permission-mode-650) for the label and write rules.
 - **Actions** (#884) — never `null`. See [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884) for its options, the `mutationsSupported` gate on Reset session, and the `absentActions` enable rule; since #678 it also reads `backgroundTaskCount`, folded only into the background-tasks row's own label.
 
-`footerControlEnabled` still gates the retained Model, Effort and Permission menu projections on a writable session, no relevant pending write and an available menu. Actions remains enabled without a session. The current sheet gates its own Model/Effort and Permission rows directly; the footer opens only Actions.
+`footerControlEnabled` takes a required `connected` flag (#1319, no default — every caller must state it) and returns `false` for every control, Actions included, while the host is not connected, before any of the per-control rules below run. When connected, it still gates the retained Model, Effort and Permission menu projections on a writable session, no relevant pending write and an available menu; Actions needs none of that — a command send addresses no session and writes no setting. The current sheet gates its own Model/Effort and Permission rows directly; the footer opens only Actions.
 
 ## How it works
 
 ### `FooterButton` and Run configuration access
 
-The current footer renders an always-enabled Actions button, the `Cxt:` reading,
-the attachment button and the trailing `Tune` icon. The icon opens the
+The current footer renders an Actions button disabled only while the host is
+not connected (#1319), the `Cxt:` reading, the attachment button and the
+trailing `Tune` icon. The icon opens the
 [Run configuration sheet](status-sheet.md), where Model, Effort and Permission
 choices are rendered. The sheet receives `runConfig.selectedChoice?.value` for
 its model radio selection, `runConfig.modelSelectionNote` for an unrepresented
