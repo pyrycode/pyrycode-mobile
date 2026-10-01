@@ -52,8 +52,20 @@ coordinator deliberately stops at publishing the churning observable.
 // data/repository/StableConversationRepository.kt
 class StableConversationRepository(
     private val currentRepository: StateFlow<ConversationRepository?>,  // = coordinator.currentRepository
+    private val heldReadings: HostReadings? = null,  // (#1317) the coordinator's host-pairing-lifetime readings
 ) : ConversationRepository
 ```
+
+**Held readings (#1317).** Five reads — `observeAnnouncedModel`, `observeSessionFacts`,
+`observeContextUsage`, `observeUsageLimit`, `observeSlashCommandMenu` — take an optional `heldReadings` and
+prefer it over the switch: `heldReadings?.observeX(id) ?: switchToLive<X?>(null) { it.observeX(id) }`. With
+it, a reading survives a reconnect and the gap before it, and is dropped only when `heldReadings.close()`
+runs — the coordinator's pairing-scoped clear, not a per-connection one. The compatibility singleton
+(`AppModule.kt`'s `single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }`)
+passes none, so it keeps the pre-#1317 switched behaviour: these five readings blank between connections,
+same as every other cold read on that path. `ThreadDestinationFactory.repository` is the only caller that
+supplies `heldReadings` (`bundle?.coordinator?.hostReadings`), since `ThreadViewModel` is the five
+readings' only production consumer.
 
 It overrides **all** interface members — the stream-shaped reads (`observeConversations`,
 `observeMessages`, `observeLastMessage`, `observeStall` (#395), `observeQueue` (#460),
@@ -117,13 +129,21 @@ private fun <T> switchToLive(whenAbsent: T, select: (ConversationRepository) -> 
   report the depth of a think that has since finished, and `flatMapLatest` dropping the previous
   connection's projection the instant the connection changes makes that structurally impossible with no
   clear written into any demux arm. See [Thinking-progress state](thinking-progress-state.md).
-- `observeUsageLimit(id)` (#802) → `switchToLive<UsageLimitReading?>(null) { … }` — no live connection
-  reports "nothing to read," the same absent value an unheard conversation produces. Unlike
-  `observeThinkingProgress`, this reading already has two ways down on the live repo itself (a benign
-  clearing frame, and the read-time expiry against `resetsAt`); the switch adds a **third**, the
-  account-level pairing-scoped clear — a usage-limit posture belongs to an account, so dropping the
-  previous connection's projection on reconnect stops one account's reading being attributed to the
-  next. See [Usage-limit state](usage-limit-state.md).
+- `observeUsageLimit(id)` (#802) → with `heldReadings` (#1317), reads the host's held reading, kept across
+  a reconnect and dropped only when the pairing ends; without it, `switchToLive<UsageLimitReading?>(null) {
+  … }` — no live connection reports "nothing to read," the same absent value an unheard conversation
+  produces. Either way, the reading already has two ways down on the live repo itself (a benign clearing
+  frame, and the read-time expiry against `resetsAt`); the held or switched path adds the account-level
+  **pairing**-scoped clear — a usage-limit posture belongs to an account, so dropping it on unpair/re-pair
+  (held) or on every reconnect (switched, the compatibility singleton's path) stops one account's reading
+  being attributed to the next. See [Usage-limit state](usage-limit-state.md).
+- `observeAnnouncedModel(id)` / `observeSessionFacts(id)` (#890) and `observeContextUsage(id)` (#945) →
+  the same held-or-switched shape as `observeUsageLimit`, `whenAbsent = null`. See [StatusSheet — running
+  model and context window readings](status-sheet-readings.md) and [Thread composer footer § Context usage
+  segment](thread-composer-footer-context-usage.md).
+- `observeSlashCommandMenu(id)` (#882) → the same held-or-switched shape, `whenAbsent = null`. A host's
+  commands are never offered for another's conversation either way. See [Remote conversation repository —
+  the model-list and slash-command-list menu retentions](remote-conversation-repository-model-and-slash-command-menus.md).
 
 When `currentRepository` emits a new value, `flatMapLatest` **cancels the previous inner flow** and
 subscribes the new one:
@@ -315,6 +335,12 @@ pass-through. The eight tests map to the ACs, the key one being
 `coldRead_afterReconnect_neverObservesPreviousConnectionData` — a ghost-push to the now-cancelled
 `repoA` after the switch must surface nowhere (AC #2). No instrumented test — pure data-layer.
 
+[#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317) added cases for the disconnected gap:
+with `heldReadings` supplied and `currentRepository.value == null`, all five reads emit the held values
+instead of the switched `null`; after `heldReadings.close()` they emit `null` like every other absent
+case. Without `heldReadings` the facade is unchanged, so no new test duplicates the existing switched-`null`
+coverage.
+
 ## Related
 
 - Ticket: [#352](../codebase/352.md) — implementation record (files, line refs, patterns, lessons).
@@ -354,6 +380,11 @@ pass-through. The eight tests map to the ACs, the key one being
   consumes it, and the mechanism (via `flatMapLatest`) that gives the reading its account-level
   pairing-scoped clear on reconnect, on top of the live repo's own benign-frame clear and read-time
   expiry.
+- Held readings: [Relay repository coordinator § `HostReadings`](relay-repository-coordinator.md)
+  ([#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317)) — the host-pairing-lifetime instance
+  this facade's `heldReadings` constructor parameter reads from, which lets `observeAnnouncedModel`,
+  `observeSessionFacts`, `observeContextUsage`, `observeUsageLimit` and `observeSlashCommandMenu` survive a
+  reconnect instead of switching to `null` in the gap.
 - Delegated capability: `mutationsSupported` ([#507](../codebase/507.md)) — the fail-safe-deny `false`
   delegation (the third not-connected posture: answer, don't throw); consumed by no composable yet (#508).
 - Delegated one-shot: `requestHistory` (#623) — the on-disk history page read, forwarded verbatim with

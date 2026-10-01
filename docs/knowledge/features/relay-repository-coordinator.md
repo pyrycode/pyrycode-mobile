@@ -20,7 +20,11 @@ switches the active connection's [held clarification-question batches](relay-rep
 — unlike `currentModal`, that state resets on every reconnect instead of surviving it. It holds the
 [background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677)
 the same reset way, except for which task ids have finished, which it retains across every reconnect so a
-completed task cannot come back as live when the daemon re-sends its retained roster.
+completed task cannot come back as live when the daemon re-sends its retained roster. It owns one
+`HostReadings` instance (#1317) — the five readings a host pushes and the phone never asks for again
+(announced model, session facts, context usage, usage limit, slash-command menu) — held for the **life of
+the host's pairing**, the `finishedBackgroundTasks` shape rather than the reset-on-reconnect one: a
+reconnect threads the same instance into the new connection's repository instead of starting empty.
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the
@@ -383,6 +387,16 @@ by the settled `.value` which is `null` on both); B's repo appears only once `pu
 reaches `pumps[1].sent` and the list loads (`reconnect_afterOpen_listConversationsSucceedsAndListLoads`).
 The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**.
 
+[#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317) added coordinator cases driving a
+connection, a teardown and a second connection: all five `hostReadings` reads hold their values through
+the gap and into the new connection, a frame on the new connection still replaces a held value,
+`session_transition` still drops announced model/session facts/context usage but leaves the usage limit
+and slash menu, the coordinator's own clock expires a held usage limit after a reconnect, and `close()`
+drops every held reading. `di/RelayConnectionFactoryTest.kt` adds a two-host case (a reading on A is
+invisible on B) and a reconnect-through-production-wiring case, plus a drop on removing a host and a
+fresh (empty) read after re-adding it. `StableConversationRepositoryTest` covers the facade's disconnected
+gap separately — see [its own Testing section](stable-conversation-repository.md#testing).
+
 ## Related
 
 - Tickets: [#351](../codebase/351.md) — the coordinator + `ManagedSessionPump` (files, line refs,
@@ -421,7 +435,14 @@ The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**
   [`backgroundTasks`](remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677)
   the `questionBatches` way, but adds one host-lifetime `FinishedBackgroundTasks` instance (the
   `replayCursor` shape) that the reset does not touch, so a task the daemon's reconnect roster re-lists
-  after it finished does not read as live again.
+  after it finished does not read as live again ·
+  [#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317) — `hostReadings`, a host-lifetime
+  `HostReadings` instance built with the coordinator's own clock and threaded into every connection's
+  `RemoteConversationRepository` (the `finishedBackgroundTasks` shape), so the announced model, session
+  facts, context usage, usage limit and slash-command menu survive a reconnect and the
+  [`StableConversationRepository`](stable-conversation-repository.md) facade reads them directly while
+  disconnected. `close()` drops it after `teardownActive()`, which is the pairing-scoped clear registry
+  reconcile gets for free on unpair or re-pair.
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status

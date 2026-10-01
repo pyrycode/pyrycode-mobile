@@ -90,7 +90,12 @@ never shown as whole when either side cut it. `ThreadRunningModel.model` is
 — `SessionFacts.permissionMode` is read nowhere in this flow, pinned by a
 `ThreadViewModelRunningModelTest` case. Both #890 readings are cleared by the repository on the
 conversation's own `session_transition` and start `null` before any announcement, so the combine needs no
-staleness handling of its own — `null` in is `null` (unavailable) out.
+staleness handling of its own — `null` in is `null` (unavailable) out. Since
+[#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317) both readings are held for the life of the
+host's pairing rather than one connection, so a background/foreground reconnect no longer blanks an
+already-announced model or build mid-thread; `session_transition` is still the only thing that clears them
+short of the pairing ending. See [Relay repository coordinator §
+`HostReadings`](relay-repository-coordinator.md).
 
 ### Context usage segment (#946)
 
