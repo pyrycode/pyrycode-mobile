@@ -19,7 +19,7 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConnectionStatus
-import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.NoiseClientInfo
@@ -382,7 +382,7 @@ internal class ThreadDestinationFactory(
                 liveRepository = bundle.coordinator::liveRepository,
                 submit = bundle.coordinator::submitQuestionBatch,
             )
-            permissionDrafts?.bind(serverId, bundle.coordinator, bundle.coordinator.currentModal)
+            permissionDrafts?.bind(serverId, bundle.coordinator, bundle.coordinator.hostModals)
         }
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
@@ -404,7 +404,7 @@ internal class ThreadDestinationFactory(
             connection,
             draftStore,
             liveSessionEvents = bundle?.coordinator?.liveSessionEvents ?: emptyFlow(),
-            hostModal = bundle?.coordinator?.currentModal ?: MutableStateFlow(ModalUiState.Hidden),
+            hostModal = bundle?.coordinator?.hostModals ?: MutableStateFlow(HostModalState()),
             answerModal = { modal, option, grant -> checkNotNull(bundle).coordinator.answerModal(modal, option, grant) },
             cancelModal = { modal -> checkNotNull(bundle).coordinator.cancelModal(modal) },
             interrupt = { id -> checkNotNull(bundle).coordinator.interrupt(id) },

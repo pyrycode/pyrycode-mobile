@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
@@ -100,11 +101,11 @@ class ThreadViewModel(
     // [turnOutcome]; the turn flags read the repository's held phase instead (#1313). Defaulted
     // to an empty flow so the fake-backed graph + existing tests stay inert.
     liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
-    // #492: the host coordinator's process-scoped, reconnection-surviving "current modal" projection
-    // (#437/#445), folded once at the coordinator layer. It holds the host's single modal whichever
-    // conversation raised it; #816 scopes it to this thread as [currentModal]. Defaulted to a fresh
-    // MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal tests stay inert.
-    private val hostModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    // #492: the host coordinator's process-scoped modal fold (#437/#445), folded once at the coordinator
+    // layer. Since #1337 it holds every prompt outstanding on the host, whichever conversation raised it;
+    // #816 scopes it to this thread as [currentModal]. Defaulted to an empty host so the fake-backed Koin
+    // graph + non-modal tests stay inert.
+    private val hostModal: StateFlow<HostModalState> = MutableStateFlow(HostModalState()),
     // #451: the outbound modal-send path → the coordinator's passthrough to the connection-scoped concrete
     // repo (RelayRepositoryCoordinator.answerModal / cancelModal). Defaulted no-ops so the fake-backed Koin
     // graph + existing ThreadViewModel tests stay inert. The VM holds only these two suspend lambdas, never
@@ -154,9 +155,10 @@ class ThreadViewModel(
         savedStateHandle.get<String>("conversationId").orEmpty()
 
     /**
-     * The host's modal as this thread sees it (#816): shown only when the conversation that raised it is
-     * this thread's own, else [ModalUiState.Hidden] (see [scopedTo]). Seeded from the host's current value
-     * and collected `Eagerly`, so `.value` is right from construction.
+     * The host's prompts as this thread sees them (#816, #1337): this conversation's first outstanding
+     * prompt, else its latest dismissal, else [ModalUiState.Hidden] (see [HostModalState.scopedTo]). Another
+     * conversation's prompt never shows here. Seeded from the host's current value and collected `Eagerly`,
+     * so `.value` is right from construction.
      */
     val currentModal: StateFlow<ModalUiState> =
         hostModal
