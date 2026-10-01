@@ -41,13 +41,14 @@ import java.util.concurrent.atomic.AtomicLong
 internal class ThreadProjection {
     /**
      * `conversationId -> ordered thread rows` ([ThreadItem.MessageItem] + [ThreadItem.SessionBoundary])
-     * for the conversation — backfilled history (`message_chunk`) plus live `message`s and structured
+     * for the conversation — backfilled history (`message_chunk`) plus live user `message`s and structured
      * turns, deduped by `message_id`, interleaved in wire/arrival order with `session_transition`
      * boundaries (#313, #336). Written by the repository's single inbound collector **and** by [RemoteConversationRepository.sendMessage]'s
      * confirmed insert (#346) — two writers, but every write goes through the atomic
      * [appendMessages] / [appendSessionBoundary] / [MutableStateFlow.update] fold, so concurrent updates
      * retry-merge correctly. [RemoteConversationRepository.observeMessages] fans out from it through [observe]. Message rows are order-preserving: first
-     * insertion fixes a message's position, a repeat `message_id` updates it in place (the dedup rule);
+     * insertion fixes a message's position; through [appendMessages] a repeat `message_id` updates it in
+     * place (the dedup rule), while [appendLiveMessage] keeps the held row unchanged (#1351);
      * boundaries append in arrival order, skipping one the thread already holds ([holdsBoundary]). The thread is
      * complete-on-first-emission once backfill arrives and live rows append after.
      */

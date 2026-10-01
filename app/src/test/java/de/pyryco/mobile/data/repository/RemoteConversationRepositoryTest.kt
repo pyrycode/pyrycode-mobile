@@ -8764,7 +8764,7 @@ class RemoteConversationRepositoryTest {
     // Defensive overlap: a replayed row whose message_id the live stream also carries stays one row,
     // kept as first drawn (#1351) — never a duplicate row (AC#3).
     @Test
-    fun replayedMessageOverlappingLive_foldsInPlaceNoDuplicateRow() =
+    fun replayedMessageOverlappingLive_keepsHeldRowNoDuplicateRow() =
         runTest {
             val pump = FakeSessionPump()
             val cursor = ReplayCursor()

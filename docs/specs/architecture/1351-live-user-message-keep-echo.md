@@ -41,3 +41,7 @@ No operator-facing flow is added (the rendering path is the existing user bubble
 ## Documentation handoff
 
 None named by the ticket. Pending for the documentation stage: the thread-screen / conversation-repository overview may note that the live `message` arm is user-only and keep-held.
+
+## Revisions
+
+- 2026-10-02 (rework, verifier MUST FIX): `RelayConnectionFactoryTest.destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect` also fed a live assistant `message` as its only thread row; its fixture role flips to `user`, as the Testing strategy already did for `RemoteConversationRepositoryTest`. Comment-only follow-ups from the nits: the `threadByConversation` KDoc now separates `appendMessages`'s upsert from `appendLiveMessage`'s keep-held rule, the `MessagePayloadDto` KDoc (`MessagePayload.kt`) names the live arm as a reader of `attachmentIds`, and the replay-then-live test is renamed `…_keepsHeldRowNoDuplicateRow`. The production contract is unchanged; the optional shared DTO-to-`Message` helper is not taken, keeping the shared surface to `storedAttachmentReferences` as designed.
