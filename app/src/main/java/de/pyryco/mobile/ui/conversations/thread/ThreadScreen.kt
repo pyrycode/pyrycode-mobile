@@ -844,13 +844,13 @@ fun ThreadScreen(
     }
     // Permission/choice request (#446). Hoisted single source = ThreadViewModel.currentModal (#445), already
     // scoped to this thread's conversation (#816): another conversation's modal arrives as Hidden. Since #1306
-    // Open renders inside the message list above; Dismissed surfaces the resolution reason once.
+    // Open renders inside the message list above; Dismissed surfaces the resolution reason.
     when (modalState) {
         is ModalUiState.Open -> Unit
         is ModalUiState.Dismissed -> {
             val reason = dismissReasonText(modalState.source)
-            // Keyed on modalId: Dismissed is a sticky terminal state (#445's fold), so this fires exactly
-            // once per resolution and never re-fires on unrelated recomposition.
+            // Keyed on modalId, so it never re-fires on unrelated recomposition. The host fold keeps this
+            // conversation's latest dismissal until the next reconnect (#1337), so reopening the chat shows it again.
             LaunchedEffect(modalState.modalId) {
                 snackbarHostState.showSnackbar(reason)
             }
