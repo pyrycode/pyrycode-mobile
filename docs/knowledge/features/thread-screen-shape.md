@@ -362,7 +362,7 @@ fun ThreadScreen(
                 sheetVisible = false
             },
             pending = state.runConfig.pending,              // new in #807
-            enabled = state.runConfig.writable,             // new in #807 — "" sessionId ⇒ read-only
+            enabled = state.runConfig.writable && connected, // new in #807 — "" sessionId ⇒ read-only; `&& connected` added in #1319
             yoloEnabled = state.yoloEnabled,                // new in #229
             onYoloToggled = onYoloToggled,                  // new in #229 — NO auto-close (toggle state-change)
             onDismiss = { sheetVisible = false },
