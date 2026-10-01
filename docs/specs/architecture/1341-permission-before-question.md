@@ -26,3 +26,23 @@ New case in `ThreadInlineQuestionTest`: compose with a question whose selection 
 ## Documentation handoff
 
 None pending — the ticket names no documentation requirement.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. No new inbound data path: the daemon-authored question and permission text reach Compose through the existing inline rows from #1305 and #1306, rendered as text. This ticket only chooses which of two already-decoded `ModalUiState.Open` / `QuestionModalState` values is composed, through `shownQuestion` in `ThreadScreen`.
+- [Android attack surface] No findings, by design decision. `QuestionPromptProtection` (secure window plus the obscured-touch filter on the decor view and the compose view) keeps reading `questionState != null || openRequest != null` at its single call site, not `shownQuestion`, so the protection stays mounted without a gap while the question is withheld and across the permission → question hand-over. Moving it to `shownQuestion` would have dropped protection for the frame between the request resolving and the question returning.
+- [UI-side leakage] No findings. While withheld, the question's Other text field leaves composition, so a third-party keyboard loses its input connection to that field; the text stays in the hoisted `QuestionSelection`, which only the app holds.
+- [Concurrency] No findings. No new coroutine or flow. A withheld question composes no `dispatch` lambda, so no `QuestionModalEvent` carrying its generation can be sent while the permission request is open; `onQuestionEvent` still guards by generation when it returns.
+- [Threat model: hostile daemon] OUT OF SCOPE (accepted). A daemon that holds a permission request open indefinitely withholds the question indefinitely. The daemon already decides when either prompt exists, so this grants it nothing new; it matches desktop's `ComposerSlot`.
+- [Tokens, files and storage, cryptography, network and I/O, logs] Not applicable: the change touches no secret, file, crypto primitive, socket or log call; it is a composition choice inside `ThreadScreen`.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-01
+
+## Revisions
+
+- 2026-10-01: Appended `## Security review` for the `security-sensitive` label, which the first build left out. The design and code do not change; the review confirms that `QuestionPromptProtection` keeps reading `questionState` on purpose.
