@@ -1208,6 +1208,9 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsArchive_staysPerHost"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_createEditArchiveChannel_readsPromptBack"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolPrompt_rendersToolStepInThread"
+  # #1410: reopening a chat after a fresh connection shows its context reading from the thread's own ask, before
+  # any turn on the phone. One turn (the peer's ping, run while the phone is offline).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn"
   # #1325 excludes five settings methods (model change, inherited and remembered effort, operator
   # bypass, reconnect footer) until #1397 repairs freshSettings after #1320's held readings and restores them.
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by

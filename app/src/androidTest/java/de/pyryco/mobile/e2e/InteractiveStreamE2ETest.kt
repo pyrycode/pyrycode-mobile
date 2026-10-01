@@ -371,6 +371,74 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * #1410: opening an existing chat after a fresh connection shows its context reading before any new turn, from
+     * the thread's own `request_context_usage`. The [SecondClientPeer] runs the chat's only turn while the phone's
+     * link is cut, so the post-turn push never reaches the phone: the chat had no ring events before the cut, and a
+     * reconnect replays only the conversation the phone's cursor names. Back on the list, the host's held reading for
+     * the chat is still empty, which is what makes the footer's later percentage the answer to the open's ask. The
+     * creating open also asks and is refused (no reading yet); the peer's whole turn separates that refusal from the
+     * reopen, longer than the daemon's short per-conversation collapse window.
+     *
+     * **One real-claude turn** (the peer's ping) plus one on-demand reading.
+     */
+    @Test
+    fun interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            // 1. The phone creates and names a chat, then leaves it without sending anything.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val before = hostConversationIds(serverId)
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId = newHostConversationId(serverId, before)
+            val chatName = CONTEXT_ASK_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            renameOpenThread(chatName)
+            leaveThread()
+
+            // 2. With the phone's link cut, the peer's turn runs to its end and the daemon publishes its reading.
+            setHostLink(serverId, up = false)
+            runBlocking {
+                peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "context_usage", THREAD_TIMEOUT_MS)
+            }
+
+            // 3. A fresh connection: the phone holds no reading for the chat, so only the open's ask can fill it.
+            setHostLink(serverId, up = true)
+            awaitChannelList()
+            assertNull(
+                "the reconnect alone delivered the chat's reading; the open's ask would prove nothing",
+                runBlocking { hostRepository(serverId).observeContextUsage(conversationId).first() },
+            )
+
+            // 4. Open the chat and send nothing: the footer reaches a percentage.
+            openChatRow(chatName)
+            val reported = Regex("Cxt: \\d+%")
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
+                    reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
+                }
+            }
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
      * Negative control (manual). Un-ignore once to confirm the positive assertion is real: it sends the
      * same ping prompt but waits for a word claude is never asked to say. On a correct build this wait
      * **times out and the test FAILS** — proving the substring matcher is not matching everything and
@@ -6655,6 +6723,9 @@ class InteractiveStreamE2ETest {
         const val OFFLINE_PROMPT = "Reply with exactly: pyryoffline"
         const val OFFLINE_REPLY = "pyryoffline"
         const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
+
+        /** #1410: the chat the peer runs a turn in while the phone is offline. */
+        const val CONTEXT_ASK_CHAT_NAME_PREFIX = "e2e1410-"
 
         // #965 stop scenario. The command waits on an event nothing sets, so only the phone's Stop (or, far
         // outside the test's step, claude's own Bash timeout) ends it; no time value is involved. It is a
