@@ -974,10 +974,11 @@ sealed interface ThreadItem {
 }
 
 /**
- * How a [ThreadItem.Banner] reads (#873). claude's `level` is an open set; `warning` reads as a warning and
- * every other value — `info`, `notice`, `suggestion`, empty, or one claude ships later — as a muted notice.
+ * How a [ThreadItem.Banner] reads (#873). claude's `level` is an open set; `warning` reads as a warning,
+ * `info` is kept in the thread but not drawn, as desktop does (#1359), and every other value — `notice`,
+ * `suggestion`, empty, or one claude ships later — reads as a muted notice.
  */
-enum class BannerLevel { Warning, Notice }
+enum class BannerLevel { Warning, Notice, Info }
 
 enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
 
