@@ -56,7 +56,7 @@ class QrCodeAnalyzerTest {
 
     @Test
     fun decode_surfacesPayloadOnceAndTransitionsToDecoded() {
-        val vm = ScannerViewModel()
+        val vm = scannerViewModel()
         var callbackCount = 0
         val analyzer =
             QrCodeAnalyzer(
@@ -75,7 +75,7 @@ class QrCodeAnalyzerTest {
 
     @Test
     fun repeatedFramesSamePayload_surfaceExactlyOnce() {
-        val vm = ScannerViewModel()
+        val vm = scannerViewModel()
         var callbackCount = 0
         val analyzer =
             QrCodeAnalyzer(
@@ -96,7 +96,7 @@ class QrCodeAnalyzerTest {
 
     @Test
     fun differentPayloadAfterFirstScan_isIgnored() {
-        val vm = ScannerViewModel()
+        val vm = scannerViewModel()
         var callbackCount = 0
         val analyzer =
             QrCodeAnalyzer(
@@ -116,7 +116,7 @@ class QrCodeAnalyzerTest {
 
     @Test
     fun nullFrameDoesNotConsumeLatch_thenLaterQrSurfaces() {
-        val vm = ScannerViewModel()
+        val vm = scannerViewModel()
         var callbackCount = 0
         val analyzer =
             QrCodeAnalyzer(

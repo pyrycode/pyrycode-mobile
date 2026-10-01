@@ -140,11 +140,14 @@ Since #1385, the wait and its outcomes are a shared, Android-free step,
 `verifySavedPairing` in `ui/onboarding/PairingVerification.kt`, mirroring
 desktop's `createPairingVerification` (`pairingReducer` /
 `pairingState.ts`). It takes the saved `PairedServer` and the status-observing
-flow and knows nothing about this screen; the QR scanner path adopts the same
-step for its own saved record in a sibling ticket. `PairCodeViewModel.verify`
+flow and knows nothing about this screen. `PairCodeViewModel.verify`
 calls it and holds the result in `PairCodeState.saved` (the record, kept across
 a failure for Retry to wait on again) and `PairCodeState.failure` (the held
-`PairingVerification.Failure`, if any — `error` carries its message).
+`PairingVerification.Failure`, if any — `error` carries its message). Since
+[#1386](scanner-screen.md#state-model--scannerviewmodel), `ScannerViewModel`
+calls the same step from its `Verifying`/`VerificationFailed` states, flattening
+the failure into `message`/`retryable` fields instead (its public sealed state
+cannot hold the `internal PairingVerification.Failure` directly).
 
 The rule, applied to each status within a 30-second deadline
 (`PAIRING_VERIFICATION_DEADLINE_MS`):
