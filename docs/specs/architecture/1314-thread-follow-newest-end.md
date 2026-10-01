@@ -84,3 +84,7 @@ The only failure is a refused scroll (`CancellationException` from the list's `M
 ## Documentation handoff
 
 Pending for the documentation stage: update § *Streaming auto-scroll (since #185)*, § *The newest-row pin (#981)* and the reveal paragraphs of § *Inline question rows and the newest-end reveal (#1305)* / § *Inline permission rows and the shared reveal (#1306)* in `docs/knowledge/features/thread-screen-how-it-works-list-and-status-row.md` to describe the position-derived following rule and the accepted-send signal.
+
+## Revisions
+
+- **2026-10-01 — Open question resolved as planned.** The anchor key is read from the visible item whose index equals `firstVisibleItemIndex` (inside `FollowNewestEnd`'s `snapshotFlow`), so key, index and offset come from the same frame. A traced run of the refused-mid-stream screen test showed the expected sequence: the tool row's arrival moves only the anchor's index and pins, the pin is refused under the resting finger, the next anchor-size change pins again and lands on the tool row. No design change.
