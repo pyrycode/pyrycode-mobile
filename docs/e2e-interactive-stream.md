@@ -1161,6 +1161,16 @@ cache holds it as an assistant-side message; after
 and both `ACTION_VIEW` (open) and `ACTION_CREATE_DOCUMENT` (save) yield the fixture's digest. A fresh
 device, or a cleared cache, would not show the file — by design, and not asserted here.
 
+**Since #1329, the offered file is fetched by its first tap, not drawn and fetched on sight.** The offer
+`send_file` produces carries a name but no MIME type, and the name is a plain `.txt`, outside desktop's
+image-extension list — so the row draws deferred (the ready `File field`, no status line, nothing
+requested) until `assertOpensAndSaves` taps it. That tap is now what triggers the retrieval, so its wait
+for `ACTION_VIEW` grew from `THREAD_TIMEOUT_MS` to `REPLY_TIMEOUT_MS` to cover it; `readyAttachmentRow`
+matches a deferred row exactly as it matches a `Ready` one, since both draw identically. The sibling
+attachments-from-phone and peer-attachment scenarios are unaffected: one is the phone's own send, which
+resolves through `sentOriginal`/`canRead` with no relay request regardless of this rule, and the other is
+a history-replayed row, which has no name or type to defer on and so still loads on show.
+
 **The LIVE list only filters; it does not set the order.** JUnit's default `MethodSorters.DEFAULT` runs a
 class's methods by name hash, not by the list's own sequence, so a method's place in
 `scripts/e2e-emulator.sh`'s `TEST_TARGET` string says nothing about when it runs. This ticket's own name

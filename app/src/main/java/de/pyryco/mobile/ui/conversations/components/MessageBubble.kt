@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -69,7 +70,7 @@ private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
  * [attachmentStates], [onAttachmentShown] and [onRetryAttachment] (#984) are read only by the two bubble
  * roles, for the message's attachments: each attachment's state by id, the report that one is on screen,
  * and its retry control. [onOpenAttachment] and [onSaveAttachment] (#985) are a ready attachment's tap and
- * long-press.
+ * long-press; [onRequestAttachment] (#1329) is the tap or long-press of a file not fetched yet.
  *
  * [onOpenMarkdownLink] (#1050) is read only by an assistant reply, streaming or finished: a tapped link to a
  * workspace markdown note hands over its path. `null` leaves such a link inert, as it was before.
@@ -80,10 +81,11 @@ fun MessageBubble(
     modifier: Modifier = Modifier,
     toolNestingDepth: Int = 0,
     attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
-    onAttachmentShown: (String) -> Unit = {},
+    onAttachmentShown: (MessageAttachment) -> Unit = {},
     onRetryAttachment: (String) -> Unit = {},
     onOpenAttachment: (AttachmentTarget) -> Unit = {},
     onSaveAttachment: (AttachmentTarget) -> Unit = {},
+    onRequestAttachment: (MessageAttachment, AttachmentAction) -> Unit = { _, _ -> },
     onOpenMarkdownLink: ((String) -> Unit)? = null,
 ) {
     val attachments: @Composable () -> Unit = {
@@ -94,6 +96,7 @@ fun MessageBubble(
             onRetry = onRetryAttachment,
             onOpen = onOpenAttachment,
             onSave = onSaveAttachment,
+            onRequest = onRequestAttachment,
         )
     }
     when (message.role) {
