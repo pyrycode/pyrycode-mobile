@@ -10,12 +10,14 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.base64StdDecode
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -184,6 +186,83 @@ class RemoteConversationRepositoryAttachmentTest {
         }
 
     @Test
+    fun progress_reportsEachChunkInOrder_afterItReachesTheWire() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val (reports, onProgress) = pump.progressLog()
+
+            val upload = startUpload(repo, ByteArray(3 * 45_000), onProgress)
+            runCurrent()
+
+            assertEquals(listOf("1/3@1", "2/3@2", "3/3@3"), reports)
+            pump.push(stored(pump.chunks().first().attachmentId, inReplyTo = pump.sent.first().id))
+            runCurrent()
+            assertTrue(upload() is AttachmentUploadResult.Stored)
+            assertEquals("the settle reports nothing", 3, reports.size)
+        }
+
+    @Test
+    fun progress_stopsAtARefusal_afterTheChunkThatWasSent() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val (reports, onProgress) = pump.progressLog()
+            pump.onSend = { envelope, count -> if (count == 2) pump.push(error(envelope.id, "attachment.too_large", false)) }
+
+            val upload = startUpload(repo, ByteArray(3 * 45_000), onProgress)
+            runCurrent()
+
+            assertEquals(AttachmentUploadResult.Refused("attachment.too_large", false), upload())
+            assertEquals(listOf("1/3@1", "2/3@2"), reports)
+        }
+
+    @Test
+    fun progress_skipsAChunkWhoseTransferSettledDuringItsSend() =
+        runTest {
+            val pump = FakeSessionPump()
+            // The collector resumes inline on the push below, so the refusal settles inside `send`.
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    CoroutineScope(
+                        backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler),
+                    ),
+                )
+            val (reports, onProgress) = pump.progressLog()
+            pump.onSend = { envelope, count -> if (count == 2) pump.push(error(envelope.id, "attachment.too_large", false)) }
+
+            val upload = startUpload(repo, ByteArray(3 * 45_000), onProgress)
+            runCurrent()
+
+            assertEquals(AttachmentUploadResult.Refused("attachment.too_large", false), upload())
+            assertEquals(2, pump.sent.size)
+            assertEquals(listOf("1/3@1"), reports)
+        }
+
+    @Test
+    fun progress_reportsNothingForAFailedSend() =
+        runTest {
+            listOf(false, true).forEach { throwOnSend ->
+                val pump = FakeSessionPump()
+                val repo = repo(pump)
+                val (reports, onProgress) = pump.progressLog()
+                pump.onSend = { _, count ->
+                    if (count == 2) {
+                        pump.sendResult = false
+                        pump.throwOnSend = throwOnSend
+                    }
+                }
+
+                val upload = startUpload(repo, ByteArray(3 * 45_000), onProgress)
+                runCurrent()
+
+                assertEquals(AttachmentUploadResult.SendFailed, upload())
+                assertEquals(listOf("1/3@1"), reports)
+            }
+        }
+
+    @Test
     fun errorNamingAnotherRequest_settlesNothing() =
         runTest {
             val pump = FakeSessionPump()
@@ -214,7 +293,7 @@ class RemoteConversationRepositoryAttachmentTest {
         }
 
     @Test
-    fun refusedSend_failsAsReconnectRequired_withoutFurtherChunks() =
+    fun refusedSend_failsAsSendFailed_withoutFurtherChunks() =
         runTest {
             listOf(false, true).forEach { throwOnSend ->
                 val pump = FakeSessionPump()
@@ -225,13 +304,13 @@ class RemoteConversationRepositoryAttachmentTest {
                 val upload = startUpload(repo, ByteArray(3 * 45_000))
                 runCurrent()
 
-                assertEquals(AttachmentUploadResult.ReconnectRequired, upload())
+                assertEquals(AttachmentUploadResult.SendFailed, upload())
                 assertEquals(1, pump.sent.size)
             }
         }
 
     @Test
-    fun connectionDropMidUpload_failsAsReconnectRequired_andALaterUploadSendsNothing() =
+    fun connectionDropMidUpload_failsAsConnectionLost_andALaterUploadIsNotConnected() =
         runTest {
             val pump = FakeSessionPump()
             val repo = repo(pump)
@@ -241,7 +320,7 @@ class RemoteConversationRepositoryAttachmentTest {
             val id = pump.chunks().single().attachmentId
             pump.close()
             runCurrent()
-            assertEquals(AttachmentUploadResult.ReconnectRequired, upload())
+            assertEquals(AttachmentUploadResult.ConnectionLost, upload())
 
             val later = startUpload(repo, ByteArray(10))
             runCurrent()
@@ -428,10 +507,17 @@ class RemoteConversationRepositoryAttachmentTest {
     private fun TestScope.startUpload(
         repo: RemoteConversationRepository,
         bytes: ByteArray,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): () -> AttachmentUploadResult? {
         var outcome: AttachmentUploadResult? = null
-        backgroundScope.launch { outcome = repo.uploadAttachment("conv-1", bytes, "notes.txt", "text/plain") }
+        backgroundScope.launch { outcome = repo.uploadAttachment("conv-1", bytes, "notes.txt", "text/plain", onProgress) }
         return { outcome }
+    }
+
+    /** Each report as `sent/total@chunksOnTheWire`, so a report's position relative to its send is visible. */
+    private fun FakeSessionPump.progressLog(): Pair<MutableList<String>, (Int, Int) -> Unit> {
+        val reports = mutableListOf<String>()
+        return reports to { sent, total -> reports += "$sent/$total@${this.sent.size}" }
     }
 
     private fun FakeSessionPump.chunks(): List<AttachmentChunkPayloadDto> =

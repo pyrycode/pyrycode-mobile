@@ -1,0 +1,1 @@
+staticFixture=true width=320 height=700 fontScale=1.5 secure=true

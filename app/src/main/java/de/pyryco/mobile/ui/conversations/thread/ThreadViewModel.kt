@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
@@ -20,6 +21,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
@@ -34,9 +36,14 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditor
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.attachmentTarget
+import de.pyryco.mobile.ui.conversations.components.loadsOnShow
 import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
@@ -62,7 +69,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
@@ -74,6 +80,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.floor
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
@@ -94,14 +102,15 @@ class ThreadViewModel(
     // defaults below: a default would hand every ViewModel its own store, which is exactly the
     // destination-scoped ownership this ticket removes — and a miswire would reproduce it invisibly.
     private val draftStore: ComposerDraftStore,
-    // #406: the coordinator's reconnection-surviving live-event seam, reduced to [isThinking]. Defaulted
-    // to an empty flow so the fake-backed graph + existing tests stay inert (the flag holds `false`).
+    // #406: the coordinator's reconnection-surviving live-event seam, folded into the thread rows and
+    // [turnOutcome]; the turn flags read the repository's held phase instead (#1313). Defaulted
+    // to an empty flow so the fake-backed graph + existing tests stay inert.
     liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
-    // #492: the host coordinator's process-scoped, reconnection-surviving "current modal" projection
-    // (#437/#445), folded once at the coordinator layer. It holds the host's single modal whichever
-    // conversation raised it; #816 scopes it to this thread as [currentModal]. Defaulted to a fresh
-    // MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal tests stay inert.
-    private val hostModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    // #492: the host coordinator's process-scoped modal fold (#437/#445), folded once at the coordinator
+    // layer. Since #1337 it holds every prompt outstanding on the host, whichever conversation raised it;
+    // #816 scopes it to this thread as [currentModal]. Defaulted to an empty host so the fake-backed Koin
+    // graph + non-modal tests stay inert.
+    private val hostModal: StateFlow<HostModalState> = MutableStateFlow(HostModalState()),
     // #451: the outbound modal-send path → the coordinator's passthrough to the connection-scoped concrete
     // repo (RelayRepositoryCoordinator.answerModal / cancelModal). Defaulted no-ops so the fake-backed Koin
     // graph + existing ThreadViewModel tests stay inert. The VM holds only these two suspend lambdas, never
@@ -119,6 +128,9 @@ class ThreadViewModel(
     private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
     private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
     questionDraftStore: QuestionDraftStore? = null,
+    // #1306: the app-scoped session-grant drafts, so Back keeps the checkbox for the same request. Absent in
+    // tests and the demo host, where a private store stands in.
+    permissionDraftStore: PermissionDraftStore? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
     // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
     backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
@@ -148,9 +160,10 @@ class ThreadViewModel(
         savedStateHandle.get<String>("conversationId").orEmpty()
 
     /**
-     * The host's modal as this thread sees it (#816): shown only when the conversation that raised it is
-     * this thread's own, else [ModalUiState.Hidden] (see [scopedTo]). Seeded from the host's current value
-     * and collected `Eagerly`, so `.value` is right from construction.
+     * The host's prompts as this thread sees them (#816, #1337): this conversation's first outstanding
+     * prompt, else its latest dismissal, else [ModalUiState.Hidden] (see [HostModalState.scopedTo]). Another
+     * conversation's prompt never shows here. Seeded from the host's current value and collected `Eagerly`,
+     * so `.value` is right from construction.
      */
     val currentModal: StateFlow<ModalUiState> =
         hostModal
@@ -205,6 +218,15 @@ class ThreadViewModel(
      */
     val attachmentsSending: StateFlow<Boolean> = _attachmentsSending.asStateFlow()
 
+    private val _attachmentUploadProgress = MutableStateFlow<AttachmentUploadProgress?>(null)
+
+    /**
+     * The figure of the upload running now (#1327), or `null`. It names one entry and lives for one upload:
+     * cleared when that upload is stored or fails, and however the send ends. Uploads under
+     * [ATTACHMENT_PROGRESS_MIN_CHUNKS] never publish one.
+     */
+    val attachmentUploadProgress: StateFlow<AttachmentUploadProgress?> = _attachmentUploadProgress.asStateFlow()
+
     private val attachmentRefusalChannel = Channel<AttachmentRefusal>(capacity = Channel.BUFFERED)
 
     /**
@@ -213,14 +235,43 @@ class ThreadViewModel(
      */
     val attachmentRefusals: Flow<AttachmentRefusal> = attachmentRefusalChannel.receiveAsFlow()
 
+    private val attachmentSendFailureChannel = Channel<AttachmentSendFailure>(capacity = Channel.BUFFERED)
+
+    /**
+     * One notice per send that stopped at a failed read or upload (#1325), naming why. A reason only, never a
+     * name, URI or the daemon's code, so the snackbar it drives shows fixed local text.
+     */
+    val attachmentSendFailures: Flow<AttachmentSendFailure> = attachmentSendFailureChannel.receiveAsFlow()
+
+    private val sentMessageChannel = Channel<Unit>(capacity = Channel.CONFLATED)
+
+    /**
+     * One signal per send the daemon accepted, of text or attachments (#1314), desktop's `onMessageSent`. The
+     * screen follows the newest end on it. Conflated: sends accepted before the screen collects follow once.
+     */
+    val sentMessages: Flow<Unit> = sentMessageChannel.receiveAsFlow()
+
     private val _attachmentStates = MutableStateFlow<Map<String, AttachmentViewState>>(emptyMap())
 
     /**
-     * Each shown message attachment's state by id (#984). An id is absent until its row is first shown,
-     * which is what starts its load ([onAttachmentShown]); the screen draws an absent id as loading. A
-     * sibling flow for the same reason as [draft].
+     * Each shown message attachment's state by id (#984). An id is absent until its load starts: when its
+     * row is first shown ([onAttachmentShown]), or for a file not fetched on sight, when it is tapped
+     * ([onAttachmentRequested], #1329). The screen draws an absent id as loading, or that file as its ready
+     * row. A sibling flow for the same reason as [draft].
      */
     val attachmentStates: StateFlow<Map<String, AttachmentViewState>> = _attachmentStates.asStateFlow()
+
+    // #1329: the action a tap asked for, by id, while that tap's load runs. Main thread only, like
+    // [_attachmentsSending]: written by [onAttachmentRequested], removed when the load settles.
+    private val pendingAttachmentRequests = mutableMapOf<String, Pair<MessageAttachment, AttachmentAction>>()
+
+    private val attachmentLoadChannel = Channel<AttachmentLoaded>(capacity = Channel.BUFFERED)
+
+    /**
+     * One open or save per tapped file that loaded ready (#1329), for the screen to run through its
+     * attachment actions. Carries the loaded source, so it never waits on [attachmentStates] recomposing.
+     */
+    val attachmentLoads: Flow<AttachmentLoaded> = attachmentLoadChannel.receiveAsFlow()
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -236,10 +287,26 @@ class ThreadViewModel(
 
     private val pendingChannelInfo = MutableStateFlow(false)
 
+    /**
+     * The Channel info sheet's System prompt editor (#1342), present only while the sheet is open, so every
+     * open starts from a fresh read. Bound to [repository], the reconnect-surviving facade.
+     */
+    private val promptEditor = MutableStateFlow<SystemPromptEditor?>(null)
+
     private val pendingDeleteConfirm = MutableStateFlow(false)
 
     private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)
     val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()
+
+    /** Set once the thread has left for an archived row (#1399), so its own archive pops only once. */
+    private val leftArchived = AtomicBoolean(false)
+
+    /** Sends the archive exit's [ThreadNavigation.PopBack] the first time only; returns whether it sent. */
+    private suspend fun leaveForList(): Boolean {
+        if (!leftArchived.compareAndSet(false, true)) return false
+        navigationChannel.send(ThreadNavigation.PopBack)
+        return true
+    }
 
     /** A model tap whose write has not settled, or `null`. A matching fresh settings reading confirms it;
      *  a rejected write or lost settings context clears it. */
@@ -266,14 +333,17 @@ class ThreadViewModel(
         repository
             .observeSessionSettings(conversationId)
             .onEach { reading ->
-                if (reading == null || pendingModel.value == reading.model) pendingModel.value = null
+                // #1320: a held reading heads the subscription on a same-host reconnect where `null` used to,
+                // so it ends the pending context the same way.
+                val lost = reading == null || reading.held
+                if (lost || pendingModel.value == reading?.model) pendingModel.value = null
                 pendingEffort.value = null
-                // #650: a `null` reading heads every new subscription (host switch, owning-host reconnect)
-                // and follows a failed read; a reading for another session means the session was replaced.
-                // Either way the permission write belongs to a context that is gone. The check runs before
-                // the tick below so the settle loop never sees a reading from the new context.
+                // #650: a `null` or held reading heads every new subscription (host switch, owning-host
+                // reconnect) and `null` follows a failed read; a reading for another session means the session
+                // was replaced. Either way the permission write belongs to a context that is gone. The check
+                // runs before the tick below so the settle loop never sees a reading from the new context.
                 permissionWrite?.let { write ->
-                    if (reading == null || reading.sessionId != write.sessionId) cancelPermissionWrite()
+                    if (lost || reading?.sessionId != write.sessionId) cancelPermissionWrite()
                 }
                 settingsReadings.update { SettingsReading(it.seq + 1, reading) }
             }
@@ -295,8 +365,10 @@ class ThreadViewModel(
      * What claude says it runs (#891): the announced model and its build, each made inert here. Both #890
      * readings are per conversation and cleared by the repository on a session transition, so nothing
      * here tracks staleness. `SessionFacts.permissionMode` is claude's claim and is deliberately not read.
+     * The second value is the raw announced model (#1308), the inherited mark's comparison key; a cut value
+     * is incomplete and is left out, as [toChoice] leaves out a cut `resolvedModel`.
      */
-    private val runningModel: Flow<ThreadRunningModel> =
+    private val runningModel: Flow<Pair<ThreadRunningModel, String>> =
         combine(
             repository.observeAnnouncedModel(conversationId),
             repository.observeSessionFacts(conversationId),
@@ -307,17 +379,24 @@ class ThreadViewModel(
                     facts?.let {
                         reportedText(it.claudeCodeVersion, CLAUDE_CODE_VERSION_FIELD in it.truncatedFields.orEmpty())
                     },
-            )
+            ) to announced?.takeUnless { it.truncated }?.model.orEmpty()
         }
 
     /**
      * The conversation list, shared (#1110) so [state] and [conversationAgent] ride one upstream
      * subscription: the remote repository sends a `list_conversations` request on every subscription.
+     *
+     * #1399: a list showing this row archived, from any client, leaves for the list. Upstream of `shareIn`
+     * so it runs once per emission. A row that disappears, or is only renamed or moved, stays (desktop #653).
      */
     private val conversations: Flow<List<Conversation>> =
         repository
             .observeConversations(ConversationFilter.All)
-            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+            .onEach { list ->
+                if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
+                    RelayLog.d { "event=thread_left_archived" }
+                }
+            }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
 
     /** The agent that runs this conversation (#1110); Claude while the list does not hold it yet. */
     private val conversationAgent: Flow<ConversationAgent> =
@@ -329,7 +408,8 @@ class ThreadViewModel(
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
      * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine, and
-     * Claude's reported context usage (#946) by a third; the repository clears that reading itself.
+     * Claude's reported context usage (#946) by a third, where [contextPercent] computes the one value the footer
+     * and the Status sheet both show (#1411); the repository clears that reading itself.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -343,11 +423,13 @@ class ThreadViewModel(
             pendingEffort,
             pendingPermission,
         ) { settings, menuAndAgent, model, effort, permission ->
-            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission)
-        }.combine(runningModel) { config, running -> config.copy(running = running) }
-            .combine(repository.observeContextUsage(conversationId)) { config, usage ->
-                config.copy(contextPercent = usage?.percentage)
-            }
+            // #1411: the settings ride along to the context-usage combine, which falls back to their token pair.
+            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission) to settings
+        }.combine(runningModel) { (config, settings), (running, announced) ->
+            config.copy(running = running, announcedModel = announced) to settings
+        }.combine(repository.observeContextUsage(conversationId)) { (config, settings), usage ->
+            config.copy(contextPercent = contextPercent(usage, settings))
+        }
 
     /**
      * This conversation's published slash-command menu (#882), feeding both the Actions menu's absent
@@ -485,14 +567,48 @@ class ThreadViewModel(
                 ),
         )
 
+    /**
+     * This thread's host connection, `Connected` once the host has answered the handshake (#1318). Started
+     * eagerly (#1319) so [connectedFor] reads the live state at tap time even when no screen collects it;
+     * a `WhileSubscribed` value stays at its initial `Connected` without a collector.
+     */
     val connectionState: StateFlow<ConnectionState> =
         connectionStateSource
             .observe()
             .stateIn(
                 scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
+                started = SharingStarted.Eagerly,
                 initialValue = ConnectionState.Connected,
             )
+
+    /**
+     * The tap-time read of this thread's host connection (#1321). Collected `Eagerly`, so it is current
+     * with no screen collecting. Unlike [connectionState] it is seeded `null` rather than an optimistic
+     * `Connected`, so a host that has not reported yet cannot be answered.
+     */
+    private val hostConnection: StateFlow<ConnectionState?> =
+        connectionStateSource.observe().stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Whether a prompt answer may be sent now (#1321): only while the host is [ConnectionState.Connected].
+     * A refused tap changes nothing, so the prompt answers as it stood once the host reconnects.
+     */
+    private fun promptSendAllowed(kind: String): Boolean {
+        if (hostConnection.value == ConnectionState.Connected) return true
+        RelayLog.d { "event=prompt_send_blocked kind=$kind reason=not_connected" }
+        return false
+    }
+
+    /**
+     * The tap-time re-check (#1319), after desktop's: the screen greys these controls while the host is not
+     * connected, and a tap that races a disconnect is dropped here before any state change or send. Logs
+     * the static [action] code only.
+     */
+    private fun connectedFor(action: String): Boolean {
+        if (connectionState.value == ConnectionState.Connected) return true
+        RelayLog.d { "event=thread_action_skipped action=$action reason=not_connected" }
+        return false
+    }
 
     /**
      * Whether the thread offers Re-pair (#843): this thread's own host is in the rejected-pairing state,
@@ -510,17 +626,23 @@ class ThreadViewModel(
             )
 
     /**
+     * This conversation's turn phase as the repository holds it (#1313): the latest `turn_state`, back to
+     * idle on `turn_end`, kept per conversation for the connection rather than folded here. A thread
+     * opened mid-turn or resubscribing after [SharingStarted.WhileSubscribed] lapsed reads the current
+     * phase at once, and a new connection reads idle until the daemon reports again.
+     */
+    private val turnPhase = repository.observeTurnPhase(conversationId)
+
+    /**
      * Whether this conversation's agent is currently in its `thinking` phase (#406) — `true` only while
-     * the latest `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking],
-     * `false` for `responding` / `idle` / `turn_end` or before any event. A sibling [StateFlow] beside
+     * the held phase is [LiveSessionEvent.TurnState.Phase.Thinking]. A sibling [StateFlow] beside
      * [connectionState] (not a [ThreadUiState] field): like the connection signal it is a transient,
-     * connection-scoped cross-cutting signal the stateless screen takes as a separate parameter. The
-     * reduction emits only on a phase transition, so [stateIn]'s last value is retained for events that
-     * leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow default.
+     * connection-scoped cross-cutting signal the stateless screen takes as a separate parameter. `false`
+     * covers idle, `responding` and the fake's idle default.
      */
     val isThinking: StateFlow<Boolean> =
-        liveSessionEvents
-            .mapNotNull { event -> thinkingTransition(event) }
+        turnPhase
+            .map { it == LiveSessionEvent.TurnState.Phase.Thinking }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -528,21 +650,14 @@ class ThreadViewModel(
             )
 
     /**
-     * Whether this conversation's agent is currently **running a turn** (#459) — `true` while the latest
-     * `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking] **or**
-     * [LiveSessionEvent.TurnState.Phase.Responding], `false` for `idle` / `turn_end` or before any event.
-     * The broader sibling of [isThinking] (which is `true` for `thinking` only): the interrupt affordance
-     * (#459) must stay visible across the whole in-flight turn, not just the thinking phase. Same posture
-     * and lifecycle as [isThinking] — a hoisted [StateFlow] beside [connectionState] the stateless screen
-     * takes as a separate parameter, backed by its own [busyTransition] reducer (a dedicated reducer is
-     * simpler than combining [isThinking] with a second flow and matches the established sibling pattern).
-     * The reduction emits only on a busy/not-busy transition, so [stateIn]'s last value is retained for
-     * events that leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow
-     * default.
+     * Whether this conversation's agent is currently **running a turn** (#459) — `true` while the held
+     * phase is [LiveSessionEvent.TurnState.Phase.Thinking] **or** [LiveSessionEvent.TurnState.Phase.Responding].
+     * The broader sibling of [isThinking]: the interrupt affordance must stay visible across the whole
+     * in-flight turn, not just the thinking phase. Same posture and lifecycle as [isThinking].
      */
     val isBusy: StateFlow<Boolean> =
-        liveSessionEvents
-            .mapNotNull { event -> busyTransition(event) }
+        turnPhase
+            .map { it == LiveSessionEvent.TurnState.Phase.Thinking || it == LiveSessionEvent.TurnState.Phase.Responding }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -568,6 +683,16 @@ class ThreadViewModel(
                 initialValue = null,
             )
 
+    /** The open Channel info sheet's System prompt state (#1342), or `null` while the sheet is closed. */
+    val systemPrompt: StateFlow<SystemPromptEditorState?> =
+        promptEditor
+            .flatMapLatest { editor -> editor?.state ?: flowOf(null) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
+            )
+
     /**
      * Whether this conversation is currently stalled (#395) — drives the prominent screen-snapshot CTA
      * (#396). A sibling [StateFlow] beside [connectionState] / [isThinking] (not a [ThreadUiState]
@@ -584,6 +709,18 @@ class ThreadViewModel(
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = false,
             )
+
+    private val _localSendPending = MutableStateFlow(false)
+
+    /**
+     * The local-send window (#1311), desktop's `localSendPending`: `true` from the moment a send is handed
+     * to the daemon until the daemon first speaks, so the status band reads "Thinking…" across the round
+     * trip instead of going dark. Opened in [sendMessage] and [sendWithAttachments] immediately before the
+     * repository send, so a blank, refused or upload-failed send never opens it. Closed by any `turn_state`
+     * for this conversation, by a failed send, and by a change of connection ([closeLocalSendWindow]).
+     * Not [isBusy]: a window the daemon has not confirmed must never arm the stop control.
+     */
+    val localSendPending: StateFlow<Boolean> = _localSendPending.asStateFlow()
 
     /**
      * Whether this conversation's remote claude is stuck retrying an API error, and at which attempt
@@ -721,11 +858,12 @@ class ThreadViewModel(
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
-     * The "don't ask again this session" offer the user accepted (#818), keyed on the prompt that showed it:
-     * its [AcceptedAlwaysAllow.modalId] and the exact rules it offered. Like [armedModalOption] it is
-     * transient and never persisted, and a stale key is simply invisible (see [alwaysAllowAccepted]).
+     * The "don't ask again this session" offers the user accepted (#818), keyed on the prompt that showed
+     * each: its [PermissionGrantDraft.modalId] and the exact rules it offered. Since #1306 they live in an
+     * app-scoped store, heap only, so leaving through Back keeps this conversation's draft; a stale key is
+     * simply invisible (see [alwaysAllowAccepted]) and a bound store retires it when the request changes.
      */
-    private val acceptedAlwaysAllow = MutableStateFlow<AcceptedAlwaysAllow?>(null)
+    private val grantDrafts = permissionDraftStore ?: PermissionDraftStore()
 
     /**
      * Whether the *currently-open* prompt's offer is accepted (#818): `true` only while the scoped modal is
@@ -734,7 +872,7 @@ class ThreadViewModel(
      * construction. A sibling of [armedOptionId], started eagerly for the same reason.
      */
     val alwaysAllowAccepted: StateFlow<Boolean> =
-        combine(currentModal, acceptedAlwaysAllow) { modal, accepted ->
+        combine(currentModal, grantDrafts.observe(serverId, conversationId)) { modal, accepted ->
             modal is ModalUiState.Open && modal.offersAlwaysAllow && accepted == modal.alwaysAllowKey()
         }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -798,12 +936,14 @@ class ThreadViewModel(
                 }
             QuestionModalEvent.Continue -> {
                 val answers = held.answers()
-                if (!held.locked && answers != null) {
+                if (!held.locked && answers != null && promptSendAllowed("question_answer")) {
                     sendQuestion(held, "answer", answers) { answerQuestionBatch(it, answers) }
                 }
             }
             QuestionModalEvent.Cancel ->
-                if (!held.locked) sendQuestion(held, "refuse", null) { refuseQuestionBatch(it) }
+                if (!held.locked && promptSendAllowed("question_refuse")) {
+                    sendQuestion(held, "refuse", null) { refuseQuestionBatch(it) }
+                }
         }
     }
 
@@ -941,48 +1081,6 @@ class ThreadViewModel(
      */
     val sessionSettingsErrors: Flow<Unit> = sessionSettingsErrorChannel.receiveAsFlow()
 
-    /**
-     * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
-     * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
-     * phase: `thinking` ⇒ `true`; `responding` / `idle` / `turn_end` ⇒ `false`; the non-phase events
-     * (`assistant_delta` / `tool_use` / `tool_result`) are not transitions ⇒ `null`.
-     */
-    private fun thinkingTransition(event: LiveSessionEvent): Boolean? {
-        if (event.conversationId != conversationId) return null
-        return when (event) {
-            is LiveSessionEvent.TurnState -> event.phase == LiveSessionEvent.TurnState.Phase.Thinking
-            is LiveSessionEvent.TurnEnd -> false
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> null
-        }
-    }
-
-    /**
-     * Folds one live event to the next [isBusy] value, or `null` to leave the flag unchanged. Mirrors
-     * [thinkingTransition] exactly; the **only** difference is the phase predicate — a turn is "running"
-     * across the `thinking` **and** `responding` phases. Routes by [conversationId] first (other
-     * conversations never move the flag), then maps the turn phase: `thinking` / `responding` ⇒ `true`;
-     * `idle` / `turn_end` ⇒ `false`; the non-phase events (`assistant_delta` / `tool_use` / `tool_result`
-     * / replay-gap) are not transitions ⇒ `null`.
-     */
-    private fun busyTransition(event: LiveSessionEvent): Boolean? {
-        if (event.conversationId != conversationId) return null
-        return when (event) {
-            is LiveSessionEvent.TurnState ->
-                event.phase == LiveSessionEvent.TurnState.Phase.Thinking ||
-                    event.phase == LiveSessionEvent.TurnState.Phase.Responding
-            is LiveSessionEvent.TurnEnd -> false
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> null
-        }
-    }
-
     /** Folds one live event into [turnOutcome]; events for other conversations leave it unchanged. */
     private fun nextTurnOutcome(
         current: TurnOutcomeReport?,
@@ -1024,12 +1122,78 @@ class ThreadViewModel(
                 .distinctUntilChanged()
                 .drop(1)
                 .collect { available ->
+                    // #1311: a drop and the return both end the round trip the window was waiting on.
+                    closeLocalSendWindow("reconnect")
                     if (available) {
                         RelayLog.d { "event=history_walk_restart reason=reconnect" }
                         restartHistoryWalk(fromWalk = historyDemand.value.walk)
                     }
                 }
         }
+
+        // #1311: the daemon's first `turn_state` for this conversation, of any phase, closes the local-send
+        // window. Collected here rather than behind a subscriber-bound stateIn, so it closes even while the
+        // screen is not collecting.
+        viewModelScope.launch {
+            liveSessionEvents.collect { event ->
+                if (event is LiveSessionEvent.TurnState && event.conversationId == conversationId) {
+                    closeLocalSendWindow("turn_state")
+                }
+            }
+        }
+
+        // #1309: a conversation whose claude had not run yet reads no permission mode and no applied effort,
+        // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
+        // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
+        viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+    }
+
+    private fun openLocalSendWindow() {
+        if (!_localSendPending.value) RelayLog.d { "event=local_send_window state=open" }
+        _localSendPending.value = true
+    }
+
+    private fun closeLocalSendWindow(reason: String) {
+        if (_localSendPending.value) RelayLog.d { "event=local_send_window state=closed reason=$reason" }
+        _localSendPending.value = false
+    }
+
+    /**
+     * Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. A send
+     * that returns was accepted, and tells the screen to follow the newest end again (#1314).
+     */
+    private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
+        openLocalSendWindow()
+        val sent =
+            try {
+                send()
+            } catch (e: Throwable) {
+                closeLocalSendWindow("send_failed")
+                throw e
+            }
+        RelayLog.d { "event=thread_send_accepted" }
+        sentMessageChannel.trySend(Unit)
+        return sent
+    }
+
+    /** The #1309 re-read edges as static reason codes: a turn ending on this host, and a reset ending. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun runSettingsRereadEdges(liveSessionEvents: Flow<LiveSessionEvent>): Flow<String> =
+        merge(
+            repositoryAvailable
+                .distinctUntilChanged()
+                .flatMapLatest { available -> if (available) turnEndEdges(liveSessionEvents) else emptyFlow() }
+                .map { "turn_end" },
+            resetEndEdges(repository.observeResetting(conversationId)).map { "reset_end" },
+        )
+
+    /**
+     * Ask for a fresh reading of this thread's run settings (#1309). The repository's `flatMapLatest` cancels
+     * an in-flight read first, and a reply still replaces the whole reading. [reason] is a static code.
+     */
+    private fun rereadRunSettings(reason: String) {
+        RelayLog.d { "event=run_settings_reread reason=$reason" }
+        repository.refreshSessionSettings(conversationId)
     }
 
     /**
@@ -1192,21 +1356,23 @@ class ThreadViewModel(
      * between them.
      */
     fun sendMessage(text: String) {
+        if (!connectedFor("send")) return
         if (_attachmentsSending.value) return
+        // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
+        if (text.isBlank()) return
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
         if (attachments.isNotEmpty()) return sendWithAttachments(text, attachments)
-        if (text.isBlank()) return
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
-            repository.sendMessage(state.value.conversationId, text)
+            sendInLocalWindow { repository.sendMessage(state.value.conversationId, text) }
             if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
         }
     }
 
     /**
      * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
-     * (#932). Blank text is allowed here: a message may carry attachments alone.
+     * (#932). [text] is never blank: [sendMessage] refuses that before reading the attachments (#1328).
      *
      * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
      * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that
@@ -1238,17 +1404,21 @@ class ThreadViewModel(
                 draftStore.recordSentOriginals(serverId, conversationId, originals)
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
-                repository.sendMessage(target, text, references)
+                sendInLocalWindow { repository.sendMessage(target, text, references) }
                 if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
                 draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
             } finally {
                 // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
                 _attachmentsSending.value = false
+                _attachmentUploadProgress.value = null
             }
         }
     }
 
-    /** Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not. */
+    /**
+     * Read and upload one pending entry (#932): its acknowledged id, or `null` after logging why not and
+     * sending one [attachmentSendFailures] notice (#1325).
+     */
     private suspend fun upload(
         target: String,
         entry: PendingAttachment,
@@ -1256,17 +1426,29 @@ class ThreadViewModel(
         val bytes =
             when (val read = attachmentReader.read(entry.uri)) {
                 is AttachmentRead.Bytes -> read.bytes
-                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large")
-                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed")
+                AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large", AttachmentSendFailure.TOO_LARGE)
+                AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed", AttachmentSendFailure.UNREADABLE)
             }
-        val result = repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType)
-        if (result !is AttachmentUploadResult.Stored) return attachmentSendFailed("upload_failed")
-        draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
-        return result.attachmentId
+        val result =
+            repository.uploadAttachment(target, bytes, entry.displayName, entry.mimeType) { sent, total ->
+                _attachmentUploadProgress.value = attachmentUploadProgress(entry.key, sent, total)
+            }
+        _attachmentUploadProgress.value = null
+        when (result) {
+            is AttachmentUploadResult.Stored -> {
+                draftStore.markUploaded(serverId, conversationId, entry.key, result.attachmentId)
+                return result.attachmentId
+            }
+            is AttachmentUploadResult.Failed -> return attachmentSendFailed("upload_failed", attachmentSendFailure(result))
+        }
     }
 
-    private fun attachmentSendFailed(outcome: String): String? {
+    private fun attachmentSendFailed(
+        outcome: String,
+        failure: AttachmentSendFailure,
+    ): String? {
         RelayLog.d { "event=composer_attachment_send outcome=$outcome" }
+        attachmentSendFailureChannel.trySend(failure)
         return null
     }
 
@@ -1307,11 +1489,30 @@ class ThreadViewModel(
     }
 
     /**
-     * A message attachment's row is on screen (#984): start its load unless it already has a state. The
-     * claim is a compare-and-set, so a row shown twice loads once, and a failure waits for [onRetryAttachment].
+     * A message attachment's row is on screen (#984): start its load unless it already has a state, and only
+     * when it is fetched on sight ([loadsOnShow], #1329); any other file waits for [onAttachmentRequested].
+     * The claim is a compare-and-set, so a row shown twice loads once, and a failure waits for
+     * [onRetryAttachment].
      */
-    fun onAttachmentShown(attachmentId: String) {
-        if (claimAttachment(attachmentId) { it == null }) loadAttachment(attachmentId)
+    fun onAttachmentShown(attachment: MessageAttachment) {
+        if (!loadsOnShow(attachment)) return
+        if (claimAttachment(attachment.attachmentId) { it == null }) loadAttachment(attachment.attachmentId)
+    }
+
+    /**
+     * A file not fetched yet was tapped or long-pressed (#1329): load it as a shown row would, and once it is
+     * ready deliver [action] once through [attachmentLoads]. Only a tap that claims the load records the
+     * action, so a tap on a row already loading, ready or failed does nothing here.
+     */
+    fun onAttachmentRequested(
+        attachment: MessageAttachment,
+        action: AttachmentAction,
+    ) {
+        val id = attachment.attachmentId
+        if (!claimAttachment(id) { it == null }) return
+        pendingAttachmentRequests[id] = attachment to action
+        RelayLog.d { "event=thread_attachment_request id=$id action=${action.name.lowercase()}" }
+        loadAttachment(id)
     }
 
     /** The retry control of a failed attachment (#984). Not found is final and has none. */
@@ -1354,6 +1555,11 @@ class ThreadViewModel(
                 }
             RelayLog.d { "event=thread_attachment_load id=$attachmentId outcome=$outcome" }
             _attachmentStates.update { it + (attachmentId to state) }
+            // #1329: a tap's action settles with its load, once; a load that did not end ready drops it.
+            val (attachment, action) = pendingAttachmentRequests.remove(attachmentId) ?: return@launch
+            val ready = state as? AttachmentViewState.Ready
+            ready?.let { attachmentLoadChannel.trySend(AttachmentLoaded(attachmentTarget(attachment, it), it.source, action)) }
+            RelayLog.d { "event=thread_attachment_request id=$attachmentId outcome=${if (ready != null) "delivered" else "dropped"}" }
         }
     }
 
@@ -1434,6 +1640,7 @@ class ThreadViewModel(
      * comes this way. Logs static codes only.
      */
     fun onComposerCommand(action: ComposerAction) {
+        if (!connectedFor("composer_action")) return
         val command = action.command ?: return
         if (action in state.value.absentActions) {
             RelayLog.d { "event=composer_action action=${action.value} outcome=absent" }
@@ -1471,8 +1678,15 @@ class ThreadViewModel(
      * and requires an explicit **second** confirm of the *same* armed option before it sends; a tap of a
      * different option re-arms. No-op if no modal is open.
      */
-    fun onModalOption(optionId: String) {
+    fun onModalOption(
+        optionId: String,
+        modalId: String? = null,
+    ) {
         val open = scopedModal() as? ModalUiState.Open ?: return
+        // #1306: a tap composed for a request that has since been replaced carries the old id.
+        if (modalId != null && modalId != open.modalId) return
+        // #1321: checked before the send or the arm, so a disabled option's tap changes nothing.
+        if (!promptSendAllowed("permission_option")) return
         when {
             optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId, grantsAlwaysAllow(open, optionId))
             armedModalOption.value == ArmedModalOption(open.modalId, optionId) ->
@@ -1482,12 +1696,24 @@ class ThreadViewModel(
     }
 
     /** Cancel the currently-open modal (#451): clear any arm and send `modal_cancel`. No-op if no modal is
-     *  open. A cancel never carries the session grant, and it drops any acceptance (#818). */
-    fun onModalCancel() {
+     *  open, or if [modalId] names a request that has been replaced (#1306). A cancel never carries the
+     *  session grant, and it drops any acceptance (#818). */
+    fun onModalCancel(modalId: String? = null) {
         val open = scopedModal() as? ModalUiState.Open ?: return
+        if (modalId != null && modalId != open.modalId) return
+        // #1321: before the arm and the grant draft are dropped, so a refused cancel keeps both.
+        if (!promptSendAllowed("permission_cancel")) return
         armedModalOption.value = null
-        acceptedAlwaysAllow.value = null
+        grantDrafts.set(serverId, conversationId, null)
         sendCancel(open.modalId)
+    }
+
+    /**
+     * The reader left this conversation's screen (#1306): drop any armed non-default option, so coming back
+     * takes two fresh taps. The session-grant draft is kept; it belongs to the request, not the visit.
+     */
+    fun onConversationLeft() {
+        armedModalOption.value = null
     }
 
     /**
@@ -1503,7 +1729,7 @@ class ThreadViewModel(
     ) {
         val open = scopedModal() as? ModalUiState.Open ?: return
         if (open.modalId != modalId || !open.offersAlwaysAllow) return
-        acceptedAlwaysAllow.value = if (accepted) open.alwaysAllowKey() else null
+        grantDrafts.set(serverId, conversationId, if (accepted) open.alwaysAllowKey() else null)
     }
 
     /**
@@ -1517,7 +1743,7 @@ class ThreadViewModel(
     ): Boolean =
         optionId in ALWAYS_ALLOW_OPTION_IDS &&
             open.offersAlwaysAllow &&
-            acceptedAlwaysAllow.value == open.alwaysAllowKey()
+            grantDrafts.current(serverId, conversationId) == open.alwaysAllowKey()
 
     /**
      * The input guard's read of this thread's modal (#816). It reads the host flow synchronously instead of
@@ -1569,10 +1795,11 @@ class ThreadViewModel(
         }
     }
 
-    /** Stop this ViewModel's conversation. Always attempts the send; the daemon is authoritative on
+    /** Stop this ViewModel's conversation. Sends whenever the host is connected (#1319); the daemon is authoritative on
      *  whether its turn is running and on the interactive gate. The affordance passes no arguments:
      *  [sendInterrupt] supplies the saved open [conversationId], without changing local turn state. */
     fun onInterrupt() {
+        if (!connectedFor("interrupt")) return
         sendInterrupt()
     }
 
@@ -1656,7 +1883,8 @@ class ThreadViewModel(
         viewModelScope.launch {
             try {
                 repository.archive(conversationId)
-                navigationChannel.send(ThreadNavigation.PopBack)
+                // #1399: the reply may already have popped through [conversations]; leave once.
+                leaveForList()
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
@@ -1754,6 +1982,7 @@ class ThreadViewModel(
      * path clears it, which is what restores the last confirmed reading.
      */
     fun onModelSelected(value: String) {
+        if (!connectedFor("model")) return
         val config = state.value.runConfig
         if (config.pending || value == config.selectedModel) return
         if (!skipUnlessWritable(config)) return
@@ -1765,6 +1994,7 @@ class ThreadViewModel(
      *  the selected row, forwarded verbatim — never `Effort.name.lowercase()`, whose five entries are this
      *  device's guess at a vocabulary the row itself publishes. */
     fun onEffortSelected(level: String) {
+        if (!connectedFor("effort")) return
         effortRecall.cancel()
         val config = state.value.runConfig
         if (config.pending || level == config.selectedEffort) return
@@ -1792,6 +2022,7 @@ class ThreadViewModel(
      * on the confirmed reading and [ThreadRunConfig.pendingPermission] only marks it pending.
      */
     fun onPermissionModeSelected(value: String) {
+        if (!connectedFor("permission")) return
         val mode = PermissionModeOption.fromWire(value) ?: return
         val config = state.value.runConfig
         if (config.permissionMode.isEmpty() || value == config.permissionMode) return
@@ -1943,19 +2174,25 @@ class ThreadViewModel(
             }
         }
 
+    /** Closes the Channel info sheet and drops its System prompt editor; a write already sent still lands. */
+    private fun closeChannelInfo() {
+        pendingChannelInfo.value = false
+        promptEditor.value = null
+    }
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
             ThreadEvent.Archive -> {
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
                 // overflow menu, where it is already false); the send + success-only PopBack live in
                 // sendArchive, off the shared silent guard (#556).
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 sendArchive()
             }
             ThreadEvent.Delete -> pendingDeleteConfirm.value = true
             ThreadEvent.DeleteConfirm -> {
                 pendingDeleteConfirm.value = false
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 launchGuardedRepoCall {
                     repository.delete(state.value.conversationId)
                     // #790: success-only, the position [sendMessage]'s own clear occupies — each of the
@@ -1988,8 +2225,18 @@ class ThreadViewModel(
                 pendingSaveAsChannelDialog.value = null
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
-            ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true
-            ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
+            // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
+            // #1342: each open also mounts a fresh System prompt editor, whose construction reads the prompt.
+            ThreadEvent.ChannelInfo ->
+                if (pendingChannelInfo.compareAndSet(false, true)) {
+                    promptEditor.value = SystemPromptEditor(viewModelScope, repository, conversationId)
+                    rereadRunSettings("channel_info_open")
+                }
+            ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
+            is ThreadEvent.SystemPromptEdit -> promptEditor.value?.edit(event.text)
+            ThreadEvent.SystemPromptSave -> promptEditor.value?.save()
+            ThreadEvent.SystemPromptClear -> promptEditor.value?.clear()
+            ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
         }
@@ -2064,13 +2311,7 @@ class ThreadViewModel(
         val optionId: String,
     )
 
-    /** An accepted always-allow offer (#818), keyed on the prompt and the exact rules it offered. */
-    private data class AcceptedAlwaysAllow(
-        val modalId: String,
-        val rules: List<String>,
-    )
-
-    private fun ModalUiState.Open.alwaysAllowKey() = AcceptedAlwaysAllow(modalId, alwaysAllowRules)
+    private fun ModalUiState.Open.alwaysAllowKey() = PermissionGrantDraft(modalId, alwaysAllowRules)
 
     /** The outstanding permission write (#650): the session it addressed, and the job that sends and
      *  settles it. */
@@ -2229,6 +2470,7 @@ private fun runConfig(
         }
     return ThreadRunConfig(
         choices = visibleRows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
+        overflowChoices = visibleRows.drop(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice(agent) },
         inheritedChoice = defaultRow?.toChoice(agent),
         inheritedResolutionUnique =
             defaultRow != null && visibleRows.count { it.resolvedModel == defaultRow.resolvedModel } == 1,
@@ -2236,6 +2478,7 @@ private fun runConfig(
         droppedModels = menu?.droppedModels ?: 0,
         hiddenChoices = (visibleRows.size - MAX_RENDERED_MODEL_CHOICES).coerceAtLeast(0),
         settingsAvailable = settings != null,
+        settingsHeld = settings?.held == true,
         savedModel = settings?.model.orEmpty(),
         savedEffort = settings?.effort.orEmpty(),
         pendingModel = pendingModel,
@@ -2246,6 +2489,7 @@ private fun runConfig(
         appliedEffort = settings?.effectiveEffort ?: EffectiveEffort.Unavailable,
         capabilities = settings?.capabilities,
         memorySearch = settings?.memorySearch ?: MemorySearchReport.Unknown,
+        agent = agent,
     )
 }
 
@@ -2299,11 +2543,32 @@ private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
 internal fun ModelMenuRow.dropdownLabel(agent: ConversationAgent): String =
     if (agent == ConversationAgent.Claude) value.modelFamily().ifEmpty { displayName.inert() } else displayName.inert()
 
-/** Desktop's dropdown family rule over the raw published value; used only for display. */
-private fun String.modelFamily(): String {
+/** Desktop's dropdown family rule over a raw identifier; used for display and the inherited mark (#1308). */
+internal fun String.modelFamily(): String {
     val bare = removePrefix("claude-")
     val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
     return head.replaceFirstChar { it.uppercaseChar() }.inert()
+}
+
+/**
+ * How full the context window is, as a whole percent in 0..100, or `null` when unavailable (#1411, desktop's
+ * `contextTokenSource` + `contextUsagePercent`). A present [usage] always supplies the pair, its `totalTokens`
+ * over `maxTokens`, whatever it holds; only an absent one falls back to [settings]' `usedTokens` over
+ * `windowTokens`. A window of `0` or less in the pair used is unavailable, never a fallback. Claude's own
+ * `percentage` is not read, so the footer and the Status sheet share one clamp. Rounds half up, as `Math.round`.
+ */
+internal fun contextPercent(
+    usage: ContextUsage?,
+    settings: SessionSettings?,
+): Int? {
+    val (used, window) =
+        when {
+            usage != null -> usage.totalTokens to usage.maxTokens
+            settings != null -> settings.usedTokens to settings.windowTokens
+            else -> return null
+        }
+    if (window <= 0) return null
+    return floor(used.toDouble() / window.toDouble() * 100 + 0.5).coerceIn(0.0, 100.0).toInt()
 }
 
 private fun Conversation.displayName(): String =

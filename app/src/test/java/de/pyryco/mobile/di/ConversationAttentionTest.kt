@@ -112,15 +112,29 @@ class ConversationAttentionTest {
     @Test
     fun anOpenPromptOrQuestionBatchWaitsOnlyForItsOwnConversation() {
         val running = HostAttentionState().onEvent(state("c", Phase.Thinking), viewing = false)
-        assertEquals(mapOf("c" to ConversationAttention.WaitingForAnswer), running.resolve(modal("c"), emptyList()))
-        assertEquals(mapOf("c" to ConversationAttention.Running), running.resolve(modal(""), emptyList()))
+        assertEquals(mapOf("c" to ConversationAttention.WaitingForAnswer), running.resolve(listOf(modal("c")), emptyList()))
+        assertEquals(mapOf("c" to ConversationAttention.Running), running.resolve(listOf(modal("")), emptyList()))
         assertEquals(
             mapOf("c" to ConversationAttention.Running, "q" to ConversationAttention.WaitingForAnswer),
-            running.resolve(ModalUiState.Dismissed("m", "allow", "remote", "q"), listOf(QuestionBatch("q", "b", emptyList()))),
+            running.resolve(emptyList(), listOf(QuestionBatch("q", "b", emptyList()))),
         )
     }
 
-    private fun HostAttentionState.resolved() = resolve(ModalUiState.Hidden, emptyList())
+    // #1338: desktop's `selectHasOutstandingFor` — a chat waits while any outstanding prompt belongs to it.
+    @Test
+    fun everyChatHoldingAPromptWaits_andAnsweringOneLeavesTheOther() {
+        val idle = HostAttentionState()
+        val both = listOf(modal("a", "m1"), modal("b", "m2"), modal("b", "m3"))
+        assertEquals(
+            mapOf("a" to ConversationAttention.WaitingForAnswer, "b" to ConversationAttention.WaitingForAnswer),
+            idle.resolve(both, emptyList()),
+        )
+        assertEquals(mapOf("b" to ConversationAttention.WaitingForAnswer), idle.resolve(both.drop(1), emptyList()))
+        assertEquals(mapOf("b" to ConversationAttention.WaitingForAnswer), idle.resolve(listOf(modal("b", "m3")), emptyList()))
+        assertEquals(emptyMap<String, ConversationAttention>(), idle.resolve(emptyList(), emptyList()))
+    }
+
+    private fun HostAttentionState.resolved() = resolve(emptyList(), emptyList())
 
     private fun state(
         id: String,
@@ -134,5 +148,8 @@ class ConversationAttentionTest {
         isError: Boolean = false,
     ) = LiveSessionEvent.TurnEnd(id, turnId, stopReason, isError = isError)
 
-    private fun modal(conversationId: String) = ModalUiState.Open("m", "permission", "title", "prompt", emptyList(), "deny", conversationId)
+    private fun modal(
+        conversationId: String,
+        modalId: String = "m",
+    ) = ModalUiState.Open(modalId, "permission", "title", "prompt", emptyList(), "deny", conversationId)
 }

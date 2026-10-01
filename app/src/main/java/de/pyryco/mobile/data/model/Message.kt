@@ -13,9 +13,33 @@ data class Message(
     val toolCall: ToolCall? = null,
     /** The files this message references (#983), in send, wire or arrival order; see [MessageAttachment]. */
     val attachments: List<MessageAttachment> = emptyList(),
+    /** Non-null exactly on an assistant row folded from `assistant_delta`s (#1350); see [AssistantSegment]. */
+    val segment: AssistantSegment? = null,
 )
 
 enum class Role { User, Assistant, Tool }
+
+/**
+ * One run of a turn's assistant text with no other row inside it (#1350): text, a tool call, more text is
+ * two segments. [turnId] is the deltas' `turn_id`, and [deltas] records each folded delta's `seq` and the
+ * length of its text in [Message.content], in fold order, so the lengths sum to the content's length.
+ *
+ * The record is what lets two copies of one segment cut by a page boundary, or met across the page and the
+ * live lane, join into one row with each delta's text once. It carries no text, so [toString] is safe.
+ */
+data class AssistantSegment(
+    val turnId: String,
+    val deltas: List<SegmentDelta>,
+) {
+    val firstSeq: Int get() = deltas.firstOrNull()?.seq ?: -1
+    val lastSeq: Int get() = deltas.lastOrNull()?.seq ?: -1
+}
+
+/** One folded `assistant_delta`: its per-turn [seq] and the [length] of its text (#1350). */
+data class SegmentDelta(
+    val seq: Int,
+    val length: Int,
+)
 
 /**
  * One file a thread message references (#983): a file the operator sent with it, one a replayed
@@ -59,6 +83,11 @@ enum class ToolCallStatus { Running, Done, Failed, Denied }
  * is [ToolCallStatus.Running]; closing the call clears it and a late reading is ignored. `null` means no
  * reading arrived, which proves nothing — a short call finishes before claude's first heartbeat, and a
  * heartbeat can be lost. Never subtract readings or treat one as timing evidence; displaying it is #658's.
+ *
+ * [resultDetail] (#1316) is the first `tool_result`'s count of what the call returned ("265 lines"), verbatim,
+ * `""` when the result had none. `null` means no result has been folded into this row: a running call, a
+ * denial whose result has not arrived, or a row restored from the disk cache, which keeps no count. It is
+ * inert display text — never parsed into a number, logged or used as a link.
  */
 data class ToolCall(
     val toolName: String,
@@ -69,6 +98,7 @@ data class ToolCall(
     val parentToolUseId: String = "",
     val denial: ToolDenial? = null,
     val elapsedSeconds: Int? = null,
+    val resultDetail: String? = null,
 )
 
 /**

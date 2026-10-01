@@ -152,6 +152,44 @@ data class AttachmentTarget(
     override fun toString(): String = "AttachmentTarget(id=$attachmentId)"
 }
 
+/** What a tap on a file that is not fetched yet asked for (#1329): open it, or save it. */
+enum class AttachmentAction { OPEN, SAVE }
+
+// Desktop's `isImageAttachmentName` list (#1329). Do not add types: the two clients fetch the same files on sight.
+private val ImageAttachmentExtensions = setOf("png", "jpg", "jpeg", "gif", "webp", "avif", "bmp")
+
+/**
+ * Whether [name] is an image by its extension (#1329), as desktop decides: the text after the last dot,
+ * compared exactly and case-insensitively. A name with no dot is not an image.
+ */
+internal fun isImageAttachmentName(name: String): Boolean {
+    val dot = name.lastIndexOf('.')
+    return dot >= 0 && name.substring(dot + 1).lowercase() in ImageAttachmentExtensions
+}
+
+/**
+ * Whether [attachment] is fetched as soon as its row is shown (#1329). Only what draws as a picture is: an
+ * `image/` type, or with no type, an image name. Any other file waits for a tap. A reference with neither
+ * type nor name, a history-replayed row, is fetched on show, since only retrieval says what it is. The name
+ * is daemon-authored; it only ever picks between fetching now and fetching on a tap.
+ */
+internal fun loadsOnShow(attachment: MessageAttachment): Boolean {
+    attachment.mimeType.nonBlank()?.let { return it.startsWith("image/", ignoreCase = true) }
+    val name = attachment.displayName.nonBlank() ?: return true
+    return isImageAttachmentName(name)
+}
+
+/** [attachment] as its open and save see it (#985): the reference's own name and type, filled in from [ready]. */
+internal fun attachmentTarget(
+    attachment: MessageAttachment,
+    ready: AttachmentViewState.Ready?,
+): AttachmentTarget =
+    AttachmentTarget(
+        attachment.attachmentId,
+        attachment.displayName.nonBlank() ?: ready?.displayName.nonBlank(),
+        attachment.mimeType.nonBlank() ?: ready?.mimeType.nonBlank(),
+    )
+
 /**
  * Decodes a thumbnail no larger than a slot of [sizePx] needs, or `null` when it cannot (#984). A seam so a
  * screen test or preview can stand in for the platform decoder.
@@ -188,30 +226,34 @@ internal fun thumbnailTargetSize(
 
 /**
  * A message's attachments in its bubble (#984), in reference order. Each reports itself shown when it is
- * composed — in the thread's lazy list, only when it is on screen — and that is what starts its retrieval.
- * A [AttachmentViewState.Ready] one opens on a tap ([onOpen]) and saves on a long-press ([onSave], #985);
- * one in any other state offers neither.
+ * composed — in the thread's lazy list, only when it is on screen — and the thread decides whether that
+ * starts its retrieval ([loadsOnShow], #1329). A [AttachmentViewState.Ready] one opens on a tap ([onOpen])
+ * and saves on a long-press ([onSave], #985). A file that is not fetched on show and has no state yet draws
+ * as a ready file row, and its tap or long-press asks for it to be fetched and then opened or saved
+ * ([onRequest]). One in any other state offers neither.
  */
 @Composable
 internal fun MessageAttachments(
     attachments: List<MessageAttachment>,
     states: Map<String, AttachmentViewState>,
-    onShown: (String) -> Unit,
+    onShown: (MessageAttachment) -> Unit,
     onRetry: (String) -> Unit,
     modifier: Modifier = Modifier,
     onOpen: (AttachmentTarget) -> Unit = {},
     onSave: (AttachmentTarget) -> Unit = {},
+    onRequest: (MessageAttachment, AttachmentAction) -> Unit = { _, _ -> },
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing)) {
         for (attachment in attachments) {
             key(attachment.attachmentId) {
                 MessageAttachmentItem(
                     attachment = attachment,
-                    state = states[attachment.attachmentId] ?: AttachmentViewState.Loading,
+                    state = states[attachment.attachmentId],
                     onShown = onShown,
                     onRetry = onRetry,
                     onOpen = onOpen,
                     onSave = onSave,
+                    onRequest = onRequest,
                 )
             }
         }
@@ -221,31 +263,41 @@ internal fun MessageAttachments(
 @Composable
 private fun MessageAttachmentItem(
     attachment: MessageAttachment,
-    state: AttachmentViewState,
-    onShown: (String) -> Unit,
+    state: AttachmentViewState?,
+    onShown: (MessageAttachment) -> Unit,
     onRetry: (String) -> Unit,
     onOpen: (AttachmentTarget) -> Unit,
     onSave: (AttachmentTarget) -> Unit,
+    onRequest: (MessageAttachment, AttachmentAction) -> Unit,
 ) {
     val id = attachment.attachmentId
     val currentOnShown by rememberUpdatedState(onShown)
-    LaunchedEffect(id) { currentOnShown(id) }
+    val currentAttachment by rememberUpdatedState(attachment)
+    LaunchedEffect(id) { currentOnShown(currentAttachment) }
     val ready = state as? AttachmentViewState.Ready
+    // #1329: a file not fetched on show has no state until it is tapped, and draws as the ready row. Any
+    // other id with no state is being fetched.
+    val deferred = state == null && !loadsOnShow(attachment)
+    val shownState = state ?: AttachmentViewState.Loading.takeUnless { deferred }
     // The message's own reference wins; retrieval only fills what it left unknown. Both are hints: the
     // MIME type picks a layout, never a viewer, and a wrong one ends in the file row below.
-    val name = attachment.displayName.nonBlank() ?: ready?.displayName.nonBlank()
-    val mimeType = attachment.mimeType.nonBlank() ?: ready?.mimeType.nonBlank()
-    val isImage = mimeType?.startsWith("image/", ignoreCase = true) == true
-    // #985: only a file that is here acts. Loading, not found and failed offer neither open nor save.
+    val target = attachmentTarget(attachment, ready)
+    val name = target.displayName
+    val isImage = target.mimeType?.startsWith("image/", ignoreCase = true) == true
+    // #985: only a file that is here acts, and #1329: one not fetched yet acts by fetching first. Loading,
+    // not found and failed offer neither open nor save.
     val actions =
-        if (ready != null) {
-            val target = AttachmentTarget(id, name, mimeType)
-            Modifier.attachmentActions(onOpen = { onOpen(target) }, onSave = { onSave(target) })
-        } else {
-            Modifier
+        when {
+            ready != null -> Modifier.attachmentActions(onOpen = { onOpen(target) }, onSave = { onSave(target) })
+            deferred ->
+                Modifier.attachmentActions(
+                    onOpen = { onRequest(attachment, AttachmentAction.OPEN) },
+                    onSave = { onRequest(attachment, AttachmentAction.SAVE) },
+                )
+            else -> Modifier
         }
-    val fileRow = @Composable { AttachmentFileRow(name = name, state = state, onRetry = { onRetry(id) }, modifier = actions) }
-    if (isImage && (state is AttachmentViewState.Loading || ready != null)) {
+    val fileRow = @Composable { AttachmentFileRow(name = name, state = shownState, onRetry = { onRetry(id) }, modifier = actions) }
+    if (isImage && (shownState is AttachmentViewState.Loading || ready != null)) {
         ImageAttachment(name = name, source = ready?.source, fallback = fileRow, modifier = actions)
     } else {
         fileRow()
@@ -338,12 +390,13 @@ private fun ImageAttachment(
 /**
  * Figma's `File field`: the page glyph with a short type label, then the name on one line, shortened in
  * the middle so the extension stays visible, and never wider than the bubble. Below the name, the state
- * when it is not ready: loading, not found, or a failure with its retry.
+ * when it is not ready: loading, not found, or a failure with its retry. No state (#1329, a file not fetched
+ * yet) draws as ready.
  */
 @Composable
 private fun AttachmentFileRow(
     name: String?,
-    state: AttachmentViewState,
+    state: AttachmentViewState?,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -368,7 +421,7 @@ private fun AttachmentFileRow(
                     AttachmentViewState.Loading -> R.string.thread_attachment_loading
                     AttachmentViewState.NotFound -> R.string.thread_attachment_not_found
                     AttachmentViewState.Failed -> R.string.thread_attachment_failed
-                    is AttachmentViewState.Ready -> null
+                    is AttachmentViewState.Ready, null -> null
                 }
             status?.let { Text(text = stringResource(it), style = MaterialTheme.typography.bodySmall, color = tint) }
             if (state is AttachmentViewState.Failed) {

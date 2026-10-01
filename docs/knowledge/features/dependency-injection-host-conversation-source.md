@@ -136,9 +136,13 @@ equality key:
   collector below seeing a null repository.
 - `restored(stored)` merges positions read from the cache under the live ones — a live
   completion always wins over a stale restore.
-- `resolve(modal, batches)` returns the non-Idle map: `WaitingForAnswer` comes from a
-  `ModalUiState.Open` whose `conversationId` matches and is non-blank (a blank-id prompt
-  belongs to no row, #816) or from `batches.batchFor(id) != null`.
+- `resolve(prompts, batches)` returns the non-Idle map: `WaitingForAnswer` comes from **any**
+  `ModalUiState.Open` in `prompts` whose `conversationId` matches and is non-blank (a blank-id prompt
+  belongs to no row, #816) or from `batches.batchFor(id) != null`. Before [#1338](current-modal-state.md#related)
+  `resolve` took one `ModalUiState` — the host's single most-recently-shown prompt — so a second chat's
+  prompt silently evicted the first's waiting state; `resolve` now takes the whole
+  `List<ModalUiState.Open>`, matching desktop's `selectHasOutstandingFor`
+  (`src/renderer/src/store/modalPrompts.ts`), and a chat waits while *any* outstanding prompt names it.
 - `positions` is capped at `MAX_READ_POSITIONS` (1000) per host, oldest insertion order
   dropped first — see the [security review](../../specs/architecture/877-conversation-attention-state.md#security-review)
   for why these three bounds exist (an unbounded daemon could otherwise mint ids or huge
@@ -158,7 +162,7 @@ hold the conversation read past that one call the way a thread's view does.
 `HostConversationSource.launchAttention(entry)` runs four collectors under the same
 `entry.job` `reconcile` already cancels on bundle replacement or removal: the live-event
 fold (reading `viewing` under the class monitor via `updateAttention`), a `repositories`
-null emission → `disconnected()`, the combined `modal`/`questionBatches` → `resolve`, and,
+null emission → `disconnected()`, the combined `modals`/`questionBatches` → `resolve`, and,
 only when a `cache` is bound, a one-shot restore followed by a collector over each
 distinct positions map, written through `ConversationCache.writeReadPositions`. All four
 route through one `@Synchronized updateAttention(entry, change)`, which reuses `update`'s
@@ -193,20 +197,38 @@ own fold treats the same way.
   a restored `positions` entry recognises the latest turn after process death). Emitted whether or not
   the conversation is viewed — a backgrounded thread composition can stay alive.
 - **Prompt:** emitted inside the modal/batches collector by diffing the current prompt-key set
-  (the private `promptKeys(modal, batches)`) against `Held.prompts`, the previous set for that
-  generation; only keys new since the last emission alert. A `StateFlow` re-publish of the same modal or
-  batch therefore emits nothing. Whether a reconnect re-emits depends on whether the key actually left
+  (the private `promptKeys(modals, batches)`) against `Held.prompts`, the previous set for that
+  generation; only keys new since the last emission alert. A `StateFlow` re-publish of the same modals or
+  batches therefore emits nothing. Whether a reconnect re-emits depends on whether the key actually left
   `Held.prompts` in between: a question batch that a reconnect drops and then shows again *does* re-emit,
   because its id left the held set while it was gone — suppressing that repeat is the consumer's job (see
   [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685)),
-  not this flow's. A **retained permission modal does not re-emit across a reconnect**: `currentModal`
-  carries the same open modal straight across the gap, so `modal:$modalId` never leaves `Held.prompts`
-  and a re-shown copy with the same id (even with different prompt text) is not a new key —
+  not this flow's. **Before [#1337](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure),
+  a retained permission modal did not re-emit across a reconnect:** the single `ModalUiState` this source
+  read carried the same open modal straight across the gap, so `modal:$modalId` never left `Held.prompts`,
+  and a re-shown copy with the same id (even with different prompt text) was not a new key. **Since #1337, a
+  *new* connection clears `coordinator.hostModals`** (a plain teardown still does not), so the prompt this
+  source reads goes empty → populated across that reconnect when the daemon re-sends the same prompt —
+  `modal:$modalId` now **does** leave `Held.prompts` while the connection is re-established, and this flow
+  re-emits the alert exactly like a dropped-and-reshown question batch. Suppressing that repeat is
+  still the consumer's job: `AttentionNotifier`'s `AlertLedger` (see [Push messaging service § Attention
+  alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685)) already
+  dedupes on the alert's digest regardless of how many times this flow re-emits it, so the push path still
+  posts exactly one notification across the reconnect —
+  `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` is the live proof.
   `HostConversationSourceAttentionTest.aPromptAlertsOncePerModalOrBatchAndABlankConversationPromptAlertsNothing`
-  pins this (`#955`) by re-publishing `open.copy(prompt = "re-shown")` for `m1` and asserting no second
-  alert. A consumer that needs to notice a reconnect's re-show of a still-open permission prompt cannot
-  rely on this flow for it. `promptKeys` drops a blank-`conversationId` modal or batch, the same way
-  `resolve` above does — its tap could never route to anything.
+  still pins the no-second-alert contract for a same-value re-publish that never passes through empty —
+  the case this flow's own diff handles identically before and after #1337. `promptKeys` drops a
+  blank-`conversationId` modal or batch, the same way `resolve` above does — its tap could never route to
+  anything.
+  **Since [#1338](current-modal-state.md#related), `promptKeys` keys every outstanding prompt**, not only
+  the host's most-recently-shown one: `HostConversationConnection.modal: StateFlow<ModalUiState>` became
+  `modals: StateFlow<HostModalState>`, wired from `coordinator.hostModals`, and `promptKeys` maps
+  `modals.outstanding` to one `"modal:$modalId"` key per prompt. A second chat's prompt arriving no longer
+  evicts the first's key, so each prompt still alerts exactly once —
+  `HostConversationSourceAttentionTest.everyChatHoldingAPromptWaitsAndAlertsOnce_andAnsweringOneLeavesTheOther`
+  pins two prompts held at once alerting once each, a re-emit of the same list alerting nothing, and
+  answering one leaving the other's waiting state and key untouched.
 - **Hot, not replayed, bounded:** `MutableSharedFlow(extraBufferCapacity = 64, onBufferOverflow = DROP_OLDEST)`,
   emitted with `tryEmit` under the same class monitor `updateAttention` already holds — no new lock and
   no suspension inside the fold. A late subscriber sees nothing emitted before it subscribed; the one
@@ -387,3 +409,6 @@ compatibility selection any longer.
 
 - [Dependency injection](dependency-injection.md) — the parent document: `appModule`,
   the flag-gated selector pattern, testing and configuration.
+- [Current-modal state](current-modal-state.md) — the coordinator-side `HostModalState` fold that
+  `HostConversationConnection.modals` is wired from, and [#1338](current-modal-state.md#related)'s removal
+  of the single-value `currentModal` projection this source and `resolve` used to read.
