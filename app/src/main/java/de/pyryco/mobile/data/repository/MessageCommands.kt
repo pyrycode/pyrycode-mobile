@@ -36,8 +36,8 @@ import java.util.UUID
  *
  * Built on [requests], the connection's one request counter and reply waiters, so every frame takes its
  * envelope id from the same sequence as every other request. [send] is the repository's pump send, used by
- * the frames that go out raw: the attachment chunks, the debug bundle request and the dequeue. A confirmed
- * send folds into [conversationList] and [threadProjection]; a drop reads [queueProjection] and records
+ * the frames that go out raw: the attachment chunks, the debug bundle request and the dequeue. A send's
+ * echo folds into [conversationList] and [threadProjection]; a drop reads [queueProjection] and records
  * into [threadProjection].
  *
  * One instance per repository, and a fresh repository per connection (#351), so the transfer state is
@@ -114,15 +114,17 @@ internal class MessageCommands(
 
     /**
      * Post [text] to [conversationId] over v2 `send_message` (#346). Mints a client-side
-     * `message_id`, sends the request, and awaits its correlated reply: an empty `ack` (success) or
-     * an `error` (failure). Mirrors [FakeConversationRepository.sendMessage]'s observable contract —
-     * returns a `role=User` [Message] reconstructed from the input. There is no server `message` echo
-     * to the sender, so the sender's thread updates only via the **confirmed insert** below, run
-     * **only after** the `ack`: both read-path projections re-emit, never on a failure path.
+     * `message_id`, draws the echo, sends the request, and awaits its correlated reply: an empty `ack`
+     * (success) or an `error` (failure). Mirrors [FakeConversationRepository.sendMessage]'s observable
+     * contract — returns a `role=User` [Message] reconstructed from the input. There is no server
+     * `message` echo to the sender, so the sender's thread shows the message through the **echo** drawn
+     * **before** the await (#1355), as desktop's `submitMessage` draws its `userText` echo whether or not
+     * the send went out: both read-path projections re-emit at once, and the `ack` adds nothing.
      *
      * Throws [IllegalArgumentException] for an unknown conversation (server `conversation.not_found`,
      * mirroring the fake's type), [RelayErrorException] for any other server `error`, and
-     * [IllegalStateException] when the session is not connected — none of which mutate a projection.
+     * [IllegalStateException] when the session is not connected. The echo stays in place on every one of
+     * them, as on desktop; only the too-many-attachments refusal, raised before an id is minted, draws none.
      */
     suspend fun sendMessage(
         conversationId: String,
@@ -168,9 +170,6 @@ internal class MessageCommands(
                         ),
                     ),
             )
-        // Throws on a server `error` / not-Open session; the confirmed insert below is unreachable
-        // on any failure path. The empty `{}` ack payload carries nothing to map.
-        requests.sendAndAwaitReply(request)
         val message =
             Message(
                 id = messageId,
@@ -192,8 +191,11 @@ internal class MessageCommands(
         conversationList.recordLastMessage(conversationId, message)
         threadProjection.appendMessages(listOf(conversationId to message))
         // Record the echo as ours (#781) — only an id in this ledger may later be correlated with a
-        // queued item and removed. Recorded after the ack, so a failed send leaves no phantom claim.
+        // queued item and removed. A failed send's id stays: no queued item will ever carry it.
         threadProjection.recordMinted(conversationId, messageId)
+        // Throws on a server `error` / not-Open session, leaving the echo drawn. The empty `{}` ack
+        // payload carries nothing to map.
+        requests.sendAndAwaitReply(request)
         return message
     }
 
@@ -307,7 +309,7 @@ internal class MessageCommands(
      * The backlog entry leaves only on the next `queue_state` (#467's non-optimistic ruling, which the
      * daemon owns), and that same snapshot is the drop's only confirmation. When it arrives without the
      * dropped `queued_msg_id`, [ThreadProjection.settleDrops] also removes **this device's own undelivered echo** for the
-     * message (#781) — the thread row [sendMessage] posted after its ack, which the daemon never
+     * message (#781) — the thread row [sendMessage] drew when it sent, which the daemon never
      * authored and which otherwise stays behind reading as a message claude received. The correlation
      * key is the item's `message_id` (pyrycode#2092), resolved from this connection's own snapshot, so
      * no caller above needs to learn a second id. Never logs the payload or either id.
