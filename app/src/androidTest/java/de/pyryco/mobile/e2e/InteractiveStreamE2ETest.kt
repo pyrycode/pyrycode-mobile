@@ -37,6 +37,7 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isFocused
@@ -110,6 +111,7 @@ import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.conversations.components.CHANNEL_INFO_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
@@ -2212,7 +2214,8 @@ class InteractiveStreamE2ETest {
      * Edit channel, which renames it and changes the prompt; reopened, it reads both back from the host and
      * says the prompt applies from the next session, since the running one was spawned with the old prompt.
      * After Reset session and a distinct second reply, a session spawned after the edit runs, and the reopened modal
-     * drops that line. Archive channel moves it to host A's Archive, and restoring it returns it to Channels
+     * drops that line. Emptying the box there clears the stored prompt (#1342), which Channel info's System prompt
+     * section then reads back as absent. Archive channel moves it to host A's Archive, and restoring it returns it to Channels
      * under its new name.
      *
      * A throwaway unpromoted chat created with omitted `cwd` supplies the daemon's actual default folder for
@@ -2324,6 +2327,39 @@ class InteractiveStreamE2ETest {
             openChannelEditor(newName)
             awaitPromptField(CHANNEL_PROMPT_SECOND)
             composeTestRule.onAllNodesWithText(nextSessionLine).assertCountEquals(0)
+
+            // 6b. #1342: emptying the box clears the stored prompt (null, not ""), as desktop's promptWriteFor does.
+            composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement("")
+            composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
+            awaitChannelEditorClosed()
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    while (hostRepository(serverId).requestSystemPrompt(id).systemPrompt != null) delay(PROMPT_STATUS_POLL_MS)
+                }
+            }
+
+            // 6c. #1342: Channel info reads the prompt on open and shows it absent: an empty box at zero bytes.
+            openRow(newName)
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+            val emptyBox = hasTestTag(CHANNEL_INFO_PROMPT_FIELD_TAG) and hasText("")
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(emptyBox).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(emptyBox).performScrollTo()
+            composeTestRule.onNode(hasText("0 / 8192 bytes") and hasAnyAncestor(isDialog())).performScrollTo()
+            composeTestRule.onNode(hasContentDescription("Close") and hasAnyAncestor(isDialog())).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_INFO_PROMPT_FIELD_TAG)).fetchSemanticsNodes().isEmpty()
+            }
+            leaveThread()
+
+            // The archive below starts from Edit channel again, which now reads an empty box.
+            openChannelEditor(newName)
+            awaitPromptField("")
 
             // 7. AC-3: archive it from the same modal. It leaves Channels for host A's Archive.
             composeTestRule.onNode(hasText(string(R.string.edit_channel_archive)) and hasClickAction()).performClick()

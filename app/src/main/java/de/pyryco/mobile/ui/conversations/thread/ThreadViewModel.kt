@@ -39,6 +39,8 @@ import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditor
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.conversations.components.attachmentTarget
 import de.pyryco.mobile.ui.conversations.components.loadsOnShow
@@ -284,6 +286,12 @@ class ThreadViewModel(
     private val pendingSaveAsChannelDialog = MutableStateFlow<SaveAsChannelDialogState?>(null)
 
     private val pendingChannelInfo = MutableStateFlow(false)
+
+    /**
+     * The Channel info sheet's System prompt editor (#1342), present only while the sheet is open, so every
+     * open starts from a fresh read. Bound to [repository], the reconnect-surviving facade.
+     */
+    private val promptEditor = MutableStateFlow<SystemPromptEditor?>(null)
 
     private val pendingDeleteConfirm = MutableStateFlow(false)
 
@@ -669,6 +677,16 @@ class ThreadViewModel(
     val turnOutcome: StateFlow<TurnOutcomeReport?> =
         liveSessionEvents
             .runningFold(null as TurnOutcomeReport?) { current, event -> nextTurnOutcome(current, event) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
+            )
+
+    /** The open Channel info sheet's System prompt state (#1342), or `null` while the sheet is closed. */
+    val systemPrompt: StateFlow<SystemPromptEditorState?> =
+        promptEditor
+            .flatMapLatest { editor -> editor?.state ?: flowOf(null) }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -2156,19 +2174,25 @@ class ThreadViewModel(
             }
         }
 
+    /** Closes the Channel info sheet and drops its System prompt editor; a write already sent still lands. */
+    private fun closeChannelInfo() {
+        pendingChannelInfo.value = false
+        promptEditor.value = null
+    }
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
             ThreadEvent.Archive -> {
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
                 // overflow menu, where it is already false); the send + success-only PopBack live in
                 // sendArchive, off the shared silent guard (#556).
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 sendArchive()
             }
             ThreadEvent.Delete -> pendingDeleteConfirm.value = true
             ThreadEvent.DeleteConfirm -> {
                 pendingDeleteConfirm.value = false
-                pendingChannelInfo.value = false
+                closeChannelInfo()
                 launchGuardedRepoCall {
                     repository.delete(state.value.conversationId)
                     // #790: success-only, the position [sendMessage]'s own clear occupies — each of the
@@ -2202,8 +2226,16 @@ class ThreadViewModel(
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
             // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
-            ThreadEvent.ChannelInfo -> if (pendingChannelInfo.compareAndSet(false, true)) rereadRunSettings("channel_info_open")
-            ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
+            // #1342: each open also mounts a fresh System prompt editor, whose construction reads the prompt.
+            ThreadEvent.ChannelInfo ->
+                if (pendingChannelInfo.compareAndSet(false, true)) {
+                    promptEditor.value = SystemPromptEditor(viewModelScope, repository, conversationId)
+                    rereadRunSettings("channel_info_open")
+                }
+            ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
+            is ThreadEvent.SystemPromptEdit -> promptEditor.value?.edit(event.text)
+            ThreadEvent.SystemPromptSave -> promptEditor.value?.save()
+            ThreadEvent.SystemPromptClear -> promptEditor.value?.clear()
             ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
