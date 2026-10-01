@@ -42,7 +42,6 @@
     <!-- A tree conversation row's status dot (#878): one per attention state, so the meaning never rests on colour. -->
     <string name="cd_conversation_attention_waiting">Waiting for your answer</string>
     <string name="cd_conversation_attention_running">Running</string>
-    <string name="cd_conversation_attention_failed">Failed</string>
     <string name="cd_conversation_attention_unread">Unread</string>
     <string name="cd_conversation_attention_idle">Idle</string>
     <string name="untitled_discussion">Untitled discussion</string>

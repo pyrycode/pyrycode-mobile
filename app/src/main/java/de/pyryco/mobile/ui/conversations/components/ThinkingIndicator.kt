@@ -1,13 +1,13 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import android.animation.ValueAnimator
 import android.content.res.Configuration
-import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,10 +18,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,11 +35,18 @@ import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
-private val IndicatorHorizontalPadding = 16.dp
 private val IndicatorVerticalPadding = 4.dp
 private val GlyphWidth = 14.dp
 private val GlyphHeight = 16.dp
-private val IconLabelGap = 8.dp
+
+/** One full turn of the status snowflake, desktop's `.composer-status__icon--spinning` (#1312). */
+private const val GLYPH_TURN_MILLIS = 1600
+
+/** The status snowflake's test tag; the band's one glyph (#1312). */
+internal const val STATUS_GLYPH_TEST_TAG = "thinking_glyph"
+
+/** The status snowflake's current rotation in degrees, exposed for screen tests (#1312). */
+internal val StatusGlyphRotation = SemanticsPropertyKey<Float>("StatusGlyphRotation")
 
 /**
  * The largest reading this row will put on screen. The largest documented extended-thinking budget for a
@@ -73,29 +81,21 @@ private const val MAX_PLAUSIBLE_THINKING_TOKENS = 1_000_000L
  * crossed, and the PTY surface emits none of these frames at all — so `null` degrades to the plain
  * "Thinking…" label and never to a stalled, failed or errored presentation.
  *
- * **One [Row] and one icon, deliberately.** Splitting the two label variants
- * across an `if`/`else` would give Compose two groups, so the first reading to arrive would dispose the
- * icon and compose a fresh one — restarting its pulse exactly when the reading appears. Only the
- * [Text]'s argument and the row's content description vary, which keeps the icon's composition
- * identity stable across the transition. There is likewise no `remember`-cached label and no
- * `derivedStateOf`: either would freeze a changing reading (the [ApiRetryIndicator] rule).
+ * **Text only (#1312).** The status snowflake is not drawn here: the band draws one [ThreadStatusGlyph] at
+ * its leading edge in every state, and this row is the label beside it. There is no `remember`-cached
+ * label and no `derivedStateOf`: either would freeze a changing reading (the [ApiRetryIndicator] rule).
  *
  * **The running tool (#897).** While a turn runs and a tool call is open, [runningTool] is that call
  * (see `openToolCall` beside the thread screen) and the label reads `Running <tool>…`, with claude's latest
  * `tool_progress` reading appended in the tool row's elapsed format. It replaces both thinking labels
  * and raises the row on its own, so a tool running in the `responding` phase is named too. It varies the
- * same [Text] argument, so the icon keeps its identity when a tool opens or closes. With no reading the
- * label shows no time; nothing here counts seconds.
+ * same [Text] argument. With no reading the label shows no time; nothing here counts seconds.
  *
  * **Working and stalled (#1311).** [isWorking] is the `responding` phase of a running turn and reads
  * `Working…`, so the band never goes dark while claude writes text, between two tools, or after a denial.
  * [isStalled] reads the client-owned `The turn seems to have stalled…` in the error colour and outranks
- * every other label here. Both vary the same [Text], so the glyph keeps its identity across Thinking →
- * Working → Running tool → Stalled. Which one the band shows is decided once, by `statusArm` beside the
- * thread screen; the precedence below only mirrors it.
- *
- * Figma's input status glyph keeps its 14 × 16 bounds while its opacity pulses; no animation frame
- * rotates or stretches the supplied shape.
+ * every other label here. Which one the band shows is decided once, by `statusArm` beside the thread
+ * screen; the precedence below only mirrors it.
  */
 @Composable
 fun ThinkingIndicator(
@@ -160,30 +160,14 @@ fun ThinkingIndicator(
             isThinking -> stringResource(R.string.thread_thinking_label)
             else -> stringResource(R.string.thread_working_label)
         }
-    val glyphPulse = rememberInfiniteTransition(label = "thinking glyph")
-    val glyphAlpha =
-        glyphPulse.animateFloat(
-            initialValue = 1f,
-            targetValue = 0.7f,
-            animationSpec = infiniteRepeatable(animation = tween(900), repeatMode = RepeatMode.Reverse),
-            label = "thinking glyph opacity",
-        )
     Row(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = IndicatorHorizontalPadding,
-                    vertical = IndicatorVerticalPadding,
-                ).semantics(mergeDescendants = true) { contentDescription = description },
+                .padding(vertical = IndicatorVerticalPadding)
+                .semantics(mergeDescendants = true) { contentDescription = description },
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(IconLabelGap),
     ) {
-        Image(
-            painter = painterResource(R.drawable.ic_thread_thinking),
-            contentDescription = null,
-            modifier = Modifier.size(GlyphWidth, GlyphHeight).alpha(glyphAlpha.value).testTag("thinking_glyph"),
-        )
         // A tool name is daemon text from an open set: one ellipsized line bounds it, as on the tool row.
         // The thinking labels keep their shipped wrapping.
         Text(
@@ -195,6 +179,46 @@ fun ThinkingIndicator(
             overflow = if (toolName != null) TextOverflow.Ellipsis else TextOverflow.Clip,
         )
     }
+}
+
+/**
+ * The status band's one snowflake (#1312), Figma's 14 × 16 input status glyph, drawn by the band at its
+ * leading edge in every state rather than by any one reading. It turns one full turn every 1.6 s, linear
+ * and continuous, while [turning] holds, as desktop's `isStatusIconTurning`; otherwise it rests at 0°.
+ * With the system's animator duration scale at 0 ("Remove animations") it stays still.
+ *
+ * The caller keeps this in one composition slot across reading changes, so a label change never restarts
+ * the turn. The tag and [StatusGlyphRotation] sit outside [rotate], so the node's bounds stay the layout
+ * slot. Reading the angle recomposes only this scope each frame.
+ */
+@Composable
+internal fun ThreadStatusGlyph(
+    turning: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val angle =
+        if (turning && ValueAnimator.areAnimatorsEnabled()) {
+            val transition = rememberInfiniteTransition(label = "status glyph")
+            transition
+                .animateFloat(
+                    initialValue = 0f,
+                    targetValue = 360f,
+                    animationSpec = infiniteRepeatable(tween(GLYPH_TURN_MILLIS, easing = LinearEasing)),
+                    label = "status glyph rotation",
+                ).value
+        } else {
+            0f
+        }
+    Image(
+        painter = painterResource(R.drawable.ic_thread_thinking),
+        contentDescription = null,
+        modifier =
+            modifier
+                .testTag(STATUS_GLYPH_TEST_TAG)
+                .semantics { this[StatusGlyphRotation] = angle }
+                .size(GlyphWidth, GlyphHeight)
+                .rotate(angle),
+    )
 }
 
 /**

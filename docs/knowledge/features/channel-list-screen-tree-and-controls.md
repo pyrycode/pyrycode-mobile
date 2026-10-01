@@ -384,7 +384,10 @@ positional call site still compiles. The row's leading slot, previously `IdleSta
 ring, became `ConversationStatusDot(attention)`: the same 8dp box and 1dp `primary` ring on every state
 (`TreeDotSize`, `TreeDotRingWidth`), now filled by an exhaustive `when` — mirrors desktop's
 `ConversationStatusDot` (`pyrycode-desktop/src/renderer/src/screens/channels/ConversationStatusDot.tsx`)
-one-for-one except `Failed`, which has no desktop counterpart and takes `error`:
+one-for-one. An earlier mobile-only `Failed` state, filled `error`, was removed by #1451: desktop's
+`resolveConversationStatus` has no failed state, so a turn that ends Failed or StoppedEarly while its
+conversation is not viewed now counts as an ordinary completed turn and resolves Unread, then Idle once
+opened, like any other completed turn. No dot ever draws the `error` fill.
 
 | State | Fill | Content description |
 | --- | --- | --- |
@@ -392,7 +395,6 @@ one-for-one except `Failed`, which has no desktop counterpart and takes `error`:
 | `Running` | `colorScheme.tertiary`, blinking | "Running" |
 | `Unread` | `colorScheme.success` | "Unread" |
 | `WaitingForAnswer` | `colorScheme.warning` | "Waiting for your answer" |
-| `Failed` | `colorScheme.error` | "Failed" |
 
 **Blink stays off the row.** `Running`'s alpha comes from `rememberInfiniteTransition`, created only
 inside the `Running` branch — leaving that state drops the transition from composition — animating
@@ -403,7 +405,7 @@ the dot's layer and never recomposes `TreeConversationRow` or its `Text`.
 
 **The state names itself.** `ConversationStatusDot` sets `Modifier.clearAndSetSemantics { contentDescription
 = … }` from an exhaustive `ConversationAttention` → string-resource map (`cd_conversation_attention_idle` /
-`_running` / `_unread` / `_waiting` / `_failed`, `strings.xml`) — the same self-describing-dot-in-a-merging-row
+`_running` / `_unread` / `_waiting`, `strings.xml`) — the same self-describing-dot-in-a-merging-row
 shape the host row's connection legs used before #1333 removed them. The row's own `selectable` merges
 that description with the conversation name,
 so TalkBack reads e.g. "Running, kitchenclaw refactor" — the meaning never rests on colour alone.
