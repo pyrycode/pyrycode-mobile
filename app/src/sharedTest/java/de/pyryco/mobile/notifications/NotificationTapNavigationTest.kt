@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.preferencesOf
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.NOTIFICATION_TAP_ROW_WAIT
 import de.pyryco.mobile.PyryNavHost
 import de.pyryco.mobile.Routes
 import de.pyryco.mobile.data.cache.ConversationCache
@@ -17,10 +18,12 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.InertAttachmentStore
 import de.pyryco.mobile.di.InertConversationCache
 import de.pyryco.mobile.di.ObservablePairedServerStore
@@ -33,8 +36,10 @@ import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.NavigationPeer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -47,7 +52,9 @@ import org.koin.dsl.module
 
 /**
  * A notification tap's target on the production graph and `Routes` (#685): a saved host's conversation
- * opens above the channel list, and anything else stays on the list. Mounts `PyryNavHost` directly, as
+ * opens above the channel list, and anything else stays on the list. Since #1400 the conversation must
+ * also be active in the host's snapshot; rows land through the real cache-restore path, released by
+ * [rows], and the tap waits [NOTIFICATION_TAP_ROW_WAIT_MS] for them. Mounts `PyryNavHost` directly, as
  * `LiteralScreenNavigationTest` does, so the intent parse is covered by `AttentionNotifierTest` instead.
  *
  * The permission prompt is marked as already asked, so the channel list never raises the system dialog
@@ -59,6 +66,7 @@ class NotificationTapNavigationTest {
     private lateinit var app: KoinApplication
     private lateinit var registry: RelayConnectionRegistry
     private lateinit var nav: NavHostController
+    private val rows = CompletableDeferred<List<Conversation>>()
 
     @After fun close() {
         if (::app.isInitialized) app.close()
@@ -67,6 +75,7 @@ class NotificationTapNavigationTest {
 
     @Test fun aSavedHostsTapOpensItsThreadAboveTheChannelList() {
         val target = HostConversationTarget(SAVED, "conv /?#%")
+        rows.complete(listOf(conversation(target.conversationId, promoted = true)))
         start(target)
 
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
@@ -79,7 +88,57 @@ class NotificationTapNavigationTest {
         compose.runOnIdle { assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route) }
     }
 
+    @Test fun anActiveChatsTapOpensItsThread() {
+        val target = HostConversationTarget(SAVED, "chat")
+        rows.complete(listOf(conversation("chat", promoted = false)))
+        start(target)
+
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
+        compose.runOnIdle { assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments)) }
+    }
+
+    @Test fun anArchivedConversationsTapStaysOnTheChannelList() {
+        rows.complete(listOf(conversation("conv", promoted = true, archived = true)))
+        start(HostConversationTarget(SAVED, "conv"))
+
+        assertStaysOnTheListPastTheWait()
+    }
+
+    @Test fun anUnknownConversationsTapStaysOnTheChannelList() {
+        rows.complete(listOf(conversation("other", promoted = true)))
+        start(HostConversationTarget(SAVED, "deleted"))
+
+        assertStaysOnTheListPastTheWait()
+    }
+
+    @Test fun aTapOpensTheThreadWhenItsRowArrivesWithinTheWait() {
+        val target = HostConversationTarget(SAVED, "conv")
+        start(target)
+        compose.mainClock.advanceTimeBy(NOTIFICATION_TAP_ROW_WAIT_MS / 2)
+        compose.runOnIdle { assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route) }
+
+        rows.complete(listOf(conversation("conv", promoted = true)))
+
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
+        compose.runOnIdle { assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments)) }
+    }
+
+    @Test fun aTapWhoseRowsNeverArriveStaysOnTheChannelList() {
+        start(HostConversationTarget(SAVED, "conv"))
+
+        assertStaysOnTheListPastTheWait()
+        // Released only after the wait: had it not elapsed, this would still open the thread.
+        rows.complete(listOf(conversation("conv", promoted = true)))
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+            assertEquals(null, nav.previousBackStackEntry)
+        }
+    }
+
     @Test fun anUnsavedHostsTapStaysOnTheChannelList() {
+        rows.complete(listOf(conversation("conv", promoted = true)))
         start(HostConversationTarget("forged", "conv"))
 
         compose.waitForIdle()
@@ -88,6 +147,21 @@ class NotificationTapNavigationTest {
             assertEquals(null, nav.previousBackStackEntry)
         }
     }
+
+    private fun assertStaysOnTheListPastTheWait() {
+        compose.mainClock.advanceTimeBy(NOTIFICATION_TAP_ROW_WAIT_MS + 1_000)
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+            assertEquals(null, nav.previousBackStackEntry)
+        }
+    }
+
+    private fun conversation(
+        id: String,
+        promoted: Boolean,
+        archived: Boolean = false,
+    ) = Conversation(id, null, "/w", "s", emptyList(), promoted, Instant.fromEpochMilliseconds(0), archived = archived)
 
     private fun start(target: HostConversationTarget) {
         val serverKey = NavigationPeer.key()
@@ -148,10 +222,17 @@ class NotificationTapNavigationTest {
                     single { registry }
                     single { store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                     single { preferences }
-                    single<ConversationCache> { InertConversationCache }
+                    single<ConversationCache> {
+                        object : ConversationCache by InertConversationCache {
+                            override suspend fun readConversations(serverId: String) = if (serverId == SAVED) rows.await() else emptyList()
+                        }
+                    }
                     single { InertAttachmentStore }
                     // The real reader needs androidContext() for its ContentResolver (#932).
                     single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
+                    // On the main thread like the registry above: the test's effect dispatcher does not
+                    // redispatch, so a snapshot published from Dispatchers.Default would navigate off it.
+                    single { HostConversationSource.relay(get(), Dispatchers.Main.immediate, cache = get(), viewing = get()) }
                 },
             )
         compose.setContent {
@@ -167,5 +248,6 @@ class NotificationTapNavigationTest {
 
     private companion object {
         const val SAVED = "A /?#%"
+        val NOTIFICATION_TAP_ROW_WAIT_MS = NOTIFICATION_TAP_ROW_WAIT.inWholeMilliseconds
     }
 }

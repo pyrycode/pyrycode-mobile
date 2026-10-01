@@ -66,3 +66,7 @@ No rung-3 scenario: this guards an existing flow's rejection path; no new operat
 ## Documentation handoff (pending — documentation stage)
 
 `docs/knowledge/features/navigation.md` (`conversation_thread` entry, and the linked push-messaging tap-route section as fits): describe the tap rule — saved host, row present and active in the host's snapshot, bounded cold-start wait (`NOTIFICATION_TAP_ROW_WAIT`, 5 s), fallback to the channel list.
+
+## Revisions
+
+- **2026-10-01, implementation.** `NOTIFICATION_TAP_ROW_WAIT` is `internal`, not `private`, so the navigation test advances the clock by the real constant rather than a copy. The open question is resolved: `mainClock.advanceTimeBy` does drive `withTimeoutOrNull` in the effect, and the never-arrive test proves it by releasing the row after the wait and still staying on the list. The test rebinds `HostConversationSource` on `Dispatchers.Main.immediate`, as it already does for the registry, because the compose test's effect dispatcher resumes on the emitting thread and a `Dispatchers.Default` publish would navigate off the main thread. In production the effect runs on the UI dispatcher.

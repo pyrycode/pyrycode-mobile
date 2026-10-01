@@ -48,6 +48,8 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
@@ -86,8 +88,10 @@ import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
+import kotlin.time.Duration.Companion.seconds
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -147,6 +151,7 @@ internal fun PyryNavHost(
 ) {
     val destinations = koinInject<ThreadDestinationFactory>()
     val appPreferences = koinInject<AppPreferences>()
+    val conversations = koinInject<HostConversationSource>()
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -614,13 +619,21 @@ internal fun PyryNavHost(
     // #685: the tap opens the thread above the channel list, so a conversation deleted since the alert
     // still ends one Back away from a usable list. Only a saved host is accepted: the activity is
     // exported, and anything can start it with these extras. Navigating is all a tap ever does.
+    // #1400: and only a conversation the host's snapshot holds active. A snapshot cannot tell rows not
+    // loaded yet from rows without the target, so the tap waits a bounded time for the row to appear and
+    // otherwise stays on the list, never opening a conversation it could not check.
     LaunchedEffect(openTarget) {
         val target = openTarget ?: return@LaunchedEffect
-        if (destinations.isSavedHost(target.serverId)) {
+        if (!destinations.isSavedHost(target.serverId)) {
+            RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
+            return@LaunchedEffect
+        }
+        val active = withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) { conversations.snapshots.first { it.holdsActive(target) } }
+        if (active != null) {
             RelayLog.d { "event=notification_tap_accepted" }
             navController.openThread(target)
         } else {
-            RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
+            RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
         }
     }
 }
@@ -678,6 +691,12 @@ private fun ArchiveDestination(navController: NavHostController) {
 }
 
 private const val SETUP_URL = "https://pyryco.de/setup"
+
+/**
+ * How long a notification tap waits for its conversation to appear active in the host's snapshot (#1400).
+ * Cached rows land at once, so this bounds only a cold start with nothing cached.
+ */
+internal val NOTIFICATION_TAP_ROW_WAIT = 5.seconds
 
 private const val TAG = "MainActivity"
 
@@ -814,6 +833,10 @@ private fun NavHostController.returnToWelcome() {
         launchSingleTop = true
     }
 }
+
+/** Whether [target]'s host holds it among its channels or chats, both of which exclude archived rows. */
+private fun List<HostConversationSnapshot>.holdsActive(target: HostConversationTarget): Boolean =
+    any { host -> host.serverId == target.serverId && (host.channels + host.chats).any { it.id == target.conversationId } }
 
 private fun NavHostController.openThread(target: HostConversationTarget) {
     if (currentDestination?.route == Routes.CONVERSATION_THREAD && Routes.target(currentBackStackEntry?.arguments) == target) return
