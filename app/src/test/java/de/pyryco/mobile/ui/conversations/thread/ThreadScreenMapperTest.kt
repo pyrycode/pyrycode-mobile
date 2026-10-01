@@ -3,12 +3,16 @@ package de.pyryco.mobile.ui.conversations.thread
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.McpStatus
+import de.pyryco.mobile.data.repository.McpStatusReport
 import de.pyryco.mobile.data.repository.MemorySearchAvailability
 import de.pyryco.mobile.data.repository.MemorySearchReport
+import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ThreadScreenMapperTest {
@@ -111,5 +115,18 @@ class ThreadScreenMapperTest {
         val model = state.toChannelInfoUiModel(now)
 
         assertEquals("—", model.lastActivityLabel)
+    }
+
+    // #1344: the MCP reading reaches the sheet unless the session reports `mcp_servers` false.
+    @Test
+    fun toChannelInfoUiModel_passesTheMcpReading_unlessTheCapabilityIsFalse() {
+        val mcp = McpStatus(report = McpStatusReport(emptyList(), 0), reconnecting = true)
+        val state = ThreadUiState(conversationId = "ch_1", displayName = "x", mcpStatus = mcp)
+
+        assertEquals(mcp, state.toChannelInfoUiModel(now).mcpServers)
+        val claude = ThreadRunConfig(capabilities = SessionCapabilities(emptyList(), emptyList(), mcpServers = true))
+        assertEquals(mcp, state.copy(runConfig = claude).toChannelInfoUiModel(now).mcpServers)
+        val codex = ThreadRunConfig(capabilities = SessionCapabilities(emptyList(), emptyList(), mcpServers = false))
+        assertNull(state.copy(runConfig = codex).toChannelInfoUiModel(now).mcpServers)
     }
 }

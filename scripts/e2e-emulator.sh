@@ -1220,9 +1220,15 @@ elif [ -n "${LIVE}" ]; then
   # #1394: the scanner's confirm waits for host B to answer before the list opens. Pairing over the
   # scanner and a phone-local unpair only, so it spends no Claude turn.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_scannerConfirm_waitsForHostThenOpensList"
+  # #1410: reopening a chat after a fresh connection shows its context reading from the thread's own ask, before
+  # any turn on the phone. One turn (the peer's ping, run while the phone is offline).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn"
   # #1337: two chats on the answer daemon hold a real prompt each at once; answering A leaves B's in place.
   # Two real-claude turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_permissionPrompts_heldPerConversation"
+  # #1344: after one ping turn, Channel info's MCP section lists the daemon's pyry_approve once Show built-in
+  # is ticked. One turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

@@ -25,6 +25,7 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -64,6 +65,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -138,7 +140,8 @@ class ThreadViewModel(
     // #861: whether this thread's host has a live repository published — for a relay host, the
     // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
     // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
-    // restart. Defaulted to always-available, as the demo path's fake repository is.
+    // restart, the #1309 settings re-read and the #1410 context-usage ask. Defaulted to
+    // always-available, as the demo path's fake repository is.
     private val repositoryAvailable: Flow<Boolean> = flowOf(true),
     // #843: whether this thread's own host rejected the saved pairing — the relay leg's distinct state,
     // which [connectionStateSource]'s legacy four cases fold into Offline. Defaulted to never, as the
@@ -454,6 +457,13 @@ class ThreadViewModel(
             ::Pair,
         ).distinctUntilChanged()
 
+    /** This conversation's MCP server reading (#1344), seeded so a source that never emits cannot stall [state]. */
+    private val mcpStatusReading: Flow<McpStatus> =
+        repository
+            .observeMcpStatus(conversationId)
+            .onStart { emit(McpStatus()) }
+            .distinctUntilChanged()
+
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
             pendingRenameDialog,
@@ -556,6 +566,8 @@ class ThreadViewModel(
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
         }.combine(backgroundTaskReading) { uiState, (roster, count) ->
             uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+        }.combine(mcpStatusReading) { uiState, mcp ->
+            uiState.copy(mcpStatus = mcp)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -1146,6 +1158,21 @@ class ThreadViewModel(
         // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
         viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+
+        // #1410: ask for a fresh context reading when the thread opens on a live host and each time the host's
+        // repository returns, as desktop does on open. Unlike the walk restart above there is no `drop(1)`: the
+        // opening availability is the open's own ask, and nothing else sends it. An opening `false` waits for the
+        // repository's arrival. Each ask is one fire-and-forget frame; the reply lands on observeContextUsage.
+        viewModelScope.launch {
+            var opened = false
+            repositoryAvailable
+                .distinctUntilChanged()
+                .filter { it }
+                .collect {
+                    askForContextUsage(reconnect = opened)
+                    opened = true
+                }
+        }
     }
 
     private fun openLocalSendWindow() {
@@ -1194,6 +1221,16 @@ class ThreadViewModel(
     private fun rereadRunSettings(reason: String) {
         RelayLog.d { "event=run_settings_reread reason=$reason" }
         repository.refreshSessionSettings(conversationId)
+    }
+
+    /**
+     * Ask for a fresh context reading of this thread (#1410). Only a [reconnect] ask logs, with a static reason and
+     * never the id: the open is already logged as the thread destination binds, and the opening ask runs during
+     * construction.
+     */
+    private fun askForContextUsage(reconnect: Boolean) {
+        if (reconnect) RelayLog.d { "event=context_usage_ask reason=reconnect" }
+        repository.requestContextUsage(conversationId)
     }
 
     /**
@@ -2176,8 +2213,17 @@ class ThreadViewModel(
 
     /** Closes the Channel info sheet and drops its System prompt editor; a write already sent still lands. */
     private fun closeChannelInfo() {
+        // #1344: by any path — dismiss, Archive or a confirmed Delete. Only the call that actually closes the
+        // sheet releases the MCP reconnect and toggle waits it may have started, so a daemon that never answers
+        // cannot leave the section's controls disabled after the sheet reopens. Every caller is on the main
+        // thread via [onOverflowEvent], so the read and the write below cannot interleave with another close.
+        val wasOpen = pendingChannelInfo.value
         pendingChannelInfo.value = false
         promptEditor.value = null
+        if (!wasOpen) return
+        repository.endMcpReconnectWait(conversationId)
+        repository.endMcpToggleWait(conversationId)
+        RelayLog.d { "event=mcp_wait_released" }
     }
 
     fun onOverflowEvent(event: ThreadEvent) {
@@ -2225,17 +2271,31 @@ class ThreadViewModel(
                 pendingSaveAsChannelDialog.value = null
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
-            // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
+            // #1309: opening either sheet re-reads the settings it shows. #1344: Channel info also asks for the
+            // MCP reading, which starts empty on every connection, unless the session reports it cannot answer.
             // #1342: each open also mounts a fresh System prompt editor, whose construction reads the prompt.
             ThreadEvent.ChannelInfo ->
                 if (pendingChannelInfo.compareAndSet(false, true)) {
                     promptEditor.value = SystemPromptEditor(viewModelScope, repository, conversationId)
                     rereadRunSettings("channel_info_open")
+                    if (state.value.runConfig.mcpServersSupported) {
+                        repository.requestMcpStatus(conversationId)
+                        RelayLog.d { "event=mcp_status_requested" }
+                    }
                 }
             ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
             is ThreadEvent.SystemPromptEdit -> promptEditor.value?.edit(event.text)
             ThreadEvent.SystemPromptSave -> promptEditor.value?.save()
             ThreadEvent.SystemPromptClear -> promptEditor.value?.clear()
+            // #1344: always the route's own conversation; the Claude-authored name only goes on the wire.
+            is ThreadEvent.McpReconnect -> {
+                repository.reconnectMcpServer(conversationId, event.serverName)
+                RelayLog.d { "event=mcp_reconnect_sent" }
+            }
+            is ThreadEvent.McpToggle -> {
+                repository.toggleMcpServer(conversationId, event.serverName, event.enabled)
+                RelayLog.d { "event=mcp_toggle_sent enabled=${event.enabled}" }
+            }
             ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()

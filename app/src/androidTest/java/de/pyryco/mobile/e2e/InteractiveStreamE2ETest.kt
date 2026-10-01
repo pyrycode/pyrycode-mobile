@@ -356,6 +356,40 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * #1344: after one real turn (the daemon queries the conversation's live child), opening Channel info asks
+     * for the MCP reading; ticking "Show built-in" lists the daemon's own `pyry_approve` server. Asserts only the
+     * built-in name — the operator's other MCP servers vary and are never hard-coded.
+     */
+    @Test
+    fun interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn() {
+        awaitChannelList()
+        awaitConnected()
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+
+        // The Show built-in row appears only once a report has arrived for this conversation.
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithContentDescription(MCP_SHOW_BUILT_IN).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithContentDescription(MCP_SHOW_BUILT_IN).performScrollTo().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(MCP_BUILT_IN_APPROVE).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText(MCP_BUILT_IN_APPROVE).performScrollTo().assertIsDisplayed()
+    }
+
+    /**
      * #946: after one real turn, the composer footer's `Cxt:` segment shows the percentage Claude reported
      * (`context_usage`, published after every completed turn and answered on the screen's own ask). Asserts
      * only the `Cxt: N%` shape (or `Cxt high: N%` from 70, #1412) — the figure depends on the operator's claude and is never hard-coded.
@@ -377,6 +411,80 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
                 reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
             }
+        }
+    }
+
+    /**
+     * #1410: opening an existing chat after a fresh connection shows its context reading before any new turn, from
+     * the thread's own `request_context_usage`. The [SecondClientPeer] runs the chat's only turn while the phone's
+     * link is cut, so the post-turn push never reaches the phone: the chat had no ring events before the cut, and a
+     * reconnect replays only the conversation the phone's cursor names. Back on the list, the host's held reading for
+     * the chat is still empty, which is what makes the footer's later percentage the answer to the open's ask. The
+     * creating open also asks and is refused (no reading yet); the peer's whole turn separates that refusal from the
+     * reopen, longer than the daemon's short per-conversation collapse window.
+     *
+     * **One real-claude turn** (the peer's ping) plus one on-demand reading.
+     */
+    @Test
+    fun interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            // 1. The phone creates and names a chat, then leaves it without sending anything.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val before = hostConversationIds(serverId)
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId = newHostConversationId(serverId, before)
+            val chatName = CONTEXT_ASK_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            renameOpenThread(chatName)
+            leaveThread()
+
+            // 2. With the phone's link cut, the peer's turn runs to its end and the daemon publishes its reading.
+            setHostLink(serverId, up = false)
+            runBlocking {
+                peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "context_usage", THREAD_TIMEOUT_MS)
+            }
+
+            // 3. A fresh connection: the phone holds no reading for the chat, so only the open's ask can fill it.
+            setHostLink(serverId, up = true)
+            awaitChannelList()
+            assertNull(
+                "the reconnect alone delivered the chat's reading; the open's ask would prove nothing",
+                runBlocking { hostRepository(serverId).observeContextUsage(conversationId).first() },
+            )
+
+            // 4. Open the chat and send nothing: the open's ask fills the reading. Waiting on the reading itself,
+            // not only the footer, because the footer also renders a percentage from session_settings alone.
+            openChatRow(chatName)
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    hostRepository(serverId).observeContextUsage(conversationId).filterNotNull().first()
+                }
+            }
+            val reported = Regex("Cxt: \\d+%")
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
+                    reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
+                }
+            }
+        } finally {
+            peer.close()
         }
     }
 
@@ -993,6 +1101,8 @@ class InteractiveStreamE2ETest {
         // 7. Open Channel info → tap the sheet's Delete. "Channel info" is ungated; the sheet's Delete
         //    ActionCell is unique while only the sheet is open. Tapping it opens the confirm dialog OVER the
         //    still-composed sheet (ThreadEvent.Delete leaves pendingChannelInfo true) → two "Delete" nodes.
+        //    The System prompt and MCP servers sections push Actions below the fold, so scroll to Delete
+        //    before tapping; an off-screen tap lands outside the sheet and opens nothing (#1344).
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1001,7 +1111,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(DELETE_ACTION).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText(DELETE_ACTION).performClick()
+        composeTestRule.onNodeWithText(DELETE_ACTION).performScrollTo().performClick()
 
         // 8. Confirm the delete. Wait for the dialog's unique title, then tap the CONFIRM "Delete" — the sheet's
         //    "Delete" is also on screen, so disambiguate by the dialog's sibling "Cancel" button (the sheet has
@@ -3667,7 +3777,8 @@ class InteractiveStreamE2ETest {
      * The composer footer's readings and a model change survive a cut-and-restore of the phone's link (#967).
      * The chat is prepared as #545's are: nothing remembered and no saved model.
      *  * **The context reading is held.** After a real turn the footer shows `Cxt: N%`. The host's readings are
-     *    kept for the life of its pairing (#1317), so after the reconnect it still shows that same reading.
+     *    kept for the life of its pairing (#1317), so with the link cut it still shows that same reading. Once the
+     *    link is back the thread asks for a fresh one (#1410), and the footer shows a percentage.
      *  * **The readings come back.** Effort and permission settle, none pending, on what a fresh reading
      *    taken on the new connection reports. The model is inherited, and the first turn's announcement is
      *    held too (#1317), so the mark follows that announcement (#1308) rather than the default row.
@@ -3693,11 +3804,23 @@ class InteractiveStreamE2ETest {
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
             val held = awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
+            // The reading the first turn pushed. Its repository reads the host's readings (#1317), so it stays
+            // readable while the link is cut.
+            val preCutRepository = hostRepository()
+            val preCut =
+                runBlocking { withTimeout(REPLY_TIMEOUT_MS) { preCutRepository.observeContextUsage(chat.id).filterNotNull().first() } }
 
-            // 2. Cut and restore the link. The host's context reading is held across it (#1317).
+            // 2. Cut the link: the host's context reading is held across it (#1317). Checked while the link is down,
+            //    because once it is back the thread's reconnect ask (#1410) may replace the reading with its answer.
             setHostLink(serverId, up = false)
+            assertEquals(
+                "the held context reading while the link is cut",
+                preCut,
+                runBlocking { preCutRepository.observeContextUsage(chat.id).first() },
+            )
+            awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' while the link is cut") { it == held }
             setHostLink(serverId, up = true)
-            awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' after the reconnect") { it == held }
+            awaitContextSegment(THREAD_TIMEOUT_MS, "a percentage after the reconnect") { CONTEXT_REPORTED.matches(it) }
 
             // 3. Model, effort and permission settle on a fresh reading taken on the new connection.
             val fresh = freshSettings(chat.id)
@@ -3721,10 +3844,16 @@ class InteractiveStreamE2ETest {
             //    the Stop control has gone. Two ping replies in a two-ping thread are both composed in the list.
             //    Then the reading must be newer than the held one: the footer's percentage can round to the same
             //    text, so freshness is the repository's token count growing past the held reading's.
-            val heldUsage =
-                hostRepository().let { repository ->
-                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first() } }
-                }
+            //    The reconnect ask's answer (#1410) is a detail:"full" count, which need not agree with a post-turn
+            //    detail:"summary" push, so it is neither the baseline nor allowed to pass the growth check. The
+            //    baseline is the pre-cut push. The answer is let land first, moving the reading off the pre-cut
+            //    one; an answer equal to it emits nothing and a refused ask sends none, so that wait may time out.
+            //    The growth check then accepts only a reading other than the settled one.
+            val repository = hostRepository()
+            val settled =
+                runBlocking {
+                    withTimeoutOrNull(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first { it != preCut } }
+                } ?: preCut
             sendFromPhone(PING_PROMPT)
             val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
             try {
@@ -3736,15 +3865,16 @@ class InteractiveStreamE2ETest {
                 throw AssertionError("the turn on the new connection never ended with its reply drawn", e)
             }
             try {
-                val repository = hostRepository()
                 runBlocking {
                     withTimeout(REPLY_TIMEOUT_MS) {
-                        repository.observeContextUsage(chat.id).filterNotNull().first { it.totalTokens > heldUsage.totalTokens }
+                        repository.observeContextUsage(chat.id).filterNotNull().first {
+                            it != settled && it.totalTokens > preCut.totalTokens
+                        }
                     }
                 }
             } catch (e: TimeoutCancellationException) {
                 throw AssertionError(
-                    "no context reading newer than the held one (${heldUsage.totalTokens} tokens) after the turn on the new connection",
+                    "no context reading newer than the held one (${preCut.totalTokens} tokens) after the turn on the new connection",
                     e,
                 )
             }
@@ -6994,6 +7124,10 @@ class InteractiveStreamE2ETest {
         const val RENAME_ITEM = "Rename"
         const val RENAME_SAVE = "Save"
         const val CHANNEL_INFO_ITEM = "Channel info"
+
+        // #1344: Channel info's MCP section — the Show built-in switch's label and the daemon's own approval server.
+        const val MCP_SHOW_BUILT_IN = "Show built-in"
+        const val MCP_BUILT_IN_APPROVE = "pyry_approve"
         const val DELETE_ACTION = "Delete"
         const val DELETE_DIALOG_TITLE = "Delete conversation?"
         const val DELETE_DIALOG_CANCEL = "Cancel"
@@ -7119,6 +7253,9 @@ class InteractiveStreamE2ETest {
         const val OFFLINE_PROMPT = "Reply with exactly: pyryoffline"
         const val OFFLINE_REPLY = "pyryoffline"
         const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
+
+        /** #1410: the chat the peer runs a turn in while the phone is offline. */
+        const val CONTEXT_ASK_CHAT_NAME_PREFIX = "e2e1410-"
 
         // #965 stop scenario. The command waits on an event nothing sets, so only the phone's Stop (or, far
         // outside the test's step, claude's own Bash timeout) ends it; no time value is involved. It is a

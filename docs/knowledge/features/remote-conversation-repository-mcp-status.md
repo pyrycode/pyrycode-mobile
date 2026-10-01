@@ -34,7 +34,7 @@ Server names, statuses and errors are claude-authored and are held for display o
 
 ## For #1344 and #1345
 
-The report and the five flags are the only state this ticket produces; rendering them is explicitly out of scope here. #1344's Channel info list must render all five `McpServerStatus` strings as inert, line-bounded text — they carry no length bound beyond the transport frame cap, and the daemon's 256-byte `error` cap on the refusal path is not a bound on these. #1345's failure notice reads `unavailable`/`reconnectRefused`/`toggleRefused` and is the surface expected to call `requestMcpStatus` again after a reconnect, since the reading starts empty on every new connection.
+The report and the five flags are the only state this ticket produces; rendering them was out of scope here. #1344 (Channel info's MCP servers section, see [Channel info sheet § MCP servers section](channel-info-sheet.md#mcp-servers-section)) renders all five `McpServerStatus` strings as inert text bounded to 256 Unicode code points (`boundMcpText`) — they carry no length bound beyond the transport frame cap, and the daemon's 256-byte `error` cap on the refusal path is not a bound on these. The code-point cut alone does not stop a status or error made of newlines from drawing an unusually tall row; a line bound on top of it is a known, non-blocking gap. #1345's failure notice still has to read `unavailable`/`reconnectRefused`/`toggleRefused` and is the surface expected to call `requestMcpStatus` again after a reconnect, since the reading starts empty on every new connection — #1344's Channel info section already does both of those, as its own re-ask-on-open and three notices.
 
 ## Related
 
