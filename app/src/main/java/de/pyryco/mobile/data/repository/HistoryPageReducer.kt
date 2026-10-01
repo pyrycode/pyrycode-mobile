@@ -312,12 +312,19 @@ private fun List<ThreadItem>.highestSeqOf(turnId: String): Int =
  * carries no assistant text — and a duplicate changes nothing. `turn_end` carries no final text, so
  * nothing is appended here.
  */
-internal fun List<ThreadItem>.withFinalizedTurn(event: LiveSessionEvent.TurnEnd): List<ThreadItem> {
+internal fun List<ThreadItem>.withFinalizedTurn(event: LiveSessionEvent.TurnEnd): List<ThreadItem> = withSettledTurns(setOf(event.turnId))
+
+/**
+ * [withFinalizedTurn] for every turn in [turnIds] in one pass (#1419): the projection settles each row of a
+ * turn whose `turn_end` it has already seen when that row enters the thread late. Returns this very list
+ * when no streaming row of those turns exists.
+ */
+internal fun List<ThreadItem>.withSettledTurns(turnIds: Set<String>): List<ThreadItem> {
     fun ofTurn(message: Message): Boolean =
         message.role == Role.Assistant &&
             message.isStreaming &&
-            (message.segment?.turnId == event.turnId || (message.segment == null && message.id == event.turnId))
-    if (none { it is ThreadItem.MessageItem && ofTurn(it.message) }) return this
+            (message.segment?.turnId?.let { it in turnIds } ?: (message.id in turnIds))
+    if (turnIds.isEmpty() || none { it is ThreadItem.MessageItem && ofTurn(it.message) }) return this
     return map { row ->
         if (row is ThreadItem.MessageItem && ofTurn(row.message)) ThreadItem.MessageItem(row.message.copy(isStreaming = false)) else row
     }
@@ -537,6 +544,25 @@ private fun storedAttachmentReferences(ids: List<String>?): List<MessageAttachme
         .distinct()
         .take(MessageAttachmentIds.MAX)
         .map { MessageAttachment(it) }
+
+/**
+ * The `turn_id` of every `turn_end` among [entries] (#1419), behind the same [interactive] gate the
+ * reduction applies to it. A malformed entry costs only itself, as in [withHistoryEntry].
+ */
+internal fun endedTurnIds(
+    entries: List<HistoryEntry>,
+    interactive: Boolean,
+): Set<String> {
+    if (!interactive) return emptySet()
+    return entries.mapNotNullTo(HashSet()) { entry ->
+        if (entry.type != TYPE_TURN_END) return@mapNotNullTo null
+        try {
+            (decodeLiveEvent(entry) as? LiveSessionEvent.TurnEnd)?.turnId
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+    }
+}
 
 /**
  * Decode one turn-scoped structured entry to its typed [LiveSessionEvent] through the **same** per-type

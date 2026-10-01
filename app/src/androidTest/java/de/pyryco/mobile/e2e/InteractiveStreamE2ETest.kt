@@ -2825,7 +2825,6 @@ class InteractiveStreamE2ETest {
      * **One real-claude turn.**
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_modelChange_roundTripsAndStaysPerConversation() {
         val originals = mutableMapOf<String, SessionSettings>()
         try {
@@ -2954,7 +2953,6 @@ class InteractiveStreamE2ETest {
      * **One real-claude turn.**
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn() {
         val originals = mutableMapOf<String, SessionSettings>()
         try {
@@ -3050,7 +3048,6 @@ class InteractiveStreamE2ETest {
      * **Two real-claude turns**: one in the fresh chat and one in the fresh channel.
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val originals = mutableMapOf<String, SessionSettings>()
@@ -3148,7 +3145,6 @@ class InteractiveStreamE2ETest {
      * **Two real-claude turns**: the tool-free ping and the Read.
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
@@ -3613,18 +3609,19 @@ class InteractiveStreamE2ETest {
     /**
      * The composer footer's readings and a model change survive a cut-and-restore of the phone's link (#967).
      * The chat is prepared as #545's are: nothing remembered and no saved model.
-     *  * **The context reading goes with the link.** After a real turn the footer shows `Cxt: N%`. The reading
-     *    belongs to the connection and nothing asks for it (#946), so after the reconnect it shows `Cxt: n/a`.
-     *  * **The readings come back.** Model, effort and permission settle, none pending, on what a fresh
-     *    reading taken on the new connection reports.
-     *  * **A fresh context reading.** A turn on the new connection brings `Cxt: N%` back.
+     *  * **The context reading is held.** After a real turn the footer shows `Cxt: N%`. The host's readings are
+     *    kept for the life of its pairing (#1317), so after the reconnect it still shows that same reading.
+     *  * **The readings come back.** Effort and permission settle, none pending, on what a fresh reading
+     *    taken on the new connection reports. The model is inherited, and the first turn's announcement is
+     *    held too (#1317), so the mark follows that announcement (#1308) rather than the default row.
+     *  * **A context reading after a turn.** A turn on the new connection pushes a reading newer than the held
+     *    one, its token count grown past the held reading's, and the footer shows `Cxt: N%`.
      *  * **A change is confirmed.** A published model picked from the footer is the saved model a fresh
      *    reading reports. It is picked after the last turn, so no turn runs on a model the account may not serve.
      *
      * **Two real-claude turns**: the ping before the cut and the ping after it.
      */
     @Test
-    @Ignore("blocked on #1397 — reads #1320's held settings reading as fresh; fails on main")
     fun interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive() {
         val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
         val originals = mutableMapOf<String, SessionSettings>()
@@ -3638,13 +3635,12 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-            awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
+            val held = awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
 
-            // 2. Cut and restore the link. The old connection's context reading goes with it.
+            // 2. Cut and restore the link. The host's context reading is held across it (#1317).
             setHostLink(serverId, up = false)
             setHostLink(serverId, up = true)
-            val unavailable = string(R.string.thread_footer_context_unavailable)
-            awaitContextSegment(THREAD_TIMEOUT_MS, "'$unavailable' after the reconnect") { it == unavailable }
+            awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' after the reconnect") { it == held }
 
             // 3. Model, effort and permission settle on a fresh reading taken on the new connection.
             val fresh = freshSettings(chat.id)
@@ -3652,20 +3648,59 @@ class InteractiveStreamE2ETest {
             val (effortLabel, effortNote) = appliedEffortFooter(fresh.effectiveEffort)
             val mode = fresh.permissionMode
             assertTrue("the fresh reading after a real turn confirms no permission mode", mode.isNotEmpty())
-            awaitFooter(changeModelLabel, inheritedModelLabel(publishedMenu(chat.id)))
+            // The first turn's announcement is held across the reconnect too (#1317), so the inherited chat
+            // marks the row it maps to rather than the default row's resolution (#1308).
+            val announced = announcedModel(chat.id)
+            check(announced.isNotEmpty()) { "claude's announced model was cut" }
+            val menu = publishedMenu(chat.id)
+            val marked = announcedRow(menu, announced)
+            awaitAnnouncedMark(menu, marked, claudeFamily(announced).ifEmpty { UNAVAILABLE_MODEL_LABEL })
+            if (marked != null) awaitFooter(changeModelLabel, marked.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeEffortLabel, effortLabel) { it == effortNote }
             awaitFooter(changePermissionLabel, PermissionModeOption.fromWire(mode)?.label ?: mode.inert())
 
-            // 4. A turn on the new connection brings a fresh context reading, pushed when the turn ends.
+            // 4. A turn on the new connection leaves a context reading, pushed when the turn ends. The held
+            //    reading already shows a percentage, so the wait is on the turn itself: its reply is drawn and
+            //    the Stop control has gone. Two ping replies in a two-ping thread are both composed in the list.
+            //    Then the reading must be newer than the held one: the footer's percentage can round to the same
+            //    text, so freshness is the repository's token count growing past the held reading's.
+            val heldUsage =
+                hostRepository().let { repository ->
+                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first() } }
+                }
             sendFromPhone(PING_PROMPT)
+            val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
+            try {
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).fetchSemanticsNodes().size >= 2 &&
+                        composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+                }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the turn on the new connection never ended with its reply drawn", e)
+            }
+            try {
+                val repository = hostRepository()
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        repository.observeContextUsage(chat.id).filterNotNull().first { it.totalTokens > heldUsage.totalTokens }
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw AssertionError(
+                    "no context reading newer than the held one (${heldUsage.totalTokens} tokens) after the turn on the new connection",
+                    e,
+                )
+            }
             awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the turn on the new connection") { CONTEXT_REPORTED.matches(it) }
 
             // 5. A model picked from the published menu is confirmed by a fresh reading.
             val target =
                 checkNotNull(
-                    usableRows(publishedMenu(chat.id)).firstOrNull { it.value != INHERITED_MODEL_VALUE && it.value != fresh.model },
+                    usableRows(publishedMenu(chat.id)).firstOrNull {
+                        it.value != INHERITED_MODEL_VALUE && it.value != fresh.model && it.value != marked?.value
+                    },
                 ) {
-                    "the menu publishes no usable model besides the inherited default"
+                    "the menu publishes no usable model besides the inherited default and the marked row"
                 }
             pickFooterOption(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
@@ -5185,14 +5220,14 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Wait until the footer's `Cxt:` segment shows text that passes [shows]. The failure names [what] was
-     * expected and what the segment showed; the text is the app's own, never claude's.
+     * Wait until the footer's `Cxt:` segment shows text that passes [shows], and return that text. The failure
+     * names [what] was expected and what the segment showed; the text is the app's own, never claude's.
      */
     private fun awaitContextSegment(
         timeoutMs: Long,
         what: String,
         shows: (String) -> Boolean,
-    ) {
+    ): String {
         fun shown(): List<String> =
             composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().map { node ->
                 node.config
@@ -5200,11 +5235,16 @@ class InteractiveStreamE2ETest {
                     .orEmpty()
                     .joinToString("") { it.text }
             }
+        var matched: String? = null
         try {
-            composeTestRule.waitUntil(timeoutMs) { shown().any(shows) }
+            composeTestRule.waitUntil(timeoutMs) {
+                matched = shown().firstOrNull(shows)
+                matched != null
+            }
         } catch (e: ComposeTimeoutException) {
             throw AssertionError("the footer's context segment never showed $what; it shows ${shown()}", e)
         }
+        return checkNotNull(matched)
     }
 
     /** A slash-command suggestion labelled [label]; the composer, whose text a pick can equal, is excluded. */
@@ -5838,14 +5878,18 @@ class InteractiveStreamE2ETest {
 
     /**
      * A new `request_session_settings` for [conversationId] and its reply: each collection sends its own read.
-     * [serverId] is the host that holds the conversation, by default the harness's first host.
+     * The subscription starts with the host's held reading (#1320), which is skipped, so only the live
+     * connection's reply is returned. [serverId] is the host that holds the conversation, by default the
+     * harness's first host.
      */
     private fun freshSettings(
         conversationId: String,
         serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
     ): SessionSettings {
         val repository = hostRepository(serverId)
-        return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeSessionSettings(conversationId).filterNotNull().first() } }
+        return runBlocking {
+            withTimeout(THREAD_TIMEOUT_MS) { repository.observeSessionSettings(conversationId).filterNotNull().first { !it.held } }
+        }
     }
 
     /** The model menu the host publishes for [conversationId]; the first collection asks for it. */
@@ -6178,8 +6222,11 @@ class InteractiveStreamE2ETest {
         val row = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(row) }.isSuccess }
         composeTestRule.onAllNodes(row).onFirst().performClick()
+        // A reopened chat can already be running (#1313), including while it awaits permission. Its
+        // empty composer shows Stop rather than Send, so either control proves the thread arrived.
+        val composerControl = hasContentDescription(CD_SEND_MESSAGE) or hasContentDescription(string(R.string.cd_thread_interrupt))
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
+            composeTestRule.onAllNodes(composerControl).fetchSemanticsNodes().isNotEmpty() &&
                 composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
         }
     }
