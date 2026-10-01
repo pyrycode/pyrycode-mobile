@@ -10,6 +10,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -18,6 +19,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -25,6 +27,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
@@ -129,13 +132,16 @@ class ComposerAttachmentStripTest {
     }
 
     @Test
-    fun attachmentsWithBlankText_enableSend_andSendingTheBlankDraft() {
+    fun attachmentsWithBlankText_keepSendDisabled_untilTextIsTyped() {
         val sent = mutableListOf<String>()
         setScreen(attachments = listOf(entry(1, "one.txt")), onSend = { sent += it })
 
+        composeRule.onNodeWithContentDescription(SEND).assertIsNotEnabled()
+
+        composeRule.onNode(hasSetTextAction()).performTextInput("with text")
         composeRule.onNodeWithContentDescription(SEND).assertIsEnabled().performClick()
 
-        composeRule.runOnIdle { assertEquals(listOf(""), sent) }
+        composeRule.runOnIdle { assertEquals(listOf("with text"), sent) }
     }
 
     @Test
@@ -264,10 +270,13 @@ class ComposerAttachmentStripTest {
         onPicked: (List<PickedAttachment>) -> Unit,
         refusals: Flow<AttachmentRefusal>,
     ) {
+        var draft by remember { mutableStateOf("") }
         ThreadScreen(
             state = ThreadUiState(conversationId = "chat", displayName = "Chat"),
             onBack = {},
             onSendMessage = onSend,
+            draft = draft,
+            onDraftChange = { draft = it },
             connectionState = ConnectionState.Connected,
             onRetry = {},
             attachments = attachments,
