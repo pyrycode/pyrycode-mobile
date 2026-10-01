@@ -186,22 +186,21 @@ class TaskCountPillTest {
     }
 
     @Test
-    fun zeroCount_showsNoPill_andTheBandCollapsesAsBefore() {
+    fun zeroCount_showsNoPill_andThePillDoesNotMoveTheBand() {
         setThread(initialCount = 0, withMessage = true)
-        val collapsedBottom = messageBottom()
+        val idleBottom = messageBottom()
         composeTestRule.onNodeWithText("running", substring = true).assertDoesNotExist()
 
         count = 2
         composeTestRule.waitForIdle()
         pill("2 tasks running").assertIsDisplayed()
-        // The pill raises the band by its measured text height and the column's 8dp gap.
-        val pillHeight = pill("2 tasks running").getUnclippedBoundsInRoot().height
-        assertEquals(collapsedBottom - pillHeight - 8.dp, messageBottom())
+        // #1312: the band is always composed at the pill's 24dp height, so the pill does not raise it.
+        assertEquals(idleBottom, messageBottom())
 
         count = 0
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithText("running", substring = true).assertDoesNotExist()
-        assertEquals(collapsedBottom, messageBottom())
+        assertEquals(idleBottom, messageBottom())
     }
 
     @Test
