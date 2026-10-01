@@ -12,13 +12,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
- * The announced-model reading for every conversation on one connection (#890): its state, its decoder and
+ * The announced-model reading for every conversation on one host (#890): its state, its decoder and
  * its read for the `model_announced` event, in its own file like every other status event. The repository
  * keeps the routing: its `onInbound` arm calls [apply] only behind the negotiated `interactive` gate, and its
  * `session_transition` arm calls [clear].
  *
- * One instance per repository, and a fresh repository per connection (#351), so the state is
- * connection-scoped: a reconnect or a host switch starts from nothing.
+ * One instance per host pairing, held in [HostReadings] by the coordinator (#1317), so a reconnect keeps the
+ * reading and a host switch or the end of the pairing does not carry it over.
  */
 internal class AnnouncedModelProjection {
     /**

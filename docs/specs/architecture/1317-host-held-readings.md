@@ -103,3 +103,12 @@ Pending for the documentation stage: update the five readings' feature topics (`
 ## Open questions
 
 - Does any other thread consumer read these five readings through the compatibility singleton? If one does, it keeps today's gap, as the ticket scopes it. I will confirm while wiring.
+
+## Revisions
+
+### 2026-10-01 (implementation)
+
+- **Open question resolved.** `ThreadViewModel` is the only production reader of the five readings, and it reads them through `ThreadDestinationFactory.repository`. No consumer is left on the compatibility singleton's gap.
+- **Projection KDocs.** The five projection files said their state was connection-scoped, which is no longer true. Their lifetime comments now say "held per host pairing in `HostReadings`" and nothing else in them changes. That raises the count of modified production files from the planned 5 to 10, one over the 8-file line. Comment-only edits that keep the code truthful have no separate deliverable, so I made them here rather than splitting them out. The plan's Design section stands as written.
+- `RemoteConversationRepository`'s `now` is now a plain constructor parameter. Its only use is `HostReadings(now)`, the default.
+- Tests share one frame and assertion helper, `HostReadingFrames`, under `app/src/test/.../data/repository/`.

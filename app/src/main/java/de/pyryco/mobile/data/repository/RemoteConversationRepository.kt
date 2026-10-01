@@ -121,7 +121,7 @@ class RemoteConversationRepository(
      * wrong. **Defaulted** so every existing construction (tests, the coordinator, the scripted
      * harness) compiles unchanged; only a test supplies its own.
      */
-    private val now: () -> Instant = Clock.System::now,
+    now: () -> Instant = Clock.System::now,
     /**
      * Which background tasks this host has finished (#677), the one piece of background-task state that
      * outlives a connection. [RelayRepositoryCoordinator] owns the host-lifetime instance and threads it into
@@ -129,6 +129,15 @@ class RemoteConversationRepository(
      * constructions compile unchanged.
      */
     private val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks(),
+    /**
+     * The five readings the host pushes and the phone never asks for again (#1317): announced model, session
+     * facts, context usage, usage limit and slash-command menu. [RelayRepositoryCoordinator] owns the instance
+     * for the host's pairing and threads it into each repository, the [finishedBackgroundTasks] shape, so a
+     * reconnect starts from the held readings rather than nothing. Every arm still applies, replaces and
+     * clears through it as before. **Defaulted to a throwaway instance** on this repository's [now], so
+     * existing constructions compile unchanged and keep connection-scoped readings.
+     */
+    hostReadings: HostReadings = HostReadings(now),
 ) : ConversationRepository {
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
@@ -144,22 +153,25 @@ class RemoteConversationRepository(
      * phase (#871), and the announced model and session facts (#890). Each
      * owns its state, its decoder and its read. [onInbound] hands each its own envelope type behind the
      * `interactive` gate, and the clears one event causes in another stay in the arm that causes them.
+     * The usage limit, announced model and session facts come from [HostReadings], held for the host's
+     * pairing (#1317); the rest are this connection's own.
      */
     private val stallProjection = StallProjection()
     private val queueProjection = QueueProjection()
     private val apiRetryProjection = ApiRetryProjection()
     private val compactingProjection = CompactingProjection()
-    private val usageLimitProjection = UsageLimitProjection(now)
+    private val usageLimitProjection = hostReadings.usageLimit
     private val thinkingProgressProjection = ThinkingProgressProjection()
     private val resettingProjection = ResettingProjection()
-    private val announcedModelProjection = AnnouncedModelProjection()
-    private val sessionFactsProjection = SessionFactsProjection()
+    private val announcedModelProjection = hostReadings.announcedModel
+    private val sessionFactsProjection = hostReadings.sessionFacts
 
     /**
-     * The context-usage reading of every conversation (#945). [onInbound] hands it `context_usage` behind the
-     * `interactive` gate and the `session_transition` clear. It sends nothing: see [ContextUsageProjection].
+     * The context-usage reading of every conversation (#945), held for the host's pairing (#1317). [onInbound]
+     * hands it `context_usage` behind the `interactive` gate and the `session_transition` clear. It sends
+     * nothing: see [ContextUsageProjection].
      */
-    private val contextUsageProjection = ContextUsageProjection()
+    private val contextUsageProjection = hostReadings.contextUsage
 
     /**
      * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
@@ -189,10 +201,11 @@ class RemoteConversationRepository(
         )
 
     /**
-     * The slash-command menu of every conversation (#882). [onInbound] hands it `slash_command_list` behind
-     * the `interactive` gate; [observeSlashCommandMenu] reads it. It sends nothing: the frame has no verb.
+     * The slash-command menu of every conversation (#882), held for the host's pairing (#1317). [onInbound]
+     * hands it `slash_command_list` behind the `interactive` gate; [observeSlashCommandMenu] reads it. It
+     * sends nothing: the frame has no verb.
      */
-    private val slashCommandMenuProjection = SlashCommandMenuProjection()
+    private val slashCommandMenuProjection = hostReadings.slashCommandMenu
 
     /**
      * The request↔reply plumbing of this connection (#914): the one envelope-id counter every request takes

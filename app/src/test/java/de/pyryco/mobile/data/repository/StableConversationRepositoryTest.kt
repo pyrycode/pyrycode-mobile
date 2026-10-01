@@ -930,6 +930,25 @@ class StableConversationRepositoryTest {
         assertFalse("getter re-reads .value live → back to false when the connection drops", facade.mutationsSupported)
     }
 
+    // ---- #1317: a host's held readings stay readable while it is disconnected ---------------------
+
+    @Test
+    fun heldReadings_readThroughTheDisconnectedGap_andDropWhenThePairingEnds() =
+        runTest {
+            val readings = HostReadings()
+            HostReadingFrames.applyAll(readings, "c1", model = "opus")
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current, readings)
+
+            HostReadingFrames.assertHeld(facade, "c1", model = "opus")
+            HostReadingFrames.assertNone(facade, "c2")
+            // The compatibility shape, with no held source, still reports nothing in the gap.
+            HostReadingFrames.assertNone(StableConversationRepository(current), "c1")
+
+            readings.close()
+            HostReadingFrames.assertNone(facade, "c1")
+        }
+
     // ---- fakes / builders ------------------------------------------------------------------------
 
     /**
