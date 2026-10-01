@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -53,8 +54,12 @@ class ThreadScreenFollowTest {
     @get:Rule
     val composeRule = createComposeRule()
 
+    /**
+     * Overscroll is off in these tests, so this is a swipe toward the newest end that cannot move the list:
+     * the input the old nested-scroll flag misread as scrolling away. A stretch overscroll moves no row either.
+     */
     @Test
-    fun an_overscroll_at_the_newest_end_leaves_following_on_for_a_new_row_and_a_streamed_delta() {
+    fun a_swipe_at_the_newest_end_that_cannot_move_the_list_leaves_following_on_for_a_new_row_and_a_streamed_delta() {
         var state by mutableStateOf(threadState(rows(30)))
         setScreen { state }
         list().performTouchInput { swipeUp() }
@@ -108,18 +113,7 @@ class ThreadScreenFollowTest {
     fun a_scroll_refused_mid_stream_costs_one_scroll_and_later_growth_is_followed() {
         var state by mutableStateOf(threadState(rows(30) + message("reply", "Reply begins.", isStreaming = true)))
         setScreen { state }
-        val list = list()
-        list.performTouchInput {
-            down(center)
-            repeat(10) { moveBy(Offset(0f, 150f)) }
-        }
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Reply begins.", substring = true, useUnmergedTree = true).assertDoesNotExist()
-        list.performTouchInput {
-            repeat(9) { moveBy(Offset(0f, -150f)) }
-            moveBy(Offset(0f, -600f))
-        }
-        composeRule.waitForIdle()
+        val list = restFingerAtTheNewestEnd()
         awaitStreamedText("Reply begins.")
 
         composeRule.runOnIdle { state = state.copy(items = state.items + toolRow(ToolCallStatus.Running)) }
@@ -135,6 +129,29 @@ class ThreadScreenFollowTest {
 
         awaitStreamedText("Reply ends.")
         composeRule.onNodeWithText(TOOL, useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    /**
+     * The refused pin is the streaming reply's own: it arrives under a resting finger and lands below the
+     * viewport, where its deltas change no visible row. Once the finger lifts the reply is followed to its end.
+     */
+    @Test
+    fun a_reply_whose_pin_is_refused_at_arrival_is_followed_once_the_finger_lifts() {
+        var state by mutableStateOf(threadState(rows(30)))
+        setScreen { state }
+        val list = restFingerAtTheNewestEnd()
+
+        composeRule.runOnIdle { state = state.copy(items = state.items + message("reply", "Reply begins.", isStreaming = true)) }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Reply begins.", substring = true, useUnmergedTree = true).assertDoesNotExist()
+        list.performTouchInput {
+            advanceEventTime(1_000)
+            up()
+        }
+        composeRule.runOnIdle { state = state.copy(items = rows(30) + message("reply", "Reply begins. More.", isStreaming = true)) }
+        composeRule.runOnIdle { state = state.copy(items = rows(30) + message("reply", LONG_REPLY, isStreaming = true)) }
+
+        awaitStreamedText("Reply ends.")
     }
 
     @Test
@@ -212,6 +229,24 @@ class ThreadScreenFollowTest {
     }
 
     private fun list() = composeRule.onNode(hasScrollToIndexAction())
+
+    /** Drags away and back to the newest end without lifting, so the finger holds the list and refuses a pin. */
+    private fun restFingerAtTheNewestEnd(): SemanticsNodeInteraction {
+        val list = list()
+        list.performTouchInput {
+            down(center)
+            repeat(10) { moveBy(Offset(0f, 150f)) }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Row 30.").assertDoesNotExist()
+        list.performTouchInput {
+            repeat(9) { moveBy(Offset(0f, -150f)) }
+            moveBy(Offset(0f, -600f))
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Row 30.").assertIsDisplayed()
+        return list
+    }
 
     /** A streaming body reveals its text a few characters per frame, so wait for it, then check it shows. */
     private fun awaitStreamedText(text: String) {
@@ -334,14 +369,7 @@ class ThreadScreenFollowTest {
                     ToolCall(
                         toolName = TOOL,
                         input = "",
-                        output =
-                            if (status ==
-                                ToolCallStatus.Done
-                            ) {
-                                "found"
-                            } else {
-                                ""
-                            },
+                        output = if (status == ToolCallStatus.Done) "found" else "",
                         status = status,
                     ),
             ),

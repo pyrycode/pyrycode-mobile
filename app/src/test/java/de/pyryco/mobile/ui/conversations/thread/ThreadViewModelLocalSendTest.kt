@@ -73,6 +73,7 @@ class ThreadViewModelLocalSendTest {
         private val uploadOutcome: AttachmentUploadResult = AttachmentUploadResult.Stored("att-1"),
     ) : ConversationRepository by FakeConversationRepository() {
         var sends = 0
+        var uploads = 0
 
         override suspend fun sendMessage(
             conversationId: String,
@@ -91,7 +92,10 @@ class ThreadViewModelLocalSendTest {
             filename: String,
             mimeType: String,
             onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
-        ): AttachmentUploadResult = uploadOutcome
+        ): AttachmentUploadResult {
+            uploads++
+            return uploadOutcome
+        }
 
         private suspend fun send(text: String): Message {
             sends++
@@ -335,10 +339,12 @@ class ThreadViewModelLocalSendTest {
     @Test
     fun anAcceptedAttachmentSend_signals() =
         runTest {
-            val vm = vm(GatedRepository())
+            val repository = GatedRepository()
+            val vm = vm(repository)
             vm.addAttachment("content://docs/a", "a.txt", "text/plain", 5L)
 
             assertEquals(1, sentSignals(vm) { vm.sendMessage("with a file") })
+            assertEquals(1, repository.uploads)
         }
 
     @Test

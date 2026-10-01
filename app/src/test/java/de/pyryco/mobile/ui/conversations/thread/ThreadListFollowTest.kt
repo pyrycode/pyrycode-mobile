@@ -14,7 +14,8 @@ class ThreadListFollowTest {
         index: Int = 0,
         offset: Int = 0,
         content: Any? = "msg:30",
-    ) = ListFrame(anchorKey = key, anchorIndex = index, anchorOffset = offset, content = content)
+        scrolling: Boolean = false,
+    ) = ListFrame(anchorKey = key, anchorIndex = index, anchorOffset = offset, content = content, scrolling = scrolling)
 
     private fun step(
         previous: ListFrame?,
@@ -73,6 +74,39 @@ class ThreadListFollowTest {
     fun aPinLandingAtTheEnd_keepsFollowing() {
         val refused = frame(index = 1, content = "msg:31")
         assertEquals(FollowStep(following = true, pin = false), step(refused, frame(key = "msg:31", content = "msg:31"), following = true))
+    }
+
+    @Test
+    fun aNewPrompt_pinsOnlyWhileFollowing() {
+        val before = frame(content = listOf("msg:30", null))
+        val prompted = frame(content = listOf("msg:30", 1 to null))
+        assertEquals(FollowStep(following = true, pin = true), step(before, prompted, following = true))
+        assertEquals(FollowStep(following = false, pin = false), step(before, prompted, following = false))
+    }
+
+    @Test
+    fun aHistoryPageAtTheOldestEnd_movesNothing_andChangesNothing() {
+        // Older rows join far above the viewport: the anchor's key, index and offset and the newest content stay.
+        val reading = frame(key = "msg:20", index = 10, offset = 40)
+        assertEquals(FollowStep(following = false, pin = false), step(reading, reading.copy(), following = false))
+    }
+
+    @Test
+    fun aReplyRefusedAtArrival_streamsBelowTheViewport_andEachDeltaRetriesThePin() {
+        // The reply arrived at index 0 and its pin was refused: the old first row sits at index 1, unchanged.
+        val refused = frame(index = 1, content = listOf("reply", "Reply begins."), scrolling = true)
+        val delta = refused.copy(content = listOf("reply", "Reply begins. More."))
+        assertEquals(FollowStep(following = true, pin = true), step(refused, delta, following = true))
+        assertEquals(FollowStep(following = false, pin = false), step(refused, delta, following = false))
+    }
+
+    @Test
+    fun theFingerLifting_retriesARefusedPin_butNotAtTheEnd() {
+        val refused = frame(index = 1, scrolling = true)
+        assertEquals(FollowStep(following = true, pin = true), step(refused, refused.copy(scrolling = false), following = true))
+        assertEquals(FollowStep(following = false, pin = false), step(refused, refused.copy(scrolling = false), following = false))
+        val atEnd = frame(scrolling = true)
+        assertEquals(FollowStep(following = true, pin = false), step(atEnd, atEnd.copy(scrolling = false), following = true))
     }
 
     private companion object {
