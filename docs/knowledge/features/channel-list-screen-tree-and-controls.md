@@ -116,6 +116,19 @@ Chats-section plus (#1190), including when either section has no conversations. 
 are separate 48dp targets. `TreeRowControl` in `ConversationTreeRows.kt` draws their 16dp glyphs with a
 `clickable` and a host-qualified content description; it has no long-press path.
 
+**A disconnected host draws neither control (#1336).** `treeHost` computes `connected =
+hostState.isHostConnected(host.serverId)` once per host and passes `null` for both section pluses and
+every conversation row's pen when it is false; `TreeHostSectionRow.onAddTapped` took the nullable
+`(() -> Unit)?` shape `TreeConversationRow.onEditTapped` already had. A null plus or pen draws nothing —
+the row keeps its layout, and the fold and row taps are untouched. They reappear on the very next snapshot
+that reports the host connected. This excludes the Edit host pen and the reconnect/re-pair/update controls
+on [the host row](#host-row-edit-control-744), which stay regardless of connection, and the toolbar's
+pairing plus, which pairs a new host rather than acting on an existing one. The toolbar cannot close over
+the host-availability bug #1190 feared for a different reason: this is a rendering gate, not a request
+that could be sent and fail. See [ChannelListViewModel](channel-list-viewmodel.md) for the companion rule
+that closes any already-open Create channel, Edit chat or Edit channel modal, and clears a failed Chats
+create, for a host that stops being connected — this reverses #1190's keep-open-on-disconnect rule.
+
 - **Toolbar “Pair another host”** uses the static `R.string.cd_pair_another_host`, with no section suffix.
   Tapping it emits `ChannelListEvent.PairHostTapped`, which the route maps to
   `navController.navigate(Routes.SCANNER)`. The scanner's paste action opens code pairing; code Cancel/Back
@@ -128,8 +141,9 @@ are separate 48dp targets. `TreeRowControl` in `ConversationTreeRows.kt` draws t
 for that host without sending a request or folding the section. The dialog names the host and offers Create
 and Cancel. Confirming sends `createDiscussion(null)` to the held host, leaving `cwd` for the daemon to
 choose independently of the app's saved per-host default. Success selects and opens the returned chat;
-failure leaves the dialog open with a generic retryable error. The dialog and error survive disconnect and
-reconnect, with Create disabled while the host is unavailable. A fresh dialog identity prevents a delayed
+failure leaves the dialog open with a generic retryable error. Since #1336 the dialog and its error close,
+rather than survive, when the held host stops being connected — see [ChannelListViewModel](channel-list-viewmodel.md)
+for the snapshot watcher that clears it, reversing the keep-open rule #1190 set. A fresh dialog identity prevents a delayed
 reply from a dismissed dialog closing or navigating from a later one, even on the same host. The old host
 row plus and its Add workspace long press are removed; folder choice remains in the thread's
 [workspace picker](workspace-picker.md#consumers), while the underlying Add workspace state remains.
@@ -370,7 +384,10 @@ positional call site still compiles. The row's leading slot, previously `IdleSta
 ring, became `ConversationStatusDot(attention)`: the same 8dp box and 1dp `primary` ring on every state
 (`TreeDotSize`, `TreeDotRingWidth`), now filled by an exhaustive `when` — mirrors desktop's
 `ConversationStatusDot` (`pyrycode-desktop/src/renderer/src/screens/channels/ConversationStatusDot.tsx`)
-one-for-one except `Failed`, which has no desktop counterpart and takes `error`:
+one-for-one. An earlier mobile-only `Failed` state, filled `error`, was removed by #1451: desktop's
+`resolveConversationStatus` has no failed state, so a turn that ends Failed or StoppedEarly while its
+conversation is not viewed now counts as an ordinary completed turn and resolves Unread, then Idle once
+opened, like any other completed turn. No dot ever draws the `error` fill.
 
 | State | Fill | Content description |
 | --- | --- | --- |
@@ -378,7 +395,6 @@ one-for-one except `Failed`, which has no desktop counterpart and takes `error`:
 | `Running` | `colorScheme.tertiary`, blinking | "Running" |
 | `Unread` | `colorScheme.success` | "Unread" |
 | `WaitingForAnswer` | `colorScheme.warning` | "Waiting for your answer" |
-| `Failed` | `colorScheme.error` | "Failed" |
 
 **Blink stays off the row.** `Running`'s alpha comes from `rememberInfiniteTransition`, created only
 inside the `Running` branch — leaving that state drops the transition from composition — animating
@@ -389,7 +405,7 @@ the dot's layer and never recomposes `TreeConversationRow` or its `Text`.
 
 **The state names itself.** `ConversationStatusDot` sets `Modifier.clearAndSetSemantics { contentDescription
 = … }` from an exhaustive `ConversationAttention` → string-resource map (`cd_conversation_attention_idle` /
-`_running` / `_unread` / `_waiting` / `_failed`, `strings.xml`) — the same self-describing-dot-in-a-merging-row
+`_running` / `_unread` / `_waiting`, `strings.xml`) — the same self-describing-dot-in-a-merging-row
 shape the host row's connection legs used before #1333 removed them. The row's own `selectable` merges
 that description with the conversation name,
 so TalkBack reads e.g. "Running, kitchenclaw refactor" — the meaning never rests on colour alone.

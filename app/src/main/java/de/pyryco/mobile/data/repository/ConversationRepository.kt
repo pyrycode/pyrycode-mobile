@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
@@ -87,6 +88,17 @@ interface ConversationRepository {
     fun observeCompacting(conversationId: String): Flow<Boolean> = flowOf(false)
 
     /**
+     * Emits [conversationId]'s current turn phase (#1313): the latest `turn_state`, back to
+     * [LiveSessionEvent.TurnState.Phase.Idle] on `turn_end`. Held per conversation for the connection, so a
+     * collector that subscribes mid-turn reads the running phase at once, and a new connection starts every
+     * conversation idle. Cold flow; re-emits on every change.
+     *
+     * Default `flowOf(Idle)` — implementations without an interactive wire (the fake, inline test doubles)
+     * inherit "no turn running" and need no override, the same cascade-avoidance as [observeCompacting].
+     */
+    fun observeTurnPhase(conversationId: String): Flow<LiveSessionEvent.TurnState.Phase> = flowOf(LiveSessionEvent.TurnState.Phase.Idle)
+
+    /**
      * Emits which phase of a Reset [conversationId] is in, and what became of its handoff note (#871), or
      * **`null` when no reset is running**. `null` until the wire says otherwise; a [ResetStatus] on each
      * rising edge; back to `null` on the falling edge or on the conversation's session transition. Cold
@@ -104,6 +116,17 @@ interface ConversationRepository {
      * [observeCompacting] / [observeThinkingProgress].
      */
     fun observeResetting(conversationId: String): Flow<ResetStatus?> = flowOf(null)
+
+    /**
+     * Emits the ids of every conversation on this connection that is busy outside a running turn (#1452):
+     * stalled, retrying the API, compacting or resetting. Each fact rises and clears on exactly the edges of
+     * [observeStall], [observeApiRetry], [observeCompacting] and [observeResetting]. Cold flow; re-emits on
+     * every change. The host's list observes this to blink a busy chat's status dot, as desktop's `isWorking`.
+     *
+     * Default `flowOf(emptySet())` — implementations without an interactive wire (the fake, inline test
+     * doubles) inherit "nothing busy" and need no override, the same cascade-avoidance as [observeStall].
+     */
+    fun observeBusyConversations(): Flow<Set<String>> = flowOf(emptySet())
 
     /**
      * Emits the model claude last announced for [conversationId]'s turn (#890), or **`null` until an
@@ -135,16 +158,71 @@ interface ConversationRepository {
     /**
      * Emits the context-window reading Claude last reported for [conversationId] (#945), or **`null` while
      * there is none**, which reads as "unavailable", never as zero. Cold flow; re-emits on every change. Each
-     * `context_usage` frame the daemon pushes after a turn replaces the reading. The conversation's session
-     * transition clears it, and a reconnect or host switch starts from nothing, so it stays absent until the next
-     * turn ends. The implementation sends no `request_context_usage` until pyrycode#2563 (#946).
+     * `context_usage` frame replaces the reading: the daemon's push after a turn, or the answer to
+     * [requestContextUsage]. The conversation's session transition clears it. Observing sends nothing; the open
+     * thread asks through [requestContextUsage] (#1410).
      *
-     * **Not [SessionSettings.usedTokens] / [SessionSettings.windowTokens].** Those are transcript-derived; this is
-     * Claude's own arithmetic, and neither stands in for the other.
+     * **Preferred over [SessionSettings.usedTokens] / [SessionSettings.windowTokens].** Those are
+     * transcript-derived; the thread shows this reading's token totals while one exists and falls back to the
+     * settings pair only when it is absent (#1411).
      *
      * Default `flowOf(null)`, the same cascade-avoidance as [observeSessionFacts].
      */
     fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = flowOf(null)
+
+    /**
+     * Emits [conversationId]'s MCP server reading on this connection (#1343): the report Claude last gave, `null`
+     * before any, and the five request flags. Cold flow; re-emits on every change. Each `mcp_status` frame,
+     * pushed or answering one of the three requests below, replaces the report and clears all five flags. The
+     * reading is per connection: a reconnect starts from [McpStatus] with nothing in it.
+     *
+     * Default `flowOf(McpStatus())`: a repository with no MCP wire never holds a report or a flag.
+     */
+    fun observeMcpStatus(conversationId: String): Flow<McpStatus> = flowOf(McpStatus())
+
+    /**
+     * Ask once for [conversationId]'s current MCP status (#1343). Fire-and-forget: the answer is a report on
+     * [observeMcpStatus], and a refusal as `mcp_status.unavailable` sets [McpStatus.unavailable]. When nothing
+     * can be sent, nothing happens. Never retries, never throws.
+     *
+     * Default no-op, the [refreshSessionSettings] shape: "nothing could be sent" is this contract's own outcome.
+     */
+    fun requestMcpStatus(conversationId: String) {}
+
+    /**
+     * Ask once for [serverName] to be reconnected on [conversationId]'s live child (#1343). Sending sets
+     * [McpStatus.reconnecting]; the next report ends it, and any correlated refusal ends it as
+     * [McpStatus.reconnectRefused]. When nothing can be sent, nothing is set. Never retries, never throws.
+     * [serverName] is claude-authored and only put on the wire.
+     *
+     * Default no-op, as [requestMcpStatus].
+     */
+    fun reconnectMcpServer(
+        conversationId: String,
+        serverName: String,
+    ) {}
+
+    /**
+     * Ask once for [serverName] on [conversationId]'s live child to be turned on or off (#1343). Sending sets
+     * [McpStatus.toggling]; the next report ends it, and any correlated refusal ends it as
+     * [McpStatus.toggleRefused]. When nothing can be sent, nothing is set. Never retries, never throws.
+     *
+     * Default no-op, as [requestMcpStatus].
+     */
+    fun toggleMcpServer(
+        conversationId: String,
+        serverName: String,
+        enabled: Boolean,
+    ) {}
+
+    /**
+     * Clear [McpStatus.reconnecting] only (#1343), called by the surface that started the wait when it goes away,
+     * so a daemon that never answers cannot leave the control stuck. Default no-op: no wait is ever held.
+     */
+    fun endMcpReconnectWait(conversationId: String) {}
+
+    /** Clear [McpStatus.toggling] only (#1343), as [endMcpReconnectWait]. Default no-op. */
+    fun endMcpToggleWait(conversationId: String) {}
 
     /**
      * Emits the files the daemon has offered in [conversationId] on this connection (#898), in arrival order
@@ -718,6 +796,18 @@ interface ConversationRepository {
      * Default is a no-op, so no test double needs to override it.
      */
     fun refreshSessionSettings(conversationId: String) = Unit
+
+    /**
+     * Ask for a fresh [observeContextUsage] reading of [conversationId] now rather than at the next turn end
+     * (#1410, `request_context_usage`). The answer arrives on the flow the caller already collects.
+     *
+     * **Fire-and-forget, non-suspending and non-throwing.** With no live connection it is a no-op. A refusal
+     * (`conversation.not_found`, `context_usage.unavailable`) leaves the current reading as it is and surfaces
+     * nothing, and nothing retries.
+     *
+     * Default is a no-op, so no test double needs to override it.
+     */
+    fun requestContextUsage(conversationId: String) = Unit
 }
 
 enum class ConversationFilter { All, Channels, Discussions, Archived }
@@ -885,10 +975,11 @@ sealed interface ThreadItem {
 }
 
 /**
- * How a [ThreadItem.Banner] reads (#873). claude's `level` is an open set; `warning` reads as a warning and
- * every other value — `info`, `notice`, `suggestion`, empty, or one claude ships later — as a muted notice.
+ * How a [ThreadItem.Banner] reads (#873). claude's `level` is an open set; `warning` reads as a warning,
+ * `info` is kept in the thread but not drawn, as desktop does (#1359), and every other value — `notice`,
+ * `suggestion`, empty, or one claude ships later — reads as a muted notice.
  */
-enum class BannerLevel { Warning, Notice }
+enum class BannerLevel { Warning, Notice, Info }
 
 enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
 
@@ -1073,11 +1164,13 @@ data class MemorySearchReport(
  *   reachable only as `yolo`.
  * @param slashCommands Whether the session answers slash commands at all; `true` when the daemon predates
  *   the flag.
+ * @param mcpServers Whether the session answers MCP status at all (#1344); `true` when the daemon predates the flag.
  */
 data class SessionCapabilities(
     val effortLevels: List<String>,
     val permissionModes: List<String>,
     val slashCommands: Boolean = true,
+    val mcpServers: Boolean = true,
 )
 
 /**
@@ -1394,8 +1487,9 @@ data class SessionFacts(
  * element type of [ConversationRepository.observeContextUsage]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
  * § `context_usage`.
  *
- * [percentage] is **Claude's own number**, held verbatim and never derived from [totalTokens] / [maxTokens]; the
- * three need not agree. It is never negative (the decoder drops a frame that says otherwise). [asOf] is non-null
+ * [percentage] is **Claude's own number**, held verbatim; the three need not agree. It is never negative (the
+ * decoder drops a frame that says otherwise). The thread does not show it: since #1411 the displayed percentage is
+ * computed from [totalTokens] / [maxTokens], as desktop does, so the footer and the Status sheet share one clamp. [asOf] is non-null
  * only on a **remembered** answer, the daemon's record of when Claude last reported it for a dormant
  * conversation; the figure is still the last one Claude gave, so it is held like any other.
  *
@@ -1410,6 +1504,53 @@ data class ContextUsage(
     val percentage: Int,
     val asOf: Instant?,
 )
+
+/**
+ * One conversation's MCP server reading on this connection (#1343) — the element type of
+ * [ConversationRepository.observeMcpStatus]. The rules are desktop's `mcpStatusStore`.
+ *
+ * [report] is `null` before any report; a report with an empty server list is Claude saying there are no servers.
+ * [unavailable] is set only when a status ask is refused as `mcp_status.unavailable`. [reconnecting] and
+ * [toggling] are set when the request is sent; [reconnectRefused] and [toggleRefused] are set, ending the matching
+ * wait, by any correlated refusal of that verb. A report clears all five flags. No refusal touches [report].
+ *
+ * Report and flags share one value so a report and the flags it clears change in one emission.
+ */
+data class McpStatus(
+    val report: McpStatusReport? = null,
+    val unavailable: Boolean = false,
+    val reconnecting: Boolean = false,
+    val reconnectRefused: Boolean = false,
+    val toggling: Boolean = false,
+    val toggleRefused: Boolean = false,
+)
+
+/**
+ * The MCP servers Claude reported for a conversation (#1343), in Claude's order. [droppedServers] is the daemon's
+ * count of tail entries it omitted, so `servers.size + droppedServers` is the original length; it is never
+ * recomputed. Wire SSOT: pyrycode `docs/protocol-mobile.md` § `mcp_status`.
+ */
+data class McpStatusReport(
+    val servers: List<McpServerStatus>,
+    val droppedServers: Int,
+)
+
+/**
+ * One MCP server row (#1343). Every field is the wire's string verbatim, `""` when Claude reported none.
+ *
+ * **SECURITY.** All five are claude-authored and unsanitized: render as **inert text only**, never log them, never
+ * use one as a key, a path, a URL or an authority, and never put one in an exception message. [status] and [scope]
+ * are claims, not states to act on; [version] is opaque. [toString] leaves every field out.
+ */
+data class McpServerStatus(
+    val name: String,
+    val status: String,
+    val error: String,
+    val scope: String,
+    val version: String,
+) {
+    override fun toString(): String = "McpServerStatus(redacted)"
+}
 
 /**
  * A file the daemon offered in a conversation (#898, pyrycode#2082/#2166) — the element type of

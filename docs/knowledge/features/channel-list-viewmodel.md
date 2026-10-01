@@ -297,10 +297,16 @@ muted: Boolean? = null)` resolves
 `submitWorkspaceName` use, and sends only what changed, in the order **rename → mute → prompt** (#1021): a
 rename iff the trimmed name differs from `savedName`, then a `setMuted` write iff `muted` is non-null and
 differs from `savedMuted` (`muted == null` means the caller reported no value and writes nothing — the
-default keeps every existing call site compiling), then the prompt verbatim iff it differs from the
-reading's own `prompt.orEmpty()` **and** the
-caller ever showed the field (`systemPrompt != null`) — an unread or failed prompt can therefore never be
-overwritten, even when the operator typed a name change and pressed OK. A confirmed rename updates
+default keeps every existing call site compiling), then the prompt leg, which follows desktop's
+`promptWriteFor` (#1342): `draft = systemPrompt?.takeIf { read != null }` — an unread or failed prompt can
+therefore never be overwritten, even when the operator typed a name change and pressed OK — and
+`writesPrompt = draft != null && draft != read?.prompt.orEmpty()` gates the write on any difference from
+the last reading, exactly as before; what changed is **what gets sent**: `promptToWrite =
+draft?.takeIf { it.isNotEmpty() }`, so an emptied box over a stored prompt sends `null` (clearing it)
+rather than storing `""`, while an unchanged box still sends nothing and any other text still goes
+verbatim. `ChannelListViewModel` logs `prompt=$writesPrompt` on `channel_edited`, a boolean rather than the
+nullable value, since the thing worth recording is "did a prompt write happen", not what it sent. A
+confirmed rename updates
 `savedName`, and a confirmed mute write updates `savedMuted`, before the prompt leg runs — the prompt is
 the only write whose confirmation is never recorded, so it stays last and a retry after any failure sends
 only the writes the host has not yet confirmed. `archiveChannel` mirrors `archiveChat`'s shape exactly — no field condition, no
@@ -309,6 +315,35 @@ nulls `channelEditor` and cancels `channelPromptRead` unguarded. See
 [System prompt editor](system-prompt-editor.md) for why this reads and writes the prompt itself rather
 than constructing a `SystemPromptEditor`: that class binds one repository at construction, which a
 background/foreground reconnect retires.
+
+**A disconnected host closes its own create and edit modals, reversing #1190 (#1336).** #1190 made
+`isHostConnected` only disable a modal's OK, so a dialog opened on a host that later dropped stayed open —
+the ticket's own rationale was that an in-flight write should not be yanked out from under the operator.
+The owner now wants desktop's rule instead: an `init` block launches `viewModelScope.launch {
+hostSource.snapshots.collect { … } }` that computes the live server-id set on every snapshot and, through a
+private `MutableStateFlow<T?>.clearUnless(name, keep)` helper (`getAndUpdate { it?.takeIf(keep) }`), sets
+`createChannel`, `chatEditor` and `createChat` to `null`, and `channelEditor` to `null` while also
+cancelling `channelPromptRead`, for whichever of them belongs to a host no longer in that set — a modal for
+a still-live host is untouched, and the clearing is atomic against any writer calling the same state's
+`compareAndSet`. A write already in flight may still finish: its terminal `compareAndSet` targets the state
+published before the watcher ran, so once that state is `null` the write's own `compareAndSet` is a no-op
+rather than a resurrection — `createChat`'s success path still navigates, since the chat it creates
+exists regardless of whether its dialog is still open. A private `isHostLive(serverId)` reads
+`hostSource.snapshots.value` with the same liveness rule `isHostConnected` uses, and every opener —
+`createChat`, `openCreateChannel`, `openChatEditor`, `openChannelEditor` — calls it first and returns
+without publishing anything on a host that is not live (`RelayLog.d` logs `event=..._rejected
+code=disconnected`, content-free). Every submitter and archiver that can reach a repository —
+`submitCreateChannel`, `submitChatName`, `submitChannelEdit`, `archiveChat`, `archiveChannel` — re-checks
+`isHostLive` after its own `saving`/validity guard and before resolving `hostSource.repositoryFor`, and on
+a host that dropped between open and press it closes its own modal (`compareAndSet` to `null`, or
+`closeChannelEditor` for the channel editor) and sends nothing — this is what a test must race against a
+queued, not unconfined, `Main` dispatcher to actually exercise, since an unconfined one lets the watcher
+close the modal first and the submit's own re-check never runs (see
+[testing](channel-list-viewmodel-testing.md)). The `hostAvailable` parameters [`ChannelListScreen` — tree
+and controls](channel-list-screen-tree-and-controls.md#add-controls-738) still passes to the modal
+bindings are unaffected and stay redundant for this path, since other callers pass them. Out of scope and
+untouched: `hostEditor`, `addWorkspace`, `workspaceEditor` — the sidebar tree does not open the Edit host,
+Add workspace or Edit workspace modals, so none of the three needed the ticket's rule.
 
 **The five-flow limit.** `hostState`'s outer `combine` was already at `combine`'s five-argument typed
 overload before #744, so every editor and modal added since has had to arrive as one of those five

@@ -260,16 +260,30 @@ class SessionSettingsPayloadsTest {
                 effortLevels = listOf("low", "medium", "xhigh"),
                 permissionModes = listOf("default", "plan"),
                 slashCommands = false,
+                mcpServers = false,
             ),
             settings.capabilities,
         )
     }
 
+    // #1344: `mcp_servers` decodes when present and counts as true when a daemon predating it omits the key.
     @Test
-    fun capabilities_withoutSlashCommands_countsAsTrue() {
+    fun capabilities_mcpServers_decodesBothValues() {
+        val on = """{"effort_levels":[],"permission_modes":[],"mcp_servers":true}"""
+        val off = """{"effort_levels":[],"permission_modes":[],"mcp_servers":false}"""
+
+        assertEquals(true, decode(capabilitiesReply(on)).capabilities?.mcpServers)
+        assertEquals(false, decode(capabilitiesReply(off)).capabilities?.mcpServers)
+    }
+
+    @Test
+    fun capabilities_withoutSlashCommandsOrMcpServers_countsBothAsTrue() {
         val settings = decode(capabilitiesReply("""{"effort_levels":["high"],"permission_modes":["default"]}"""))
 
-        assertEquals(SessionCapabilities(listOf("high"), listOf("default"), slashCommands = true), settings.capabilities)
+        assertEquals(
+            SessionCapabilities(listOf("high"), listOf("default"), slashCommands = true, mcpServers = true),
+            settings.capabilities,
+        )
     }
 
     @Test

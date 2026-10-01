@@ -47,6 +47,7 @@
 #   DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, spinner
 #   DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool running→done
 #   DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool failed
+#   DETERMINISTIC=1 SCENARIO=tool-then-text PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh # rung 4, reply text below its tool step
 #   DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh # rung 4, running-tool label elapsed → gone
 #   DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, reconnect continuity
 #   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
@@ -133,7 +134,7 @@ FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overri
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
 SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
                                               # tool | tool-failed (#455) | tool-progress (#950) | reconnect (#476) |
-                                              # replay-order (#477). Resolved to a @Test method + fixture(s)
+                                              # replay-order (#477) | tool-then-text (#1417). Resolved to a @Test method + fixture(s)
                                               # in the preflight below; bare DETERMINISTIC=1 (SCENARIO unset
                                               # → ping) keeps #431.
 
@@ -602,6 +603,10 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_failedToolStepRendersFailed"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-failed.jsonl}"    # single terminal drop
       ;;
+    tool-then-text)
+      TEST_METHOD="interactiveTurn_seededChannel_replyTextAfterToolRendersBelowIt"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-then-text.jsonl}"  # single drop: text, tool, text, turn end
+      ;;
     tool-progress)
       TEST_METHOD="interactiveTurn_seededChannel_runningToolLabelShowsElapsedThenClears"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-progress-open.jsonl}"      # drop A: tool_use + heartbeat, held open
@@ -623,7 +628,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       DROP_B_FENCE=disconnect                                                  # drop B fences on the phone-leg disconnect, not enqueue #2
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -1146,11 +1151,11 @@ elif [ -n "${LIVE}" ]; then
   # Historical list-size counts in this block predate the temporary exclusions for #1245 and
   # the two already ignored workspace-switching scenarios. #1250 retired the peer workspace-label
   # method, so the active list and gate floor contain 41 methods after #1251.
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_offlineRetry_reconnectsSameHostAndReplies,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_offlineRetry_reconnectsSameHostAndReplies,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
   # #965: the stop method joins the list, so it holds 21 methods and 17 turns while #687 stays out.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain"
   # #1246: the operator-bypass method is selected again; its write and fresh reply decide settlement.
-  # #1325 excludes this method while #1397 repairs the held-settings e2e helper.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild"
   # #981 originally restored the #687 operator-bypass method when the allowed Read's reply appeared.
   # #966: the permission-answer method (three turns) and the question-answer method (two) join on the answer
   # daemon, so the list holds 24 methods and 24 turns.
@@ -1158,7 +1163,7 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_questionAnswer_reachesTheAskingConversation"
   # #967: the reconnect footer method (two turns), the reconnect slash-command and compaction method (two)
   # and the background-task method (one) join, so the list holds 27 methods and 29 turns.
-  # #1325 excludes this method while #1397 repairs the held-settings e2e helper.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_slashCommandsAndCompactStillWork"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel"
   # #955: the push scenarios join (one turn each): a turn that ends while the app is in the background, and
@@ -1205,11 +1210,25 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership"
+  # #1332: the Archive lists the second-archived chat first, ordered by the daemon's archived_at. No Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_archiveTwoChats_listsSecondArchivedFirst"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_twoHostsArchive_staysPerHost"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_createEditArchiveChannel_readsPromptBack"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolPrompt_rendersToolStepInThread"
-  # #1325 excludes five settings methods (model change, inherited and remembered effort, operator
-  # bypass, reconnect footer) until #1397 repairs freshSettings after #1320's held readings and restores them.
+  # #1311: the status band keeps a reading for the whole tool-then-text turn. One turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy"
+  # #1394: the scanner's confirm waits for host B to answer before the list opens. Pairing over the
+  # scanner and a phone-local unpair only, so it spends no Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_scannerConfirm_waitsForHostThenOpensList"
+  # #1410: reopening a chat after a fresh connection shows its context reading from the thread's own ask, before
+  # any turn on the phone. One turn (the peer's ping, run while the phone is offline).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn"
+  # #1337: two chats on the answer daemon hold a real prompt each at once; answering A leaves B's in place.
+  # Two real-claude turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_permissionPrompts_heldPerConversation"
+  # #1344: after one ping turn, Channel info's MCP section lists the daemon's pyry_approve once Show built-in
+  # is ticked. One turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

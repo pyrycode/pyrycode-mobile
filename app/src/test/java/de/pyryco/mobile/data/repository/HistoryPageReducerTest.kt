@@ -315,12 +315,13 @@ class HistoryPageReducerTest {
             reduceHistoryPage(
                 listOf(
                     entry(3, "turn_end", turnEndPayload("turn-1")),
-                    entry(2, "assistant_delta", assistantDeltaPayload("turn-1", seq = 2, text = " world")),
-                    entry(1, "assistant_delta", assistantDeltaPayload("turn-1", seq = 1, text = "hello")),
+                    entry(2, "assistant_delta", assistantDeltaPayload("turn-1", seq = 1, text = " world")),
+                    entry(1, "assistant_delta", assistantDeltaPayload("turn-1", seq = 0, text = "hello")),
                 ),
                 interactive = true,
             )
 
+        // Every turn's text starts at seq 0, the delta that keys its first segment by the bare turn id (#1350).
         assertEquals(listOf("turn-1"), rows.messageIds())
         assertEquals("hello world", rows.messageRow("turn-1")?.content)
         assertFalse(rows.messageRow("turn-1")?.isStreaming ?: true)
@@ -623,13 +624,15 @@ class HistoryPageReducerTest {
     }
 
     @Test
-    fun reduce_storedBannerOfAnyOtherLevel_readsAsANotice() {
+    fun reduce_storedBannerOfAnyOtherLevel_readsAsANotice_exceptInfo() {
         val levels = listOf("info", "notice", "suggestion", "", "brand-new")
         val entries = levels.mapIndexed { i, level -> entry(i + 1L, "banner", bannerPayload(level), ts = "2026-09-05T10:0$i:00Z") }
 
         val rows = reduceHistoryPage(entries, true)
 
-        assertEquals(List(levels.size) { BannerLevel.Notice }, rows.map { (it as ThreadItem.Banner).level })
+        // #1359: info keeps its row but reads as Info, which the thread does not draw. The page reads
+        // newest first, so the oldest entry, `info`, is last.
+        assertEquals(List(4) { BannerLevel.Notice } + BannerLevel.Info, rows.map { (it as ThreadItem.Banner).level })
     }
 
     @Test

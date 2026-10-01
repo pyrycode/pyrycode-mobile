@@ -290,7 +290,8 @@ fun treeHostChatAddTestTag(serverId: String): String = "tree-host-chat-add:${bou
 
 /**
  * Fixed Channels or Chats section under one host, each with its own create control. The supplied sidebar
- * frame shows only Channels' plus; #1190's later product decision gives Chats the matching control.
+ * frame shows only Channels' plus; #1190's later product decision gives Chats the matching control. A null
+ * [onAddTapped] draws no plus: the caller passes null while the host is not connected (#1336).
  */
 @Composable
 fun TreeHostSectionRow(
@@ -299,7 +300,7 @@ fun TreeHostSectionRow(
     sectionName: String,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
-    onAddTapped: () -> Unit,
+    onAddTapped: (() -> Unit)?,
     isChat: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -317,16 +318,18 @@ fun TreeHostSectionRow(
         onToggleExpanded = onToggleExpanded,
         modifier = modifier.padding(end = 10.dp),
     ) {
-        TreeRowControl(
-            painter = painterResource(R.drawable.ic_tree_add),
-            contentDescription =
-                stringResource(if (isChat) R.string.cd_tree_host_new_chat else R.string.cd_tree_host_new_channel, boundedHost),
-            onClick = onAddTapped,
-            modifier = Modifier.testTag(if (isChat) treeHostChatAddTestTag(serverId) else treeHostChannelAddTestTag(serverId)),
-            height = TreeBandHeight,
-            glyphWidth = 16.dp,
-            glyphHeight = 16.dp,
-        )
+        if (onAddTapped != null) {
+            TreeRowControl(
+                painter = painterResource(R.drawable.ic_tree_add),
+                contentDescription =
+                    stringResource(if (isChat) R.string.cd_tree_host_new_chat else R.string.cd_tree_host_new_channel, boundedHost),
+                onClick = onAddTapped,
+                modifier = Modifier.testTag(if (isChat) treeHostChatAddTestTag(serverId) else treeHostChannelAddTestTag(serverId)),
+                height = TreeBandHeight,
+                glyphWidth = 16.dp,
+                glyphHeight = 16.dp,
+            )
+        }
     }
 }
 
@@ -626,7 +629,7 @@ private fun TreeRowControl(
 
 /**
  * The conversation row's leading dot (#878), after desktop's `ConversationStatusDot`: the design's idle
- * ring on every state, with the state's fill inside it. Failed has no desktop counterpart and takes `error`.
+ * ring on every state, with the state's fill inside it.
  *
  * The dot names its state, so the meaning never rests on colour; the row's `selectable` merges that name
  * with the conversation's. Only Running blinks, and the alpha is read in the layer, so the blink redraws
@@ -638,7 +641,6 @@ private fun ConversationStatusDot(attention: ConversationAttention) {
         when (attention) {
             ConversationAttention.WaitingForAnswer -> MaterialTheme.colorScheme.warning
             ConversationAttention.Running -> MaterialTheme.colorScheme.tertiary
-            ConversationAttention.Failed -> MaterialTheme.colorScheme.error
             ConversationAttention.Unread -> MaterialTheme.colorScheme.success
             ConversationAttention.Idle -> Color.Transparent
         }
@@ -673,7 +675,6 @@ private fun ConversationAttention.descriptionRes(): Int =
     when (this) {
         ConversationAttention.WaitingForAnswer -> R.string.cd_conversation_attention_waiting
         ConversationAttention.Running -> R.string.cd_conversation_attention_running
-        ConversationAttention.Failed -> R.string.cd_conversation_attention_failed
         ConversationAttention.Unread -> R.string.cd_conversation_attention_unread
         ConversationAttention.Idle -> R.string.cd_conversation_attention_idle
     }

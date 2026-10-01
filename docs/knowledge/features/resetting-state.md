@@ -89,6 +89,16 @@ it respawns claude, so no rising edge can follow a transition — the clear only
 never races one being written back in. Connection-scoped, in-memory: a fresh repo per connection (#351)
 starts empty, so a reset reading **never survives a reconnect**.
 
+`ResettingProjection.observeIds(): Flow<Set<String>>` (#1452) exposes `resetByConversation`'s keys,
+host-wide rather than per-conversation — only rising edges are stored, so this is exactly the set
+with a reading, and it empties on the same falling edge and `session_transition` clear above.
+`RemoteConversationRepository.observeBusyConversations()` unions it with the three sibling arms'
+own `observeIds()` so the host's list can blink a resetting chat's status dot even though no turn
+is running on it — see [Dependency injection — host conversation source § Attention state](dependency-injection-host-conversation-source.md#attention-state-877).
+This is the second kept difference from desktop: desktop has no `session_transition` falling edge
+for a reset, so this arm's existing clear-on-transition behaviour now also closes the busy blink
+that a bare `turn_state`/`api_retry`/`compacting` clear would otherwise miss.
+
 ## Capability gate (fail-closed)
 
 The demux arm sits inside `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` — the same gate
@@ -155,6 +165,9 @@ a family-wide fix, if ever warranted, is its own ticket, not this one's.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted
   `observeResetting` joins; [`StableConversationRepository`](stable-conversation-repository.md) — the
   facade that makes it reach the thread ViewModel.
+- [Dependency injection — host conversation source](dependency-injection-host-conversation-source.md#attention-state-877)
+  (#1452) — folds this arm's `observeIds()`, unioned with its siblings, into the host-wide
+  `ConversationAttention.Running` blink.
 - Consumer: [Resetting indicator](resetting-indicator.md) (#872) — renders the phase in the thread
   status area, between usage limit and compaction in the status-slot ladder.
 - Server SSOT: pyrycode#2478, `docs/protocol-mobile.md § resetting`.
