@@ -12,9 +12,8 @@ import de.pyryco.mobile.data.network.RelayConnectionController
  * `onStart → connect()`.
  *
  * Extracted as a free, Android-free `suspend fun` (it holds no `NavController`, no `Context`, no VM)
- * so this ordering is unit-testable, unlike the composable lambda it is called from. It is deliberately
- * **not** [ScannerViewModel] logic — the VM stays a pure synchronous state machine; this is a
- * route-scope side effect the composable launches.
+ * so this ordering is unit-testable on its own. Its callers, [ScannerViewModel] and [PairCodeViewModel],
+ * launch it on their own scope and then wait for the saved record's status.
  *
  * Ordering — `save → connect → onPersisted`:
  * - [controller].connect() runs **only after** [store].save returns, so a persist that throws never

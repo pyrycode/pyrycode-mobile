@@ -396,6 +396,28 @@ class ScannerScreenTest {
         composeTestRule.runOnIdle { assertEquals(listOf("cancel"), events.toList()) }
     }
 
+    // A rebuilt Dialog window composes fresh layout nodes, so a changed semantics id means the modal closed and reopened.
+    @Test
+    fun confirmWaitAndFailure_keepTheSameModalWindow() {
+        var state by mutableStateOf<ScannerUiState>(ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(state = state, onNavigateBack = {}, onOpenSettings = {}, onPasteCode = {})
+            }
+        }
+        val fingerprintId = composeTestRule.onNodeWithText(FINGERPRINT).fetchSemanticsNode().id
+
+        listOf(
+            ScannerUiState.Verifying(FINGERPRINT, pairedServer()),
+            failed(PairingVerification.Failure.Unavailable),
+            ScannerUiState.Verifying(FINGERPRINT, pairedServer()),
+            failed(PairingVerification.Failure.Rejected),
+        ).forEach { next ->
+            composeTestRule.runOnIdle { state = next }
+            assertEquals(fingerprintId, composeTestRule.onNodeWithText(FINGERPRINT).fetchSemanticsNode().id)
+        }
+    }
+
     private fun failed(failure: PairingVerification.Failure) =
         ScannerUiState.VerificationFailed(FINGERPRINT, pairedServer(), failure.message, failure.retryable)
 

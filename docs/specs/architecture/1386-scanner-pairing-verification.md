@@ -168,3 +168,9 @@ Pending for the documentation stage: `docs/knowledge/features/scanner-screen.md`
 - **Redaction assertion scoped.** The security review said the JVM test would assert the fingerprint is absent from state `toString`. The fingerprint is public (on screen, no custom `toString` on `AwaitingConfirm`), so the test asserts it is absent from every log line and asserts only the token is absent from the state's `toString`.
 - **Save-failure constant** is `SAVE_FAILED_MESSAGE` in `ScannerViewModel.kt` (same copy as the removed `SAVE_FAILED_MSG`).
 - **Open question resolved** as written: Retry never returns to `AwaitingConfirm`; the modal keeps its fingerprint content as the "stays up" requirement reads.
+
+### 2026-10-01 — rework after verifier review
+
+- **One composition branch for the modal.** `ScannerScreen` renders `AwaitingConfirm`, `Verifying` and `VerificationFailed` from a single `when` branch and derives labels, `loading`, `error` and callbacks from the state inside it. Separate branches disposed and rebuilt the `MobileModal` dialog window on every transition, so the modal did not literally "stay up" (AC 1). `PairingConfirmContent` loses its parameter defaults. Proven by `ScannerScreenTest.confirmWaitAndFailure_keepTheSameModalWindow` (same semantics node id across the transitions; red against the earlier screen).
+- **Rung-3 coverage split to #1394**, in the #481 / #482 shape: inject the host-B payload into the scanner VM from the harness, confirm, wait for the channel list, with `needs-real-claude`. Replaces this plan's "No rung-3 scenario" note.
+- Stale comments fixed: `confirmPairingAndConnect` KDoc and the `PairingConfirmContent` comment no longer describe a synchronous VM / route-held server.
