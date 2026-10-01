@@ -1069,7 +1069,8 @@ class ChannelListViewModel(
      *
      * [systemPrompt] is `null` when the modal never showed a stored prompt, and it is ignored unless this
      * editor's reading arrived: a prompt the operator never saw can never be overwritten. An absent stored
-     * prompt reads as an empty box, as `SystemPromptEditorState.Loaded.changed` does. A confirmed rename is
+     * prompt reads as an empty box, as `SystemPromptEditorState.Loaded.changed` does, and a box emptied over
+     * a stored prompt sends `null`, clearing it (#1342). A confirmed rename is
      * recorded as the saved name and a confirmed mute as the saved flag; the prompt, whose confirmation is not
      * recorded, goes last. So a retry sends only the writes the host has not confirmed.
      *
@@ -1099,7 +1100,10 @@ class ChannelListViewModel(
         }
         val renameTo = trimmed.takeIf { it != state.savedName.trim() }
         val muteTo = muted?.takeIf { it != state.savedMuted }
-        val promptToWrite = draft?.takeIf { it != read?.prompt.orEmpty() }
+        // Desktop's promptWriteFor (#1342): an unchanged box sends nothing, an emptied one clears the prompt
+        // with null, and any other text is sent verbatim.
+        val writesPrompt = draft != null && draft != read?.prompt.orEmpty()
+        val promptToWrite = draft?.takeIf { it.isNotEmpty() }
         val pending = state.copy(saving = true, failed = false, archiveFailed = false)
         channelEditor.value = pending
         viewModelScope.launch {
@@ -1130,7 +1134,7 @@ class ChannelListViewModel(
                 current = before.copy(savedMuted = muteTo)
                 channelEditor.compareAndSet(before, current)
             }
-            if (promptToWrite != null) {
+            if (writesPrompt) {
                 try {
                     live.setSystemPrompt(state.conversationId, promptToWrite)
                 } catch (error: Exception) {
@@ -1143,7 +1147,7 @@ class ChannelListViewModel(
             // The row picks the new name and flag up from the host's own conversation stream; nothing is patched here.
             channelEditor.compareAndSet(current, null)
             RelayLog.d {
-                "event=channel_edited renamed=${renameTo != null} muted=${muteTo != null} prompt=${promptToWrite != null}"
+                "event=channel_edited renamed=${renameTo != null} muted=${muteTo != null} prompt=$writesPrompt"
             }
         }
     }

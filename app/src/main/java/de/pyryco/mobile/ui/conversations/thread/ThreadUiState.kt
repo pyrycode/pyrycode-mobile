@@ -37,6 +37,22 @@ sealed interface ThreadEvent {
 
     data object ChannelInfoDismiss : ThreadEvent
 
+    /**
+     * The Channel info sheet's System prompt box changed (#1342). [toString] is overridden: the generated
+     * one would print the prompt, which may hold a pasted credential.
+     */
+    data class SystemPromptEdit(
+        val text: String,
+    ) : ThreadEvent {
+        override fun toString(): String = "SystemPromptEdit(text=<redacted>)"
+    }
+
+    /** Save in the System prompt section: the box, verbatim. */
+    data object SystemPromptSave : ThreadEvent
+
+    /** Clear in the System prompt section: removes the stored prompt. */
+    data object SystemPromptClear : ThreadEvent
+
     /** The Run configuration sheet opened (#1309); the thread re-reads its settings. */
     data object RunConfigOpen : ThreadEvent
 

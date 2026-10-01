@@ -2612,13 +2612,13 @@ class HostChannelListViewModelTest {
             assertEquals(listOf<Pair<String, String?>>("same" to "  New prompt  "), f.b.repo.promptWrites)
             assertNull(f.channelEditor())
 
-            // Both, on the other host; an emptied box over stored text is a real change, sent as "".
+            // Both, on the other host; an emptied box over stored text clears it with null (#1342, promptWriteFor).
             f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
             f.vm.submitChannelEdit("Both", "")
             runCurrent()
             assertEquals(listOf("same" to "Both"), f.a.repo.renames)
-            assertEquals(listOf<Pair<String, String?>>("same" to ""), f.a.repo.promptWrites)
+            assertEquals(listOf<Pair<String, String?>>("same" to null), f.a.repo.promptWrites)
 
             // No stored prompt and an empty box: nothing to write.
             f.a.repo.storedPrompts

@@ -442,6 +442,7 @@ internal fun PyryNavHost(
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
                 val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
+                val systemPrompt by vm.systemPrompt.collectAsStateWithLifecycle()
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
                 val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
                 val attachmentUploadProgress by vm.attachmentUploadProgress.collectAsStateWithLifecycle()
@@ -507,6 +508,7 @@ internal fun PyryNavHost(
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
+                    systemPrompt = systemPrompt,
                     // #933: the composer's attachment picker and strip, over the same per-chat draft store.
                     attachments = pendingAttachments,
                     attachmentsSending = attachmentsSending,
