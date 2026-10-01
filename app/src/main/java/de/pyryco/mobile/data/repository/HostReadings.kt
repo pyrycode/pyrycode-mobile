@@ -12,10 +12,10 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
 /**
- * The five per-conversation readings a host pushes and the phone never asks for again (#1317): the announced
- * model, session facts, context usage, usage limit and slash-command menu. They are held for the life of a
- * host's pairing rather than one connection, as on desktop, so a return to the foreground does not blank them
- * until the next turn ends.
+ * The five per-conversation readings a host pushes (#1317): the announced model, session facts, context usage,
+ * usage limit and slash-command menu. Of these the phone asks only for context usage, from the open thread
+ * (#1410); the other four it never asks for again. They are held for the life of a host's pairing rather than one
+ * connection, as on desktop, so a return to the foreground does not blank them until the next turn ends.
  *
  * Since #1320 it also holds two readings the phone asks for: the model menu of each conversation and the last
  * successful run-settings reply. The asks themselves stay with each connection. A held settings reading is

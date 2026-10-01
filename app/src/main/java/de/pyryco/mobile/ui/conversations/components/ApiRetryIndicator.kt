@@ -1,7 +1,6 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,9 +20,7 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
-private val IndicatorHorizontalPadding = 16.dp
 private val IndicatorVerticalPadding = 4.dp
-private val SpinnerLabelGap = 8.dp
 
 /**
  * The largest `total` this row will render a counter for. Claude's API-retry budget is single-digit in
@@ -91,14 +88,10 @@ fun ApiRetryIndicator(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = IndicatorHorizontalPadding,
-                    vertical = IndicatorVerticalPadding,
-                ).semantics(mergeDescendants = true) { contentDescription = description },
+                .padding(vertical = IndicatorVerticalPadding)
+                .semantics(mergeDescendants = true) { contentDescription = description },
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(SpinnerLabelGap),
     ) {
-        ThreadStatusSpinner()
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,

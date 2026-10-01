@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
@@ -32,7 +33,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -52,9 +52,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -69,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -78,6 +76,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.BannerNoticeRow
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
@@ -97,25 +96,26 @@ import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
+import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.theme.threadColors
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
 private const val ABOVE_DELIMITER_ALPHA = 0.55f
+
+/** The status band's reading box (#1312), so a test can tell a band reading from the same words in a message. */
+internal const val STATUS_READING_TEST_TAG = "thread-status-reading"
 
 // Figma 16:8's `Input area` (533:1957) and its offsets inside the 412dp reference frame: a 20dp
 // content gutter (372dp of content), 8dp between the area's three bands, 12dp of air above it where
@@ -130,11 +130,6 @@ private val AttachmentStripTouchOverlap = 5.dp
 // without entering the input surface. The visible controls stay in their 20dp design band.
 private val FooterTouchBottomOverflow = 12.dp
 private val FrameFooterTouchHeight = 32.dp
-
-// The three status indicators each carry their own 16dp horizontal padding, sized for the full-bleed
-// foot-of-list mount they had until #643. Inset them by the remainder so their content lands on the
-// same 20dp gutter as the input field and the footer, with their own files untouched.
-private val ComposerStatusGutter = ComposerGutter - 16.dp
 
 // Figma's top overlay shares the message area's top edge.
 private val TopOverlayTopGap = 0.dp
@@ -230,6 +225,9 @@ fun ThreadScreen(
     // bar owned its own text.
     draft: String = "",
     onDraftChange: (String) -> Unit = {},
+    // #1342: the open Channel info sheet's System prompt state (ThreadViewModel.systemPrompt); its edits,
+    // Save and Clear go through onOverflowEvent.
+    systemPrompt: SystemPromptEditorState? = null,
     // #843: this thread's host rejected the saved pairing (ThreadViewModel.rePairAvailable). Draws the
     // Top overlay's pairing pill (#1002) and withholds the connection banner, whose retry cannot succeed then.
     // The tap is bound by MainActivity to the code-pair route keyed by the destination's own server id.
@@ -249,14 +247,20 @@ fun ThreadScreen(
     onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
     onRemoveAttachment: (Long) -> Unit = {},
     attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
+    // #1314: one signal per send the daemon accepted (ThreadViewModel.sentMessages); the list follows again.
+    sentMessages: Flow<Unit> = emptyFlow(),
     // #1325: the one-shot notice of why a send stopped at a file (ThreadViewModel.attachmentSendFailures).
     attachmentSendFailures: Flow<AttachmentSendFailure> = emptyFlow(),
     // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
     // row is on screen, and a failed one's retry. Bound by MainActivity; defaulted so other screens and tests
-    // draw attachments as loading and start nothing.
+    // draw attachments as loading, or a file not fetched on sight (#1329) as its ready row, and start nothing.
     attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
-    onAttachmentShown: (String) -> Unit = {},
+    onAttachmentShown: (MessageAttachment) -> Unit = {},
     onRetryAttachment: (String) -> Unit = {},
+    // #1329: a file not fetched yet, tapped or long-pressed, and the one-shot open or save once it loaded.
+    // Bound by MainActivity → vm::onAttachmentRequested / vm.attachmentLoads.
+    onRequestAttachment: (MessageAttachment, AttachmentAction) -> Unit = { _, _ -> },
+    attachmentLoads: Flow<AttachmentLoaded> = emptyFlow(),
     // #1027: a ready markdown attachment's tap, and the one-shot signal that it could not be read. Bound by
     // MainActivity → vm::onOpenMarkdownAttachment / vm.markdownOpenFailures.
     onOpenMarkdownAttachment: (String) -> Unit = {},
@@ -268,6 +272,9 @@ fun ThreadScreen(
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val openRequest = modalState as? ModalUiState.Open
+    // #1341: an open permission request goes first, as desktop's ComposerSlot hides QuestionPanelSlot. The
+    // question's picks live in the hoisted state (#1305's draft store), so it returns intact on resolution.
+    val shownQuestion = questionState.takeIf { openRequest == null }
     // #1306: one call site for both prompt kinds, so a question → permission hand-over keeps one owner.
     if (questionState != null || openRequest != null) QuestionPromptProtection()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -333,6 +340,8 @@ fun ThreadScreen(
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
             noticeScope.launch { snackbarHostState.showSnackbar(resources.getString(notice.message)) }
         }
+    // #1329: a tapped file that loaded ready opens or saves once, through the same actions as a ready row.
+    LaunchedEffect(attachmentLoads, attachmentActions) { attachmentLoads.collect(attachmentActions.loaded) }
     // #1027: a markdown file that cannot be read says what any failed open says.
     LaunchedEffect(markdownOpenFailures, snackbarHostState) {
         markdownOpenFailures.collect { snackbarHostState.showSnackbar(resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
@@ -444,7 +453,7 @@ fun ThreadScreen(
                         localSendPending = localSendPending,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
-                        waitingForAnswers = questionState != null && connectionState == ConnectionState.Connected,
+                        waitingForAnswers = shownQuestion != null && connectionState == ConnectionState.Connected,
                         connectionState = connectionState,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
@@ -526,7 +535,7 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
-                    if (!state.hasMessages && state.queuedMessages.isEmpty() && questionState == null && openRequest == null) {
+                    if (!state.hasMessages && state.queuedMessages.isEmpty() && shownQuestion == null && openRequest == null) {
                         EmptyThreadState(
                             modifier =
                                 Modifier
@@ -543,34 +552,6 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                         val listState = rememberLazyListState()
-                        val hasStreamingMessage by remember(state.items) {
-                            derivedStateOf {
-                                state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming }
-                            }
-                        }
-                        var userScrolledAway by remember { mutableStateOf(false) }
-                        val autoScrollNestedScroll =
-                            remember {
-                                object : NestedScrollConnection {
-                                    override fun onPreScroll(
-                                        available: Offset,
-                                        source: NestedScrollSource,
-                                    ): Offset {
-                                        if (source == NestedScrollSource.UserInput && available.y != 0f) {
-                                            userScrolledAway = true
-                                        }
-                                        return Offset.Zero
-                                    }
-                                }
-                            }
-                        LaunchedEffect(listState) {
-                            snapshotFlow {
-                                listState.firstVisibleItemIndex == 0 &&
-                                    listState.firstVisibleItemScrollOffset == 0
-                            }.collect { atBottom ->
-                                if (atBottom) userScrolledAway = false
-                            }
-                        }
                         // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
                         // visible index, not the first.
                         //
@@ -583,7 +564,7 @@ fun ThreadScreen(
                         // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
                         // so distinctUntilChanged sees no edge and no second demand is issued.
                         val promptRowCount =
-                            (questionState?.let { it.batch.questions.size + 2 } ?: 0) +
+                            (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0)
                         val historyRowCount by rememberUpdatedState(rows.size + promptRowCount)
                         val hasHistoryRows by rememberUpdatedState(rows.isNotEmpty())
@@ -598,75 +579,22 @@ fun ThreadScreen(
                             }.distinctUntilChanged()
                                 .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
                         }
-                        val promptPresent = questionState != null || openRequest != null
-                        LaunchedEffect(hasStreamingMessage, promptPresent, listState) {
-                            if (!hasStreamingMessage || promptPresent) return@LaunchedEffect
-                            snapshotFlow {
-                                listState.layoutInfo.visibleItemsInfo
-                                    .firstOrNull { it.index == 0 }
-                                    ?.size ?: 0
-                            }.distinctUntilChanged()
-                                .collect {
-                                    if (!userScrolledAway) {
-                                        listState.scrollToItem(0)
-                                    }
-                                }
-                        }
-                        // #981: the list keeps its first visible row anchored by key, so under reverseLayout a new
-                        // newest row lands at index 0 below the viewport. The streaming pin above only covers a
-                        // row that is still streaming when it collects; a reply that arrives whole, a tool row or
-                        // the operator's own echo needs this one. A streaming row that grows keeps its key and is
-                        // left to the pin. drop(1) skips the first value, because userScrolledAway is not saved
-                        // and a recreation must not pull a reader who had scrolled away back to the newest end.
-                        val newestRowKey by rememberUpdatedState(rows.lastOrNull()?.listKey(rows.lastIndex))
-                        LaunchedEffect(listState) {
-                            snapshotFlow { newestRowKey }
-                                .drop(1)
-                                .collect {
-                                    if (!userScrolledAway) {
-                                        // A finger resting at the newest end holds the list at UserInput priority,
-                                        // which refuses this scroll with a CancellationException. Unlike the
-                                        // streaming pin, this effect never relaunches, so the refusal costs this one
-                                        // scroll only; a real cancellation of the effect still ends it.
-                                        try {
-                                            listState.scrollToItem(0)
-                                        } catch (e: CancellationException) {
-                                            ensureActive()
-                                        }
-                                    }
-                                }
-                        }
-                        // #1305: prompt rows insert at index 0 below the anchored newest row, so a batch arriving
-                        // while the reader sits at the newest end would land offscreen. Reveal it from its
-                        // actions upward, but only for that reader: userScrolledAway misses a programmatic scroll
-                        // into history, so the newest row must also still be the first visible item. drop(1)
-                        // keeps a recreation from moving a restored position, as in the #981 effect. #1306: a
-                        // permission request inserts at the same end, so either prompt's new identity reveals.
-                        val promptIdentity by rememberUpdatedState(questionState?.generation to openRequest?.modalId)
-                        LaunchedEffect(listState) {
-                            snapshotFlow { promptIdentity }
-                                .drop(1)
-                                .filter { (generation, modalId) -> generation != null || modalId != null }
-                                .collect {
-                                    val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
-                                    val atNewestEnd =
-                                        listState.firstVisibleItemScrollOffset == 0 &&
-                                            (listState.firstVisibleItemIndex == 0 || first?.key == newestRowKey)
-                                    if (!userScrolledAway && atNewestEnd) {
-                                        try {
-                                            listState.scrollToItem(0)
-                                        } catch (e: CancellationException) {
-                                            ensureActive()
-                                        }
-                                    }
-                                }
-                        }
+                        // #1314: one following state, derived from position on every scroll as desktop's
+                        // useThreadScrollPin does, replaces the #185 streaming pin, the #981 newest-row pin and
+                        // the #1305/#1306 prompt reveal. New rows, streamed growth and a new prompt pin a reader
+                        // who is following; an accepted send follows again.
+                        val promptIdentity by rememberUpdatedState(shownQuestion?.generation to openRequest?.modalId)
+                        FollowNewestEnd(
+                            listState = listState,
+                            newestRowKey = rows.lastOrNull()?.listKey(rows.lastIndex),
+                            newestRow = rows.lastOrNull(),
+                            promptIdentity = promptIdentity,
+                            promptPresent = questionState != null || openRequest != null,
+                            sentMessages = sentMessages,
+                        )
                         LazyColumn(
                             state = listState,
-                            modifier =
-                                Modifier
-                                    .fillMaxSize()
-                                    .nestedScroll(autoScrollNestedScroll),
+                            modifier = Modifier.fillMaxSize(),
                             reverseLayout = true,
                         ) {
                             openRequest?.let { open ->
@@ -681,7 +609,7 @@ fun ThreadScreen(
                                     gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp),
                                 )
                             }
-                            questionState?.let { pending ->
+                            shownQuestion?.let { pending ->
                                 val dispatch: (QuestionModalEvent) -> Unit = { onQuestionEvent(it, pending.generation) }
                                 val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp)
                                 item(key = "question-actions:${pending.generation}") {
@@ -730,6 +658,7 @@ fun ThreadScreen(
                                                         onRetryAttachment = onRetryAttachment,
                                                         onOpenAttachment = attachmentActions.open,
                                                         onSaveAttachment = attachmentActions.save,
+                                                        onRequestAttachment = onRequestAttachment,
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
@@ -917,6 +846,12 @@ fun ThreadScreen(
             onDelete = { onOverflowEvent(ThreadEvent.Delete) },
             onInstallMemoryPlugin = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) },
             onDismiss = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
+            systemPrompt = systemPrompt ?: SystemPromptEditorState.Loading,
+            onSystemPromptChange = { onOverflowEvent(ThreadEvent.SystemPromptEdit(it)) },
+            onSystemPromptSave = { onOverflowEvent(ThreadEvent.SystemPromptSave) },
+            onSystemPromptClear = { onOverflowEvent(ThreadEvent.SystemPromptClear) },
+            onMcpReconnect = { name -> onOverflowEvent(ThreadEvent.McpReconnect(name)) },
+            onMcpToggle = { name, enabled -> onOverflowEvent(ThreadEvent.McpToggle(name, enabled)) },
         )
     }
     if (state.deleteConfirmVisible) {
@@ -928,13 +863,13 @@ fun ThreadScreen(
     }
     // Permission/choice request (#446). Hoisted single source = ThreadViewModel.currentModal (#445), already
     // scoped to this thread's conversation (#816): another conversation's modal arrives as Hidden. Since #1306
-    // Open renders inside the message list above; Dismissed surfaces the resolution reason once.
+    // Open renders inside the message list above; Dismissed surfaces the resolution reason.
     when (modalState) {
         is ModalUiState.Open -> Unit
         is ModalUiState.Dismissed -> {
             val reason = dismissReasonText(modalState.source)
-            // Keyed on modalId: Dismissed is a sticky terminal state (#445's fold), so this fires exactly
-            // once per resolution and never re-fires on unrelated recomposition.
+            // Keyed on modalId, so it never re-fires on unrelated recomposition. The host fold keeps this
+            // conversation's latest dismissal until the next reconnect (#1337), so reopening the chat shows it again.
             LaunchedEffect(modalState.modalId) {
                 snackbarHostState.showSnackbar(reason)
             }
@@ -968,8 +903,13 @@ fun ThreadScreen(
  *
  * Notices are not turn status and are not here: claude's usage-limit report and the pairing error draw as
  * pills in the message area's [ThreadTopOverlay] (#1002), so a live reading never hides the running tool,
- * the wrap-up or "interrupted". When no signal is live every arm returns without emitting, so the band
- * contributes no node and the composer column's gap above the input field collapses with it.
+ * the wrap-up or "interrupted". When no signal is live every arm returns without emitting, but the band
+ * stays composed at its 24dp height with the snowflake alone (#1312), so the input field never moves.
+ *
+ * **The snowflake (#1312).** The band, not an arm, draws one [ThreadStatusGlyph] at its leading edge in
+ * every state, as desktop's `ComposerStatusArea` draws `PyryMark`; only waiting for answers puts its own
+ * question glyph there instead. It turns while [isBusy] or [localSendPending] holds, desktop's
+ * `isStatusIconTurning`, and is still otherwise, including an api-retry, compaction or stall while idle.
  *
  * [thinkingProgress] (#803) adds **no arm**: it decorates the daemon's thinking phase only, so every arm
  * above pre-empts a live reading for free and the local-send window never shows a stale one.
@@ -978,8 +918,7 @@ fun ThreadScreen(
  * "Working…" or "Thinking…" (#1311), never to nothing while [isBusy] holds.
  *
  * [taskCount] (#1043) is not an arm either: above zero, a pill reading it sits at the band's right end
- * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel. At zero
- * the band is exactly the reading, so with nothing live it still contributes no node.
+ * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel.
  */
 @Composable
 private fun ThreadStatusArea(
@@ -999,77 +938,72 @@ private fun ThreadStatusArea(
     onTasksClick: () -> Unit,
     agent: ConversationAgent,
 ) {
-    val reading: @Composable (Modifier) -> Unit = { modifier ->
+    // #1312: one always-composed band. The glyph is its first child in every state, so a reading change or
+    // the task pill never gives the snowflake a new composition node and its turn never restarts.
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 24.dp).padding(horizontal = ComposerGutter),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         if (waitingForAnswers) {
-            Row(
-                modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Image(
-                    painterResource(R.drawable.ic_question_glyph),
-                    contentDescription = null,
-                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.size(14.dp, 16.dp),
-                )
+            Image(
+                painterResource(R.drawable.ic_question_glyph),
+                contentDescription = null,
+                colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.size(14.dp, 16.dp),
+            )
+        } else {
+            ThreadStatusGlyph(turning = isBusy || localSendPending)
+        }
+        // Always present, so the pill keeps the band's right end while no reading shows.
+        Box(Modifier.weight(1f).testTag(STATUS_READING_TEST_TAG)) {
+            if (waitingForAnswers) {
                 Text(
                     stringResource(R.string.question_waiting_for_answers),
+                    modifier = Modifier.padding(vertical = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
+            } else {
+                StatusReading(
+                    arm =
+                        statusArm(
+                            connectionState = connectionState,
+                            resetting = resetting != null,
+                            apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
+                            isCompacting = isCompacting,
+                            isStalled = isStalled,
+                            hasTurnOutcome = turnOutcome != null,
+                            isThinking = isThinking,
+                            isBusy = isBusy,
+                            localSendPending = localSendPending,
+                            hasOpenTool = runningTool != null,
+                        ),
+                    apiRetry = apiRetry,
+                    resetting = resetting,
+                    turnOutcome = turnOutcome,
+                    isThinking = isThinking,
+                    thinkingProgress = thinkingProgress,
+                    runningTool = runningTool,
+                    connectionState = connectionState,
+                    agent = agent,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-        } else {
-            StatusReading(
-                arm =
-                    statusArm(
-                        connectionState = connectionState,
-                        resetting = resetting != null,
-                        apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
-                        isCompacting = isCompacting,
-                        isStalled = isStalled,
-                        hasTurnOutcome = turnOutcome != null,
-                        isThinking = isThinking,
-                        isBusy = isBusy,
-                        localSendPending = localSendPending,
-                        hasOpenTool = runningTool != null,
-                    ),
-                apiRetry = apiRetry,
-                resetting = resetting,
-                turnOutcome = turnOutcome,
-                isThinking = isThinking,
-                thinkingProgress = thinkingProgress,
-                runningTool = runningTool,
-                connectionState = connectionState,
-                agent = agent,
-                modifier = modifier,
-            )
         }
-    }
-    if (taskCount <= 0) {
-        reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
-        return
-    }
-    // The reading's own 16dp padding lands its content on the 20dp gutter; the pill ends on it. A reading
-    // that emits nothing takes its weight with it, and Arrangement.End keeps the pill at the right end.
-    // The reading and pill share Figma's 24dp band at normal text scale, and can grow with text scale.
-    val bandModifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter)
-    Row(
-        modifier = bandModifier,
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        reading(Modifier.weight(1f))
-        // Figma's band is 24dp, the pill's own height. The clickable Surface would otherwise lay out at the
-        // 48dp minimum touch target; the hit test still widens its touch bounds to that minimum without it.
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            NoticePill(
-                text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount),
-                isError = false,
-                onClick = onTasksClick,
-                modifier = Modifier.sizeIn(minWidth = 104.dp, minHeight = 24.dp),
-                // Figma 568:3162 sits in the band, not over the messages, so it has no overlay shadow.
-                shadowElevation = 0.dp,
-            )
+        if (taskCount > 0) {
+            // Figma's band is 24dp, the pill's own height. The clickable Surface would otherwise lay out at the
+            // 48dp minimum touch target; the hit test still widens its touch bounds to that minimum without it.
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                NoticePill(
+                    text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount),
+                    isError = false,
+                    onClick = onTasksClick,
+                    modifier = Modifier.sizeIn(minWidth = 104.dp, minHeight = 24.dp),
+                    // Figma 568:3162 sits in the band, not over the messages, so it has no overlay shadow.
+                    shadowElevation = 0.dp,
+                )
+            }
         }
     }
 }
@@ -1116,7 +1050,7 @@ internal fun statusArm(
         else -> StatusArm.None
     }
 
-/** The band's one live reading, [arm], drawn; see [ThreadStatusArea]. Emits nothing for [StatusArm.None]. */
+/** The band's one live reading, [arm], as text or pill; see [ThreadStatusArea]. Emits nothing for [StatusArm.None]. */
 @Composable
 private fun StatusReading(
     arm: StatusArm,
@@ -1137,7 +1071,6 @@ private fun StatusReading(
         StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
         StatusArm.TurnOutcome -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
-        // One branch, so the glyph keeps its composition identity, and its pulse, across these readings.
         StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
                 isThinking = arm == StatusArm.Thinking,
@@ -1197,6 +1130,7 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         messageCount = items.count { it is ThreadItem.MessageItem },
         memorySearch = runConfig.memorySearch,
         channelId = conversationId,
+        mcpServers = mcpStatus.takeIf { runConfig.mcpServersSupported },
     )
 
 /**

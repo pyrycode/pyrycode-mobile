@@ -175,10 +175,12 @@ frame order alone. Only `Thinking`/`Responding` mean a new turn has actually sta
 `turnOutcome_clearsWhenTheNextTurnStarts_butNotOnIdle` in `ThreadViewModelTest` pins this against `Idle`,
 an `AssistantDelta`, and a `ReplayGap` in sequence.
 
-**`isThinking` and `isBusy` are pinned, not changed.** They already turn off on any `turn_end` via their
-existing `thinkingTransition`/`busyTransition` reducers; #805 adds
-`failedAndCancelledTurnEnds_clearIsThinkingAndIsBusy` to guard that a failed or cancelled `turn_end` can
-never leave the spinner or the Stop affordance on, now that a `turn_end` can carry a non-clean shape.
+**`isThinking` and `isBusy` are pinned, not changed.** They already turn off on any `turn_end` — at the
+time (#805), via their own `thinkingTransition`/`busyTransition` reducers; since #1313, via
+`TurnPhaseProjection.apply`, which returns a conversation to idle on `TurnEnd` of any outcome. #805's
+`failedAndCancelledTurnEnds_clearIsThinkingAndIsBusy`, guarding that a failed or cancelled `turn_end`
+never leaves the spinner or the Stop affordance on, moved to `TurnPhaseProjectionTest` with that change,
+since the behaviour it pins now lives in the projection, not in a per-ViewModel reducer.
 
 `MainActivity` collects `vm.turnOutcome.collectAsStateWithLifecycle()` beside `apiRetry`/`usageLimit`/
 `isCompacting` and forwards it; `ThreadScreen` threads it as a defaulted `turnOutcome: TurnOutcomeReport? =

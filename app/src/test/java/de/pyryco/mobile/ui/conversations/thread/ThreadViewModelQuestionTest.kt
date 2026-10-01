@@ -135,7 +135,7 @@ class ThreadViewModelQuestionTest {
             vm.onQuestionEvent(QuestionModalEvent.OtherTextChanged(1, " Web "))
             assertTrue(vm.state().canContinue)
             vm.onQuestionEvent(QuestionModalEvent.Continue)
-            assertEquals(listOf("batch-1" to listOf(QuestionAnswer(0, listOf("Kotlin")), QuestionAnswer(1, listOf(" Web ")))), answers)
+            assertEquals(listOf("batch-1" to listOf(QuestionAnswer(0, listOf("Kotlin")), QuestionAnswer(1, listOf("Web")))), answers)
         }
 
     @Test

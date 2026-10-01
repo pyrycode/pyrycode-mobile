@@ -76,6 +76,13 @@ internal class ApiRetryProjection {
         apiRetryByConversation.map { it[conversationId] ?: ApiRetryStatus.NotRetrying }.distinctUntilChanged()
 
     /**
+     * Every conversation retrying right now (#1452), for the host's list. Same edges as [observe]; a stored
+     * falling edge is [ApiRetryStatus.NotRetrying] and so is left out.
+     */
+    fun observeIds(): Flow<Set<String>> =
+        apiRetryByConversation.map { all -> all.filterValues { it != ApiRetryStatus.NotRetrying }.keys }.distinctUntilChanged()
+
+    /**
      * Decode one v2 `api_retry` envelope (#593) to its conversation id and mapped [ApiRetryStatus], or
      * **null** when it cannot be read. Decodes the untrusted [Envelope.payload] through the single
      * configured [MobileJson] and maps via `toStatus()`. The whole body is one `try`/`catch

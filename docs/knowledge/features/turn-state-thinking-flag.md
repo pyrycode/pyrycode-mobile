@@ -16,147 +16,163 @@ indicator instead of appearing stalled.
 
 ## The data path
 
+As of #1313, the phase is **held in the repository**, per conversation, not folded per screen — the
+same shape as [`StallProjection`](stall-state.md) and [`CompactingProjection`](compacting-indicator.md):
+
 ```
-turn_state envelope  ──(#385 decode, capability-gated)──▶  LiveSessionEvent.TurnState(convId, phase)
-        │                                                          on RemoteConversationRepository
-        │                                                          .liveSessionEvents (concrete, per-connection)
+turn_state / turn_end envelope ──(#385 decode, capability-gated)──▶  LiveSessionEvent
+        │                                                          on RemoteConversationRepository's
+        │                                                          single inbound collector, behind the
+        │                                                          `interactive` gate
         ▼
-RelayRepositoryCoordinator.liveSessionEvents : Flow<LiveSessionEvent>   ◀── #406 seam (generic, reconnection-surviving)
-        │  injected at the AppModule ThreadViewModel factory (no new Koin binding)
+TurnPhaseProjection.apply(event)   ◀── #1313: one MutableStateFlow<Map<conversationId, Phase>> per
+        │                               connection; `turn_state` sets the conversation's phase,
+        │                               `turn_end` of any outcome returns it to idle, every other event
+        │                               is ignored. Absent means idle.
         ▼
-ThreadViewModel.isThinking : StateFlow<Boolean>   ◀── #406 reduction (route by conversationId, latest-phase-wins)
-        │  separate parameter beside `state`
+ConversationRepository.observeTurnPhase(conversationId) : Flow<Phase>
+        │  default flowOf(Idle) on the interface, so fakes need no override; RemoteConversationRepository
+        │  reads the projection; StableConversationRepository routes through switchToLive(Idle), so a
+        │  new connection's fresh (empty) projection reads idle until the daemon reports a phase again
         ▼
-ThreadScreen → ThinkingIndicator (#407 renders it at the foot of the list)
+ThreadViewModel.isThinking / isBusy : StateFlow<Boolean>   ◀── map the held phase, no own reduction
+        │  separate parameters beside `state`
+        ▼
+ThreadScreen → ThinkingIndicator (#407) / interrupt affordance (#459)
 ```
 
-Two non-trivial hops, both reusing an established precedent:
+Because the phase is held outside any screen, a thread opened or reopened mid-turn reads the current
+phase on its very first collection — there is no "wait for the next `turn_state`" window, and no
+window where an unsubscribed thread's last-known value goes stale: resubscribing re-reads the
+projection's current value instead of a per-ViewModel fold's frozen one.
 
-### 1. The coordinator seam (generic, reconnection-surviving)
+Two non-trivial hops:
 
-The decoded events live on the **concrete** `RemoteConversationRepository.liveSessionEvents`
-([Live-session events](live-session-events.md), #385) — a `SharedFlow` that is **connection-scoped**
-(rebuilt per connection, absent between) and deliberately **not** on the `ConversationRepository`
-interface the thread ViewModel consumes. So the ViewModel cannot reach it directly.
+### 1. The projection (held, per connection, per conversation)
 
-[`RelayRepositoryCoordinator`](relay-repository-coordinator.md) — the layer that already owns the
-per-connection pump and repository — exposes a stable public flow over it (see
-[§ Live-session event seam](relay-repository-coordinator-seams-and-passthroughs.md#live-session-event-seam-406) there):
+`TurnPhaseProjection` (`data/repository/TurnPhaseProjection.kt`) lives beside
+[`StallProjection`](stall-state.md) and [`CompactingProjection`](compacting-indicator.md): one instance
+per `RemoteConversationRepository`, so one per connection. It holds a single
+`MutableStateFlow<Map<String, Phase>>` of every conversation whose latest phase is not idle — absent
+means idle, so a conversation never heard from and one whose turn just ended read the same.
+
+The repository's single inbound collector hands the projection every decoded `LiveSessionEvent`,
+inside the existing `interactive` gate, beside the `stallProjection.clear` call it already makes there:
+a `turn_state` sets that conversation's phase, a `turn_end` of any outcome returns it to idle, and
+every other event (`AssistantDelta`, `ToolUse`, `ToolResult`, `ReplayGap`) is ignored. Every write is
+keyed by the event's own `conversationId`, so one conversation's frames never move another's phase.
+Replayed frames after a reconnect pass through the same arm, so they rebuild the phase exactly as live
+frames do — no separate replay handling.
+
+`ConversationRepository.observeTurnPhase(conversationId): Flow<Phase>` exposes it, defaulting to
+`flowOf(Phase.Idle)` so the fake and inline test doubles need no override.
+`RemoteConversationRepository` reads `turnPhaseProjection.observe(conversationId)`.
+[`StableConversationRepository`](stable-conversation-repository.md) routes it through
+`switchToLive(Phase.Idle) { it.observeTurnPhase(conversationId) }`, the same seam `observeStall` and
+`observeCompacting` use — so with no connection, or right after a reconnect (a fresh repository means a
+fresh, empty projection), every conversation reads idle until the daemon reports a phase again. That
+reset is the mobile equivalent of desktop's `reconnected` arm in `reduceTimeline`
+(`src/renderer/src/store/threadTimeline.ts`), which does the same per-conversation reset explicitly;
+mobile gets it for free because the repository itself is rebuilt per connection.
+
+### 2. The ViewModel read (no reduction of its own)
+
+`ThreadViewModel` reads the held phase once and derives both flags from it — there is no longer a
+per-ViewModel fold, and no `liveSessionEvents` involvement for these two flags at all:
 
 ```kotlin
-val liveSessionEvents: Flow<LiveSessionEvent> =
-    activeConnection.flatMapLatest { conn -> conn?.repo?.liveSessionEvents ?: emptyFlow() }
-```
+private val turnPhase = repository.observeTurnPhase(conversationId)
 
-`flatMapLatest` switches to the fresh connection's repo and cancels the prior on reconnect (AC #1
-"survives reconnection"); `emptyFlow()` covers between-connections. The seam stays **generic** — the
-full `LiveSessionEvent` stream, not an `isThinking` projection — so #387 (tool timeline) and #337 (live
-assistant text) reuse it without re-plumbing the coordinator. This is the identical reachability shape
-already solved for `registerPushToken` ([#359](../codebase/359.md)/[#365](../codebase/365.md)) and the
-two-part `connectionStatus` ([#392](../codebase/392.md)/[#398](../codebase/398.md)).
-
-### 2. The ViewModel reduction (route, then latest-phase-wins)
-
-`ThreadViewModel` takes the coordinator flow as a **defaulted** trailing ctor param
-(`liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow()` — so the fake-backed graph and the existing
-4-arg tests stay inert) and reduces it to a sibling `StateFlow`:
-
-```kotlin
 val isThinking: StateFlow<Boolean> =
-    liveSessionEvents
-        .mapNotNull { event -> thinkingTransition(event) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    turnPhase.map { it == Phase.Thinking }.stateIn(viewModelScope, WhileSubscribed(5_000), false)
+
+val isBusy: StateFlow<Boolean> =
+    turnPhase.map { it == Phase.Thinking || it == Phase.Responding }
+        .stateIn(viewModelScope, WhileSubscribed(5_000), false)
 ```
 
-`thinkingTransition` returns the next flag value, or `null` to **leave the flag unchanged**:
-
-| event for **this** `conversationId` | result | why |
-|---|---|---|
-| `TurnState(phase = Thinking)` | `true` | `true` only while the latest phase is thinking (AC #2) |
-| `TurnState(phase = Responding \| Idle)` | `false` | AC #2 |
-| `TurnEnd` | `false` | AC #2 lists `turn_end` false; guards the thinking→turn_end-direct edge (no responding/idle between) |
-| `AssistantDelta` / `ToolUse` / `ToolResult` | `null` | not a phase transition — hold the prior value |
-| any event for a **different** `conversationId` | `null` | other conversations never move the flag (AC #3) |
-
-`mapNotNull` + `stateIn` gives "latest-wins with hold" for free: a non-matching event produces no
-emission, so the `StateFlow` retains its prior value; no explicit `scan`/`distinctUntilChanged`. The
-`false` initial value does double duty — "before any turn-state event" (AC #2) **and** the inert
-empty-flow default (AC #5).
+The `thinkingTransition` / `busyTransition` reducers that used to route `liveSessionEvents` by
+`conversationId` and hold the flag between non-phase events are gone — that routing and holding now
+happen once, in the projection, and every `ThreadViewModel` reads the same per-conversation slice of
+it. `liveSessionEvents` stays a `ThreadViewModel` constructor parameter and keeps feeding `turnOutcome`
+(#805) and the thread's own live-event fold ([Streaming assistant
+turns](streaming-assistant-turns.md)) — only `isThinking` / `isBusy` moved off it.
 
 ## Why a sibling `StateFlow`, not a `ThreadUiState` field
 
-`isThinking` mirrors `connectionState`: both are transient, connection-scoped cross-cutting signals
-with a distinct source, and the stateless `ThreadScreen` already receives `connectionState` as a
-**separate** parameter beside `state` (ThreadScreen.kt:70). Folding `isThinking` into the max-arity-5
-`state` `combine` would force a sub-combine restructure and touch its `initialValue`, putting AC #5
-("existing tests compile and pass unchanged") at risk. The sibling flow is **zero-touch** to the
-combine. [#407](../codebase/407.md) followed the same separate-parameter pattern for the
-[indicator composable](thinking-indicator.md) — a defaulted hoisted `isThinking: Boolean` on
-`ThreadScreen`, collected at `MainActivity` beside `connectionState`.
+`isThinking` mirrors `connectionState`, `isStalled` and `isCompacting`: all are transient,
+connection-scoped cross-cutting signals with a distinct source, and the stateless `ThreadScreen`
+already receives `connectionState` as a **separate** parameter beside `state` (ThreadScreen.kt:70).
+Folding `isThinking` into the max-arity-5 `state` `combine` would force a sub-combine restructure and
+touch its `initialValue`. The sibling flow is **zero-touch** to the combine. [#407](../codebase/407.md)
+followed the same separate-parameter pattern for the [indicator composable](thinking-indicator.md) — a
+defaulted hoisted `isThinking: Boolean` on `ThreadScreen`, collected at `MainActivity` beside
+`connectionState`.
 
 ## Lifecycle, errors, edge cases
 
 - **Lifecycle** — `stateIn(viewModelScope, WhileSubscribed(5_000), false)`, identical to
-  `connectionState`. While subscribed it collects the coordinator flow on the Main-bound
-  `viewModelScope`; the reduction is pure (no dispatcher switch). On unsubscribe the upstream collection
-  stops after 5 s and the `StateFlow` retains its last value.
-- **Errors** — none. `liveSessionEvents` is a `SharedFlow` that never completes-with-error; decode
-  failures / unknown `turn_state` values are already dropped to nothing at the #385 mapper. Absence of a
-  live source is the empty flow ⇒ the flag stays `false`. No `catch`, no result type.
-- **Stale-`true`-on-resume (known, accepted)** — with `replay = 0` upstream, if the agent leaves
-  `thinking` while the screen is backgrounded > 5 s and re-foregrounds before a fresh event,
-  `isThinking` can momentarily read a stale `true` until the next event. This matches the transient
-  "right-now" posture already accepted for the [stall flag](stall-state.md) (#395) and
-  `connectionState`. [#407](../codebase/407.md) shipped the UI **without** handling it — deliberately,
-  since a reset would need either a data-layer change or local state in the (stateless) composable; an
-  `idle`/`turn_end`-on-resubscribe reset remains a deferred follow-up if it ever reads jarring.
-
-## Wiring
-
-`AppModule` fetches the seam off the already-registered concrete coordinator singleton at the
-`ThreadViewModel` factory — **no new Koin binding**, exactly as `SettingsViewModel` takes
-`connectionStatus`:
-
-```kotlin
-viewModel {
-    ThreadViewModel(get(), get(), get(), get(), get<RelayRepositoryCoordinator>().liveSessionEvents)
-}
-```
-
-`AppModule` supplies the coordinator's live events in both real and demo builds;
-the [repository build option](dependency-injection.md#how-it-works) does not gate
-this seam. Direct test/preview construction that omits `liveSessionEvents` uses
-the default empty flow, so `isThinking` remains `false`.
+  `connectionState` / `isStalled` / `isCompacting`. While subscribed it collects
+  `repository.observeTurnPhase(conversationId)` on the Main-bound `viewModelScope`; the `map` is pure
+  (no dispatcher switch). On unsubscribe the upstream collection stops after 5 s and the `StateFlow`
+  retains its last value — but because the upstream is the repository's held `TurnPhaseProjection`, not
+  a `replay = 0` event stream, resubscribing re-reads the **current** phase rather than replaying what
+  was missed. A thread unsubscribed through a turn ending, or through a new turn starting, reads the
+  right value on return with no further frame (#1313 AC2), and a thread opened mid-turn for the
+  first time reads the running phase on its very first collection (#1313 AC1).
+- **Errors** — none. Decode failures / unknown `turn_state` values are already dropped to nothing at
+  the #385 mapper before `TurnPhaseProjection` ever sees them. Absence of a live connection is
+  `StableConversationRepository`'s idle default ⇒ the flags stay `false`. No `catch`, no result type.
+- **Reset on reconnect** — a reconnect replaces `RemoteConversationRepository`, so `TurnPhaseProjection`
+  starts over empty; every conversation reads idle until the daemon reports a phase again
+  (#1313 AC3). This replaces the "stale `true` on resume" gap the per-ViewModel fold used to have:
+  that gap no longer exists, because the flags no longer depend on having been subscribed when the
+  defining frame arrived.
 
 ## Related
 
-- [#406 implementation notes](../codebase/406.md) — files, line refs, patterns, lessons.
+- [#406 implementation notes](../codebase/406.md) — files, line refs, patterns, lessons from when the
+  flag was still a per-ViewModel fold over the coordinator seam; superseded by the held projection
+  (#1313) described above.
 - [Live-session events](live-session-events.md) ([#385](../codebase/385.md)) — the decode seam that
-  produces `LiveSessionEvent.TurnState`; this slice realizes its "facade/coordinator reachability is
-  consumer-slice work" deferral.
+  produces `LiveSessionEvent.TurnState` / `TurnEnd`, the events `TurnPhaseProjection` folds.
 - [Relay repository coordinator](relay-repository-coordinator.md)
-  ([#351](../codebase/351.md)/[#365](../codebase/365.md)/[#392](../codebase/392.md)) — owns + publishes
-  the generic `liveSessionEvents` seam (§ Live-session event seam).
-- [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `isThinking` joins `connectionState`
-  as a sibling signal the stateless screen takes as a separate parameter.
+  ([#351](../codebase/351.md)/[#365](../codebase/365.md)/[#392](../codebase/392.md)) — still owns the
+  generic `liveSessionEvents` seam that `turnOutcome` and the thread's live-event fold keep using; the
+  turn-phase flags no longer go through it.
+- [Stall state](stall-state.md) (#395) and [Compacting indicator](compacting-indicator.md) — the sibling
+  connection-scoped projections `TurnPhaseProjection` follows the shape of, and whose
+  `observeStall` / `observeCompacting` + `switchToLive` plumbing `observeTurnPhase` reuses.
+- [Stable conversation repository](stable-conversation-repository.md) — `switchToLive`, the seam that
+  gives every repository-held, per-conversation signal its idle reading with no connection and its reset
+  on a fresh connection.
+- [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `isThinking` / `isBusy` join
+  `connectionState` / `isStalled` / `isCompacting` as sibling signals the stateless screen takes as
+  separate parameters.
 - Sibling UI slice (shipped): [Thinking indicator](thinking-indicator.md)
   ([#407](../codebase/407.md)) — the stateless composable + its placement at the foot of the thread,
   consuming `isThinking`.
 - Broader sibling (shipped): [Interrupt affordance](interrupt-affordance.md)
-  ([#459](../codebase/459.md)) — `ThreadViewModel.isBusy`, declared **identically** to `isThinking` over
-  the same seam but **broadened** to `thinking` **or** `responding` via its own `busyTransition` reducer
-  (the "a turn is running" signal driving the foot-of-list interrupt control). `isThinking` is `false`
-  during `responding`, so it can't drive an affordance that must persist across the whole turn — hence the
-  dedicated flow rather than reuse.
-- Other consumers of the generic seam (shipped): [#387](../codebase/387.md)
-  ([Live tool-call](live-tool-call.md), tool-use timeline), [#337](../codebase/337.md)
-  ([Streaming assistant turns](streaming-assistant-turns.md), live assistant text).
+  ([#459](../codebase/459.md)) — `ThreadViewModel.isBusy`, `true` while the held phase is `thinking`
+  **or** `responding` (the "a turn is running" signal driving the foot-of-list interrupt control).
+  `isThinking` is `false` during `responding`, so it can't drive an affordance that must persist across
+  the whole turn — hence the separate flag rather than reuse, even though both now read the same held
+  `turnPhase`.
+- Other consumers of the generic `liveSessionEvents` seam (shipped, unaffected by #1313):
+  [#387](../codebase/387.md) ([Live tool-call](live-tool-call.md), tool-use timeline),
+  [#337](../codebase/337.md) ([Streaming assistant turns](streaming-assistant-turns.md), live assistant
+  text), `turnOutcome` ([Turn outcome indicator](turn-outcome-indicator.md), #805).
 - Precedent: `connectionStatus` injected into [`SettingsViewModel`](settings-viewmodel.md)
   ([#398](../codebase/398.md)); `registerPushToken` reached through the concrete repo
   ([#365](../codebase/365.md)). See [[post-352-connection-scoped-repo-behind-facade]].
 - Render regression coverage: [#432 scripted-stream thread harness](../codebase/432.md) — the Layer-1a
-  `ScriptedThreadHarness` scripts `turn_state("thinking")` → `turn_end` through this reduction and asserts
-  the `cd_thread_thinking` indicator appears then clears (the spinner case). Subscribe-before-push is
-  load-bearing: `isThinking` is sourced only from the `replay = 0` `liveSessionEvents`.
+  `ScriptedThreadHarness` scripts `turn_state("thinking")` → `turn_end` and asserts the
+  `cd_thread_thinking` indicator appears then clears (the spinner case). Its `pushTurnState` now also
+  takes a `targetConversationId` (#1313), and `openConversation` swaps the composed `ThreadViewModel` to
+  a different conversation over the same repository — `ScriptedTurnPhaseTest` uses both to push frames
+  for one conversation while another is open and prove routing and the reopen-shows-it-at-once behaviour
+  (AC1). The harness's subscribe-before-push rule no longer applies to `isThinking` / `isBusy`, since
+  #1313 made them read held state instead of a `replay = 0` fold; it still applies to `turnOutcome` and
+  the thread's own live-event fold, which stay on `liveSessionEvents` unchanged.
 - Server SSOT: pyrycode#607 (`turn_state` wire), #616 (capability-gated fan-out), ADR 025 § Phase 2
   structured streaming, EPIC pyrycode#596.

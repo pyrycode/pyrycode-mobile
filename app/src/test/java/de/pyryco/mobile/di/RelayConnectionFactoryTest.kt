@@ -424,7 +424,6 @@ class RelayConnectionFactoryTest {
                     runCurrent()
                     assertTrue(f.transports.isEmpty())
                     assertTrue(stable.observeConversations(ConversationFilter.Channels).first().isEmpty())
-                    assertEquals(ModalUiState.Hidden, registry.currentModal.value)
                     f.store.save(f.a.record)
                     runCurrent()
                     val a = registry.connectionFor("A")!!
@@ -448,7 +447,13 @@ class RelayConnectionFactoryTest {
                     tb.emit(modal("B"))
                     runCurrent()
                     assertEquals(1, events.size)
-                    assertEquals(b.coordinator.currentModal.value, registry.currentModal.value)
+                    // #1338: each host's attention reads that host's whole outstanding prompt list.
+                    assertSame(
+                        b.coordinator.hostModals,
+                        registry.hostConnections.value
+                            .single { it.serverId == "B" }
+                            .modals,
+                    )
                     assertEquals(b.coordinator.connectionStatus.value, registry.connectionStatus.value)
                     stable.startNewSession("c")
                     registry.interrupt("c")
@@ -462,13 +467,11 @@ class RelayConnectionFactoryTest {
                     f.store.remove("B")
                     runCurrent()
                     assertSame(a, registry.selected.value)
-                    assertEquals(a.coordinator.currentModal.value, registry.currentModal.value)
                     assertEquals(2, f.transports.size)
                     f.store.remove("A")
                     runCurrent()
                     assertNull(registry.selected.value)
                     assertNull(registry.currentRepository.value)
-                    assertEquals(ModalUiState.Hidden, registry.currentModal.value)
                     assertEquals(RelayLinkStatus.Idle, registry.connectionStatus.value.relay)
                     assertTrue(runCatching { registry.interrupt("c") }.exceptionOrNull() is IllegalStateException)
                 } finally {
@@ -622,9 +625,14 @@ class RelayConnectionFactoryTest {
                 ta.emit(modal("A"))
                 tb.emit(modal("B"))
                 runCurrent()
-                val modalB = b.coordinator.currentModal.value
-                assertEquals("B", (modalB as ModalUiState.Open).title)
-                assertEquals("A", (a.coordinator.currentModal.value as ModalUiState.Open).title)
+                val modalB = b.coordinator.hostModals.value
+                assertEquals("B", modalB.outstanding.single().title)
+                assertEquals(
+                    "A",
+                    a.coordinator.hostModals.value.outstanding
+                        .single()
+                        .title,
+                )
                 assertEquals(1, eventsA.size)
                 assertEquals(1, eventsB.size)
                 val pending = async { registry.answerModal("same", "deny") }
@@ -634,14 +642,14 @@ class RelayConnectionFactoryTest {
                 runCurrent()
                 assertNull(a.coordinator.currentRepository.value)
                 assertSame(repoB, b.coordinator.currentRepository.value)
-                assertEquals(modalB, b.coordinator.currentModal.value)
+                assertEquals(modalB, b.coordinator.hostModals.value)
                 a.supervisor.retry()
                 runCurrent()
                 assertEquals("7", f.transports.last().cursor())
                 f.store.remove("A")
                 runCurrent()
                 assertSame(repoB, b.coordinator.currentRepository.value)
-                assertEquals(modalB, b.coordinator.currentModal.value)
+                assertEquals(modalB, b.coordinator.hostModals.value)
                 assertEquals(7L, b.coordinator.replayCursor.latest)
                 assertFalse(tb.closed)
                 tb.emit(envelope("ack", "{}").copy(inReplyTo = tb.outbound.single().id))

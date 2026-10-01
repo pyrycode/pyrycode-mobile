@@ -92,6 +92,13 @@ projection. In short: a connection-scoped `MutableStateFlow<Map<String, ApiRetry
 fresh repo per connection (#351) starts empty, so a retry state **never survives a reconnect** — it
 re-derives from the live stream. A retry is a transient "right now" condition, not durable state.
 
+`ApiRetryProjection.observeIds(): Flow<Set<String>>` (#1452) filters `apiRetryByConversation` to the
+keys whose status is not `NotRetrying` — a stored falling edge is left out, so a conversation that
+retried once and stopped does not read as still busy. `RemoteConversationRepository.observeBusyConversations()`
+unions it with the three sibling arms' `observeIds()` so the host's list can blink a retrying chat's
+status dot even though no turn is running on it — see [Dependency injection — host conversation
+source § Attention state](dependency-injection-host-conversation-source.md#attention-state-877).
+
 ## Capability gate (fail-closed)
 
 The demux arm sits inside `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` — the same gate
@@ -153,6 +160,9 @@ overlay of a retry banner) belong to #594.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeApiRetry`
   joins; [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it
   reach the thread ViewModel.
+- [Dependency injection — host conversation source](dependency-injection-host-conversation-source.md#attention-state-877)
+  (#1452) — folds this arm's `observeIds()`, unioned with its siblings, into the host-wide
+  `ConversationAttention.Running` blink.
 - Consumer (shipped): **[#594](../codebase/594.md)** — [API-retry indicator](api-retry-indicator.md),
   the visible "Retrying — attempt N/M" render.
 - Sibling (shipped): **[#596](../codebase/596.md)** — [Compacting state](compacting-state.md), the

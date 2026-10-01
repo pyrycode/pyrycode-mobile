@@ -79,6 +79,15 @@ a cold `map { id in it }.distinctUntilChanged()` projection. Connection-scoped, 
 per connection (#351) starts empty, so a stall **never survives a reconnect** — it re-derives from the
 live stream. A stall is a transient "right now" condition, not durable state.
 
+`StallProjection.observeIds(): Flow<Set<String>>` (#1452) exposes `stalledConversations` itself,
+host-wide rather than per-conversation, with no change to the onset/clearing edges above.
+`RemoteConversationRepository.observeBusyConversations()` unions it with the three sibling arms'
+own `observeIds()` so the host's list can blink a stalled chat's status dot even though no turn is
+running on it — see [Dependency injection — host conversation source § Attention state](dependency-injection-host-conversation-source.md#attention-state-877).
+Because the union reuses this arm's own clearing rule verbatim, a stall's blink clears on *any*
+decoded live event, not only `turn_state` — wider than desktop's own `isWorking`, which clears a
+stall only on `turnState`. That gap is deliberate, not a bug to narrow.
+
 ## Capability gate (fail-closed)
 
 Both the onset arm and the clearing hook sit inside `CAPABILITY_INTERACTIVE in negotiatedCapabilities()`
@@ -137,6 +146,9 @@ clipboard) was handled where it was actually rendered, in the now-retired `Liter
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeStall`
   joins; [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it
   reach the thread ViewModel.
+- [Dependency injection — host conversation source](dependency-injection-host-conversation-source.md#attention-state-877)
+  (#1452) — folds this arm's `observeIds()`, unioned with the three siblings below, into the host-wide
+  `ConversationAttention.Running` blink.
 - Former consumer: **[#396](../codebase/396.md)** — the stall promotion banner, which rendered this flag
   as a prominent screen-snapshot CTA at the top of the thread until [#883](../../specs/architecture/883-retire-literal-screen.md)
   retired it. No UI currently consumes `isStalled` / `observeStall`.

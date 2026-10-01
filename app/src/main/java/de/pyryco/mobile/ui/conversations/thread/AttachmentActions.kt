@@ -24,6 +24,7 @@ import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentTarget
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -207,10 +208,27 @@ internal fun saveNoteText(
     return copyAttachment({ text.toByteArray(Charsets.UTF_8).inputStream() }, openOutput, discard)
 }
 
-/** What a message attachment's tap and long-press do in the thread (#985). */
+/**
+ * A tapped file that has loaded ready (#1329), for the screen to open or save once: the target the row
+ * shows, the [source] the load produced, and the [action] the tap asked for. [toString] prints the id and
+ * the action only.
+ */
+data class AttachmentLoaded(
+    val target: AttachmentTarget,
+    val source: AttachmentSource,
+    val action: AttachmentAction,
+) {
+    override fun toString(): String = "AttachmentLoaded(id=${target.attachmentId}, action=$action)"
+}
+
+/**
+ * What a message attachment's tap and long-press do in the thread (#985), and what a tapped file does once
+ * it has loaded ([loaded], #1329).
+ */
 class AttachmentActions(
     val open: (AttachmentTarget) -> Unit,
     val save: (AttachmentTarget) -> Unit,
+    val loaded: (AttachmentLoaded) -> Unit,
 )
 
 /** The system's create-document picker for one attachment: its type, and its name as the suggestion. */
@@ -246,6 +264,10 @@ private class CreateAttachmentDocument : ActivityResultContract<CreateAttachment
  * the document it returns. The pending save keeps only the attachment id across the picker round trip, and
  * resolves its source against the live [states] when the result arrives, so no path or URI enters the
  * saved-state bundle. A cancelled picker writes nothing and says nothing.
+ *
+ * [AttachmentActions.loaded] (#1329) opens or saves a file its tap just loaded. It may run before [states]
+ * recomposes with that file ready, so it opens the source the load carries and saves without the ready check;
+ * the picker's result arrives later, when the live states hold the file.
  */
 @Composable
 internal fun rememberAttachmentActions(
@@ -293,33 +315,43 @@ internal fun rememberAttachmentActions(
             }
         }
     return remember(context, scope, launcher, unnamed) {
+        val openSource = { target: AttachmentTarget, source: AttachmentSource ->
+            if (isMarkdownAttachmentName(target.displayName)) {
+                // #1027: read in-app from the host's store, whichever source the row shows.
+                currentOnOpenMarkdown(target.attachmentId)
+            } else {
+                val notice = openAttachment(context, source, target.mimeType)
+                val outcome =
+                    when (notice) {
+                        null -> "opened"
+                        AttachmentNotice.NO_APP -> "no_app"
+                        else -> "failed"
+                    }
+                RelayLog.d { "event=thread_attachment_open id=${target.attachmentId} outcome=$outcome" }
+                notice?.let(currentOnNotice)
+            }
+        }
+        val launchSave = { target: AttachmentTarget ->
+            pendingSaveId = target.attachmentId
+            launcher.launch(
+                CreateAttachmentDocument.Request(
+                    suggestedName = target.displayName ?: unnamed,
+                    mimeType = attachmentIntentType(target.mimeType),
+                ),
+            )
+        }
         AttachmentActions(
             open = { target ->
                 val source = (currentStates[target.attachmentId] as? AttachmentViewState.Ready)?.source
-                if (source != null && isMarkdownAttachmentName(target.displayName)) {
-                    // #1027: read in-app from the host's store, whichever source the row shows.
-                    currentOnOpenMarkdown(target.attachmentId)
-                } else if (source != null) {
-                    val notice = openAttachment(context, source, target.mimeType)
-                    val outcome =
-                        when (notice) {
-                            null -> "opened"
-                            AttachmentNotice.NO_APP -> "no_app"
-                            else -> "failed"
-                        }
-                    RelayLog.d { "event=thread_attachment_open id=${target.attachmentId} outcome=$outcome" }
-                    notice?.let(currentOnNotice)
-                }
+                if (source != null) openSource(target, source)
             },
             save = { target ->
-                if (currentStates[target.attachmentId] is AttachmentViewState.Ready) {
-                    pendingSaveId = target.attachmentId
-                    launcher.launch(
-                        CreateAttachmentDocument.Request(
-                            suggestedName = target.displayName ?: unnamed,
-                            mimeType = attachmentIntentType(target.mimeType),
-                        ),
-                    )
+                if (currentStates[target.attachmentId] is AttachmentViewState.Ready) launchSave(target)
+            },
+            loaded = { load ->
+                when (load.action) {
+                    AttachmentAction.OPEN -> openSource(load.target, load.source)
+                    AttachmentAction.SAVE -> launchSave(load.target)
                 }
             },
         )

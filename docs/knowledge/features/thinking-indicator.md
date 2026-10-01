@@ -58,6 +58,15 @@ thread), not by this component. The composable is a **pure function of its param
   `ViewModel` reference, no flow collection, no label cache, no `LaunchedEffect`, no `ThreadUiState` field.
 Statelessness is an AC, not a style choice.
 
+**Text only (#1312).** `ThinkingIndicator` no longer draws the snowflake. The `ic_thread_thinking` `Image`
+and its opacity pulse moved out to `ThreadStatusGlyph`, an internal composable in this same file that
+[`ThreadStatusArea`](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) draws once, ahead
+of every arm's reading, so the glyph is the band's and not any one arm's. `ThinkingIndicator` and the other
+three arms (`ApiRetryIndicator`, `CompactingIndicator`, `ResettingIndicator`) now render only their text or
+pill, with no leading-edge padding of their own — the band supplies the 8dp gap after the glyph instead.
+`ThreadStatusSpinner`, the rotating-arc glyph those three arms used to draw beside their text, is deleted;
+`ThreadStatusGlyph` is the only glyph left, in every arm.
+
 ## What it does
 
 - **`if (!isThinking && !isWorking && !isStalled && runningTool == null) return`** (#1311 widened #897's
@@ -259,6 +268,19 @@ this component cannot tell a local-send "Thinking…" from a daemon-confirmed on
 the local window never decorates itself with a leftover token reading from the previous turn. See [Thread
 screen § The arm order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for where the
 window opens and closes.
+
+**The band is always composed, and the glyph always turns with it (#1312).** Before #1312, `StatusArm.None`
+made `StatusReading` emit nothing, so `ThreadStatusArea` contributed no node at all and the composer's input
+field jumped between idle and busy. The band is now an always-present `Row` with the glyph
+(`ThreadStatusGlyph`) as its first child in every state — idle included — a weighted reading box second (so
+a `StatusArm.None` reading that emits nothing doesn't drop the weight with it and pull a lone task pill up
+against the glyph), and the task-count pill last when present. `ThreadStatusGlyph(turning: Boolean)` is the
+only rotation gate: `turning = ThreadViewModel.isBusy || localSendPending`, independent of which arm is
+showing, so a label change — Thinking → Working → api-retry, say — never restarts the turn, because the
+glyph is one stable composition node across arm changes, not a per-arm one. While `turning` and
+`ValueAnimator.areAnimatorsEnabled()` (false at system animator scale 0, "Remove animations") it runs a
+`rememberInfiniteTransition` from 0° to 360° over 1600 ms, linear, restarting; otherwise the angle holds at
+0°, and it is disposed and restarts from 0° on the next rising edge rather than resuming mid-turn.
 
 ## Placement in the thread
 

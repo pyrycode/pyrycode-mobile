@@ -64,7 +64,7 @@ for the full mechanism.
 sends no reply to `question_answer` / `question_refused` and the batch is only truly resolved by the later
 `question_dismissed`. A modal that unlocked itself after `Sent` would let a second Continue race the first
 send. `answers()` returns one `QuestionAnswer` per question — option labels in **option order**, then the
-Other text **verbatim** when ticked and non-blank — or `null` if any question has no value; `canContinue`
+Other text **trimmed** when ticked and non-blank — or `null` if any question has no value; `canContinue`
 composes that with `!locked`.
 
 ## Batch ownership: process-lifetime drafts, source- and request-bound sends
@@ -132,11 +132,13 @@ and the source's own held batch for that conversation `=== batch` — synchronou
 sending, and always sends through the **captured** source, never a freshly selected one. Locks are always
 taken store → coordinator, so the two synchronized blocks cannot deadlock.
 
-**Verbatim, not trimmed.** The AC requires Other text sent "verbatim". Desktop's `resolveQuestionAnswers`
-trims it before sending; mobile does not — `values()` uses `otherText.isNotBlank()` only to decide whether
-Other counts as answered, and sends the exact typed string. A caller porting behaviour from the desktop
-`questionResolution.ts` reference should check each such transform against the ticket's own AC rather than
-assuming parity.
+**Trimmed, as desktop does.** #1305 shipped Other text sent verbatim; #1349 refined the AC to match desktop's
+`resolveQuestionAnswers`, which adds `otherText.trim()` only when Other is ticked and the trimmed text is
+non-empty. `values()` now does the same — `otherText.trim().takeIf { otherTicked && it.isNotEmpty() }` — so
+whitespace-only Other text still counts as no value. Only the sent value is trimmed; the held draft
+(`otherText` in `QuestionDraftStore`) stays untrimmed, so the text field keeps exactly what the operator
+typed. A caller porting behaviour from the desktop `questionResolution.ts` reference should still check each
+such transform against the ticket's own AC rather than assuming parity by default.
 
 **The question path never touches `answerModal` / `cancelModal`.** It holds its own
 `answerQuestionBatch` / `refuseQuestionBatch` lambdas, defaulted inert like every other outbound send this
