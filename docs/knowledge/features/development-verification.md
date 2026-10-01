@@ -370,16 +370,25 @@ asserting scroll-yield or auto-follow behavior is unaffected.
 layout assertions around it already passed — seen four times against
 `ScannerFrameTest` and `PairCodeScreenTest` (#1038), including once after
 `PairCodeScreenTest`'s existing leading `rule.waitForIdle()`, so waiting for idle
-first is not sufficient on its own. The screenshot PNG is a review artifact, not
-part of the contract under test, so a capture-only helper should retry
-(`ComposeTestRule.saveScreenshot` in
+first is not sufficient on its own, and again against `ScannerFrameTest`'s dark
+412dp atmosphere pixel check on PR #1428 because that call used raw
+`captureToImage` instead of the retry helper (#1441). Any assertion built on a
+device pixel capture, not only a screenshot PNG, needs the same protection — a
+passing layout assertion next to it does not make the capture itself safe.
+Retry through the shared `ComposeTestRule.captureWithRetry(name, node)` in
 `app/src/androidTest/java/de/pyryco/mobile/ui/onboarding/ScreenshotCapture.kt`
-retries up to three times with `waitForIdle()` before each retry) and log +
-skip the PNG rather than fail the test when every attempt still times out. Catch
-only `ComposeTimeoutException`; any other exception from the capture should still
-fail the test. The retry cannot be proven on a healthy emulator because the
-timeout does not reproduce on demand — the focused device run only proves the
-PNGs are still written when capture succeeds, not that the skip path fires.
+(up to three attempts with `waitForIdle()` before each retry, returning `null`
+and logging a skip if every attempt throws `ComposeTimeoutException`).
+`ComposeTestRule.saveScreenshot` calls it to get the PNG and log + skip rather
+than fail when every attempt still times out; a pixel-comparison check should
+call it directly and run its assertion only when a bitmap comes back, skipping
+with a log line otherwise. Catch only `ComposeTimeoutException` in the helper;
+any other exception from the capture should still fail the test. The retry
+cannot be proven on a healthy emulator because the timeout does not reproduce
+on demand — a focused device run only proves captures still succeed, not that
+the skip path fires. `ChannelInfoCaptureTest` and `AttachmentVisualCaptureTest`
+still call `captureToImage` unprotected; that sweep is tracked under #1046, not
+fixed here.
 
 ## Test scheduling and harnesses
 
