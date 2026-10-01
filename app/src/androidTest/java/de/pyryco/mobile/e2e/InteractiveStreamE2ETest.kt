@@ -5576,13 +5576,12 @@ class InteractiveStreamE2ETest {
                 { node -> attentionOf(node) },
             ).mapValues { (_, states) -> states.sorted() }
 
-    /** The attention state a tree row's merged node carries: whichever of the dot's five descriptions it holds. */
+    /** The attention state a tree row's merged node carries: whichever of the dot's four descriptions it holds. */
     private fun attentionOf(node: SemanticsNode): String {
         val states =
             listOf(
                 R.string.cd_conversation_attention_waiting,
                 R.string.cd_conversation_attention_running,
-                R.string.cd_conversation_attention_failed,
                 R.string.cd_conversation_attention_unread,
                 R.string.cd_conversation_attention_idle,
             ).map(::string)
