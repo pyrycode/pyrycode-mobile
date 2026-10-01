@@ -148,8 +148,12 @@ internal fun List<ThreadItem>.withToolUse(
  * position and `timestamp` preserved — attaching the output and flipping the status to
  * [ToolCallStatus.Failed] when [LiveSessionEvent.ToolResult.isError], else [ToolCallStatus.Done].
  * **If no matching row exists, no-op:** a result with no prior use — including one arriving before its
- * use — is dropped, leaving no orphan half-row. A duplicate re-applies the same in-place update
- * (idempotent / last-write-wins, one row). The result summary is carried **verbatim**.
+ * use — is dropped, leaving no orphan half-row. The result summary and its count
+ * ([LiveSessionEvent.ToolResult.resultDetail], #1316) are carried **verbatim**.
+ *
+ * **The first result wins** (#1316, desktop's `fillResult`): only a [ToolCallStatus.Running] row, or a
+ * [ToolCallStatus.Denied] row with no result yet ([ToolCall.resultDetail] `null`), takes one. A later
+ * frame returns this list unchanged, as does a result for a resolved row restored from the disk cache.
  *
  * The result's `parent_tool_use_id` (#810) replaces the row's when non-empty and leaves the use's in
  * place when empty. A conforming daemon sends the same value on both frames; this only matters across a
@@ -164,22 +168,24 @@ internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult)
     val index = indexOfMessage(event.toolUseId, Role.Tool)
     if (index < 0) return this
     val row = (this[index] as ThreadItem.MessageItem).message
+    val call = row.toolCall ?: return this
+    val open = call.status == ToolCallStatus.Running || (call.status == ToolCallStatus.Denied && call.resultDetail == null)
+    if (!open) return this
     val updated =
         row.copy(
             toolCall =
-                row.toolCall?.let { call ->
-                    call.copy(
-                        output = event.resultSummary,
-                        status =
-                            when {
-                                call.status == ToolCallStatus.Denied -> ToolCallStatus.Denied
-                                event.isError -> ToolCallStatus.Failed
-                                else -> ToolCallStatus.Done
-                            },
-                        parentToolUseId = event.parentToolUseId.ifEmpty { call.parentToolUseId },
-                        elapsedSeconds = null,
-                    )
-                },
+                call.copy(
+                    output = event.resultSummary,
+                    resultDetail = event.resultDetail,
+                    status =
+                        when {
+                            call.status == ToolCallStatus.Denied -> ToolCallStatus.Denied
+                            event.isError -> ToolCallStatus.Failed
+                            else -> ToolCallStatus.Done
+                        },
+                    parentToolUseId = event.parentToolUseId.ifEmpty { call.parentToolUseId },
+                    elapsedSeconds = null,
+                ),
         )
     return toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
 }
@@ -188,8 +194,9 @@ internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult)
  * Mark the [Role.Tool] row [toolUseId] names as [ToolCallStatus.Denied] for a `tool_denied` (#811), in
  * place, attaching [denial]. The denial wins over any prior status, because the daemon's result-line
  * recovery can report a denial after the call's `tool_result` shipped. Output, input, parent and position
- * are untouched, and a repeat denial is last-write-wins. **No matching row, no-op:** a denial never adds
- * a row. A denial closes the call, so it clears the elapsed reading (#812).
+ * are untouched. **The first denial wins** (#1316): a row already holding a denial returns this list
+ * unchanged. **No matching row, no-op:** a denial never adds a row. A denial closes the call, so it clears
+ * the elapsed reading (#812).
  */
 internal fun List<ThreadItem>.withToolDenied(
     toolUseId: String,
@@ -198,8 +205,9 @@ internal fun List<ThreadItem>.withToolDenied(
     val index = indexOfMessage(toolUseId, Role.Tool)
     if (index < 0) return this
     val row = (this[index] as ThreadItem.MessageItem).message
-    val updated =
-        row.copy(toolCall = row.toolCall?.copy(status = ToolCallStatus.Denied, denial = denial, elapsedSeconds = null))
+    val call = row.toolCall ?: return this
+    if (call.denial != null) return this
+    val updated = row.copy(toolCall = call.copy(status = ToolCallStatus.Denied, denial = denial, elapsedSeconds = null))
     return toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
 }
 
