@@ -64,3 +64,7 @@ Not operator-facing in a new way (the dot already exists, no visual change), so 
 ## Documentation handoff
 
 Pending for the documentation stage: `docs/knowledge/features/dependency-injection-host-conversation-source.md` § "Attention state (#877)": unread by new thread rows rather than by turn completion, which rows count (every append to the thread store; in-place growth does not), the client-minted token, and the zero baseline for a new connection's repository.
+
+## Revisions
+
+- 2026-10-01: `app/src/main/java/de/pyryco/mobile/data/cache/ConversationCache.kt` joins the touched files, KDoc only. `ReadPosition`'s KDoc said both tokens are daemon-authored turn ids, which a client-minted row token makes untrue. No code or stored shape changes there. The repository wiring is also proven at the repository level by `RemoteConversationRepositoryRowCountTest` (a delta and a tool use raise counts, a further delta and a tool result do not, a banner does).

@@ -520,6 +520,17 @@ internal class ThreadProjection {
         threadByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
 
     /**
+     * Every conversation's row count (#1361): the size of its thread, so an appended row of any kind raises
+     * it and an in-place update (a delta into the same bubble, a tool result) does not. The projection starts
+     * empty per connection, so a collector's baseline for it is zero rows.
+     */
+    fun observeRowCounts(): Flow<Map<String, Int>> =
+        threadByConversation
+            .map { threads ->
+                threads.mapValues { it.value.size }
+            }.distinctUntilChanged()
+
+    /**
      * Decode one v2 `unrecognized_message` envelope (#609) to its routing [conversationId] and the mapped
      * [ThreadItem.UnrecognizedMessage], or **null** when it cannot be folded. Decodes the untrusted
      * [Envelope.payload] through the single configured [MobileJson] and maps via `toRow()`. The whole body

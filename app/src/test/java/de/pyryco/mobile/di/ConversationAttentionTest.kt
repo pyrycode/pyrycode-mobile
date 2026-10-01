@@ -120,6 +120,45 @@ class ConversationAttentionTest {
         )
     }
 
+    @Test
+    fun aNewRowMarksABackgroundConversationUnreadAndNeverAViewedOne() {
+        val unread = HostAttentionState().rowsAdded("c", viewing = false, token = "r1")
+        assertEquals(mapOf("c" to ConversationAttention.Unread), unread.resolved())
+        assertEquals(HostAttentionState(), HostAttentionState().rowsAdded("c", viewing = true, token = "r1"))
+        // A second row while still unread keeps the position, so a stored turn id stays recognisable.
+        val ended = HostAttentionState().onEvent(end("c", "t1"), viewing = false)
+        assertEquals(ended, ended.rowsAdded("c", viewing = false, token = "r2"))
+
+        val read = unread.opened("c")
+        assertEquals(emptyMap<String, ConversationAttention>(), read.resolved())
+        assertEquals(read, read.rowsAdded("c", viewing = true, token = "r2"))
+        val again = read.rowsAdded("c", viewing = false, token = "r2")
+        assertEquals(mapOf("c" to ConversationAttention.Unread), again.resolved())
+        assertEquals(ReadPosition("r2", "r1"), again.positions["c"])
+    }
+
+    @Test
+    fun aTurnEndAfterItsRowsStillCountsOnceAndKeepsTheConversationUnread() {
+        val rows = HostAttentionState().rowsAdded("c", viewing = false, token = "r1")
+        val ended = rows.onEvent(end("c", "t1"), viewing = false)
+        assertEquals(listOf("t1"), ended.counted["c"])
+        assertEquals(mapOf("c" to ConversationAttention.Unread), ended.resolved())
+        assertEquals(ended, ended.onEvent(end("c", "t1"), viewing = false))
+        // A turn end the operator watched, after rows they did not, is read.
+        assertEquals(emptyMap<String, ConversationAttention>(), rows.onEvent(end("c", "t1"), viewing = true).resolved())
+    }
+
+    @Test
+    fun aRowMovesItsConversationToTheNewestBoundedPosition() {
+        var state = HostAttentionState().rowsAdded("old", viewing = false, token = "r")
+        repeat(MAX_READ_POSITIONS - 1) { state = state.onEvent(end("c$it", "t"), viewing = false) }
+        state = state.opened("old").rowsAdded("old", viewing = false, token = "r2")
+        state = state.onEvent(end("new", "t"), viewing = false)
+        assertEquals(MAX_READ_POSITIONS, state.positions.size)
+        assertTrue("old" in state.positions)
+        assertTrue("c0" !in state.positions)
+    }
+
     private fun HostAttentionState.resolved() = resolve(ModalUiState.Hidden, emptyList())
 
     private fun state(

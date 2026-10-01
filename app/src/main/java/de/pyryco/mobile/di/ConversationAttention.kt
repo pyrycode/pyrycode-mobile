@@ -30,7 +30,7 @@ enum class ConversationAttention {
     /** The latest turn ended Failed or StoppedEarly per `turnOutcomeReport` (#805), unopened since. */
     Failed,
 
-    /** A turn completed live while the operator was not viewing the conversation. */
+    /** A row was added to the thread, or a turn completed, while the operator was not viewing it (#1361). */
     Unread,
 
     Idle,
@@ -107,6 +107,22 @@ internal data class HostAttentionState(
             positions = boundedPositions((positions - id) + (id to position)),
             counted = counted + (id to (counted[id].orEmpty() + turnId).takeLast(MAX_COUNTED_TURNS_PER_CONVERSATION)),
         )
+    }
+
+    /**
+     * [conversationId]'s thread gained a row (#1361). A viewed conversation is already read, and an unread
+     * one keeps its position, so a stored turn id stays recognisable to [isCounted]. Otherwise [token], a
+     * client-minted value unique to this change, becomes its unread position.
+     */
+    fun rowsAdded(
+        conversationId: String,
+        viewing: Boolean,
+        token: String,
+    ): HostAttentionState {
+        val position = positions[conversationId]
+        if (viewing || position?.unread == true) return this
+        val unread = ReadPosition(token, position?.readTurnId)
+        return copy(positions = boundedPositions((positions - conversationId) + (conversationId to unread)))
     }
 
     private fun isCounted(

@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonElement
@@ -24,6 +25,13 @@ interface ConversationRepository {
     fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>>
 
     fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
+
+    /**
+     * How many rows each conversation's thread holds on this repository (#1361), keyed by conversation id.
+     * A row appended raises its count; growth of an existing row does not. Defaulted empty for a repository
+     * that has no live thread store.
+     */
+    fun observeThreadRowCounts(): Flow<Map<String, Int>> = emptyFlow()
 
     /**
      * Emits the most-recent [Message] (by [Message.timestamp]) for the
