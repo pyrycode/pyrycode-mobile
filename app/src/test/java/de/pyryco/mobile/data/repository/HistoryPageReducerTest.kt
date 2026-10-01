@@ -315,12 +315,13 @@ class HistoryPageReducerTest {
             reduceHistoryPage(
                 listOf(
                     entry(3, "turn_end", turnEndPayload("turn-1")),
-                    entry(2, "assistant_delta", assistantDeltaPayload("turn-1", seq = 2, text = " world")),
-                    entry(1, "assistant_delta", assistantDeltaPayload("turn-1", seq = 1, text = "hello")),
+                    entry(2, "assistant_delta", assistantDeltaPayload("turn-1", seq = 1, text = " world")),
+                    entry(1, "assistant_delta", assistantDeltaPayload("turn-1", seq = 0, text = "hello")),
                 ),
                 interactive = true,
             )
 
+        // Every turn's text starts at seq 0, the delta that keys its first segment by the bare turn id (#1350).
         assertEquals(listOf("turn-1"), rows.messageIds())
         assertEquals("hello world", rows.messageRow("turn-1")?.content)
         assertFalse(rows.messageRow("turn-1")?.isStreaming ?: true)
