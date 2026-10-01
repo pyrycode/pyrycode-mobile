@@ -18,6 +18,10 @@ The first host has zero extra top padding; subsequent hosts use `TreeHostGap = 1
 [toolbar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) supplies the 24dp gap from its
 divider to the first row. With the old tier divider gone, the toolbar rule is the only full-width rule.
 The section content begins 4dp and conversation content 12dp from the list's 20dp content edge.
+A conversation row's `Box` pads that 12dp on the start only; it ends flush at the tree gutter
+like `TreeHostRow` does, so the Channels/Chats row pens share one horizontal centre with the
+Edit host pen ([#1334](https://github.com/pyrycode/pyrycode-mobile/issues/1334) — the row used
+to pad both sides, which put its pen 12dp left of the host pen's column).
 Each section uses a closed/open folder glyph and right/down chevron to match its fold state. Its fold
 and both section plus controls retain separate 48dp touch targets and host-qualified TalkBack names.
 
