@@ -32,8 +32,8 @@ internal data class ContextUsagePayloadDto(
 
 /**
  * Map a decoded [ContextUsagePayloadDto] to a [ContextUsage], or **null** for a negative
- * [ContextUsagePayloadDto.percentage], which no reading can carry. Otherwise a verbatim copy: the percentage is
- * never recomputed from the token counts. A malformed [ContextUsagePayloadDto.asOf] makes [Instant.parse] throw
+ * [ContextUsagePayloadDto.percentage], which no reading can carry. Otherwise a verbatim copy; the percentage the
+ * thread shows is computed from the token counts downstream (#1411), not here. A malformed [ContextUsagePayloadDto.asOf] makes [Instant.parse] throw
  * [IllegalArgumentException], which the caller's decoder catches, so that frame drops too.
  */
 internal fun ContextUsagePayloadDto.toReading(): ContextUsage? =

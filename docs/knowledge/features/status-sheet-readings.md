@@ -32,17 +32,20 @@ Not in Figma node `20:100` — the design has no running-model row; this section
 private fun ContextWindowSection(contextPercent: Int?)
 ```
 
-`contextPercent` is the same nullable reported percentage used by the footer. A reading
+`contextPercent` is the same nullable percentage computed for the footer. A reading
 renders `N% used`; absence renders `Not reported yet` via `status_sheet_context_unavailable`.
-It never derives a percentage from token counts. The current modal has one reading line:
-the older Context window helper caption and progress bar are absent. This reading is
-read-only and never triggers a settings write. The current dark Figma frame has no
-unavailable variant; its old token-count mockup is historical.
+Since [#1411](https://github.com/pyrycode/pyrycode-mobile/issues/1411) that percentage **is** derived
+from token counts — `ThreadViewModel.contextPercent(usage, settings)` prefers Claude's reported
+`totalTokens` / `maxTokens` and falls back to `SessionSettings.usedTokens` / `.windowTokens` — so this
+section can show a number before any turn has ended, as long as the session settings carry a positive
+window. The current modal has one reading line: the older Context window helper caption and progress bar
+are absent. This reading is read-only and never triggers a settings write. The current dark Figma frame has
+no unavailable variant; its old token-count mockup is historical.
 
 ## Related
 
 Part of [StatusSheet](status-sheet.md); see that document for the shell, the Model and Effort sections,
 `## Shape`, hosting in `ThreadScreen`, tests and edge cases. See also [Thread composer footer § Running
 model](thread-composer-footer.md#running-model-891) and [Thread composer footer § Context usage
-segment](thread-composer-footer.md#context-usage-segment-946) — the two footer readings these sections
-mirror.
+segment](thread-composer-footer-context-usage.md#context-usage-segment-946-computed-since-1411) — the two
+footer readings these sections mirror.
