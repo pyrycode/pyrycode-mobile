@@ -933,8 +933,8 @@ fun ThreadScreen(
         is ModalUiState.Open -> Unit
         is ModalUiState.Dismissed -> {
             val reason = dismissReasonText(modalState.source)
-            // Keyed on modalId: Dismissed is a sticky terminal state (#445's fold), so this fires exactly
-            // once per resolution and never re-fires on unrelated recomposition.
+            // Keyed on modalId: the host fold keeps this conversation's latest dismissal until the next
+            // reconnect (#1337), so this fires once per resolution and never re-fires on unrelated recomposition.
             LaunchedEffect(modalState.modalId) {
                 snackbarHostState.showSnackbar(reason)
             }

@@ -989,6 +989,7 @@ class RelayRepositoryCoordinatorTest {
             openInteractiveConnection(hostA).push(modalShownEnvelope("a1", conversationId = "conv-a"))
             openInteractiveConnection(hostB).push(modalShownEnvelope("b1", conversationId = "conv-b"))
             runCurrent()
+            assertEquals(listOf("a1"), hostA.coordinator.heldIds())
 
             hostA.connections.value = null
             runCurrent()
@@ -1043,7 +1044,7 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
-    // Unlike currentModal, question state resets on reconnect: the daemon's connect-time reconcile re-sends
+    // Like hostModals, question state resets on reconnect: the daemon's connect-time reconcile re-sends
     // every outstanding batch under its original id, and one resolved while mobile was away is absent.
     @Test
     fun questionBatches_resetOnReconnectAndHoldReconciledBatchOnce() =

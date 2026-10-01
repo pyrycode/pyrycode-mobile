@@ -254,7 +254,7 @@ class RelayRepositoryCoordinator(
      *
      * Switched to the active connection's [RemoteConversationRepository.questionBatches] and started
      * [SharingStarted.Eagerly] for [hostModals]' reason (#492): a batch that arrives before any thread
-     * screen subscribes is held. Like [hostModals] it is **not** retained across a reconnect:
+     * screen subscribes is held. Unlike [hostModals], which keeps its prompts through a teardown, it is **not** retained:
      * [teardownActive] nulls [activeConnection] (empty) and the next connection's repository starts empty,
      * so the old connection's batches are gone before the new one's first frame folds, and the daemon's
      * connect-time reconcile rebuilds only the batches still outstanding. No log: the batch strings are
