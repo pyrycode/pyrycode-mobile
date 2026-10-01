@@ -167,6 +167,9 @@ class RemoteConversationRepository(
     private val usageLimitProjection = hostReadings.usageLimit
     private val thinkingProgressProjection = ThinkingProgressProjection()
     private val resettingProjection = ResettingProjection()
+
+    /** The turn phase of every conversation on this connection (#1313); see [TurnPhaseProjection]. */
+    private val turnPhaseProjection = TurnPhaseProjection()
     private val announcedModelProjection = hostReadings.announcedModel
     private val sessionFactsProjection = hostReadings.sessionFacts
 
@@ -565,13 +568,16 @@ class RemoteConversationRepository(
                         // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
                         // onset arm below — both are inside the same `interactive` gate.
                         stallProjection.clear(event.conversationId)
+                        // Hold the conversation's turn phase (#1313) for every conversation, open or not, so
+                        // a thread opened mid-turn reads it at once. Only `turn_state` and `turn_end` move it.
+                        turnPhaseProjection.apply(event)
                         // Fold the structured turn into the same thread store ([ThreadProjection]) the live
                         // `message` arm writes, so every row interleaves by arrival order (AC #4): a
                         // `tool_use`/`tool_result` pair into one evolving tool row (#387), and the
                         // `assistant_delta` stream into one streaming assistant row that `turn_end`
-                        // finalizes (#337). `turn_state` stays a stream-only signal — the thinking
-                        // indicator reads it off the live-event stream below (#406) — and every event
-                        // is surfaced on that stream regardless of whether it also folds a row.
+                        // finalizes (#337). `turn_state` folds no row — the thinking indicator reads the
+                        // held phase above (#1313) — and every event is surfaced on the live-event stream
+                        // below regardless of whether it also folds a row.
                         when (event) {
                             is LiveSessionEvent.AssistantDelta -> threadProjection.applyAssistantDelta(event)
                             is LiveSessionEvent.ToolUse -> threadProjection.applyToolUse(event)
@@ -1101,6 +1107,9 @@ class RemoteConversationRepository(
     override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetryProjection.observe(conversationId)
 
     override fun observeCompacting(conversationId: String): Flow<Boolean> = compactingProjection.observe(conversationId)
+
+    override fun observeTurnPhase(conversationId: String): Flow<LiveSessionEvent.TurnState.Phase> =
+        turnPhaseProjection.observe(conversationId)
 
     override fun observeResetting(conversationId: String): Flow<ResetStatus?> = resettingProjection.observe(conversationId)
 

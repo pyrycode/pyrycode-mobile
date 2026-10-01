@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
@@ -99,6 +100,10 @@ class StableConversationRepository(
         switchToLive(ApiRetryStatus.NotRetrying) { it.observeApiRetry(conversationId) }
 
     override fun observeCompacting(conversationId: String): Flow<Boolean> = switchToLive(false) { it.observeCompacting(conversationId) }
+
+    /** The live connection's held turn phase (#1313); idle with no connection, and a new one starts idle. */
+    override fun observeTurnPhase(conversationId: String): Flow<LiveSessionEvent.TurnState.Phase> =
+        switchToLive(LiveSessionEvent.TurnState.Phase.Idle) { it.observeTurnPhase(conversationId) }
 
     override fun observeResetting(conversationId: String): Flow<ResetStatus?> =
         switchToLive<ResetStatus?>(null) { it.observeResetting(conversationId) }

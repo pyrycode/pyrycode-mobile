@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
@@ -85,6 +86,17 @@ interface ConversationRepository {
      * [observeStall] / [observeQueue] / [observeApiRetry].
      */
     fun observeCompacting(conversationId: String): Flow<Boolean> = flowOf(false)
+
+    /**
+     * Emits [conversationId]'s current turn phase (#1313): the latest `turn_state`, back to
+     * [LiveSessionEvent.TurnState.Phase.Idle] on `turn_end`. Held per conversation for the connection, so a
+     * collector that subscribes mid-turn reads the running phase at once, and a new connection starts every
+     * conversation idle. Cold flow; re-emits on every change.
+     *
+     * Default `flowOf(Idle)` — implementations without an interactive wire (the fake, inline test doubles)
+     * inherit "no turn running" and need no override, the same cascade-avoidance as [observeCompacting].
+     */
+    fun observeTurnPhase(conversationId: String): Flow<LiveSessionEvent.TurnState.Phase> = flowOf(LiveSessionEvent.TurnState.Phase.Idle)
 
     /**
      * Emits which phase of a Reset [conversationId] is in, and what became of its handoff note (#871), or
