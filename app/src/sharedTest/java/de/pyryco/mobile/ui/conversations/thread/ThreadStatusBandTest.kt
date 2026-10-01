@@ -11,7 +11,10 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertLeftPositionInRootIsEqualTo
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -186,6 +189,18 @@ class ThreadStatusBandTest {
 
         composeTestRule.onNodeWithText(string(R.string.question_waiting_for_answers)).assertIsDisplayed()
         composeTestRule.onAllNodesWithTag(STATUS_GLYPH_TEST_TAG, useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun turnReadings_sitInTheTaggedReadingBox() {
+        reading = Reading("working", isBusy = true)
+        setThread()
+
+        composeTestRule
+            .onNode(
+                hasText(string(R.string.thread_working_label)) and hasAnyAncestor(hasTestTag(STATUS_READING_TEST_TAG)),
+                useUnmergedTree = true,
+            ).assertIsDisplayed()
     }
 
     @Test

@@ -31,9 +31,9 @@ private val IndicatorVerticalPadding = 4.dp
  *
  * Stateless and a pure function of [status]: emits nothing for `null`, the sibling early-return idiom.
  * Otherwise the [CompactingIndicator] row — a plain label, since both phases are progress with no counter
- * on the wire — chosen by [resettingLabelRes]; the band draws the snowflake beside it (#1312). The label is also the row's
- * merged content description, so the wording has one source. Every string is a local resource selected by
- * closed-set enum; no daemon or claude text reaches this composable.
+ * on the wire — chosen by [resettingLabelRes]; the band draws the snowflake beside it (#1312). The label
+ * is also the row's merged content description, so the wording has one source. Every string is a local
+ * resource selected by closed-set enum; no daemon or claude text reaches this composable.
  */
 @Composable
 fun ResettingIndicator(

@@ -126,6 +126,7 @@ import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_WINDOW_MS
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.PermissionModeOption
 import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
+import de.pyryco.mobile.ui.conversations.thread.STATUS_READING_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.UNAVAILABLE_MODEL_LABEL
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
@@ -513,6 +514,8 @@ class InteractiveStreamE2ETest {
                 context.getString(R.string.thread_thinking_label),
                 context.resources.getString(R.string.thread_tool_running_label).substringBefore("%"),
             )
+        // Scoped to the band's reading box, so a streamed reply line that opens with "Running …" cannot pass
+        // for a reading and hide a dark band.
         val turnReading =
             SemanticsMatcher("a thinking, working, running-tool or stall reading") { node ->
                 node.config
@@ -520,7 +523,7 @@ class InteractiveStreamE2ETest {
                     .orEmpty()
                     .map { it.text }
                     .any { text -> text in turnReadings || turnPrefixes.any { text.startsWith(it) } }
-            }
+            } and hasAnyAncestor(hasTestTag(STATUS_READING_TEST_TAG))
         val otherReading =
             SemanticsMatcher("a compaction, api-retry, reset, connection or waiting reading") { node ->
                 val descriptions = node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()

@@ -119,6 +119,9 @@ import kotlinx.datetime.Instant
 
 private const val ABOVE_DELIMITER_ALPHA = 0.55f
 
+/** The status band's reading box (#1312), so a test can tell a band reading from the same words in a message. */
+internal const val STATUS_READING_TEST_TAG = "thread-status-reading"
+
 // Figma 16:8's `Input area` (533:1957) and its offsets inside the 412dp reference frame: a 20dp
 // content gutter (372dp of content), 8dp between the area's three bands, 12dp of air above it where
 // the message area ends, and 16dp below it at the frame's foot.
@@ -1021,7 +1024,7 @@ private fun ThreadStatusArea(
             ThreadStatusGlyph(turning = isBusy || localSendPending)
         }
         // Always present, so the pill keeps the band's right end while no reading shows.
-        Box(Modifier.weight(1f)) {
+        Box(Modifier.weight(1f).testTag(STATUS_READING_TEST_TAG)) {
             if (waitingForAnswers) {
                 Text(
                     stringResource(R.string.question_waiting_for_answers),

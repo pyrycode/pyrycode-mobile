@@ -36,9 +36,8 @@ private val IndicatorVerticalPadding = 4.dp
  * **Indeterminate, deliberately.** The upstream detector streams no compaction progress — the wire
  * payload is `{conversation_id, active}` and carries no counter, percent, or ETA — so a plain label is the
  * honest rendering and a progress bar would invent data. The band's snowflake beside it turns only while
- * the turn is busy (#1312). Nothing daemon-supplied reaches
- * either string (both are literals with no format argument), so unlike [ApiRetryIndicator] there is no
- * display-sanitisation gate to clone.
+ * the turn is busy (#1312). Nothing daemon-supplied reaches either string (both are literals with no
+ * format argument), so unlike [ApiRetryIndicator] there is no display-sanitisation gate to clone.
  *
  * The status this renders is **conversation-level, not turn-scoped** — it neither opens nor closes a
  * turn, so it decorates the existing thinking affordance's slot rather than altering the turn lifecycle,

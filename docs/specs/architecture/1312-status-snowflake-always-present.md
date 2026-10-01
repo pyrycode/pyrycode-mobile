@@ -72,3 +72,8 @@ Pending for the documentation stage:
 - `ShadowValueAnimator.setDurationScale` is protected; the rotation test calls the framework's hidden `ValueAnimator.setDurationScale` through Robolectric's `ReflectionHelpers`, which is still the value `ValueAnimator.areAnimatorsEnabled()` reads.
 - `ThreadStatusBandTest` runs the per-state check with native graphics at Figma's 412dp reference width, where every reading is one line; a reading that wraps at a narrower width raises the band, as it did before. The absolute-dp checks (42dp label start, 14 × 16 slot) run at the default configuration because `ForcedSize` rescales density.
 - `ThreadScreenModalTest`: the always-present band shortens Robolectric's message area by 32dp. `context_rows_render_between_the_prompt_and_the_options_in_desktop_order` scrolls each row into view before asserting it, and the offline test taps the always-allow toggle's lower part, because the scroll now leaves that row under the Offline retry pill at the message area's top.
+- `TaskCountPillTest.zeroCount_showsNoPill_andThePillDoesNotMoveTheBand` is renamed and its assertion flipped: the band is always present now, so the test checks that showing the pill leaves the band in place.
+
+**2026-10-01, rework after review.**
+
+- The verifier's SHOULD FIX: the live test's turn-reading matcher searched the whole tree, so a streamed reply line opening with "Running …" could pass for a reading. The band's reading box now carries the tag `STATUS_READING_TEST_TAG`, and `interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy` counts a turn reading only beneath it. `ThreadStatusBandTest.turnReadings_sitInTheTaggedReadingBox` asserts the tag holds the reading.

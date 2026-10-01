@@ -89,8 +89,7 @@ private const val MAX_PLAUSIBLE_THINKING_TOKENS = 1_000_000L
  * (see `openToolCall` beside the thread screen) and the label reads `Running <tool>…`, with claude's latest
  * `tool_progress` reading appended in the tool row's elapsed format. It replaces both thinking labels
  * and raises the row on its own, so a tool running in the `responding` phase is named too. It varies the
- * same [Text] argument. With no reading the
- * label shows no time; nothing here counts seconds.
+ * same [Text] argument. With no reading the label shows no time; nothing here counts seconds.
  *
  * **Working and stalled (#1311).** [isWorking] is the `responding` phase of a running turn and reads
  * `Working…`, so the band never goes dark while claude writes text, between two tools, or after a denial.
