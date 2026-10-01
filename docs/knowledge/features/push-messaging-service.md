@@ -243,11 +243,24 @@ conversation reads exactly as before (`notification_turn_completed` / `notificat
 conversation gets `notification_turn_completed_codex` / `notification_prompt_codex`, and a conversation the
 agent lookup above returns `null` for gets the neutral `notification_turn_completed_neutral` /
 `notification_prompt_neutral` ("A reply finished" / "An answer is needed") — a lookup miss reads as unknown,
-never as an assumed Claude. Title is still the app name. No daemon-authored conversation name or
-push-message field ever reaches it; the agent name is one of these fixed, client-owned strings. Tag =
-`SHA-256(serverId, conversationId)`, id `0`: one notification per conversation per host, so the same
-conversation id on two hosts posts two notifications, and a later alert for the same conversation replaces
-the earlier one instead of stacking.
+never as an assumed Claude. The agent name is one of these fixed, client-owned strings; no daemon-authored
+field drives the body text. The **title** is the conversation's own name (#1330, below) when one is known,
+and the app name otherwise. Tag = `SHA-256(serverId, conversationId)`, id `0`: one notification per
+conversation per host, so the same conversation id on two hosts posts two notifications, and a later alert
+for the same conversation replaces the earlier one instead of stacking.
+
+### The name lookup and title (#1330)
+
+`nameOf: (serverId, conversationId) -> String?` is wired exactly like `agentOf` above — a constructor
+parameter over a top-level `internal fun List<HostConversationSnapshot>.nameOf(serverId, conversationId):
+String?` (`AttentionNotifier.kt`), host-first then `channels + chats`, null on a missing host or row. The
+conversation name is daemon-authored and untrusted, so it crosses into the notification only through
+`notificationTitle(name: String?): String?`, which copies desktop's `notificationTitle` (`fireNotification.ts`,
+\#1593): walk by code point, drop `\p{Cc}` control characters, keep at most `MAX_TITLE_CODE_POINTS` (80) code
+points without ever splitting a surrogate pair, then trim both whitespace and U+FEFF (Kotlin's `trim()`
+doesn't strip U+FEFF the way JS's does, so the contract spells it out — see the #1330 plan's Revisions). Null
+input or an empty result after cleaning both return null, and `post` falls back to `getString(R.string.app_name)`.
+The name is never logged — `handle`'s log line carries only the static `outcome`/`kind` codes.
 
 **The tap** carries only a server id and a conversation id, via `NotificationTap`'s explicit-component,
 `FLAG_IMMUTABLE` `PendingIntent` naming `MainActivity` and `ACTION_OPEN_CONVERSATION`. `MainActivity` is
@@ -286,6 +299,7 @@ single(createdAtStart = true) {
         notificationsEnabled = get<AppPreferences>().notificationsEnabled,
         isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
         agentOf = { serverId, conversationId -> source.snapshots.value.agentOf(serverId, conversationId) },
+        nameOf = { serverId, conversationId -> source.snapshots.value.nameOf(serverId, conversationId) },
         isForeground = { ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) },
         ledgerFile = File(androidContext().noBackupFilesDir, "attention_alerts"),
     )
@@ -324,6 +338,12 @@ No id, digest or notification text appears in any of these lines.
   as before, and the channel description reads neutrally.
   `List<HostConversationSnapshot>.agentOf`'s own table (Codex in `channels`, Codex in `chats`, a Claude
   row, id missing from the host's rows, host missing entirely) is a plain unit test beside `isMuted`'s.
+  (#1330) A named conversation's alert is titled with its own host's name and keeps its body unchanged
+  (`aNamedConversationsAlertIsTitledWithItsOwnHostsNameAndKeepsItsBody`); an unnamed or blank-after-cleaning
+  conversation gets the app name (`anUnnamedOrBlankNamedConversationIsTitledWithTheAppName`);
+  `notificationTitle` drops controls, caps at 80 code points without splitting a surrogate pair, and trims
+  whitespace and U+FEFF (`theTitleDropsControlsCapsAt80CodePointsAndNeverSplitsASurrogatePair`); and
+  `nameOf` reads only the alert's own host (`theNameLookupReadsOnlyTheAlertsOwnHostAndIsNullWhenMissing`).
 - `NotificationTapNavigationTest` (`app/src/sharedTest`) drives `PyryNavHost` on the production Koin
   graph, per the `SettingsNavigationTest` pattern: a saved host's target opens the thread above
   `CHANNEL_LIST`; an unsaved host's target stays on `CHANNEL_LIST`.
@@ -370,4 +390,7 @@ No id, digest or notification text appears in any of these lines.
 - Spec: `docs/specs/architecture/1102-request-current-fcm-token.md` — `PushTokenRefresher`'s design,
   the #1076 gate flake it fixes, and the Phase B revision resolving the `Task` listener/executor
   question.
+- Spec: `docs/specs/architecture/1330-alert-title-conversation-name.md` — the name lookup and
+  `notificationTitle`'s design, and § Security review (verdict PASS) on the untrusted-name trust
+  boundary.
 - README `### Firebase` — where `app/google-services.json` and the conditional plugin are recorded.
