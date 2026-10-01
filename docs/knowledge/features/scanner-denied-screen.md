@@ -97,7 +97,7 @@ persistence. Debug builds log only static action names (`back`, `settings`,
 
 Permission state remains in `ScannerViewModel`. Its existing process-death and
 return-from-settings limitations are described in
-[Scanner screen edge cases](scanner-screen.md#edge-cases--limitations); restoring
+[Scanner screen edge cases](scanner-screen-edge-cases-and-testing.md#edge-cases--limitations); restoring
 the header does not add an on-resume permission check.
 
 ## Testing
