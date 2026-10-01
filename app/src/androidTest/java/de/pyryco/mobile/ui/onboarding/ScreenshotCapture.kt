@@ -22,23 +22,30 @@ internal fun ComposeTestRule.saveScreenshot(
     name: String,
     node: () -> SemanticsNodeInteraction,
 ) {
-    var image: ImageBitmap? = null
-    var timeout: ComposeTimeoutException? = null
-    for (attempt in 1..CAPTURE_ATTEMPTS) {
-        if (attempt > 1) waitForIdle()
-        try {
-            image = node().captureToImage()
-            break
-        } catch (e: ComposeTimeoutException) {
-            timeout = e
-        }
-    }
-    if (image == null) {
-        Log.w("Screenshot", "skipped $name after $CAPTURE_ATTEMPTS attempts: ${timeout?.message}")
-        return
-    }
+    val image = captureWithRetry(name, node) ?: return
     File(dir).mkdirs()
     File(dir, "$name.png").outputStream().use {
         image.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
     }
+}
+
+/**
+ * Captures [node], retrying when `captureToImage` times out on a loaded emulator. Returns null,
+ * with a log line naming [name], when every attempt times out, so the caller can skip its check.
+ */
+internal fun ComposeTestRule.captureWithRetry(
+    name: String,
+    node: () -> SemanticsNodeInteraction,
+): ImageBitmap? {
+    var timeout: ComposeTimeoutException? = null
+    for (attempt in 1..CAPTURE_ATTEMPTS) {
+        if (attempt > 1) waitForIdle()
+        try {
+            return node().captureToImage()
+        } catch (e: ComposeTimeoutException) {
+            timeout = e
+        }
+    }
+    Log.w("Screenshot", "skipped $name after $CAPTURE_ATTEMPTS attempts: ${timeout?.message}")
+    return null
 }

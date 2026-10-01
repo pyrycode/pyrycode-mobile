@@ -216,8 +216,11 @@ private `ChatEditorModal(hostState, onEvent)` as a third `Scaffold` sibling, aft
 drawn only while `hostState.chatEditor != null`. It passes
 [`EditChatModal`](mobile-modal-callers.md#callers) `conversationId`, `initialName`, `saving` and `failed` straight
 off that state, and `hostAvailable = hostState.isHostConnected(editor.serverId)` — read fresh on every
-draw from the same host-snapshot flow the rows themselves render from, so a disconnect disables OK and a
-reconnect re-enables it without the modal leaving composition or losing the typed name; the error slot
+draw from the same host-snapshot flow the rows themselves render from, so OK stays disabled while the row's
+own host is not connected. Since #1336 that disconnect also closes this modal outright, rather than
+leaving it open with OK disabled: the view model's own snapshot watcher clears `chatEditor` for a host that
+drops, so `hostAvailable` now only covers the brief window between a disconnect snapshot landing and the
+watcher's own clear — see [ChannelListViewModel](channel-list-viewmodel.md#wiring). The error slot
 resolves the one generic string, `R.string.edit_chat_save_failed`, the same way the host editor's does.
 `onArchiveRequested = {}` stays unwired until #828. `ChannelListViewModel` owns the open
 (`openChatEditor`, reading the name from the target host's own snapshot, never from row text or another

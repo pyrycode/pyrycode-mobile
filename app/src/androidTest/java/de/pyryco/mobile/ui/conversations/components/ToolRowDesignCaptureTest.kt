@@ -36,41 +36,54 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import java.io.File
 
 /** Device pixels for the simple and described Figma tool-use variants. */
 @RunWith(AndroidJUnit4::class)
 class ToolRowDesignCaptureTest {
-    @get:Rule val rule = createComposeRule()
-
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private var oldSize = "reset"
-    private var oldDensity = "reset"
     private var variant by mutableIntStateOf(0)
     private var contentView: View? = null
 
-    @Before
-    fun setViewport() {
-        oldSize = overrideOf(shell("wm size"))
-        oldDensity = overrideOf(shell("wm density"))
-        shell("wm density 160")
-        shell("wm size 412x892")
-        instrumentation.waitForIdleSync()
-    }
+    /** The display size a test captures at; without it the viewport rule applies 412x892. */
+    @Retention(AnnotationRetention.RUNTIME)
+    @Target(AnnotationTarget.FUNCTION)
+    private annotation class Viewport(
+        val size: String,
+    )
 
-    @After
-    fun restoreViewport() {
-        shell("wm size $oldSize")
-        shell("wm density $oldDensity")
-        instrumentation.waitForIdleSync()
-    }
+    // Resizing under a running activity can recreate or refocus it, so the final size is
+    // applied here before the compose rule launches its activity, and restored after it ends.
+    @get:Rule(order = 0)
+    val viewport =
+        TestRule { base, description ->
+            object : Statement() {
+                override fun evaluate() {
+                    val size = overrideOf(shell("wm size"))
+                    val density = overrideOf(shell("wm density"))
+                    shell("wm density 160")
+                    shell("wm size ${description.getAnnotation(Viewport::class.java)?.size ?: "412x892"}")
+                    try {
+                        instrumentation.waitForIdleSync()
+                        base.evaluate()
+                    } finally {
+                        shell("wm size $size")
+                        shell("wm density $density")
+                        instrumentation.waitForIdleSync()
+                    }
+                }
+            }
+        }
+
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
 
     @Test
     fun referenceVariantsAt412By892() {
@@ -97,10 +110,9 @@ class ToolRowDesignCaptureTest {
         capture("emulator-expanded.png", 412, 892, 1f)
     }
 
+    @Viewport("320x700")
     @Test
     fun compactLargeTextKeepsDescriptionAndStatusReachable() {
-        shell("wm size 320x700")
-        instrumentation.waitForIdleSync()
         variant = 1
         showRow(fontScale = 1.5f)
         rule.onNodeWithText(DESCRIPTION).assertIsDisplayed()
