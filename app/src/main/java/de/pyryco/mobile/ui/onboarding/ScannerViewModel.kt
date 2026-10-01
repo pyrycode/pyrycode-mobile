@@ -1,10 +1,20 @@
 package de.pyryco.mobile.ui.onboarding
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.network.RelayConnectionController
+import de.pyryco.mobile.data.network.RelayLog
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+internal const val SAVE_FAILED_MESSAGE = "Couldn't save the pairing. Please try again."
 
 sealed interface ScannerUiState {
     // Initial: the camera-permission request is in flight / being checked.
@@ -44,6 +54,28 @@ sealed interface ScannerUiState {
         val fingerprint: String,
         val server: PairedServer,
     ) : ScannerUiState
+
+    // Confirm saved (or is saving) [server] and waits for the host to answer (#1386). The confirm modal
+    // stays up in its loading state; [server] is the exact record Retry waits for again.
+    data class Verifying(
+        val fingerprint: String,
+        val server: PairedServer,
+    ) : ScannerUiState
+
+    // The shared step's failure for the saved [server] (#1386): its [message], and whether Retry is offered.
+    // Flattened from the internal PairingVerification.Failure, which this public state cannot expose.
+    data class VerificationFailed(
+        val fingerprint: String,
+        val server: PairedServer,
+        val message: String,
+        val retryable: Boolean,
+    ) : ScannerUiState
+
+    // The host answered on both legs: the route opens the channel list.
+    data object Paired : ScannerUiState
+
+    // Cancel or Back during the wait or after a failure: the route pops the scanner. The host stays saved.
+    data object Cancelled : ScannerUiState
 }
 
 sealed interface ScannerEvent {
@@ -84,19 +116,57 @@ sealed interface ScannerEvent {
     ) : ScannerEvent
 
     // Fired by the Decline button and by system Back while AwaitingConfirm: persist nothing, re-arm
-    // the scanner (#343). Confirm is deliberately NOT an event — the suspend save + navigate is a
-    // route-scope callback in the composable (mirrors onPasteCode), keeping this VM Android-free.
+    // the scanner (#343).
     data object DeclinePairing : ScannerEvent
+
+    // The Confirm button (#1386): save the held record, then wait for the host to answer.
+    data object ConfirmPairing : ScannerEvent
+
+    data object RetryVerification : ScannerEvent
+
+    data object CancelVerification : ScannerEvent
 }
 
-// Pure synchronous state machine: no viewModelScope, no flows beyond the single state holder, no
-// Android types. The only async edge (the runtime permission callback) lives in the composable and
-// feeds this VM via onEvent.
-class ScannerViewModel : ViewModel() {
+// A synchronous state machine for the scan itself. Confirm owns the one async edge (#1386): save, then
+// wait on the saved record with the step the code path shares, in viewModelScope so the wait survives
+// rotation and stops when the route is popped. No Android types.
+class ScannerViewModel(
+    private val store: PairedServerStore,
+    private val controller: RelayConnectionController,
+    private val observe: (PairedServer) -> Flow<ConnectionStatus?>,
+) : ViewModel() {
     private val scannerState = MutableStateFlow<ScannerUiState>(ScannerUiState.PermissionRequesting)
     val state: StateFlow<ScannerUiState> = scannerState.asStateFlow()
+    private var operation: Job? = null
 
     fun onEvent(event: ScannerEvent) {
+        when (val current = scannerState.value) {
+            is ScannerUiState.AwaitingConfirm ->
+                if (event == ScannerEvent.ConfirmPairing) {
+                    scannerState.value = ScannerUiState.Verifying(current.fingerprint, current.server)
+                    operation = viewModelScope.launch { persist(current.fingerprint, current.server) }
+                    return
+                }
+            // While the modal waits or holds a failure, only its own actions apply: a rotation re-sends
+            // PermissionGranted, which must not hide the modal while the wait still runs.
+            is ScannerUiState.Verifying, is ScannerUiState.VerificationFailed -> {
+                if (event == ScannerEvent.CancelVerification) {
+                    operation?.cancel()
+                    scannerState.value = ScannerUiState.Cancelled
+                    RelayLog.d { "event=scanner_pair_cancel" }
+                } else if (event == ScannerEvent.RetryVerification &&
+                    current is ScannerUiState.VerificationFailed &&
+                    current.retryable
+                ) {
+                    scannerState.value = ScannerUiState.Verifying(current.fingerprint, current.server)
+                    RelayLog.d { "event=scanner_pair_retry" }
+                    operation = viewModelScope.launch { verify(current.fingerprint, current.server, retry = true) }
+                }
+                return
+            }
+            ScannerUiState.Paired, ScannerUiState.Cancelled -> return
+            else -> Unit
+        }
         scannerState.value =
             when (event) {
                 ScannerEvent.PermissionGranted -> ScannerUiState.ReadyToScan
@@ -110,6 +180,50 @@ class ScannerViewModel : ViewModel() {
                 // surface / the AwaitingConfirm-gated BackHandler. Re-arms CameraPreview (mounted
                 // only in ReadyToScan); persists nothing.
                 ScannerEvent.DeclinePairing -> ScannerUiState.ReadyToScan
+                ScannerEvent.ConfirmPairing,
+                ScannerEvent.RetryVerification,
+                ScannerEvent.CancelVerification,
+                -> return
             }
+    }
+
+    private suspend fun persist(
+        fingerprint: String,
+        server: PairedServer,
+    ) {
+        var saved = false
+        RelayLog.d { "event=scanner_pair_save_started" }
+        confirmPairingAndConnect(
+            server,
+            store,
+            controller,
+            onPersisted = { saved = true },
+            onFailed = {
+                scannerState.value = ScannerUiState.Error(SAVE_FAILED_MESSAGE)
+                RelayLog.w { "event=scanner_pair_failed code=save_failed" }
+            },
+        )
+        if (saved) verify(fingerprint, server, retry = false)
+    }
+
+    private suspend fun verify(
+        fingerprint: String,
+        server: PairedServer,
+        retry: Boolean,
+    ) {
+        RelayLog.d { "event=scanner_pair_connection_wait" }
+        val outcome = verifySavedPairing(server, observe, retry)
+        // A late result never overrides Cancel or a newer wait.
+        if (scannerState.value != ScannerUiState.Verifying(fingerprint, server)) return
+        when (outcome) {
+            PairingVerification.Connected -> {
+                scannerState.value = ScannerUiState.Paired
+                RelayLog.d { "event=scanner_pair_connected" }
+            }
+            is PairingVerification.Failure -> {
+                scannerState.value = ScannerUiState.VerificationFailed(fingerprint, server, outcome.message, outcome.retryable)
+                RelayLog.w { "event=scanner_pair_failed code=${outcome.code}" }
+            }
+        }
     }
 }

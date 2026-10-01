@@ -242,6 +242,8 @@ fun ThreadScreen(
     // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
     attachments: List<PendingAttachment> = emptyList(),
     attachmentsSending: Boolean = false,
+    // #1327: the running upload's figure (ThreadViewModel.attachmentUploadProgress), drawn on its tile.
+    attachmentUploadProgress: AttachmentUploadProgress? = null,
     onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
     onRemoveAttachment: (Long) -> Unit = {},
     attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
@@ -333,6 +335,9 @@ fun ThreadScreen(
     // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
     // closes when the control stops offering anything (a write goes pending, a reading drops the menu).
+    // #1319: Send, Stop, Actions and the run settings wait for the host's handshake, as on desktop.
+    // #1321: so do the inline permission and question answers.
+    val connected = connectionState == ConnectionState.Connected
     var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
     // #678: the read-only background-task panel the Actions menu opens. Local and keyed like [openControl]:
     // closing it only flips this flag, so nothing is sent and no conversation or task changes.
@@ -341,7 +346,7 @@ fun ThreadScreen(
     var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     val openMenu =
         openControl
-            ?.takeIf { footerControlEnabled(it, state.runConfig) }
+            ?.takeIf { footerControlEnabled(it, state.runConfig, connected) }
             ?.let { control ->
                 footerMenu(
                     control,
@@ -441,6 +446,7 @@ fun ThreadScreen(
                             attachments = attachments,
                             sending = attachmentsSending,
                             onRemove = onRemoveAttachment,
+                            uploadProgress = attachmentUploadProgress,
                             modifier =
                                 Modifier
                                     .padding(horizontal = ComposerGutter)
@@ -461,6 +467,7 @@ fun ThreadScreen(
                         onAnchorChanged = { inputAnchor = it },
                         sending = attachmentsSending,
                         onImagesReceived = onImagesPasted,
+                        enabled = connected,
                     )
                     // The design puts the model/effort controls in the footer, below the input field, not
                     // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
@@ -481,6 +488,7 @@ fun ThreadScreen(
                         agent = state.agent,
                         touchHeight = FrameFooterTouchHeight,
                         contentBottomPadding = FooterTouchBottomOverflow,
+                        connected = connected,
                     )
                 }
             },
@@ -654,6 +662,7 @@ fun ThreadScreen(
                                 permissionRequestItems(
                                     open = open,
                                     armedOptionId = armedOptionId,
+                                    connected = connected,
                                     onOption = onModalOption,
                                     onCancel = onModalCancel,
                                     alwaysAllowAccepted = alwaysAllowAccepted,
@@ -665,7 +674,7 @@ fun ThreadScreen(
                                 val dispatch: (QuestionModalEvent) -> Unit = { onQuestionEvent(it, pending.generation) }
                                 val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp)
                                 item(key = "question-actions:${pending.generation}") {
-                                    Box(gutter) { QuestionBatchActions(pending, dispatch) }
+                                    Box(gutter) { QuestionBatchActions(pending, connected, dispatch) }
                                 }
                                 items(pending.batch.questions.size, key = { "question:${pending.generation}:$it" }) { reversedIndex ->
                                     val index = pending.batch.questions.lastIndex - reversedIndex
@@ -866,7 +875,8 @@ fun ThreadScreen(
             },
             pending = state.runConfig.pending,
             // An empty session id means the daemon has no session to address, so the controls read only.
-            enabled = state.runConfig.writable,
+            // So does a host that is not connected (#1319).
+            enabled = state.runConfig.writable && connected,
             onDismiss = { sheetVisible = false },
             effortNote = state.runConfig.effortNote?.text(state.agent),
             running = state.runConfig.running,

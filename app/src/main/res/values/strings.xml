@@ -28,7 +28,6 @@
     <string name="create_chat_failed">Couldn’t create the chat. Try again.</string>
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <string name="cd_tree_host_update">Update Pyrycode to use %1$s</string>
-    <string name="cd_tree_host_leg_idle">Pyrycode: idle</string>
     <string name="tree_host_update_required">Update Pyrycode to use this host.</string>
     <string name="tree_host_update_required_version">Update Pyrycode to version %1$s or newer to use this host.</string>
     <!-- A Chats row's pencil (#827); %1$s is the chat's (clamped) name or the untitled fallback. -->
@@ -420,6 +419,8 @@
     <string name="cd_remove_attachment">Remove %1$s</string>
     <string name="thread_attachment_file">File</string>
     <string name="thread_attachments_sending">Sending</string>
+    <!-- #1327: desktop's wording for a large upload's figure; %1$d is a whole percentage, 0..100. -->
+    <string name="thread_attachments_uploading">Uploading… %1$d%%</string>
     <plurals name="thread_attachments_too_large">
         <item quantity="one">%1$d file is over the 8 MB limit and was not added</item>
         <item quantity="other">%1$d files are over the 8 MB limit and were not added</item>

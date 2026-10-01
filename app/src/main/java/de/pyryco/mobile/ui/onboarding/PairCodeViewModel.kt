@@ -6,8 +6,6 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerStoreException
 import de.pyryco.mobile.data.model.ConnectionStatus
-import de.pyryco.mobile.data.model.PyrycodeLinkStatus
-import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.PairingParseResult
 import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.network.RelayLog
@@ -17,10 +15,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** Field errors on the pairing code; any other error renders in the action area. */
 internal const val INVALID_CODE_ERROR = "Invalid pairing code"
@@ -48,6 +44,10 @@ internal data class PairCodeState(
     val error: String? = null,
     /** The re-paired host's label in target mode (#842): its stored name, else its server id. */
     val targetName: String? = null,
+    /** The record Confirm saved, held so Retry waits for it again instead of re-parsing (#1385). Never logged. */
+    val saved: PairedServer? = null,
+    /** The held verification failure; [error] carries its message. */
+    val failure: PairingVerification.Failure? = null,
 ) {
     override fun toString() = "PairCodeState([REDACTED])"
 }
@@ -114,6 +114,17 @@ internal class PairCodeViewModel(
             return
         }
         if (current.phase != PairCodePhase.Editing) return
+        // After a verification failure the record is saved: the draft is frozen and Pair only waits again.
+        val failure = current.failure
+        if (failure != null) {
+            val saved = current.saved
+            if (event == PairCodeEvent.Pair && failure.retryable && saved != null) {
+                mutableState.value = current.copy(phase = PairCodePhase.Connecting, error = null, failure = null)
+                RelayLog.d { "event=pair_code_retry" }
+                operation = viewModelScope.launch { verify(saved, retry = true) }
+            }
+            return
+        }
         when (event) {
             is PairCodeEvent.Name -> if (target == null) mutableState.value = current.copy(name = event.value)
             is PairCodeEvent.Code -> mutableState.value = current.copy(code = event.value, error = null)
@@ -158,34 +169,31 @@ internal class PairCodeViewModel(
             fail("Pairing saved, but the host name could not be saved. Retry or cancel.", "name_failed")
             return
         }
-        mutableState.value = state.value.copy(phase = PairCodePhase.Connecting, confirmation = null)
+        mutableState.value = state.value.copy(phase = PairCodePhase.Connecting, confirmation = null, saved = server)
+        verify(server, retry = false)
+    }
+
+    private suspend fun verify(
+        server: PairedServer,
+        retry: Boolean,
+    ) {
         RelayLog.d { "event=pair_code_connection_wait" }
-        val terminal =
-            withTimeoutOrNull(30_000) {
-                observe(server).first {
-                    (it?.relay == RelayLinkStatus.Connected && it.pyrycode == PyrycodeLinkStatus.Connected) ||
-                        it?.relay == RelayLinkStatus.DaemonAbsent ||
-                        it?.relay == RelayLinkStatus.PairingRejected ||
-                        it?.relay is RelayLinkStatus.UpdateRequired ||
-                        it?.relay == RelayLinkStatus.Offline
-                }
+        when (val outcome = verifySavedPairing(server, observe, retry)) {
+            PairingVerification.Connected -> {
+                mutableState.value = state.value.copy(phase = PairCodePhase.Complete)
+                RelayLog.d { "event=pair_code_connected" }
             }
-        if (terminal?.relay == RelayLinkStatus.Connected && terminal.pyrycode == PyrycodeLinkStatus.Connected) {
-            mutableState.value = state.value.copy(phase = PairCodePhase.Complete)
-            RelayLog.d { "event=pair_code_connected" }
-        } else if (terminal?.relay is RelayLinkStatus.UpdateRequired) {
-            // A retry cannot help until the app is updated (#1008); the host's minimum is not shown here.
-            fail("Pairing saved. This app is too old for this host. Update the app, then retry.", "update_required")
-        } else {
-            fail("Pairing saved. Host unavailable. Retry or cancel.", if (terminal == null) "deadline" else "unavailable")
+            is PairingVerification.Failure -> fail(outcome.message, outcome.code, outcome)
         }
     }
 
     private fun fail(
         message: String,
         code: String,
+        failure: PairingVerification.Failure? = null,
     ) {
-        mutableState.value = state.value.copy(phase = PairCodePhase.Editing, confirmation = null, error = message)
+        mutableState.value =
+            state.value.copy(phase = PairCodePhase.Editing, confirmation = null, error = message, failure = failure)
         RelayLog.w { "event=pair_code_failed code=$code" }
     }
 }

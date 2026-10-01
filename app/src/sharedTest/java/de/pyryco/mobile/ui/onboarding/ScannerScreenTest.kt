@@ -2,11 +2,16 @@ package de.pyryco.mobile.ui.onboarding
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -332,6 +337,89 @@ class ScannerScreenTest {
         composeTestRule.onNodeWithText("Confirm pairing").assertHeightIsAtLeast(48.dp)
         composeTestRule.onNodeWithText("Don't pair").assertHeightIsAtLeast(48.dp)
     }
+
+    // ---- Verification after Confirm (#1386) -----------------------------------
+
+    @Test
+    fun verifying_keepsTheModalLoadingWithCancelEnabled() {
+        var cancelled = false
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = ScannerUiState.Verifying(FINGERPRINT, pairedServer()),
+                    onNavigateBack = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                    onCancelPairing = { cancelled = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(FINGERPRINT).assertExists()
+        composeTestRule.onNodeWithText("Confirm pairing").assertIsNotEnabled()
+        composeTestRule.onNodeWithText("Don't pair").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Cancel").assertIsEnabled().performClick()
+        assertTrue(cancelled)
+    }
+
+    @Test
+    fun verificationFailed_offersRetryOnlyWhenTheStepAllowsIt() {
+        val events = mutableListOf<String>()
+        var state by mutableStateOf<ScannerUiState>(failed(PairingVerification.Failure.Unavailable))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = state,
+                    onNavigateBack = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                    onRetryPairing = { events += "retry" },
+                    onCancelPairing = { events += "cancel" },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(PairingVerification.Failure.Unavailable.message).assertExists()
+        composeTestRule.onNodeWithText("Confirm pairing").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Retry").assertIsEnabled().performClick()
+        composeTestRule.onNodeWithText("Cancel").assertIsEnabled().performClick()
+        composeTestRule.runOnIdle { assertEquals(listOf("retry", "cancel"), events.toList()) }
+
+        composeTestRule.runOnIdle {
+            events.clear()
+            state = failed(PairingVerification.Failure.Rejected)
+        }
+        composeTestRule.onNodeWithText(PairingVerification.Failure.Rejected.message).assertExists()
+        composeTestRule.onNodeWithText("Retry").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Confirm pairing").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Cancel").assertIsEnabled().performClick()
+        composeTestRule.runOnIdle { assertEquals(listOf("cancel"), events.toList()) }
+    }
+
+    // A rebuilt Dialog window composes fresh layout nodes, so a changed semantics id means the modal closed and reopened.
+    @Test
+    fun confirmWaitAndFailure_keepTheSameModalWindow() {
+        var state by mutableStateOf<ScannerUiState>(ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(state = state, onNavigateBack = {}, onOpenSettings = {}, onPasteCode = {})
+            }
+        }
+        val fingerprintId = composeTestRule.onNodeWithText(FINGERPRINT).fetchSemanticsNode().id
+
+        listOf(
+            ScannerUiState.Verifying(FINGERPRINT, pairedServer()),
+            failed(PairingVerification.Failure.Unavailable),
+            ScannerUiState.Verifying(FINGERPRINT, pairedServer()),
+            failed(PairingVerification.Failure.Rejected),
+        ).forEach { next ->
+            composeTestRule.runOnIdle { state = next }
+            assertEquals(fingerprintId, composeTestRule.onNodeWithText(FINGERPRINT).fetchSemanticsNode().id)
+        }
+    }
+
+    private fun failed(failure: PairingVerification.Failure) =
+        ScannerUiState.VerificationFailed(FINGERPRINT, pairedServer(), failure.message, failure.retryable)
 
     private companion object {
         const val FINGERPRINT = "32:0b:5e:a9:9e:65:3b:c2"

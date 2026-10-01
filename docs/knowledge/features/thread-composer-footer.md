@@ -10,7 +10,7 @@ The current footer shows Actions and context usage, then attachment and Run conf
 
 ## Sourcing
 
-Run configuration and the footer projections come from `ThreadUiState.runConfig: ThreadRunConfig` (`ThreadUiState.kt`). The sheet reads this state for Model, Effort and Permission, so its sections agree by construction. `ThreadRunConfig` folds `ConversationRepository.observeSessionSettings(conversationId)` (the saved `model` / `effort` / `permissionMode` plus the `sessionId` a write must address) and `observeModelMenu(conversationId)` (the models this conversation's daemon published, each with its own `effortLevels` and, since #650, `supportsAutoMode`) together with independent pending-write flags — `pendingModel: String?`, `pendingEffort: String?`, and `pendingPermission: String?` — each `null` when no write is outstanding for that control.
+Run configuration and the footer projections come from `ThreadUiState.runConfig: ThreadRunConfig` (`ThreadUiState.kt`). The sheet reads this state for Model, Effort and Permission, so its sections agree by construction. `ThreadRunConfig` folds `ConversationRepository.observeSessionSettings(conversationId)` (the saved `model` / `effort` / `permissionMode` plus the `sessionId` a write must address) and `observeModelMenu(conversationId)` (the models this conversation's daemon published, each with its own `effortLevels` and, since #650, `supportsAutoMode`) together with independent pending-write flags — `pendingModel: String?`, `pendingEffort: String?`, and `pendingPermission: String?` — each `null` when no write is outstanding for that control. `settingsHeld: Boolean` ([#1320](https://github.com/pyrycode/pyrycode-mobile/issues/1320), folded from `SessionSettings.held`) marks a reading that was carried across a reconnect rather than answered by the live connection — it fills the model/effort labels and keeps `writable` true, but is display-only: see [§ Permission mode — Context cancellation](#permission-mode-650) for how an outstanding write treats it, and [remembered effort recall](thread-composer-footer-effort-recall.md#remembered-effort-recall-686) for why the recall waits on it too.
 
 Two computed properties resolve the model and effort labels used by run configuration and its menu projection:
 
@@ -41,7 +41,7 @@ The permission button reads `ThreadRunConfig.permissionMode: String` — the **l
 
 **Failure:** a `RelayErrorException` (e.g. `session.not_found` on a dormant session) or `IllegalStateException` clears `pendingPermission`, sends the existing `sessionSettingsErrorChannel` signal (the shared failure snackbar), and triggers one `refreshSessionSettings` — no settle loop runs. `CancellationException` is rethrown before either typed catch, matching `sendSessionSettings`.
 
-**Context cancellation:** the same `sessionSettings.onEach` that publishes the reading tick also cancels an outstanding permission write — before publishing that tick — when the delivered reading is `null` (subscription head on a host switch or an owning-host reconnect, or a failed read) or its `sessionId` differs from the write's target session. Cancelling mid-send abandons the reply waiter, so a late ack from the old context reaches nothing and cannot start a settle; the canceller clears `pendingPermission` itself. Running the cancel check before the tick publish matters: otherwise the settle loop could observe a first reading from the new context before its own job was torn down.
+**Context cancellation:** the same `sessionSettings.onEach` that publishes the reading tick also cancels an outstanding permission write — before publishing that tick — when the delivered reading is `null` or `held` (subscription head on a host switch or a same-host reconnect, a failed read, or — since [#1320](https://github.com/pyrycode/pyrycode-mobile/issues/1320) — a reading carried across a reconnect rather than answered on the live connection) or its `sessionId` differs from the write's target session. Cancelling mid-send abandons the reply waiter, so a late ack from the old context reaches nothing and cannot start a settle; the canceller clears `pendingPermission` itself. Running the cancel check before the tick publish matters: otherwise the settle loop could observe a first reading from the new context before its own job was torn down. The same `lost` test (`reading == null || reading.held`) also clears `pendingModel`/`pendingEffort` when it matches the currently-pending raw value — a held reading is exactly as much a lost context as the pre-#1320 `null` head was, so a reconnect does not strand a tap as pending against a reading that will never confirm it.
 
 **Session-reset staleness:** on a `session_transition`, `RemoteConversationRepository` folds the new id into `currentSessionId` synchronously before bumping the settings-read revision, so a reading for the *old* session can still be the most recent one on hand for a beat. `ThreadRunConfig.forLiveSession(liveSessionId)` (private, `ThreadViewModel.kt`, applied in the `state` combine using `conv?.currentSessionId`) blanks `permissionMode` whenever `liveSessionId` is non-empty and differs from `runConfig.sessionId` — an equality check, not an arrival-order race, so it doesn't matter whether the transition or the settings re-read lands first. Model and effort labels are untouched by this rule.
 
@@ -90,7 +90,12 @@ never shown as whole when either side cut it. `ThreadRunningModel.model` is
 — `SessionFacts.permissionMode` is read nowhere in this flow, pinned by a
 `ThreadViewModelRunningModelTest` case. Both #890 readings are cleared by the repository on the
 conversation's own `session_transition` and start `null` before any announcement, so the combine needs no
-staleness handling of its own — `null` in is `null` (unavailable) out.
+staleness handling of its own — `null` in is `null` (unavailable) out. Since
+[#1317](https://github.com/pyrycode/pyrycode-mobile/issues/1317) both readings are held for the life of the
+host's pairing rather than one connection, so a background/foreground reconnect no longer blanks an
+already-announced model or build mid-thread; `session_transition` is still the only thing that clears them
+short of the pairing ending. See [Relay repository coordinator §
+`HostReadings`](relay-repository-coordinator.md).
 
 ### Context usage segment (#946)
 
@@ -135,7 +140,7 @@ internal fun footerMenu(
     backgroundTaskCount: Int = 0,
 ): FooterMenu?
 
-internal fun footerControlEnabled(control: FooterControl, runConfig: ThreadRunConfig): Boolean
+internal fun footerControlEnabled(control: FooterControl, runConfig: ThreadRunConfig, connected: Boolean): Boolean
 
 @Composable
 fun ThreadComposerFooter(
@@ -146,6 +151,7 @@ fun ThreadComposerFooter(
     modifier: Modifier = Modifier,
     onAttach: () -> Unit = {},
     agent: ConversationAgent = ConversationAgent.Claude,
+    connected: Boolean = true,
 )
 ```
 
@@ -160,14 +166,15 @@ fun ThreadComposerFooter(
 - **Permission** (#650) — `null` when `runConfig.permissionMode` is `""`. Options are every `PermissionModeOption` `runConfig.offersPermission` allows (#1111) — `Auto` filtered out unless `runConfig.selectedMetadata?.supportsAutoMode == true` (the same field the [Status sheet](status-sheet.md)'s Model section reads for its own rows), and, with a `capabilities` list present, every mode but `Bypass` must be in `capabilities.permissionModes`; `selectedValue = runConfig.permissionMode` — an unrecognised value therefore selects nothing in the overlay, since it matches no `PermissionModeOption.wire`; `notListed = 0` always, since the vocabulary is closed and client-owned. See [§ Sourcing — Permission mode](#permission-mode-650) for the label and write rules.
 - **Actions** (#884) — never `null`. See [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884) for its options, the `mutationsSupported` gate on Reset session, and the `absentActions` enable rule; since #678 it also reads `backgroundTaskCount`, folded only into the background-tasks row's own label.
 
-`footerControlEnabled` still gates the retained Model, Effort and Permission menu projections on a writable session, no relevant pending write and an available menu. Actions remains enabled without a session. The current sheet gates its own Model/Effort and Permission rows directly; the footer opens only Actions.
+`footerControlEnabled` takes a required `connected` flag (#1319, no default — every caller must state it) and returns `false` for every control, Actions included, while the host is not connected, before any of the per-control rules below run. When connected, it still gates the retained Model, Effort and Permission menu projections on a writable session, no relevant pending write and an available menu; Actions needs none of that — a command send addresses no session and writes no setting. The current sheet gates its own Model/Effort and Permission rows directly; the footer opens only Actions.
 
 ## How it works
 
 ### `FooterButton` and Run configuration access
 
-The current footer renders an always-enabled Actions button, the `Cxt:` reading,
-the attachment button and the trailing `Tune` icon. The icon opens the
+The current footer renders an Actions button disabled only while the host is
+not connected (#1319), the `Cxt:` reading, the attachment button and the
+trailing `Tune` icon. The icon opens the
 [Run configuration sheet](status-sheet.md), where Model, Effort and Permission
 choices are rendered. The sheet receives `runConfig.selectedChoice?.value` for
 its model radio selection, `runConfig.modelSelectionNote` for an unrepresented

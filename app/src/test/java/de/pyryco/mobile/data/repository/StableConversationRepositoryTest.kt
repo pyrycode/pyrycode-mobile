@@ -10,6 +10,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
@@ -17,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -929,6 +931,63 @@ class StableConversationRepositoryTest {
         current.value = null
         assertFalse("getter re-reads .value live → back to false when the connection drops", facade.mutationsSupported)
     }
+
+    // ---- #1317: a host's held readings stay readable while it is disconnected ---------------------
+
+    @Test
+    fun heldReadings_readThroughTheDisconnectedGap_andDropWhenThePairingEnds() =
+        runTest {
+            val readings = HostReadings()
+            HostReadingFrames.applyAll(readings, "c1", model = "opus")
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current, readings)
+
+            HostReadingFrames.assertHeld(facade, "c1", model = "opus")
+            HostReadingFrames.assertNone(facade, "c2")
+            // The compatibility shape, with no held source, still reports nothing in the gap.
+            HostReadingFrames.assertNone(StableConversationRepository(current), "c1")
+
+            readings.close()
+            HostReadingFrames.assertNone(facade, "c1")
+        }
+
+    // #1320: the gap reports the held settings only invalidated, and the held menu as it was; a live repository
+    // still answers while connected, and closing the pairing drops both for a collector in the gap.
+    @Test
+    fun heldSettingsAndMenu_readInvalidatedThroughTheGap_liveWhileConnected_andDropWhenThePairingEnds() =
+        runTest {
+            val readings = HostReadings()
+            val memory = MemorySearchReport(MemorySearchAvailability.Available, emptyList())
+            readings.holdSessionSettings("c1", READING.copy(memorySearch = memory))
+            readings.modelMenus.value = mapOf("c1" to MENU)
+            val live = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current, readings)
+            val settings = mutableListOf<SessionSettings?>()
+            val menus = mutableListOf<ModelMenu?>()
+            backgroundScope.launch { facade.observeSessionSettings("c1").collect { settings += it } }
+            backgroundScope.launch { facade.observeModelMenu("c1").collect { menus += it } }
+            runCurrent()
+
+            assertEquals(READING.copy(permissionMode = "", memorySearch = MemorySearchReport.Unknown, held = true), settings.last())
+            assertEquals(MENU, menus.last())
+            assertNull(facade.observeSessionSettings("c2").first())
+            assertNull(facade.observeModelMenu("c2").first())
+
+            current.value = live
+            runCurrent()
+            assertNull("a live repository answers for itself", settings.last())
+            live.pushSessionSettings(READING)
+            runCurrent()
+            assertEquals(READING, settings.last())
+
+            current.value = null
+            runCurrent()
+            readings.close()
+            runCurrent()
+            assertNull(settings.last())
+            assertNull(menus.last())
+        }
 
     // ---- fakes / builders ------------------------------------------------------------------------
 

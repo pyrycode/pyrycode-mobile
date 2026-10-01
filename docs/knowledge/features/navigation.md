@@ -98,17 +98,21 @@ the exact case-sensitive server id; names and relay URLs never identify a host.
 | Saving credentials/name | Dismissal and editing are blocked until persistence finishes. |
 | Connecting | Cancel the wait, enter Cancelled and pop; later readiness cannot navigate. |
 
-Credential-save failure cannot start a new connection. Name-write or connection
-failure after saving returns to the draft with explicit retained-pairing feedback
-and Retry. Retry crosses the fingerprint gate again and upserts the same host for
-an unchanged code. Cancel does not undo saved credentials or a successful name
-write. See [failure behavior](paste-code-dialog.md#failure-and-cancellation).
+Credential-save failure cannot start a new connection, and Retry for it crosses
+the fingerprint gate again and upserts the same host for an unchanged code, as
+before. A connection-verification failure is different (#1385): Retry does not
+re-parse, re-confirm or save again — it waits on the already-saved record for a
+fresh 30 s. See [the shared verification rule](paste-code-dialog.md#target-readiness-and-retry)
+for the three outcomes and their texts. Cancel does not undo saved credentials or
+a successful name write. See [failure behavior](paste-code-dialog.md#failure-and-cancellation).
 
 The connection wait follows the complete saved record through registry
 reconciliation, including replacement credentials on re-pairing. Another host's
 connection, a stale bundle or bare relay readiness cannot complete it. Both relay
-and encrypted-session status must be Connected within 30 seconds; a new
-unavailable status ends the wait earlier.
+and encrypted-session status must be Connected within 30 seconds; relay blips
+(`Offline`, `Connecting`, `Reconnecting`) keep the wait going, while
+`PairingRejected`, `UpdateRequired` or an absent daemon end it earlier — see
+[the shared verification rule](paste-code-dialog.md#target-readiness-and-retry).
 
 `LaunchedEffect(state.phase)` translates Cancelled to `popBackStack()` and Complete
 to `navigate(CHANNEL_LIST)` with `popUpTo(navController.graph.id) { inclusive = true }`
@@ -315,6 +319,20 @@ this paragraph describes, since extended for #904/#899/#685. #883 took out the
 literal-screen steps — the overflow-menu trip to `LITERAL_SCREEN` in the back-reopen
 test (host B now restores the thread itself instead) and the `Routes.literal`
 navigation in the invalid-host test — and left the rest of the harness unchanged.
+
+`flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges` (#1392) flaked under
+full-suite load because `HostConversationSource.reconcile` publishes `snapshots` from a
+`Dispatchers.Default` coroutine, the one step on the `openAddWorkspace` → `recent_workspaces`
+path that isn't `Main.immediate`, so Compose idling (`waitForIdle`/`runOnIdle`) does not drain
+it. Under load that coroutine can lag past the test's `openAddWorkspace(a)` call; the ViewModel
+then rejects A as `unknown_host` and sends nothing, so an idle-only wait on the peer's outbound
+frame can pass or fail depending on scheduling, not on the production behavior under test. The
+fix is test-only: wait on `HostConversationSource.snapshots` holding the host before opening the
+picker, then replace the idle-then-assert check on `NavigationPeer.outbound` with a bounded
+`compose.waitUntil`; `NavigationPeer.outbound` became a `CopyOnWriteArrayList` since the send and
+a device-side `waitUntil` read it from different threads. A test asserting on a value fed by a
+non-`Main` coroutine must wait on that value directly — `waitForIdle` only proves the main
+dispatcher is quiet, not that every producer has run.
 
 `SettingsNavigationTest` mounts the production `PyryNavHost` and checks the gear-to-modal path, dismissal to the previous view, persisted push state after reopening, and opening without a paired host. `SettingsDensityDeviceTest` sends a real Back key to the focused dialog. Espresso Back aimed at the unfocused Activity root in the graph harness and could miss the dialog window; a real focused-window key tests that dismissal route.
 
