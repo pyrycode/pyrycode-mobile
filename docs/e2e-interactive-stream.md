@@ -187,10 +187,12 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    host's list toolbar after proving its active and archived membership changes;
    `interactiveTurn_twoHostsArchive_staysPerHost` archives and restores A's chat through A's toolbar
    while B's active and archived sets remain unchanged. Both wait for restore completion before Back.
-   **Channel create, edit and archive** is live again in `InteractiveStreamE2ETest` (#1251):
-   `interactiveTurn_createEditArchiveChannel_readsPromptBack` creates from an empty Channels section,
-   reads the original and edited prompt, waits for a distinct reply after Reset session, then restores
-   through the selected host's list-toolbar Archive entry and finds the edited name on the list.
+   **Channel create, edit and archive** is live again in `InteractiveStreamE2ETest` (#1251, extended
+   #1342): `interactiveTurn_createEditArchiveChannel_readsPromptBack` creates from an empty Channels
+   section, reads the original and edited prompt, waits for a distinct reply after Reset session,
+   then empties the prompt from Edit channel and polls the host until its reading comes back `null`,
+   opens Channel info and checks for an empty box at "0 / 8192 bytes", before restoring through the
+   selected host's list-toolbar Archive entry and finding the edited name on the list.
    **Archive order** (#1332 — `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`): archives two
    freshly created chats on a live daemon, the newer-by-last-use one first and the older one second, then
    opens Archive and asserts the second-archived chat is on top — proving the daemon's `archived_at` stamp,
@@ -1667,11 +1669,15 @@ These are daemon round trips and spend no real Claude turns. The independent
 `InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740) still proves the toolbar
 entry reaches Archive without creating a conversation.
 
-`InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` (#1088/#1251)
-starts with an empty Channels section, creates a channel in its host's default working folder,
-and reads back its name and system prompt before and after editing. After Reset session, a
-distinct real `pong` reply precedes the prompt-status check, so the check belongs to the new
-session. It archives from Edit channel, restores through the selected host's list-toolbar
+`InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` (#1088/#1251,
+extended #1342) starts with an empty Channels section, creates a channel in its host's default
+working folder, and reads back its name and system prompt before and after editing. After Reset
+session, a distinct real `pong` reply precedes the prompt-status check, so the check belongs to the
+new session. It then empties the prompt from Edit channel, polls the host's own reading until it
+comes back `null` — proving `submitChannelEdit` sent `null` rather than `""` — and opens Channel
+info to check the System prompt section shows an empty box at "0 / 8192 bytes", the live proof that
+desktop's clear rule (#1342) reaches the daemon and that the section reads what Edit channel wrote.
+It archives from Edit channel, restores through the selected host's list-toolbar
 Archive entry and its Channels tab, then finds the edited name back on the list. The test
 restores the pre-existing channel fixtures and deletes its temporary conversations in `finally`.
 Two Settings-dependent methods and two older workspace-switching methods remain ignored and
@@ -2128,7 +2134,22 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-01 (#1337).** The dispatcher ran a focused
+**Current live verification — 2026-10-01 (#1342).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live --tests ...` against
+`feature/1342` at `bf964f0c39`, merged with `origin/main` at `599aa84bfd` in a detached worktree
+(27 commits behind before the merge): **8 executed, 8 passed, 0 failed, 0 skipped**, exit 0, wall
+clock 392.1s. The selection named the five methods in PR #1407's `## Live tests`
+(`interactiveTurn_createEditArchiveChannel_readsPromptBack`,
+`interactiveTurn_deleteConversation_removesFromListAndClosesThread`,
+`interactiveTurn_twoHostsArchive_staysPerHost`, `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`,
+`interactiveTurn_markdownLink_opensLiveNoteInReader`) plus three always-run methods — not a full-suite
+run. The fresh XML has a passing testcase for the extended
+`interactiveTurn_createEditArchiveChannel_readsPromptBack`, closing AC-5 of #1342: it now empties the
+prompt in Edit channel, waits for the host reading to come back `null`, then opens Channel info and
+checks for an empty box at "0 / 8192 bytes". See the [dispatcher
+evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1342#issuecomment-5939773632).
+
+**Previous live verification — 2026-10-01 (#1337).** The dispatcher ran a focused
 `python3 scripts/android-test-gate.py live --tests ...` selection against `feature/1337` at
 `62ed2d1072`, merged with `origin/main` at `a8bb98ca56` (0 commits behind before the merge): **7
 executed, 7 passed, 0 failed, 0 skipped**, exit 0, wall clock 404.8s. The selection named the four
