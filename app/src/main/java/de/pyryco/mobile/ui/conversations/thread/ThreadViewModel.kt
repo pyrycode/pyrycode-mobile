@@ -20,6 +20,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
@@ -75,6 +76,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.floor
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
@@ -372,7 +374,8 @@ class ThreadViewModel(
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
      * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine, and
-     * Claude's reported context usage (#946) by a third; the repository clears that reading itself.
+     * Claude's reported context usage (#946) by a third, where [contextPercent] computes the one value the footer
+     * and the Status sheet both show (#1411); the repository clears that reading itself.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -386,11 +389,13 @@ class ThreadViewModel(
             pendingEffort,
             pendingPermission,
         ) { settings, menuAndAgent, model, effort, permission ->
-            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission)
-        }.combine(runningModel) { config, (running, announced) -> config.copy(running = running, announcedModel = announced) }
-            .combine(repository.observeContextUsage(conversationId)) { config, usage ->
-                config.copy(contextPercent = usage?.percentage)
-            }
+            // #1411: the settings ride along to the context-usage combine, which falls back to their token pair.
+            runConfig(settings, menuAndAgent.first, menuAndAgent.second, model, effort, permission) to settings
+        }.combine(runningModel) { (config, settings), (running, announced) ->
+            config.copy(running = running, announcedModel = announced) to settings
+        }.combine(repository.observeContextUsage(conversationId)) { (config, settings), usage ->
+            config.copy(contextPercent = contextPercent(usage, settings))
+        }
 
     /**
      * This conversation's published slash-command menu (#882), feeding both the Actions menu's absent
@@ -2451,6 +2456,27 @@ internal fun String.modelFamily(): String {
     val bare = removePrefix("claude-")
     val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
     return head.replaceFirstChar { it.uppercaseChar() }.inert()
+}
+
+/**
+ * How full the context window is, as a whole percent in 0..100, or `null` when unavailable (#1411, desktop's
+ * `contextTokenSource` + `contextUsagePercent`). A present [usage] always supplies the pair, its `totalTokens`
+ * over `maxTokens`, whatever it holds; only an absent one falls back to [settings]' `usedTokens` over
+ * `windowTokens`. A window of `0` or less in the pair used is unavailable, never a fallback. Claude's own
+ * `percentage` is not read, so the footer and the Status sheet share one clamp. Rounds half up, as `Math.round`.
+ */
+internal fun contextPercent(
+    usage: ContextUsage?,
+    settings: SessionSettings?,
+): Int? {
+    val (used, window) =
+        when {
+            usage != null -> usage.totalTokens to usage.maxTokens
+            settings != null -> settings.usedTokens to settings.windowTokens
+            else -> return null
+        }
+    if (window <= 0) return null
+    return floor(used.toDouble() / window.toDouble() * 100 + 0.5).coerceIn(0.0, 100.0).toInt()
 }
 
 private fun Conversation.displayName(): String =
