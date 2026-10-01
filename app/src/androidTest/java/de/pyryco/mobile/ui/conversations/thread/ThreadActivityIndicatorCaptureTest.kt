@@ -18,6 +18,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ApiRetryStatus
@@ -29,9 +31,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TestRule
 import org.junit.runner.RunWith
-import org.junit.runners.model.Statement
 import java.io.File
 
 /** Real fixed-dark pixels for the thread's five status readings at the Figma viewport. */
@@ -41,35 +41,8 @@ class ThreadActivityIndicatorCaptureTest {
     private var reading by mutableIntStateOf(0)
     private var contentView: View? = null
 
-    /** The display size a test captures at; without it the viewport rule applies 412x892. */
-    @Retention(AnnotationRetention.RUNTIME)
-    @Target(AnnotationTarget.FUNCTION)
-    private annotation class Viewport(
-        val size: String,
-    )
-
-    // Resizing under a running activity can recreate or refocus it, so the final size is
-    // applied here before the compose rule launches its activity, and restored after it ends.
     @get:Rule(order = 0)
-    val viewport =
-        TestRule { base, description ->
-            object : Statement() {
-                override fun evaluate() {
-                    val size = overrideOf(shell("wm size"))
-                    val density = overrideOf(shell("wm density"))
-                    shell("wm density 160")
-                    shell("wm size ${description.getAnnotation(Viewport::class.java)?.size ?: "412x892"}")
-                    try {
-                        instrumentation.waitForIdleSync()
-                        base.evaluate()
-                    } finally {
-                        shell("wm size $size")
-                        shell("wm density $density")
-                        instrumentation.waitForIdleSync()
-                    }
-                }
-            }
-        }
+    val viewport = ViewportRule()
 
     @get:Rule(order = 1)
     val rule = createComposeRule()
@@ -188,7 +161,4 @@ class ThreadActivityIndicatorCaptureTest {
             .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
             .bufferedReader()
             .use { it.readText() }
-
-    private fun overrideOf(output: String): String =
-        output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
 }
