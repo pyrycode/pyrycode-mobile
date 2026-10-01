@@ -1161,6 +1161,16 @@ cache holds it as an assistant-side message; after
 and both `ACTION_VIEW` (open) and `ACTION_CREATE_DOCUMENT` (save) yield the fixture's digest. A fresh
 device, or a cleared cache, would not show the file — by design, and not asserted here.
 
+**Since #1329, the offered file is fetched by its first tap, not drawn and fetched on sight.** The offer
+`send_file` produces carries a name but no MIME type, and the name is a plain `.txt`, outside desktop's
+image-extension list — so the row draws deferred (the ready `File field`, no status line, nothing
+requested) until `assertOpensAndSaves` taps it. That tap is now what triggers the retrieval, so its wait
+for `ACTION_VIEW` grew from `THREAD_TIMEOUT_MS` to `REPLY_TIMEOUT_MS` to cover it; `readyAttachmentRow`
+matches a deferred row exactly as it matches a `Ready` one, since both draw identically. The sibling
+attachments-from-phone and peer-attachment scenarios are unaffected: one is the phone's own send, which
+resolves through `sentOriginal`/`canRead` with no relay request regardless of this rule, and the other is
+a history-replayed row, which has no name or type to defer on and so still loads on show.
+
 **The LIVE list only filters; it does not set the order.** JUnit's default `MethodSorters.DEFAULT` runs a
 class's methods by name hash, not by the list's own sequence, so a method's place in
 `scripts/e2e-emulator.sh`'s `TEST_TARGET` string says nothing about when it runs. This ticket's own name
@@ -2118,7 +2128,20 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-01 (#1332).** The dispatcher ran
+**Current live verification — 2026-10-01 (#1337).** The dispatcher ran a focused
+`python3 scripts/android-test-gate.py live --tests ...` selection against `feature/1337` at
+`62ed2d1072`, merged with `origin/main` at `a8bb98ca56` (0 commits behind before the merge): **7
+executed, 7 passed, 0 failed, 0 skipped**, exit 0, wall clock 404.8s. The selection named the four
+methods in PR #1406's `## Live tests` (`interactiveTurn_permissionPrompts_heldPerConversation`,
+`interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`,
+`interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`,
+`interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`) plus three always-run methods — not a
+full-suite run. The fresh XML has a passing testcase for
+`interactiveTurn_permissionPrompts_heldPerConversation`, closing AC-4 of
+[#1337](specs/architecture/1337-hold-every-outstanding-prompt.md). See the [dispatcher
+evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1337#issuecomment-5938993775).
+
+**Previous live verification — 2026-10-01 (#1332).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1332` at
 `cc94a05bbc`, merged with `origin/main` at `18ea26526a` (0 commits behind before the merge):
 **41 executed, 41 passed, 0 failed, 0 skipped**, exit 0, wall clock 518.8s. This is full-suite evidence;
@@ -2811,6 +2834,29 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — added:** [#1337](https://github.com/pyrycode/pyrycode-mobile/issues/1337) adds
+  `InteractiveStreamE2ETest.interactiveTurn_permissionPrompts_heldPerConversation` to the curated LIVE
+  `TEST_TARGET` selector in `scripts/e2e-emulator.sh`, raising `LIVE_MINIMUM` to 41 in
+  `scripts/android-test-gate.py` and pinned by `test_live_floor_matches_the_curated_list`. Chats A and
+  B each raise a real prompt at once; both show in their own chat; answering A from the phone resolves
+  only A's id while B's card stays mounted — proving the `HostModalState` hold-all fold (see
+  [Current-modal state](knowledge/features/current-modal-state.md)) against a real daemon, not just the
+  single-prompt-replacement case its sibling
+  `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` covers. The method proves the
+  phone's answer through the peer's `modal_dismissed` for A's id (source `remote`, outcome
+  `allow_once`) and the dialog leaving A, and does **not** await A's `turn_end`: the daemon streams
+  turn frames only for the conversation a message was last routed to (its `activeConversation`
+  follow-active cursor), and B's send in the method moves that cursor to B, so A's `tool_use` /
+  `turn_end` after the allow never reach any client — B's `turn_end` is still awaited, since B holds
+  the cursor. No rung-4 twin: the ticket's acceptance criteria require only the rung-3 proof. PR
+  #1406's `## Live tests` also names `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+  and `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` as the live guards whose input this
+  ticket changes (the former's input now goes `Open` → `Hidden` → `Open` across a reconnect, deduped only by
+  `AttentionNotifier`'s ledger). The dispatcher's post-verifier focused `python3
+  scripts/android-test-gate.py live --tests ...` run (branch `feature/1337` at `62ed2d1072`, merged with
+  `origin/main` at `a8bb98ca56`) executed 7, passed 7, failed 0 and skipped 0, including all four named
+  methods passing — see [Verification status](#verification-status).
 
 - **Coverage — updated:** [#1309](https://github.com/pyrycode/pyrycode-mobile/issues/1309) rewrote
   `InteractiveStreamE2ETest.interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` to drop

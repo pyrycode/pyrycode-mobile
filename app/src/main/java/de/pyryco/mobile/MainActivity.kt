@@ -533,6 +533,9 @@ internal fun PyryNavHost(
                     attachmentStates = attachmentStates,
                     onAttachmentShown = vm::onAttachmentShown,
                     onRetryAttachment = vm::onRetryAttachment,
+                    // #1329: a file other than an image loads only when it is tapped, then opens or saves.
+                    onRequestAttachment = vm::onAttachmentRequested,
+                    attachmentLoads = vm.attachmentLoads,
                     // #843: the tree row's re-pair route (#842), keyed by this destination's own host. The
                     // thread stays on the back stack beneath it, so Cancel returns to the cached history.
                     showRePair = rePairAvailable,
