@@ -151,7 +151,7 @@ class ListDesignCaptureTest {
         design.capture(FOLDER, "thread-menu$suffix", "none")
         rule.onNodeWithText("Channel info").performClick()
         awaitText("About")
-        design.capture(FOLDER, "channel-info$suffix", "20:48")
+        design.capture(FOLDER, "channel-info$suffix", "668:5355")
     }
 
     /** Each surface starts from a fresh channel list, so one surface's dismissal path cannot steer the next. */
