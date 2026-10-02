@@ -65,6 +65,16 @@ Device-only (real activity, real pixels, IME, `wm` resizing), on the full image:
 - Whether the markdown reader and composer attachment tiles are reachable in the demo graph without a production change. If not, they are gaps.
 - Whether the base frame's thinking label holds long enough to capture after `TurnState.Thinking`.
 
+## Documentation handoff
+
+Pending for the documentation stage, from the verifier's second review:
+
+- `docs/knowledge/features/development-verification.md` § "Compose evidence" (or the design-audit topic): a focused
+  composer's cursor-handle popup is an extra root, so capture keyboard states last; wait for the indeterminate
+  progress indicator to clear after an image attachment is ready; re-export and diff every frame at capture time.
+- Same topic: `ThreadDesignCaptureTest` runs in the UI gate on ATD, so a thread panel, menu or status-band change can
+  break it.
+
 ## Revisions
 
 ### 2026-10-02 — methods, thread inputs and open questions
