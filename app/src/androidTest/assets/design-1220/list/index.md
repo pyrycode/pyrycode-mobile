@@ -1,12 +1,17 @@
 # List-side audit (#1431)
 
-- **App commit:** `main` at `4c755aa6`, plus the test-only `ListDesignCaptureTest` on `feature/1431`.
+- **App commit:** `main` at `ddebd393`, plus the test-only `ListDesignCaptureTest` on `feature/1431`. No file
+  under `app/src/main/` differs from the first run's `4c755aa6`.
 - **Figma:** Mobile page of `g2HIq2UyPhslEoHRokQmHG`, inspected and exported with `get_screenshot` on 2026-10-02.
   Channel Info `20:48` is a 412x596 sheet; its comparison pads the export onto a 412x892 canvas at the bottom.
 - **Capture:** `ListDesignCaptureTest` (two methods) on the full `pixel8Api35` image (API 35) with
   `requireRealSystemBars=true`: 412x892 px at density 1.0 and font scale 1.0, and 320x700 at 150 % font scale
   (`-compact`), fixed dark theme, real 24 px bars. Each surface starts from a fresh `MainActivity` launch on the
-  paired demo host.
+  paired demo host. Archive's capture archives three demo channels and restores them afterwards; Edit host's
+  installs a store that answers `loadById` for the demo host, through Koin in the capture class. Archive's tabs
+  are tapped through the device's input (`input tap`), so the capture shows the state a finger leaves.
+- **Measuring:** positions are raw image y of the first and last bright text rows (luminance over 150); the
+  shell's 24 px move inside the system bars is removed before comparing, per the README.
 - **Result:** `list-results.xml`, 2 executed, 0 failures, 0 errors, 0 skipped.
 
 No audit declares app-wide parity; #1434 owns that verdict.
@@ -15,7 +20,8 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 - **Owning ticket:** #737 (bar), #738 (tree)
 - **Capture:** `channel-list.png` (412x892, 1.0), `channel-list-compact.png` (320x700, 1.5) · **Side-by-side:** `channel-list-side-by-side.png` · **Overlay:** `channel-list-overlay.png`
-- Host separation: one host row (Demo) with its own Channels and Chats folders. No workspace grouping and no workspace label appear.
+- Host separation: one host row (Demo) with its own Channels and Chats folders. No workspace grouping and no
+  workspace label appear; the walk asserts no text containing "workspace" on the list and in Settings.
 
 | Aspect | Verdict |
 |---|---|
@@ -36,22 +42,26 @@ No audit declares app-wide parity; #1434 owns that verdict.
 ### Archive — `18:2`
 
 - **Owning ticket:** #1265
-- **Capture:** `archive.png`, `archive-compact.png`; Discussions tab `archive-discussions.png`, `archive-discussions-compact.png` · **Side-by-side:** `archive-side-by-side.png` · **Overlay:** `archive-overlay.png`
+- **Capture:** `archive.png`, `archive-compact.png` (Channels tab, three archived demo channels); Discussions tab `archive-discussions.png`, `archive-discussions-compact.png` · **Side-by-side:** `archive-side-by-side.png` · **Overlay:** `archive-overlay.png`
+- The screen opens on Discussions whatever the counts (`ArchivedDiscussionsViewModel` starts on
+  `ArchiveTab.Discussions`); the capture taps Channels to reach the frame's state.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match: top bar, tabs and rows at the frame's positions, after the host label (a recorded adaptation) |
-| Padding | match: 16 px gutters |
-| Spacing | match |
-| Typography | match: title, tab labels, row title and subtitle |
-| Colour | mismatch: status-bar icons are dark on the dark canvas |
-| Borders | match: tab indicator and divider |
+| Geometry | mismatch: the host label "Demo" (#715) adds 26 px above the tabs, so tabs and rows sit 26 px below the frame after the bar offset. `docs/knowledge/features/archived-discussions-screen.md` records the label as a deliberate addition to `18:2`; the frame does not carry it |
+| Padding | match: 16 px gutters, restore icons at x 365–384 |
+| Spacing | mismatch: rows repeat every 64 px against 66 (row titles at y 181, 245, 309 against the frame's 133, 199, 265); tab label to indicator 16 px against 15, title to subtitle 23 against 24 |
+| Typography | match: title, tab labels (14 px glyph rows in both), row title and subtitle |
+| Colour | mismatch: status-bar icons are dark on the dark canvas; the tapped tab keeps a lighter fill (RGB 29,51,67 against 11,39,59) |
+| Borders | match: tab indicator under the selected tab and the divider |
 | Radii | match (none) |
-| Icon paths | match: back arrow, restore icon |
-| Component state | mismatch: with no archived channel, Discussions is selected on open; the frame opens on Channels |
+| Icon paths | match: back arrow, restore icon (18 px) |
+| Component state | mismatch: opens on Discussions where the frame opens on Channels; the tapped tab's fill is a state the frame does not show |
 
-- **Compact:** mismatch: "Discussions (1)" wraps to two lines and overruns the tab indicator.
+- **Compact:** mismatch: "Discussions (1)" wraps to two lines and overruns the tab indicator; rows and restore
+  icons stay reachable.
 - **Routed:** #1487
+- The first run's verdicts compared a Discussions row with the frame's Channels rows; this section replaces them.
 
 ### Channel Info Sheet — `20:48`
 
@@ -80,12 +90,22 @@ No audit declares app-wide parity; #1434 owns that verdict.
 - **Capture:** `settings.png`, `settings-compact.png` · **Side-by-side:** `settings-side-by-side.png` · **Overlay:** `settings-overlay.png`
 - Notifications only, with the "Notification sound — Default" row.
 
+| Text | Figma y | App y | After the 24 px bar |
+|---|---|---|---|
+| Title | 30 | 54 | 0 |
+| Notifications | 90 | 111 | -3 |
+| Push notifications | 134 | 155 | -3 |
+| Push switch | 137 | 157 | -4 |
+| Notification sound | 218 | 236 | -6 |
+| Chevron | 228 | 245 | -7 |
+| Default | 242 | 256 | -10 |
+
 | Aspect | Verdict |
 |---|---|
-| Geometry | match inside the bars: the modal moves 24 px down with the status bar |
+| Geometry | match inside the bars: the shell spans 24–868; horizontal edges and the header match |
 | Padding | match: 28 px gutters |
-| Spacing | match |
-| Typography | match: title, section label, row text |
+| Spacing | mismatch: per the table, the section label sits 3 px closer to the header, the Notification sound row 6 px higher and its "Default" line 10 px higher; title to supporting line in that row is 20 px against 24 (the Push row keeps 24); Done sits 29 px above the shell's bottom edge against 25 |
+| Typography | match: glyph heights of title, section label and row text |
 | Colour | match: modal surface, switch, Done |
 | Borders | match: header rule |
 | Radii | match: modal, close button, Done |
@@ -93,15 +113,33 @@ No audit declares app-wide parity; #1434 owns that verdict.
 | Component state | match: notifications on |
 
 - **Compact:** no clipping; the push row wraps to four lines and the switch and Done stay reachable.
-- **Routed:** none
+- **Routed:** #1503. The first run recorded Spacing as a match; the side-by-side contradicts it.
 
 ### Modal › Edit host — `533:2369`
 
 - **Owning ticket:** #1277
-- **Capture:** none. The harness's startup store answers `list()` but not `loadById`, so the host editor rejects the
-  demo host (`host_editor_open_rejected code=unknown_host`). Fixing that edits `DesignCapture`, outside this
-  audit's write scope. Default, compact and keyboard-open states are unverified.
-- **Routed:** #1489
+- **Capture:** `edit-host.png`, `edit-host-compact.png`; keyboard open on the name field `edit-host-keyboard.png`, `edit-host-keyboard-compact.png` (`imePx` bottom 240) · **Side-by-side:** `edit-host-side-by-side.png`, `edit-host-keyboard-side-by-side.png` · **Overlay:** `edit-host-overlay.png`, `edit-host-keyboard-overlay.png`
+- Opened from the host row's pen ("Edit host Demo"). The demo values ("demo", "wss://demo.invalid", "Demo")
+  are shorter than the frame's, so value truncation is judged on the compact capture.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: the centred field block sits 7–10 px higher than the frame (Server identity y 342 against 349, field top 427 against 437), more than the 2 px the shell's 844 px height inside the bars accounts for. Cancel and OK keep the frame's 25 px from the shell's bottom edge |
+| Padding | match: 28 px gutters, field text inset 16 px, Unpair host at x 28–155 |
+| Spacing | mismatch: the title starts 30 px below the shell's top against 34 (header rule 64 against 68), the same 30 px `17:2` uses, so the two frames disagree; "Host name:" to the field is 12 px against 15. Identity rows keep the 32 px pitch |
+| Typography | mismatch: "Server identity:" runs 4 px wider (x 29–126 against 29–122) and "Relay address:" 2 px wider, pushing values 3–4 px right; glyph heights match |
+| Colour | match: shell surface, field fill, outlined Unpair host and Cancel, filled OK, close |
+| Borders | match: header rule, outlines |
+| Radii | match: shell, field, buttons |
+| Icon paths | match: close |
+| Component state | match: name filled, OK enabled |
+
+- **Compact:** no clipping or overlap; the identity labels wrap to two lines and the relay value ellipsizes;
+  every control stays on screen.
+- **Keyboard-open:** at 412x892 the field, Unpair host, Cancel and OK sit above the keyboard. At 320x700 and
+  150 % the field, Cancel and OK stay above it and Unpair host scrolls under the action bar; the walk scrolls to
+  it and asserts it is displayed, so it stays reachable. No overlap.
+- **Routed:** #1489 (rescoped from the harness gap the first run named, which this run closed)
 
 ## Gaps
 
@@ -109,12 +147,12 @@ States reachable from `MainActivity` with no current Mobile frame:
 
 | State | Capture | Owning ticket | Routed |
 |---|---|---|---|
-| Edit channel modal (row pen) | `edit-channel.png`, `edit-channel-compact.png` | #667 | #1434 (parity verdict) |
-| Edit chat modal (row pen) | none | #827 | #1434 |
-| Create channel modal (Channels plus) | none | #958 | #1434 |
-| Unpair host confirmation (Edit host) | none | #745 | #1489 |
-| Archive, Discussions tab | `archive-discussions.png` | #1265 | #1487 |
-| Rename and Save as channel | thread overflow, audited with the thread (#1432) | #957 | #1432 |
+| Edit channel modal (row pen) | `edit-channel.png`, `edit-channel-compact.png` (it opens with its name field focused and the keyboard up; at 412x892 every field and action sits above the keyboard, at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it, not checked for reachability) | #667 | #1504 |
+| Edit chat modal (row pen) | none | #827 | #1504 |
+| Create channel modal (Channels plus) | none | #958 | #1504 |
+| Unpair host confirmation (Edit host) | `edit-host-unpair.png`, `edit-host-unpair-compact.png`; its copy names a "saved workspace" | #745 | #1504, copy in #1489 |
+| Archive, Discussions tab | `archive-discussions.png`, `archive-discussions-compact.png` | #1265 | #1487 |
+| Rename dialog and Save as channel (thread overflow) | none | #957 | #1504 |
 
 Create folder and the pickers' new-folder dialog are reachable only from `AddWorkspaceModal` and `WorkspacePicker`
 (below), so they are not reachable. Paste code is the Pair Screen, audited in `onboarding/`.

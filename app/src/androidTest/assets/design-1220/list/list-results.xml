@@ -1,12 +1,12 @@
 <?xml version='1.0' encoding='UTF-8' ?>
-<testsuites tests="2" failures="0" errors="0" skipped="0" time="100.152" timestamp="2026-10-02T07:22:07" hostname="localhost">
-  <testsuite name="de.pyryco.mobile.design.ListDesignCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="96.373" timestamp="2026-10-02T07:22:07" hostname="localhost">
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="94.976" timestamp="2026-10-02T08:01:34" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.ListDesignCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="87.025" timestamp="2026-10-02T08:01:34" hostname="localhost">
     <properties>
       <property name="device" value="pixel8Api35" />
       <property name="flavor" value="" />
       <property name="project" value=":app" />
     </properties>
-    <testcase name="listFramesAt320By700LargeText" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="55.978" />
-    <testcase name="listFramesAt412By892" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="40.395" />
+    <testcase name="listFramesAt320By700LargeText" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="36.789" />
+    <testcase name="listFramesAt412By892" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="50.236" />
   </testsuite>
 </testsuites>
