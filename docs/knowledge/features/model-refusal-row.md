@@ -99,15 +99,35 @@ and (transitively) `ThreadRow.listKey()` all agree with it.
 
 ```kotlin
 @Composable
-fun ModelRefusalRow(item: ThreadItem.ModelRefusal, agent: ConversationAgent, modifier: Modifier = Modifier)
+fun ModelRefusalRow(
+    item: ThreadItem.ModelRefusal,
+    agent: ConversationAgent,
+    modifier: Modifier = Modifier,
+    switchBack: SwitchBackOffer? = null,
+    onSwitchBack: () -> Unit = {},
+    knownModelLabel: (String) -> String? = { null },
+)
 ```
+
+**`knownModelLabel` (#1494).** `ThreadScreen` passes `state.runConfig::knownModelLabel`
+(`ThreadRunConfig.knownModelLabel(identifier: String): String?`, next to `selectedChoice` in
+`ThreadUiState.kt`): the label shared by every row in `choices + overflowChoices` (rendered and overflow menu
+rows alike, never the hidden `inheritedChoice` default) whose `value` or `resolvedModel` equals `identifier`
+exactly, or `null` when no row matches, matching rows disagree on the label, or `identifier` is empty (so a
+cut `resolvedModel` of `""` can never match a blank identifier). No family or prefix guessing. With no menu
+— including a row restored from the thread cache before a menu arrives — `choices` and `overflowChoices` are
+both empty, so every identifier is unknown. The default parameter (`{ null }`) keeps every other caller
+(previews, the no-menu shared tests) on the pre-#1494 monospace-only rendering.
 
 The public row keeps only its `rememberSaveable` expansion Boolean under the list row key. The [refusal stream reference](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=620-1577) uses bare text in the message gutter: a collapsed title and `Show details` label, then an attributed explanation and `Hide details` when expanded. There is no pill, icon, border or bubble. When the sanitized explanation is non-blank, the entire gutter-width column is clickable, including its far edge, and carries the agent-named expand/collapse accessibility label. Without an explanation the title has no details action. Title and explanation wrap within the gutter.
 
 The title is one `AnnotatedString`: client-owned copy (`thread_refusal_refused_on` "Refused on ",
 `thread_refusal_continued_on` ", continued on ", `thread_refusal_refused_by` "Refused by ") in
-`onSurfaceVariant`, with each model identifier as its own `FontFamily.Monospace` + `onSurface` span so an
-identifier crafted to read as client copy (e.g. `"a, continued on b"` sent as `original_model` in a
+`onSurfaceVariant`, with each model identifier its own span. **Since #1494**, a model the thread's menu
+knows reads as the menu's label (`ThreadRunConfig.knownModelLabel`, see below) in that same `onSurfaceVariant`
+body style — still its own `withStyle` span, never concatenated into the surrounding copy, even though the
+style now matches it — while anything else keeps the pre-#1494 `FontFamily.Monospace` + `onSurface` span so
+an identifier crafted to read as client copy (e.g. `"a, continued on b"` sent as `original_model` in a
 no-fallback frame) cannot pass itself off as the surrounding words. A blank identifier renders the
 client-owned `thread_refusal_unknown_model` ("unknown model") in the client span instead. Expanding shows
 one `Text` built the same way [`BannerNoticeRow`](banner-notice-row.md) builds its line: the reused
@@ -128,6 +148,13 @@ also removed — an identifier has no business spanning lines, and one that did 
 `ModelRefusalDisplayTest` (JVM): a plain identifier survives; CSI/OSC/control escapes are stripped; tabs and
 line breaks are stripped; empty, blank, and escape-only input all read as no model.
 
+The private `appendModel` helper (#1494) is the one rule the title and the Switch back button (§ below) share
+for one identifier: `refusalModelDisplay(model) == null` reads "unknown model"; otherwise
+`knownModelLabel(model)` put through `refusalModelDisplay` again (so a label can never carry a line break
+either, even though `label` is already `inert()`-stripped at the menu boundary) reads as that stripped label
+in the client span when non-null; otherwise the stripped identifier reads in the monospace span as before.
+The lookup is always against the raw `model`; stripping applies only to what is drawn.
+
 ### Security — why each model is its own span
 
 The realistic abuse the protocol names is a claude-authored identifier trying to read as more of the
@@ -137,6 +164,23 @@ never concatenated into one plain string, so claude can type the client's litera
 cannot restyle a span to make them look like part of the chrome. The `"<agent>: "` attribution stays a
 separate medium-weight span, the #873 rule. Unicode bidi/format-character stripping is out of scope here,
 matching `banner` and desktop.
+
+**The 2026-10-02 design decision relaxed the "always monospace" half of this rule, not the "always its own
+span" half (#1494).** A model the thread's menu knows now draws in the title's own body style instead of
+monospace, because that is what the Status sheet already shows as the model's name. It still goes through a
+separate `withStyle` call — `appendModel`'s `label != null` branch — so the span boundary survives a style
+that happens to match the surrounding copy; nothing is ever concatenated into the plain client string. The
+match is exact (`ThreadRunConfig.knownModelLabel`: the identifier equals a published row's `value` or
+`resolvedModel`, no family or prefix guess) and must be unanimous across every matching row, so a second
+published row with a different label can never be shadowed by the first, and a hostile daemon cannot widen
+the known set by publishing a near-miss. **Accepted residual:** when a Claude row's `value` has no family,
+`ThreadViewModel`'s `dropdownLabel` falls back to the row's own claude-authored `displayName`, so a daemon
+that controls the menu could in principle publish `value = "x"`, `displayName = "Opus, continued on Sonnet"`
+and then refuse naming `"x"` — the title would draw that label in the client's own style. This is accepted
+because the daemon that publishes the menu is the one that could already lie in it (the Status sheet shows
+the same label today), and the label still passes through `refusalModelDisplay`, is capped at 128 characters
+by `inert()` at the menu boundary, and stays a separate span. A future change to this row must keep those
+three properties, not just the exact-match rule, to keep the residual this narrow.
 
 **The agent name stays client-owned ([#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113)),
 same as `BannerNoticeRow`.** The attribution and both click labels take their name from `agentName(agent)`
@@ -219,9 +263,12 @@ inherits this DataStore write and should say so in its own plan rather than assu
 armed the current offer draws the button — a second fallback row, qualifying or not, never shows one.
 `SwitchBackOffer.armedBy` matches the row by `occurredAt`, the frame's own identity (§ above), not by model
 value, so two refusals naming the same models at different instants cannot cross-arm each other's row. The
-button label puts the claude-authored original model through `refusalModelDisplay` as its own monospace
-span, the same anti-spoofing split the row's title and banner use (§ Security above) — a tap target is a
-second place an identifier could otherwise masquerade as client copy.
+button label shares the title's `appendModel` rule (#1494, § The row composable above): the claude-authored
+original model reads as the thread menu's label for it, in the button's own text style, when
+`ThreadRunConfig.knownModelLabel` knows it, otherwise it is put through `refusalModelDisplay` as its own
+monospace span, the same anti-spoofing split the row's title and banner use (§ Security above) — a tap target
+is a second place an identifier could otherwise masquerade as client copy, and the label case keeps that
+split by giving the label its own `withStyle` call even though the style matches the button's copy.
 
 **No rung-3 scenario; the rung-4 scripted `refusal` scenario is the end-to-end proof** — real claude cannot
 be made to refuse on demand. See [the scripted-scenario entry](../../e2e-interactive-stream.md#scenarios-454)
@@ -311,6 +358,23 @@ repeats it for one frame type.
   [e2e-interactive-stream.md](../../e2e-interactive-stream.md#scenarios-454)). No rung 3: real claude cannot
   be made to refuse on demand.
 
+- **#1494 (known model labels)**: `ThreadRunConfigKnownModelLabelTest` (JVM, new, 8 methods) — match by
+  `value`, by `resolvedModel`, and on an overflow-only row; two agreeing rows (including one of them in
+  overflow) match, two disagreeing rows don't; a prefix, family-only, case-different or trailing-newline
+  lookup misses; no menu, an empty identifier against a cut (`""`) `resolvedModel`, and `inheritedChoice`
+  alone are all unknown. `ModelRefusalModelLabelTest` (sharedTest, Robolectric at `w412dp-h892dp`, through
+  `ThreadScreen`, new, 5 methods) — known (title one line, "Opus" and "Sonnet" each a span of their own with
+  no monospace family and the client colour, button "Switch back to Opus" with "Opus" its own span), unknown,
+  ambiguous (two menu rows disagreeing on the label), no menu, and a blank identifier reading "unknown
+  model"; each case checks that no span straddles a model name, not just the rendered text. `ModelRefusalRowTest`,
+  `ThreadAgentAttributionTest` and `ModelRefusalSwitchBackTest` keep their no-menu fixtures and so keep
+  asserting the pre-#1494 monospace form unchanged. Device capture: `ThreadDesignCaptureTest
+  .threadNoticeFramesAt412By892` now seeds the menu before taking `notification-text.png` and
+  `refusal-switch-back.png`; the `16:8` status capture (`threadStatusFramesAt412By892`) still seeds none, so
+  its refusal row stays monospace by design, not a defect — see the design index entries below. The scripted
+  `refusal` scenario's Switch back button text follows whatever label fakeclaude's canned menu gives the
+  model it names (`DeterministicInteractiveStreamE2ETest`, [e2e doc](../../e2e-interactive-stream.md#scenarios-454)).
+
 ## Related
 
 - Ticket notes: [`../codebase/875.md`](../codebase/875.md). #1113 postdates the 2026-09-05 codebase-archive
@@ -319,7 +383,9 @@ repeats it for one frame type.
   (design + security review, verdict PASS) ·
   `docs/specs/architecture/1113-agent-name-in-thread-notices.md` (the `agent` param, § Security above) ·
   [`docs/specs/architecture/1360-refusal-switch-back.md`](../../specs/architecture/1360-refusal-switch-back.md)
-  (the switch-back offer, § Switch back above; its Revisions section records the no-session fix).
+  (the switch-back offer, § Switch back above; its Revisions section records the no-session fix) ·
+  [`docs/specs/architecture/1494-refusal-row-model-labels.md`](../../specs/architecture/1494-refusal-row-model-labels.md)
+  (`ThreadRunConfig.knownModelLabel`, the known/unknown render rule, § Security's accepted residual above).
 - Wire SSOT: `pyrycode/docs/protocol-mobile.md` § `model_refusal_fallback`, § `model_refusal_no_fallback`,
   § *Joining a page to the live stream* (sibling checkout).
 - Desktop sibling: pyrycode-desktop `ConversationScreen.tsx`'s `ModelRefusalRow` (`reduceRefusalOffer` in

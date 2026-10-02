@@ -1999,7 +1999,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
 | `offline-retry` (#1286) | actual Offline pill retries the same host and a new reply renders | `ping.jsonl` | one |
 | `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
-| `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to haiku"; the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
+| `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to Haiku" (the menu label, #1494); the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
 | `mcp-failed` (#1457) | the failed-MCP-server pill (#1345) renders and tapping it opens Channel info on its MCP servers section | `mcp-failed.jsonl` | one |
 | `context-overflow` (#1473) | the context notice and Compact pill (#1357) render after a `prompt_too_long` turn end, and tapping Compact reaches the daemon's child | `context-overflow.jsonl` | one |
 

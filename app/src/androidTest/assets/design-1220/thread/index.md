@@ -76,17 +76,17 @@ verdicts apply to each of those frames, which list only what differs.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the user bubble draws its text first and the photo below it; the frame draws the photo at the top of the bubble. The refusal title wraps to two lines (see `620:1577`). The photo message bubble is about 272 px wide where the frame's (`I533:1956;132:4567`) is 222 px, so the bubble and photo sit about 50 px further left. Photo size, the other bubble widths and the file row match |
+| Geometry | mismatch: the user bubble draws its text first and the photo below it; the frame draws the photo at the top of the bubble. The refusal title wraps to two lines because this capture's repository override seeds no model menu, so the names stay monospace by design (`620:1577` seeds the menu and is one line). The photo message bubble is about 272 px wide where the frame's (`I533:1956;132:4567`) is 222 px, so the bubble and photo sit about 50 px further left. Photo size, the other bubble widths and the file row match |
 | Padding | match: 20 px bubble padding |
 | Spacing | match |
-| Typography | mismatch: refusal model names (see `620:1577`). File row name middle-ellipsized ("Filename of th…ttachment.pdf"), as the updated frame |
+| Typography | mismatch: refusal model names render as raw monospace identifiers because this capture seeds no model menu, by design (`620:1577` seeds the menu and matches). File row name middle-ellipsized ("Filename of th…ttachment.pdf"), as the updated frame |
 | Colour | match: file row icon and name in the light on-secondary-container tone the updated frame uses |
 | Borders | match: header divider, PDF outline |
 | Radii | match: bubbles, photo corners |
 | Icon paths | match: back, overflow, copy, document outline, snowflake |
 | Component state | match: thinking, send enabled, photo loaded |
 
-- **Routed:** #1513 (photo position and photo bubble width), #1494 (model names). The frame's PDF row between two paragraphs cannot be
+- **Routed:** #1513 (photo position and photo bubble width). The frame's PDF row between two paragraphs cannot be
   expressed by the app's message model; #1513 asks for that decision too.
 
 ### Conversation Thread / Tool row — `674:5853`
