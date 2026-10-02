@@ -4,6 +4,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.view.View
 import android.view.WindowManager
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
@@ -19,6 +22,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -83,6 +87,8 @@ class PromptsDesignCaptureTest {
         scrollTo(hasTestTag("question_other_1"))
         design.openKeyboard(rule.onNodeWithTag("question_other_1"))
         rule.onNodeWithTag("question_other_1").assertIsDisplayed()
+        // The viewport leaves 552 px only above the 240 px test keyboard; one run showed a 332 px keyboard instead.
+        assertEquals("the test IME's keyboard is open", 240, design.insets().getInsets(WindowInsetsCompat.Type.ime()).bottom)
         secureCapture("question-keyboard", "636:3803")
         reachable("Cancel", "Continue")
     }
@@ -149,7 +155,7 @@ class PromptsDesignCaptureTest {
         back()
         secureCapture("switch-list", "640:2440", expectSecure = false)
 
-        open(OTHER, ids)
+        open(OTHER, ids, draft = null)
         assertNoQuestion()
         assertNoPermission()
         // The composer is the only text field in a chat with no prompt. Open the keyboard first so closing it
@@ -169,10 +175,23 @@ class PromptsDesignCaptureTest {
         assertNoQuestion()
         secureCapture("switch-permission-chat", "639:2451")
 
+        // `640:2838` item 3: switching away clears the arm.
+        rule.onNodeWithText("Allow once").performClick()
+        rule.waitUntil(5_000) { thread().armedOptionId.value == "allow_once" }
         back()
-        open(CLIENT, ids)
+        open(OTHER, ids, draft = null)
+        assertEquals("the composer draft stays with its chat", "Release notes draft", thread().draft.value)
+
+        back()
+        open(KITCHEN, ids, draft = null)
+        rule.waitUntil(5_000) { thread().currentModal.value is ModalUiState.Open }
+        assertNull("switching away clears the arm", thread().armedOptionId.value)
+
+        back()
+        open(CLIENT, ids, draft = null)
         awaitQuestion()
         assertNoPermission()
+        assertEquals("the composer draft stays with its chat", "My message", thread().draft.value)
     }
 
     /** The view model's own state, not a lazily composed node, decides that no batch reached this chat. */
@@ -228,10 +247,14 @@ class PromptsDesignCaptureTest {
         return channels.toMap()
     }
 
-    /** Launches on the channel list, opens [name] and sets the frames' footer: draft "My message", 84 % context. */
+    /**
+     * Launches on the channel list, opens [name] and sets the frames' footer: 84 % context and, unless [draft] is
+     * null, the composer draft [draft]. Pass null to open a chat with whatever draft it already holds.
+     */
     private fun open(
         name: String,
         existing: Map<String, String>? = null,
+        draft: String? = "My message",
     ): Map<String, String> {
         val ids = existing ?: createChannels()
         inputs.contextUsage.value = ContextUsage(totalTokens = 168_000, maxTokens = 200_000, percentage = 84, asOf = null)
@@ -243,9 +266,9 @@ class PromptsDesignCaptureTest {
         rule.onNodeWithText(name).performScrollTo().performClick()
         rule.waitUntil(5_000) { inputs.thread.value.let { it != null && it !== before } }
         val chat = thread()
-        if (name != OTHER) {
-            instrumentation.runOnMainSync { chat.onDraftChange("My message") }
-            rule.waitUntil(5_000) { chat.draft.value == "My message" }
+        if (draft != null) {
+            instrumentation.runOnMainSync { chat.onDraftChange(draft) }
+            rule.waitUntil(5_000) { chat.draft.value == draft }
         }
         rule.waitForIdle()
         return ids
@@ -296,36 +319,90 @@ class PromptsDesignCaptureTest {
                 .apply { mkdirs() }
         val root = design.view.rootView
         val metrics = root.resources.displayMetrics
-        val bars = design.insets().getInsets(WindowInsetsCompat.Type.systemBars())
-        val ime = design.insets().getInsets(WindowInsetsCompat.Type.ime())
+
+        // insets() substitutes synthetic bars when the platform reports none; the decor view's own insets do not.
+        // Setting FLAG_SECURE relays out the window, so they can read empty for a moment after a prompt arrives.
+        fun platformBars() = rule.runOnIdle { ViewCompat.getRootWindowInsets(root) }?.getInsets(WindowInsetsCompat.Type.systemBars())
+        // Right after launch the navigation bar can also report a taller inset for over a second before it settles,
+        // so wait until the real bars have held for 1.5 s.
+        var steady: Insets? = null
+        var since = 0L
+        runCatching {
+            rule.waitUntil(10_000) {
+                val now = platformBars()?.takeIf { it.top > 0 && it.bottom > 0 }
+                if (now != steady) {
+                    steady = now
+                    since = SystemClock.uptimeMillis()
+                }
+                steady != null && SystemClock.uptimeMillis() - since >= 1_500
+            }
+        }
+        val real = platformBars()
+        val syntheticBars = real == null || (real.top == 0 && real.bottom == 0)
         if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
-            // insets() substitutes synthetic bars when the platform reports none; the decor view's own insets do not.
-            val platform = rule.runOnIdle { ViewCompat.getRootWindowInsets(root) }
-            val real = platform?.getInsets(WindowInsetsCompat.Type.systemBars())
             assertTrue("real system bars required for design evidence", real != null && real.top > 0 && real.bottom > 0)
         }
         var secure = false
-        val image = Bitmap.createBitmap(root.width, root.height - ime.bottom, Bitmap.Config.ARGB_8888)
         rule.runOnIdle {
             design.scenario?.onActivity {
                 secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
             }
-            Canvas(image).apply { drawColor(Color.BLACK) }.also { root.draw(it) }
         }
+        val image = drawSettled(root)
+        val bars = design.insets().getInsets(WindowInsetsCompat.Type.systemBars())
+        val ime = design.insets().getInsets(WindowInsetsCompat.Type.ime())
         val colors = (0 until image.height step 8).flatMap { y -> (0 until image.width step 8).map { x -> image.getPixel(x, y) } }
         assertTrue("capture must contain rendered content", colors.toSet().size > 10)
         assertTrue("capture must not be black", colors.any { (it and 0xFFFFFF) > 0x101010 })
         assertEquals("FLAG_SECURE on the window while capturing $name", expectSecure, secure)
         assertEquals("capture matches the window width", metrics.widthPixels, image.width)
         File(output, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        // The keyboard frame's viewport assumes the harness's 240 px test IME; record which keyboard showed.
+        val keyboard = if (ime.bottom > 0) " keyboard=${shellOutput("settings get secure default_input_method")}" else ""
         File(output, "$name.txt").writeText(
             "activity=MainActivity figma=$figmaNode sizePx=${metrics.widthPixels}x${metrics.heightPixels} " +
                 "capturePx=${image.width}x${image.height} density=${metrics.density} " +
                 "fontScale=${root.resources.configuration.fontScale} staticDark=true secure=$secure decorViewDraw=true " +
-                "systemBarsPx=$bars imePx=$ime api=${Build.VERSION.SDK_INT} device=${Build.MODEL}\n",
+                "syntheticBars=$syntheticBars systemBarsPx=$bars imePx=$ime$keyboard api=${Build.VERSION.SDK_INT} device=${Build.MODEL}\n",
         )
         image.recycle()
     }
+
+    /**
+     * Draws the decor view above the keyboard until two draws 250 ms apart agree, so the relayout that follows
+     * `FLAG_SECURE` has settled (#1433: a capture caught it 19 px off). A few changed samples, such as a caret
+     * blink, still count as agreement. Fails if the frame has not settled within 5 s.
+     */
+    private fun drawSettled(root: View): Bitmap {
+        fun draw(): Bitmap =
+            rule.runOnIdle {
+                val ime = checkNotNull(ViewCompat.getRootWindowInsets(root)).getInsets(WindowInsetsCompat.Type.ime())
+                Bitmap.createBitmap(root.width, root.height - ime.bottom, Bitmap.Config.ARGB_8888).also {
+                    Canvas(it).apply { drawColor(Color.BLACK) }.also { canvas -> root.draw(canvas) }
+                }
+            }
+        var previous = draw()
+        repeat(20) {
+            SystemClock.sleep(250)
+            val next = draw()
+            val settled =
+                next.width == previous.width &&
+                    next.height == previous.height &&
+                    (0 until next.height step 4).sumOf { y ->
+                        (0 until next.width step 4).count { x -> next.getPixel(x, y) != previous.getPixel(x, y) }
+                    } < SETTLED_SAMPLE_TOLERANCE
+            previous.recycle()
+            if (settled) return next
+            previous = next
+        }
+        previous.recycle()
+        throw AssertionError("the frame did not settle within 5 s")
+    }
+
+    private fun shellOutput(command: String): String =
+        instrumentation.uiAutomation
+            .executeShellCommand(command)
+            .let { fd -> ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader().use { it.readText().trim() } }
 
     private fun batch(conversationId: String): QuestionBatch {
         val choices = listOf(QuestionOption("Kotlin", "The JVM language"), QuestionOption("Rust", "A systems language"))
@@ -369,6 +446,7 @@ class PromptsDesignCaptureTest {
     private companion object {
         val channels = mutableMapOf<String, String>()
         const val FOLDER = "prompts"
+        const val SETTLED_SAMPLE_TOLERANCE = 50
         const val CLIENT = "Client planning"
         const val KITCHEN = "kitchenclaw refactor"
         const val OTHER = "Release notes"

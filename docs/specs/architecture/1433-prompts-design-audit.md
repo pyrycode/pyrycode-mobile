@@ -125,3 +125,27 @@ None. The README already describes how audits add a subfolder.
   marked "match": the gap between permission choices, `PermissionContext` spacing, the Other row in
   `QuestionBlock`, and the compact button heights. They are routed to the new #1501. Three frameless prompt states
   are listed under Gaps and routed to #1502.
+
+### 2026-10-02 — second verifier rework on PR #1492
+
+- **Open Question resolved.** The channel list at this commit cannot be judged row by row against `640:2440`:
+  the harness feeds prompts to the thread's view model only, and the list reads `ConversationAttention` from the
+  host source, so every row shows idle. The item judges that the list stays usable while both prompts wait.
+  The waiting marks are a mismatch-in-waiting, routed to #1507 (a harness input plus a capture against
+  `640:2440`), and the item's Component state verdict no longer reads as a full match.
+- **`640:2838` behaviours in the switching sequence.** `promptsWaitInTheirOwnChats` now arms Allow once in
+  "kitchenclaw refactor", leaves and returns, and asserts `armedOptionId` is null (item 3). It returns to
+  "Release notes" and "Client planning" without setting a draft and asserts each composer draft is kept.
+  `open` takes a `draft` parameter, null to keep whatever the chat holds, in place of the check on the chat's
+  name. The grant checkbox across chats (item 4) is not judged: the override passes no `PermissionDraftStore`,
+  so the index lists it with its owner #1337.
+- **The 150 % top-bar title is a routed mismatch.** It was described as platform scaling. It is now a mismatch
+  in `636:4066` and `639:3308`, routed to #1501, whose body now carries it.
+- **`secureCapture` waits for a settled frame and records `syntheticBars`.** It reads `syntheticBars` from the
+  decor view's root insets, the same field `DesignCapture.capture` writes. Before drawing it waits until those
+  bar insets have held for 1.5 s, and it then draws until two draws 250 ms apart agree. This rework's runs caught
+  the window empty of insets right after `FLAG_SECURE`, and a 63 px navigation bar for over a second after
+  launch, each of which moved the layout. The keyboard frame asserts the test IME's 240 px inset and the `.txt`
+  records the keyboard, because one run showed a 332 px keyboard.
+- **Index items follow the README's per-item format**, with separate Capture, Side-by-side and Overlay bullets
+  and a Verdict bullet.
