@@ -43,3 +43,7 @@ AC5 (live suite) is the dispatcher's post-verifier `live` run; the two named `In
 ## Documentation handoff
 
 Pending for the documentation stage: the composer send section of `docs/knowledge/features/thread-screen-composer-drafts-and-attachments.md` — optimistic echo, trim, and the dropped restore-on-failure from #789.
+
+## Revisions
+
+**2026-10-02, merge of `main` (#1348).** #1348 gave `sendWithAttachments` an `onSent` callback, run after the send, so `onComposerCommand` can send pending files without clearing the typed draft. The `typed` parameter is gone. `sendWithAttachments(text, attachments, onUploaded, onSent)` now runs `onUploaded` once every upload has succeeded and before the send, then removes the snapshot's entries, sends, and runs `onSent`. `sendMessage` passes the guarded draft clear, which compares the store against the untrimmed text, as `onUploaded`. `onComposerCommand` passes its log as `onSent` and leaves the draft alone. The clear still happens before the reply, as AC4 requires.
