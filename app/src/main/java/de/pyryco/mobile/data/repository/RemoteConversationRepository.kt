@@ -46,7 +46,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -362,6 +364,20 @@ class RemoteConversationRepository(
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
     val modalEvents: SharedFlow<ModalEvent> = mutableModalEvents.asSharedFlow()
+
+    /**
+     * Live refusal frames and session transitions keyed by conversation id (#1360), the source of
+     * [observeLiveRefusalEvents]. The [mutableLiveSessionEvents] posture: events, not state, so nothing is
+     * replayed, and [BufferOverflow.DROP_OLDEST] keeps [MutableSharedFlow.tryEmit] from ever stalling the
+     * inbound collector. A dropped event can only leave a switch-back offer unarmed or stale; a write still
+     * needs the user's tap.
+     */
+    private val liveRefusalEvents =
+        MutableSharedFlow<Pair<String, LiveRefusalEvent>>(
+            replay = 0,
+            extraBufferCapacity = 16,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
 
     /**
      * The clarification batches outstanding on **this connection** (#822), held by [QuestionBatchProjection]
@@ -756,6 +772,9 @@ class RemoteConversationRepository(
                         // Eighth write since #945: the context reading described the replaced session, so it is
                         // dropped until the new session's first turn ends. Same routing.
                         contextUsageProjection.onSessionTransition(conversationId)
+                        // Ninth since #1360: the replaced session's switch-back offer is over. Emitted on the same
+                        // flow as the refusals, so the two keep their wire order.
+                        liveRefusalEvents.tryEmit(conversationId to LiveRefusalEvent.SessionReplaced)
                     }
                 }
             }
@@ -817,8 +836,10 @@ class RemoteConversationRepository(
                 // the refusal row — and inert toward every neighbour: no liveSessionEvents emission, no turn
                 // opened, closed or altered, no status touched, and no model state, which `model_announced`
                 // alone owns. Nothing here logs any payload field: all of them but the id are claude's.
+                // #1360: the one other write is the live signal, carrying the decoded refusal with its `scope`.
+                // Only this live arm emits it; the history lane never does.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    threadProjection.applyModelRefusal(envelope)
+                    threadProjection.applyModelRefusal(envelope)?.let { liveRefusalEvents.tryEmit(it) }
                 }
             }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
@@ -1157,6 +1178,9 @@ class RemoteConversationRepository(
         ) { stalled, retrying, compacting, resetting -> stalled + retrying + compacting + resetting }.distinctUntilChanged()
 
     override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = announcedModelProjection.observe(conversationId)
+
+    override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> =
+        liveRefusalEvents.filter { it.first == conversationId }.map { it.second }
 
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 

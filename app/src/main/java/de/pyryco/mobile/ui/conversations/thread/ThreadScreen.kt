@@ -97,6 +97,7 @@ import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
+import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
@@ -186,6 +187,9 @@ fun ThreadScreen(
     onOverflowEvent: (ThreadEvent) -> Unit = {},
     // #807: a published ModelMenuRow.value / effort level, forwarded verbatim — never a device enum.
     onModelSelected: (String) -> Unit = {},
+    // #1360: the switch-back offer, drawn on the refusal row that armed it, and its tap.
+    switchBackOffer: SwitchBackOffer? = null,
+    onSwitchBack: () -> Unit = {},
     onEffortSelected: (String) -> Unit = {},
     // #650: a PermissionModeOption wire value from the footer's permission menu.
     onPermissionModeSelected: (String) -> Unit = {},
@@ -682,7 +686,13 @@ fun ThreadScreen(
                                                         BannerNoticeRow(item = item, agent = state.agent)
                                                     }
                                                 is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
-                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item, agent = state.agent)
+                                                is ThreadItem.ModelRefusal ->
+                                                    ModelRefusalRow(
+                                                        item = item,
+                                                        agent = state.agent,
+                                                        switchBack = switchBackOffer?.takeIf { it.armedBy(item) },
+                                                        onSwitchBack = onSwitchBack,
+                                                    )
                                             }
                                         // One render path for both kinds of queued row — the one the echo
                                         // correlated to and the one this device minted no echo for — so the
