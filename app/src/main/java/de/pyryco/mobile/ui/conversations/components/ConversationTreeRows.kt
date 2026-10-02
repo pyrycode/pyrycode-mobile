@@ -365,7 +365,7 @@ private const val MAX_TEST_TAG_ID_CHARS = 256
  *
  * [workspaceName] is #729's already-resolved `HostWorkspaceGroup.displayName` — display text only,
  * never the `cwd`. The row resolves nothing: the caller binds [onEditTapped] to the group's own host and
- * `cwd`. The pencil is drawn permanently, as the host and chat rows' are, since the phone has no hover;
+ * `cwd`. The pencil is drawn permanently, as the host row's is, since the phone has no hover;
  * it is a [TreeRowControl], so a tap on it edits the workspace without folding the row. The row adds no
  * workspace: that is the host row's plus, held (#904).
  *
@@ -420,13 +420,13 @@ fun TreeWorkspaceRow(
  * instances one component in both sections.
  *
  * The leading status dot draws [attention], the row's one state that #877 resolves by precedence (#878).
- * [selected] draws the design's plain highlighted treatment.
+ * Under the static dark palette, [selected] draws 15:8's `Hover` fill (`primary-container`) and a pressed
+ * row its darker `on-primary` fill (#1523).
  *
- * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge, permanently, since the
- * phone has no hover (#827) — the host row's pencil made the same trade (#744). The caller decides which
- * rows get it and names what it edits through [editDescription]: Edit chat on Chats rows, Edit channel on
- * Channels rows (#667). It is a [TreeRowControl], so a tap on it edits the row without opening it or
- * moving the highlight.
+ * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge. The phone has no hover,
+ * so the caller hands it only to the selected row (#1523), and names what it edits through
+ * [editDescription]: Edit chat on Chats rows, Edit channel on Channels rows (#667). It is a
+ * [TreeRowControl], so a tap on it edits the row without opening it or moving the highlight.
  */
 @Composable
 fun TreeConversationRow(
@@ -442,15 +442,16 @@ fun TreeConversationRow(
     val bounded = boundedRowText(conversationName)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed = interactionSource.collectIsPressedAsState().value
+    val staticDark = LocalStaticDarkPalette.current
     val fill =
         if (selected) {
-            if (LocalStaticDarkPalette.current) {
-                MaterialTheme.colorScheme.onPrimary
+            if (staticDark) {
+                MaterialTheme.colorScheme.primaryContainer
             } else {
                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = SELECTED_FILL_ALPHA)
             }
         } else if (pressed) {
-            MaterialTheme.colorScheme.primaryContainer
+            if (staticDark) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primaryContainer
         } else {
             Color.Transparent
         }
@@ -714,8 +715,9 @@ private fun TreeRowsPreviewMatrix() {
                 conversationName = "pyrycode discord integration",
                 selected = true,
                 onClick = {},
+                onEditTapped = {},
             )
-            TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {}, onEditTapped = {})
+            TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {})
             ConversationAttention.entries.forEach { state ->
                 TreeConversationRow(conversationName = state.name, selected = false, onClick = {}, attention = state)
             }
