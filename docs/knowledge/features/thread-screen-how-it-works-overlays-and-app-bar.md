@@ -15,7 +15,7 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 ```kotlin
 bottomBar = {
     Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, isStalled = isStalled, turnOutcome = turnOutcome, isThinking = isThinking, isBusy = isBusy, localSendPending = localSendPending, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, waitingForAnswers = …, connectionState = connectionState, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true }, agent = state.agent)
+        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, isStalled = isStalled, turnOutcome = turnOutcome, onCompact = onCompact, isThinking = isThinking, isBusy = isBusy, localSendPending = localSendPending, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, waitingForAnswers = …, connectionState = connectionState, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true }, agent = state.agent)
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
     }
@@ -27,7 +27,8 @@ private fun ThreadStatusArea(
     resetting: ResetStatus?, // #872
     isCompacting: Boolean,
     isStalled: Boolean, // #1311
-    turnOutcome: TurnOutcomeReport?, // #805
+    turnOutcome: TurnRecoveryNotice?, // #1357
+    onCompact: (() -> Unit)?, // #1357
     isThinking: Boolean,
     isBusy: Boolean, // #1311
     localSendPending: Boolean, // #1311
@@ -45,7 +46,7 @@ private fun ThreadStatusArea(
         } else {
             StatusReading(
                 arm = statusArm(connectionState, resetting != null, apiRetry != ApiRetryStatus.NotRetrying, isCompacting, isStalled, turnOutcome != null, isThinking, isBusy, localSendPending, runningTool != null),
-                apiRetry, resetting, turnOutcome, isThinking, thinkingProgress, runningTool, connectionState, agent, modifier,
+                apiRetry, resetting, turnOutcome, onCompact, isThinking, thinkingProgress, runningTool, connectionState, agent, modifier,
             )
         }
     }
@@ -73,7 +74,8 @@ private fun StatusReading(
     arm: StatusArm,
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    turnOutcome: TurnOutcomeReport?,
+    turnOutcome: TurnRecoveryNotice?,
+    onCompact: (() -> Unit)?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
@@ -87,7 +89,7 @@ private fun StatusReading(
         StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent) // agent: #1112
         StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        StatusArm.TurnOutcome -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
+        StatusArm.TurnOutcome -> TurnOutcomeIndicator(notice = turnOutcome, agent = agent, onCompact = onCompact, modifier = modifier)
         // One branch, so the glyph keeps its composition identity, and its pulse, across these readings (#1311).
         StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
@@ -106,7 +108,9 @@ private fun StatusReading(
 `agent` reaches both functions from `ThreadScreen`'s own `state.agent` (see [Thinking indicator § The agent
 name](thinking-indicator.md#the-agent-name-1114)); `resetting`'s branch is the only one of the arms that
 picked up `agent` after #1114 shipped, closed by #1112 — see [Resetting indicator § The agent
-name](resetting-indicator.md#the-agent-name-1112). The turn-outcome lead stays client-owned and its daemon detail stays bounded by `turnOutcomeReport`. See [Thread screen § The arm
+name](resetting-indicator.md#the-agent-name-1112). Since [#1357](turn-outcome-indicator.md) the turn-outcome arm
+shows only client-owned recovery copy — no daemon text crosses into it at all — and carries the `onCompact`
+callback the context notice's Compact pill uses. See [Thread screen § The arm
 order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for `statusArm`'s full
 signature, the precedence table and the local-send window that feeds `localSendPending`.
 
