@@ -39,7 +39,7 @@ UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui   # in-depth run: every 
 ```
 
 New Compose screen tests go in `app/src/sharedTest`, not `app/src/androidTest`. See
-[where a screen test goes](docs/knowledge/features/development-verification.md#where-a-screen-test-goes).
+[where a screen test goes](docs/knowledge/features/development-verification-gates.md#where-a-screen-test-goes).
 
 ## Layout
 
