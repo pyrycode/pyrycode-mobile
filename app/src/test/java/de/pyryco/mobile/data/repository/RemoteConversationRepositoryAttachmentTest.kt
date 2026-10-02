@@ -517,7 +517,8 @@ class RemoteConversationRepositoryAttachmentTest {
             assertEquals("a held id re-emits nothing", emitted, thread.size)
         }
 
-    // #1369: the push can beat the ack. Its bare-id row is then replaced by the send's confirmed insert.
+    // #1369: the push can beat the ack. The echo is drawn before the send (#1355), so the push already finds
+    // the named row and keeps it, and the ack changes nothing.
     @Test
     fun pushBeforeAck_theConfirmedInsertLeavesTheNamedRow() =
         runTest {
@@ -536,7 +537,7 @@ class RemoteConversationRepositoryAttachmentTest {
             pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
             runCurrent()
             assertEquals(
-                listOf(MessageAttachment(ID_A), MessageAttachment(ID_B)),
+                listOf(NAMED_A, NAMED_B),
                 (thread.last().single() as ThreadItem.MessageItem).message.attachments,
             )
 
