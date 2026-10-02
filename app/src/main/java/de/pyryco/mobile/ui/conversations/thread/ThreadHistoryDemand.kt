@@ -10,10 +10,10 @@ package de.pyryco.mobile.ui.conversations.thread
  * stop.
  *
  * At the fake's page size that is 2000 rows of scroll-back, past any plausible reader. The count is per
- * walk (so per [ThreadViewModel], so per screen-open): leaving and re-entering a thread starts a fresh
- * walk from the newest page. Every page costs a deliberate human gesture since #1352, and a per-screen
- * walk is the right scope for a per-screen cap — a process-scoped counter would leak walk state across
- * conversations for no attacker-relevant gain.
+ * walk (so per [ThreadViewModel], so per screen-open): re-entering a thread continues from its saved
+ * position (#1354) with a fresh count, because only the position is saved. Every page costs a deliberate
+ * human gesture since #1352, and a per-screen walk is the right scope for a per-screen cap — a
+ * process-scoped counter would leak walk state across conversations for no attacker-relevant gain.
  */
 internal const val MAX_HISTORY_PAGES = 100
 
@@ -170,6 +170,18 @@ internal data class ThreadHistoryDemand(
             inFlight = false,
             stoppedBy = if (retryable) HistoryWalkStop.RetryableFailure else HistoryWalkStop.PermanentFailure,
         )
+
+    /**
+     * Resume from the position saved when the thread was last open (#1354): ask next with [cursor], and stop
+     * as [HistoryWalkStop.AtStart] when the saved walk had reached the start of history, so a pull asks
+     * nothing and the offline notice stays hidden. Takes the saved position's two scalars, for the same
+     * reason [settled] does. [pagesLoaded] is carried, so restoring never resets the [MAX_HISTORY_PAGES]
+     * budget.
+     */
+    fun restored(
+        cursor: String,
+        atStart: Boolean,
+    ): ThreadHistoryDemand = copy(cursor = cursor, stoppedBy = if (atStart) HistoryWalkStop.AtStart else stoppedBy)
 
     /**
      * Fold a refused cursor (#1352): the daemon answered `history.invalid_cursor`, so the next ask starts

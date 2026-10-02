@@ -25,6 +25,7 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.HistoryPage
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -36,7 +37,6 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -70,7 +70,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -284,110 +283,6 @@ class ThreadViewModelTest {
             thinking.cancel()
             busy.cancel()
         }
-
-    // ---- #805: turnOutcome, and turn_end still clearing the spinner and the Stop affordance ------
-
-    @Test
-    fun turnOutcome_initialValue_isNullWithNoLiveSource() =
-        runTest {
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-            val vm = makeVm(handle, FakeConversationRepository())
-            assertNull(vm.turnOutcome.value)
-        }
-
-    @Test
-    fun turnOutcome_failedTurnEnd_isReported() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.turnOutcome.collect {} }
-            advanceUntilIdle()
-
-            events.emit(failedTurnEnd(ACTIVE_CONV))
-            advanceUntilIdle()
-
-            assertEquals(
-                TurnOutcomeReport(TurnOutcomeReport.Kind.Failed, listOf("prompt_too_long"), null),
-                vm.turnOutcome.value,
-            )
-            collector.cancel()
-        }
-
-    @Test
-    fun turnOutcome_cleanTurnEnd_clearsAStaleReport() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.turnOutcome.collect {} }
-            advanceUntilIdle()
-
-            events.emit(failedTurnEnd(ACTIVE_CONV))
-            advanceUntilIdle()
-            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, turnId = "t2", stopReason = "end_turn"))
-            advanceUntilIdle()
-
-            assertNull(vm.turnOutcome.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun turnOutcome_clearsWhenTheNextTurnStarts_butNotOnIdle() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.turnOutcome.collect {} }
-            advanceUntilIdle()
-
-            events.emit(failedTurnEnd(ACTIVE_CONV))
-            // idle may accompany a turn_end in either order, and deltas/tool events are not a turn start.
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Idle))
-            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 0, text = "hi"))
-            events.emit(LiveSessionEvent.ReplayGap(ACTIVE_CONV))
-            advanceUntilIdle()
-            assertNotNull(vm.turnOutcome.value)
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
-            advanceUntilIdle()
-            assertNull(vm.turnOutcome.value)
-
-            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t2", "cancelled"))
-            advanceUntilIdle()
-            assertNotNull(vm.turnOutcome.value)
-
-            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
-            advanceUntilIdle()
-            assertNull(vm.turnOutcome.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun turnOutcome_otherConversation_isIgnored() =
-        runTest {
-            val events = MutableSharedFlow<LiveSessionEvent>()
-            val vm = vmWithLiveEvents(events)
-            val collector = launch { vm.turnOutcome.collect {} }
-            advanceUntilIdle()
-
-            events.emit(failedTurnEnd("other-conversation"))
-            advanceUntilIdle()
-            assertNull(vm.turnOutcome.value)
-
-            events.emit(failedTurnEnd(ACTIVE_CONV))
-            events.emit(turnState("other-conversation", LiveSessionEvent.TurnState.Phase.Thinking))
-            advanceUntilIdle()
-            assertNotNull(vm.turnOutcome.value)
-            collector.cancel()
-        }
-
-    private fun failedTurnEnd(conversationId: String) =
-        LiveSessionEvent.TurnEnd(
-            conversationId,
-            turnId = "t1",
-            stopReason = "end_turn",
-            outcome = "success",
-            isError = true,
-            terminalReason = "prompt_too_long",
-        )
 
     // ---- #492: currentModal is the hoisted projection injected from the coordinator -------------
     // The fold itself moved to the process-scoped coordinator: the pure-fold behaviours (Shown→Open,
@@ -4619,6 +4514,127 @@ class ThreadViewModelTest {
                 }
         }
 
+    // --- #1354: the walk resumes from the position saved beside the cached rows ------------------------
+
+    @Test
+    fun history_withASavedPosition_theFirstPullAsksWithTheSavedCursorAndOpeningAsksNothing() =
+        runTest {
+            val repo = HistoryRepo(saved = HistoryPosition("saved-cursor", atStart = false)) { page(cursor = "older") }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            assertEquals(emptyList<String>(), repo.asks)
+
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+
+            assertEquals(listOf("saved-cursor"), repo.asks)
+            assertEquals(listOf<HistoryPosition?>(HistoryPosition("older", atStart = false)), repo.positionWrites)
+        }
+
+    @Test
+    fun history_withNoSavedPosition_theFirstPullAsksFromTheNewestAndSavesThePage() =
+        runTest {
+            val repo = HistoryRepo { HistoryPage(entries = emptyList(), cursor = "", atStart = true) }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+
+            assertEquals(listOf(""), repo.asks)
+            // Even an empty page sets the position.
+            assertEquals(listOf<HistoryPosition?>(HistoryPosition("", atStart = true)), repo.positionWrites)
+        }
+
+    @Test
+    fun history_aPullWhileTheSavedPositionIsBeingRead_asksWithTheSavedCursor() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val repo = HistoryRepo(saved = HistoryPosition("saved-cursor", atStart = false), readGate = gate) { page(cursor = "older") }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            repeat(3) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            assertEquals(emptyList<String>(), repo.asks)
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(listOf("saved-cursor"), repo.asks)
+        }
+
+    @Test
+    fun history_aSavedAtStart_asksNothingAndHidesTheOfflineNotice() =
+        runTest {
+            val available = MutableStateFlow(true)
+            val repo = HistoryRepo(saved = HistoryPosition("", atStart = true)) { page(cursor = "c1") }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+
+            repeat(3) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            assertEquals(emptyList<String>(), repo.asks)
+
+            available.value = false
+            advanceUntilIdle()
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aFailedAsk_leavesTheSavedPositionUnchanged() =
+        runTest {
+            val saved = HistoryPosition("saved-cursor", atStart = false)
+            var asks = 0
+            val repo =
+                HistoryRepo(saved = saved) {
+                    if (asks++ == 0) {
+                        throw RelayErrorException("history.unavailable", true, "busy")
+                    } else {
+                        throw IllegalStateException("not connected")
+                    }
+                }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            repeat(2) {
+                vm.onDemandOlderHistory()
+                advanceUntilIdle()
+            }
+
+            assertEquals(listOf("saved-cursor", "saved-cursor"), repo.asks)
+            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
+            assertEquals(saved, repo.saved)
+        }
+
+    @Test
+    fun history_aRefusedSavedCursor_clearsTheSavedPositionAndTheNextPullAsksFromTheNewest() =
+        runTest {
+            val repo =
+                HistoryRepo(saved = HistoryPosition("stale-cursor", atStart = false)) { cursor ->
+                    if (cursor.isNotEmpty()) throw RelayErrorException("history.invalid_cursor", false, "stale")
+                    page(cursor = "fresh")
+                }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf<HistoryPosition?>(null), repo.positionWrites)
+            assertEquals(null, repo.saved)
+
+            // The next open starts from the newest page...
+            val reopened = HistoryRepo(saved = repo.saved) { page(cursor = "c1") }
+            val next = makeVm(historyHandle(), reopened)
+            advanceUntilIdle()
+            next.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf(""), reopened.asks)
+
+            // ...and so does the next pull.
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("stale-cursor", ""), repo.asks)
+        }
+
     private fun historyHandle() = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
 
     private fun page(cursor: String) = HistoryPage(entries = emptyList(), cursor = cursor, atStart = false)
@@ -4644,10 +4660,30 @@ class ThreadViewModelTest {
      */
     private class HistoryRepo(
         private val delegate: FakeConversationRepository = FakeConversationRepository(),
+        /** #1354: the position saved beside the cached rows, read once at open and replaced by every write. */
+        var saved: HistoryPosition? = null,
+        /** #1354: when set, the saved-position read suspends until it completes. */
+        private val readGate: CompletableDeferred<Unit>? = null,
         private val answer: suspend (String) -> HistoryPage,
     ) : ConversationRepository by delegate {
         val asks = mutableListOf<String>()
         val messages = MutableStateFlow<List<ThreadItem>>(emptyList())
+
+        /** Every position write, in order; `null` is a clear. */
+        val positionWrites = mutableListOf<HistoryPosition?>()
+
+        override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? {
+            readGate?.await()
+            return saved
+        }
+
+        override suspend fun writeHistoryPosition(
+            conversationId: String,
+            position: HistoryPosition?,
+        ) {
+            positionWrites += position
+            saved = position
+        }
 
         override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = messages
 

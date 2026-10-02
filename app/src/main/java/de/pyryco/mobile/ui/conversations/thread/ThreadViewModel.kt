@@ -25,6 +25,8 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.HistoryPage
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchReport
@@ -44,10 +46,10 @@ import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditor
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.attachmentTarget
 import de.pyryco.mobile.ui.conversations.components.loadsOnShow
-import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.turnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
@@ -68,6 +70,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -78,7 +81,6 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
@@ -500,10 +502,23 @@ class ThreadViewModel(
      * read-then-assign would open a real window, because the settle runs in a launched coroutine while the
      * claim runs on the caller's.
      *
-     * Not persisted. It survives a reconnect (#1352): the cursor names a position in the daemon's
-     * append-only log, so the next gesture after a reconnect continues from it.
+     * It survives a reconnect (#1352): the cursor names a position in the daemon's append-only log, so the
+     * next gesture after a reconnect continues from it. Its position is saved beside the cached rows when
+     * an ask settles and restored at open by [historySeed] (#1354); the page count and failures are not.
      */
     private val historyDemand = MutableStateFlow(ThreadHistoryDemand())
+
+    /**
+     * Restores the history position saved when this thread was last open (#1354), so the first pull asks
+     * past the rows the cache already drew instead of re-fetching the newest page. Reading asks nothing.
+     * [onDemandOlderHistory] waits for it, so no ask can carry the opening empty cursor once a saved one
+     * exists.
+     */
+    private val historySeed: Job =
+        viewModelScope.launch {
+            val saved = repository.readHistoryPosition(conversationId) ?: return@launch
+            historyDemand.update { it.restored(cursor = saved.cursor, atStart = saved.atStart) }
+        }
 
     /**
      * Whether this thread's host has a live repository right now (#1352), desktop's
@@ -532,6 +547,8 @@ class ThreadViewModel(
         ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
             .map { it.render() }
             .distinctUntilChanged()
+            // #1357: a session transition reaches this thread only as a new boundary row.
+            .onEach(::noteNewestBoundary)
 
     /**
      * The thread's content surface: the [threadItems] rows folded with the conversation's queued-message
@@ -760,24 +777,25 @@ class ThreadViewModel(
                 initialValue = false,
             )
 
+    private val _turnOutcome = MutableStateFlow<TurnRecoveryNotice?>(null)
+
     /**
-     * How this conversation's last turn ended, when it did not end cleanly (#805) — drives the status
-     * area's turn-outcome arm. A sibling [StateFlow] beside [isThinking] / [isBusy] over the same live
-     * events, with the same lifetime. `null` covers no event yet, a clean last turn, and a next turn that
-     * has started.
+     * The recovery advice for this conversation's last stopped turn (#1357), desktop's `latestTurnEnd` read by
+     * `ComposerErrorSlotControl` — drives the status area's turn-outcome arm. A `turn_end` sets or replaces it
+     * through [turnRecoveryNotice]; the next sign of activity clears it: a non-idle `turn_state`, an
+     * assistant delta, a tool use or result ([nextTurnOutcome]), a new thinking reading, a new session
+     * boundary ([noteNewestBoundary]), the user's send, and a reconnect. An `idle` `turn_state` never clears it,
+     * since it may arrive on either side of the `turn_end` it accompanies.
      *
-     * A `turn_end` replaces the value outright (a clean one clears a stale report), and only `thinking` /
-     * `responding` clear it otherwise — never `idle`, which may arrive on either side of the `turn_end` it
-     * accompanies. [isThinking] and [isBusy] are untouched: they already turn off on any `turn_end`.
+     * Held, not folded per subscriber, so a `turn_end` that lands while the screen is not collecting still
+     * counts. Every writer runs on `viewModelScope`'s main dispatcher.
      */
-    val turnOutcome: StateFlow<TurnOutcomeReport?> =
-        liveSessionEvents
-            .runningFold(null as TurnOutcomeReport?) { current, event -> nextTurnOutcome(current, event) }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue = null,
-            )
+    val turnOutcome: StateFlow<TurnRecoveryNotice?> = _turnOutcome.asStateFlow()
+
+    /** The newest boundary row [threadItems] has drawn, once it has drawn a non-empty thread (#1357). */
+    private var newestBoundary: ThreadItem.SessionBoundary? = null
+
+    private var boundaryBaselineSeen = false
 
     /** The open Channel info sheet's System prompt state (#1342), or `null` while the sheet is closed. */
     val systemPrompt: StateFlow<SystemPromptEditorState?> =
@@ -1179,20 +1197,51 @@ class ThreadViewModel(
 
     /** Folds one live event into [turnOutcome]; events for other conversations leave it unchanged. */
     private fun nextTurnOutcome(
-        current: TurnOutcomeReport?,
+        current: TurnRecoveryNotice?,
         event: LiveSessionEvent,
-    ): TurnOutcomeReport? {
+    ): TurnRecoveryNotice? {
         if (event.conversationId != conversationId) return current
         return when (event) {
-            is LiveSessionEvent.TurnEnd -> turnOutcomeReport(event)
+            is LiveSessionEvent.TurnEnd -> turnRecoveryNotice(event)
             is LiveSessionEvent.TurnState ->
                 if (event.phase == LiveSessionEvent.TurnState.Phase.Idle) current else null
             is LiveSessionEvent.AssistantDelta,
             is LiveSessionEvent.ToolUse,
             is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> current
+            -> null
+            is LiveSessionEvent.ReplayGap -> current
         }
+    }
+
+    private fun setTurnOutcome(
+        notice: TurnRecoveryNotice?,
+        reason: String,
+    ) {
+        val current = _turnOutcome.value
+        if (notice == current) return
+        _turnOutcome.value = notice
+        RelayLog.d {
+            if (notice == null) {
+                "event=turn_recovery_notice state=cleared reason=$reason"
+            } else {
+                "event=turn_recovery_notice state=shown notice=${notice.name}"
+            }
+        }
+    }
+
+    private fun clearTurnOutcome(reason: String) = setTurnOutcome(null, reason)
+
+    /**
+     * Clear [turnOutcome] when [items] end on a boundary newer than the last one drawn (#1357). An empty list,
+     * the fold's seed or a thread not loaded yet, sets no baseline, so the first load never reads as a
+     * transition. An older history page prepends rows and leaves the newest boundary as it was.
+     */
+    private fun noteNewestBoundary(items: List<ThreadItem>) {
+        if (items.isEmpty()) return
+        val newest = items.lastOrNull { it is ThreadItem.SessionBoundary } as ThreadItem.SessionBoundary?
+        if (boundaryBaselineSeen && newest != null && newest != newestBoundary) clearTurnOutcome("session_boundary")
+        newestBoundary = newest
+        boundaryBaselineSeen = true
     }
 
     init {
@@ -1205,7 +1254,30 @@ class ThreadViewModel(
             repositoryAvailable
                 .distinctUntilChanged()
                 .drop(1)
-                .collect { closeLocalSendWindow("reconnect") }
+                .collect {
+                    closeLocalSendWindow("reconnect")
+                    clearTurnOutcome("reconnect")
+                }
+        }
+
+        // #1357: the live events set and clear the recovery notice, and a new thinking reading clears it. The
+        // repository drops a reading on `turn_end`, so any reading that follows belongs to a later step.
+        viewModelScope.launch {
+            liveSessionEvents.collect { event ->
+                val reason =
+                    when (event) {
+                        is LiveSessionEvent.TurnEnd -> "turn_end"
+                        is LiveSessionEvent.TurnState -> "turn_state"
+                        is LiveSessionEvent.AssistantDelta -> "assistant_delta"
+                        is LiveSessionEvent.ToolUse -> "tool_use"
+                        is LiveSessionEvent.ToolResult -> "tool_result"
+                        is LiveSessionEvent.ReplayGap -> "replay_gap"
+                    }
+                setTurnOutcome(nextTurnOutcome(_turnOutcome.value, event), reason)
+            }
+        }
+        viewModelScope.launch {
+            repository.observeThinkingProgress(conversationId).filterNotNull().collect { clearTurnOutcome("thinking") }
         }
 
         // #1311: the daemon's first `turn_state` for this conversation, of any phase, closes the local-send
@@ -1283,6 +1355,7 @@ class ThreadViewModel(
      * that returns was accepted, and tells the screen to follow the newest end again (#1314).
      */
     private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
+        clearTurnOutcome("send")
         openLocalSendWindow()
         val sent =
             try {
@@ -1335,6 +1408,14 @@ class ThreadViewModel(
      * rather than queuing it.
      */
     fun onDemandOlderHistory() {
+        if (!historySeed.isCompleted) {
+            // #1354: a pull while the saved position is still being read asks once it has been.
+            viewModelScope.launch {
+                historySeed.join()
+                onDemandOlderHistory()
+            }
+            return
+        }
         if (!hostAvailable.value) {
             RelayLog.d { "event=history_ask_skipped reason=offline" }
             return
@@ -1366,38 +1447,50 @@ class ThreadViewModel(
      *
      * Exactly one ask is outstanding at a time ([claimHistorySlot]), so every settle and fail belongs to
      * the current ask. A page that settles across a reconnect still applies: its cursor stays valid.
+     *
+     * A received page's position is saved (#1354) before the settle releases the slot, so the one
+     * outstanding ask also orders the saves. A failed ask saves nothing, leaving the saved position as it
+     * was; a refused cursor clears it.
      */
     private fun launchHistoryAsk(claimed: ThreadHistoryDemand) {
         viewModelScope.launch {
-            try {
-                val page = repository.requestHistory(conversationId, claimed.cursor)
-                historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
-            } catch (e: CancellationException) {
-                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
-            } catch (e: RelayErrorException) {
-                // A server error frame. Only the CODE is read, and only to choose a branch; e.message is
-                // server-supplied and is never read, logged or surfaced. An unknown or differently-cased
-                // code falls through to the failure branch, so the fallback here is the safe one.
-                if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
-                    // #1352: the daemon refused the cursor. The next gesture asks from the newest page;
-                    // nothing asks now.
-                    RelayLog.d { "event=history_cursor_refused" }
-                    historyDemand.update { it.cursorRefused() }
-                } else {
-                    // A refusal of the NEWEST-page ask has nothing to fall back to, so it is a failure.
-                    failWalk(retryable = e.retryable)
-                }
-            } catch (e: IllegalStateException) {
-                // A not-connected session, #488's teardown sweep, or the not-wired interface default. Not
-                // retryable: a button with no connection behind it cannot work. A gesture after the
-                // reconnect asks again (#1352).
-                failWalk(retryable = false)
-            } catch (e: IllegalArgumentException) {
-                // An unknown conversation id, or a malformed page — kotlinx.serialization's
-                // SerializationException is an IllegalArgumentException, so the decode failure lands here.
-                failWalk(retryable = false)
-            }
+            val page = fetchHistoryPage(claimed) ?: return@launch
+            repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor, page.atStart))
+            historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
         }
+    }
+
+    /** Ask for the page at [claimed]'s cursor, or settle the failure and return `null`. */
+    private suspend fun fetchHistoryPage(claimed: ThreadHistoryDemand): HistoryPage? {
+        try {
+            return repository.requestHistory(conversationId, claimed.cursor)
+        } catch (e: CancellationException) {
+            throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+        } catch (e: RelayErrorException) {
+            // A server error frame. Only the CODE is read, and only to choose a branch; e.message is
+            // server-supplied and is never read, logged or surfaced. An unknown or differently-cased
+            // code falls through to the failure branch, so the fallback here is the safe one.
+            if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
+                // #1352: the daemon refused the cursor. The next gesture asks from the newest page;
+                // nothing asks now. #1354: the saved position goes too, so the next open does the same.
+                RelayLog.d { "event=history_cursor_refused" }
+                repository.writeHistoryPosition(conversationId, null)
+                historyDemand.update { it.cursorRefused() }
+            } else {
+                // A refusal of the NEWEST-page ask has nothing to fall back to, so it is a failure.
+                failWalk(retryable = e.retryable)
+            }
+        } catch (e: IllegalStateException) {
+            // A not-connected session, #488's teardown sweep, or the not-wired interface default. Not
+            // retryable: a button with no connection behind it cannot work. A gesture after the
+            // reconnect asks again (#1352).
+            failWalk(retryable = false)
+        } catch (e: IllegalArgumentException) {
+            // An unknown conversation id, or a malformed page — kotlinx.serialization's
+            // SerializationException is an IllegalArgumentException, so the decode failure lands here.
+            failWalk(retryable = false)
+        }
+        return null
     }
 
     /** Settle a failed ask. [retryable] is a flag, never text. */
@@ -1760,6 +1853,7 @@ class ThreadViewModel(
         }
         launchGuardedRepoCall {
             effortRecall.awaitWrite()
+            clearTurnOutcome("send")
             repository.sendMessage(conversationId, command)
             RelayLog.d { "event=composer_action action=${action.value} outcome=sent" }
         }

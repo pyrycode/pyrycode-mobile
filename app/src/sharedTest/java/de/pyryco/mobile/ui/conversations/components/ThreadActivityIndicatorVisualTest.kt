@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -41,8 +42,9 @@ class ThreadActivityIndicatorVisualTest {
                         }
                         Box(Modifier.testTag("outcome")) {
                             TurnOutcomeIndicator(
-                                report = TurnOutcomeReport(TurnOutcomeReport.Kind.Interrupted, emptyList(), null),
+                                notice = TurnRecoveryNotice.ContextTooLong,
                                 agent = ConversationAgent.Claude,
+                                onCompact = {},
                             )
                         }
                     }
@@ -56,6 +58,7 @@ class ThreadActivityIndicatorVisualTest {
             val bounds = composeRule.onNodeWithTag(tag).getUnclippedBoundsInRoot()
             assertTrue("$tag fits the band", bounds.bottom - bounds.top <= 24.dp)
         }
-        composeRule.onNodeWithTag("outcome").assertHeightIsEqualTo(24.dp)
+        // #1357: the recovery notice may wrap to its two lines; the Compact pill beside it holds the band height.
+        composeRule.onNodeWithText("Compact").assertHeightIsEqualTo(24.dp)
     }
 }

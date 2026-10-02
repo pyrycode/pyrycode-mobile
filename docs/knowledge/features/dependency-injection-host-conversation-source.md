@@ -148,10 +148,11 @@ since desktop has no such edge. No new visuals: a busy conversation resolves to 
   at `MAX_COUNTED_TURNS_PER_CONVERSATION` = 16) or equal to the stored position's
   `completedTurnId`/`readTurnId` — records the turn as counted and sets a `ReadPosition`
   (read immediately if `viewing`, else `completedTurnId` only, keeping the prior
-  `readTurnId`). A turn whose `turnOutcomeReport(event)?.kind` is `Failed` or `StoppedEarly`
-  sets that same `ReadPosition` like any other completed turn (#1451 removed the separate
-  `failed` fold this used to feed), so it resolves Unread when not viewed and Idle once
-  opened. Every other event is a no-op.
+  `readTurnId`). `completed` draws no distinction by how the turn ended — a failed, interrupted
+  or early-stopped turn sets that same `ReadPosition` like any other completed turn (#1451
+  removed the separate `failed` fold this used to feed; [#1357](turn-outcome-indicator.md)
+  later removed the outcome classifier itself, which this fold never called), so it resolves
+  Unread when not viewed and Idle once opened. Every other event is a no-op.
 - `rowsAdded(conversationId, viewing, token)` (#1361) is the other way a conversation turns
   Unread: a row — a text delta's bubble, a tool call, a banner, a session boundary, a
   compaction divider, a refusal, an attachment offer, a `TurnEnd` — appended to the thread,
