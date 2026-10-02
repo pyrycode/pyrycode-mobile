@@ -62,8 +62,11 @@ items drawn directly inside `ThreadScreen`'s message list, following the #1305 q
 ([Question batch modal](question-batch-modal.md)) almost exactly:
 
 - **Container.** `permissionRequestItems` replaces `PermissionModalOverlay`, emitting (under the list's
-  reverse layout, newest end first) Cancel, the card, then the title — see § The inline request below. The
-  request also renders in an **empty thread** (the `EmptyThreadState` branch now also gates on
+  reverse layout, newest end first) Cancel then the card — see § The inline request below. The title moved
+  inside the card as its first line in [#1483](../../specs/architecture/1483-permission-request-frames.md),
+  so the container is now two lazy items, not three; `PERMISSION_ROW_COUNT` (see [Thread screen § list and
+  status row](thread-screen-how-it-works-list-and-status-row.md#inline-permission-rows-and-the-shared-reveal-1306))
+  must keep matching whatever count `permissionRequestItems` emits. The request also renders in an **empty thread** (the `EmptyThreadState` branch now also gates on
   `openRequest == null`, and since [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340)
   on `!answerRejected` too, so a refused answer in a chat with no messages has a slot to draw in) and no
   longer blocks Back, chat switching or history scrolling.
@@ -161,14 +164,16 @@ while chat B raises and even resolves its own.
 
 Since [#1306](../../specs/architecture/1306-inline-permissions.md), `permissionRequestItems(open:
 ModalUiState.Open, armedOptionId, onOption, onCancel, alwaysAllowAccepted, onAlwaysAllowChanged, gutter)` is
-an `internal fun LazyListScope.` extension that emits three keyed items directly into `ThreadScreen`'s
+an `internal fun LazyListScope.` extension that emits two keyed items directly into `ThreadScreen`'s
 message `LazyColumn` — no dialog, no `MobileGateModal`. Under the list's `reverseLayout = true`, items are
-emitted **newest end first**: Cancel (`permission-cancel:$modalId`), the card
-(`permission-card:$modalId`), then the title (`permission-title:$modalId`). `MobileGateModal` — the #815
-hardened dialog shell — is no longer this surface's container; it still gates `CreateChatModal`. Every
-server string renders through plain `Text` bounded by `MAX_PERMISSION_TEXT` (8192 chars). The option count is
-variable (`permission` = 4, `trust` = 2), so all options render uniformly in a `Column` to preserve array
-order and a single highlight path.
+emitted **newest end first**: Cancel (`permission-cancel:$modalId`, `Box` aligned `TopStart` so its visible
+top sits about 12 px under the card), then the card (`permission-card:$modalId`). The title moved inside the
+card as its first line in [#1483](../../specs/architecture/1483-permission-request-frames.md) — there is no
+longer a separate title item, and `ThreadScreen`'s `PERMISSION_ROW_COUNT` must equal the item count here (2).
+`MobileGateModal` — the #815 hardened dialog shell — is no longer this surface's container; it still gates
+`CreateChatModal`. Every server string renders through plain `Text` bounded by `MAX_PERMISSION_TEXT` (8192
+chars). The option count is variable (`permission` = 4, `trust` = 2), so all options render uniformly in a
+`Column` to preserve array order and a single highlight path.
 
 ```kotlin
 internal fun LazyListScope.permissionRequestItems(
@@ -181,35 +186,47 @@ internal fun LazyListScope.permissionRequestItems(
     gutter: Modifier,
 ) {
     item(key = "permission-cancel:${open.modalId}") {
-        Box(gutter.testTag("permission-request-cancel")) {
+        Box(gutter.testTag("permission-request-cancel"), contentAlignment = Alignment.TopStart) {
             ModalCancelButton(label = stringResource(R.string.modal_cancel), onClick = { onCancel(open.modalId) })
         }
     }
     item(key = "permission-card:${open.modalId}") {
         Box(gutter) { PermissionRequestCard(open, armedOptionId, onOption, alwaysAllowAccepted, onAlwaysAllowChanged) }
     }
-    item(key = "permission-title:${open.modalId}") {
-        Box(gutter) { Text(text = open.title.take(MAX_PERMISSION_TEXT), style = MaterialTheme.typography.titleMedium) }
-    }
 }
 ```
 
 `PermissionRequestCard` — the #1305 question card's own container (`background` fill, 1dp
-`primaryContainer` border, `modalControl` shape, 16dp padding) — holds the verbatim prompt, the decision
-context, the always-allow offer and the options, every tap forwarding `open.modalId` alongside it:
+`primaryContainer` border, `modalControl` shape, 16dp padding) — opens with the title as its first child
+(Figma `639:2242`), then holds the verbatim prompt, the decision context, the always-allow offer and the
+options, every tap forwarding `open.modalId` alongside it:
 
 ```kotlin
+Text(                                    // #1483: the card's first line, not a separate item above it
+    text = open.title.take(MAX_PERMISSION_TEXT),
+    style = MaterialTheme.typography.titleMedium,
+    modifier = Modifier.semantics { heading() }.testTag("permission-request-title"),
+)
 Text(text = open.prompt.take(MAX_PERMISSION_TEXT), style = MaterialTheme.typography.bodyLarge)
 if (!open.context.isEmpty) PermissionContext(open.context)             // #817, only when the frame carried any
 if (open.offersAlwaysAllow)                                            // #818, only when the daemon offered it
     AlwaysAllowOffer(open.alwaysAllowRules, alwaysAllowAccepted, onChanged = { onAlwaysAllowChanged(open.modalId, it) })
 open.options.forEach { option ->          // wire array order = canonical display/selection order
+    val isArmed = option.id == armedOptionId
     ModalOptionButton(option.label.take(MAX_PERMISSION_TEXT),
         isDefault = option.id == open.defaultOptionId,
-        isArmed   = option.id == armedOptionId,             // #452: reflects the VM's armed option
-        onClick   = { onOption(open.modalId, option.id) })  // every tap forwards verbatim, with the request id
+        isArmed   = isArmed,                                 // #452: reflects the VM's armed option
+        onClick   = { onOption(open.modalId, option.id) })   // every tap forwards verbatim, with the request id
+    if (isArmed) Text(stringResource(R.string.modal_armed_option_hint, option.label.take(MAX_PERMISSION_TEXT)))
+    // #1483: "Tap <label> again to confirm." sits directly under the armed choice, inside the 8dp column
+    // gaps, and disappears with the arm. It is a server-string sink like the label — plain Text, bounded,
+    // no markdown. The other choices show no hint.
 }
 ```
+
+The title keeps the `permission-request-title` test tag and `heading()` semantics it had as a separate item
+— only its container moved, from its own `Box` above the card to the card's Column, in the card's
+`onBackground` content colour rather than `onPrimaryContainer`.
 
 `open.modalClass` is **not** branched on — there is no per-class layout; the `title` / `prompt` already
 carry the human text (the class is carried but unused here, available to the later visual spec).
@@ -221,7 +238,7 @@ extended from #446's 2-way by [#452](../codebase/452.md):
 
 | State | Button | Marker |
 |---|---|---|
-| `isArmed` — the VM's armed non-default, awaiting its second confirm (#452) | `FilledTonalButton` (kept **below** the default's filled emphasis so the safe default stays dominant) | `stateDescription = modal_armed_option_desc` ("Tap again to confirm") |
+| `isArmed` — the VM's armed non-default, awaiting its second confirm (#452) | `FilledTonalButton` (kept **below** the default's filled emphasis so the safe default stays dominant) | `stateDescription = modal_armed_option_desc` ("Tap again to confirm"), plus a visible `modal_armed_option_hint` ("Tap <label> again to confirm.") directly under the button since [#1483](../../specs/architecture/1483-permission-request-frames.md) — TalkBack announces both, one after the other, which the #1483 verifier flagged as an unfixed duplicate announcement |
 | `isDefault` — the fail-safe-deny default | high-emphasis filled `Button` | `stateDescription = modal_default_option_desc` ("Default") |
 | neither — a resting non-default | `OutlinedButton`, with primary text and a primary 1 dp border, matching [the shared action palette](mobile-modal.md#layout-and-theme) and footer Cancel | none (a first tap arms it via the VM) |
 
@@ -269,7 +286,9 @@ extend: `classifier` and `rule` map to a local sentence (`modal_context_reason_c
 `_reason_rule`), any other non-null value formats the local `modal_context_reason_type` string around the
 **raw** value (never dropped — an unrecognised category still renders as `Reason type: <raw>`), and `null`
 falls back to the bare `modal_context_reason` label. The row appears when either `reason` or `reasonType` is
-non-null, and renders the label alone when only the type arrived. The description and blocked-path rows are
+non-null, and renders the label alone when only the type arrived. The blocked-path row's label reads
+"Folder" (`modal_context_blocked_path`, changed from "Blocked path" in
+[#1483](../../specs/architecture/1483-permission-request-frames.md) to match Figma). The description and blocked-path rows are
 unconditional on their own field. Every value is plain `Text(String)` — no `MarkdownText`, no
 `AnnotatedString` link handling, no `SelectionContainer`, no `remember`/`rememberSaveable` — the same
 render-time obligations the rest of this surface owns (§ Security). Labels are local string resources; the

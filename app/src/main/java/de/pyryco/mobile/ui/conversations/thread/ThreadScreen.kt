@@ -161,8 +161,8 @@ private fun Modifier.frameHeightWithTouchOverflow(
 // at most one of them is ever emitted.
 private const val HISTORY_TAIL_KEY = "history-tail"
 
-// #1306: the inline permission request's lazy items — Cancel, card and title.
-private const val PERMISSION_ROW_COUNT = 3
+// #1306: the inline permission request's lazy items — Cancel and the card, which holds the title since #1483.
+private const val PERMISSION_ROW_COUNT = 2
 
 /** The refused-answer notice's slot in the thread (#1340). */
 internal const val PERMISSION_REJECTION_TEST_TAG = "thread-permission-rejection"
@@ -475,6 +475,7 @@ fun ThreadScreen(
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
                         waitingForAnswers = shownQuestion != null && connectionState == ConnectionState.Connected,
+                        waitingForPermission = openRequest != null && connectionState == ConnectionState.Connected,
                         connectionState = connectionState,
                         taskCount = state.backgroundTaskCount,
                         onTasksClick = { backgroundTasksOpen = true },
@@ -967,7 +968,8 @@ fun ThreadScreen(
  *
  * **The snowflake (#1312).** The band, not an arm, draws one [ThreadStatusGlyph] at its leading edge in
  * every state, as desktop's `ComposerStatusArea` draws `PyryMark`; only waiting for answers puts its own
- * question glyph there instead. It turns while [isBusy] or [localSendPending] holds, desktop's
+ * question glyph there instead. Waiting for permission (#1483) keeps the snowflake and reads "Waiting for
+ * permission" in place of the arms, as Figma `639:2242` draws it. It turns while [isBusy] or [localSendPending] holds, desktop's
  * `isStatusIconTurning`, and is still otherwise, including an api-retry, compaction or stall while idle.
  *
  * [thinkingProgress] (#803) adds **no arm**: it decorates the daemon's thinking phase only, so every arm
@@ -993,6 +995,7 @@ private fun ThreadStatusArea(
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
     waitingForAnswers: Boolean,
+    waitingForPermission: Boolean,
     connectionState: ConnectionState,
     taskCount: Int,
     onTasksClick: () -> Unit,
@@ -1017,9 +1020,11 @@ private fun ThreadStatusArea(
         }
         // Always present, so the pill keeps the band's right end while no reading shows.
         Box(Modifier.weight(1f).testTag(STATUS_READING_TEST_TAG)) {
-            if (waitingForAnswers) {
+            if (waitingForAnswers || waitingForPermission) {
                 Text(
-                    stringResource(R.string.question_waiting_for_answers),
+                    stringResource(
+                        if (waitingForAnswers) R.string.question_waiting_for_answers else R.string.thread_status_waiting_for_permission,
+                    ),
                     modifier = Modifier.padding(vertical = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,

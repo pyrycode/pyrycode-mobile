@@ -47,10 +47,10 @@ private const val MAX_PERMISSION_TEXT = 8192
 
 /**
  * The pending permission or trust request inside its conversation's stream (#1306, superseding the #446
- * dialog): the server [title][ModalUiState.Open.title] as a heading, a card with the verbatim
- * [prompt][ModalUiState.Open.prompt], claude's decision context, the session-grant offer and the
- * [options][ModalUiState.Open.options] in wire order, then Cancel below the card. Under the thread's reverse
- * layout the items are emitted newest end first, so Cancel sits at index 0 and the title furthest up.
+ * dialog): a card opening with the server [title][ModalUiState.Open.title] as a heading (#1483), then the
+ * verbatim [prompt][ModalUiState.Open.prompt], claude's decision context, the session-grant offer and the
+ * [options][ModalUiState.Open.options] in wire order, then Cancel start-aligned below the card. Under the
+ * thread's reverse layout the items are emitted newest end first, so Cancel sits at index 0 and the card above.
  *
  * Security (render-time obligations #445 deferred, unchanged in substance):
  * - **Inert output-encoding** — every server string renders through plain [Text] bounded by
@@ -78,7 +78,7 @@ internal fun LazyListScope.permissionRequestItems(
     gutter: Modifier,
 ) {
     item(key = "permission-cancel:${open.modalId}") {
-        Box(gutter.testTag("permission-request-cancel"), contentAlignment = Alignment.Center) {
+        Box(gutter.testTag("permission-request-cancel"), contentAlignment = Alignment.TopStart) {
             ModalCancelButton(
                 label = stringResource(R.string.modal_cancel),
                 onClick = { onCancel(open.modalId) },
@@ -89,16 +89,6 @@ internal fun LazyListScope.permissionRequestItems(
     item(key = "permission-card:${open.modalId}") {
         Box(gutter) {
             PermissionRequestCard(open, armedOptionId, connected, onOption, alwaysAllowAccepted, onAlwaysAllowChanged)
-        }
-    }
-    item(key = "permission-title:${open.modalId}") {
-        Box(gutter) {
-            Text(
-                text = open.title.take(MAX_PERMISSION_TEXT),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.semantics { heading() }.testTag("permission-request-title"),
-            )
         }
     }
 }
@@ -124,6 +114,12 @@ private fun PermissionRequestCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            // Figma `639:2242`: the title is the card's first line, in the card's on-background content colour.
+            Text(
+                text = open.title.take(MAX_PERMISSION_TEXT),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { heading() }.testTag("permission-request-title"),
+            )
             Text(text = open.prompt.take(MAX_PERMISSION_TEXT), style = MaterialTheme.typography.bodyLarge)
             if (!open.context.isEmpty) PermissionContext(open.context)
             if (open.offersAlwaysAllow) {
@@ -141,13 +137,24 @@ private fun PermissionRequestCard(
                 // fail-safe-deny highlight; isArmed reflects the VM's armed non-default option — no
                 // option-id semantics are interpreted, every tap forwards verbatim.
                 open.options.forEach { option ->
+                    val label = option.label.take(MAX_PERMISSION_TEXT)
+                    val isArmed = option.id == armedOptionId
                     ModalOptionButton(
-                        label = option.label.take(MAX_PERMISSION_TEXT),
+                        label = label,
                         isDefault = option.id == open.defaultOptionId,
-                        isArmed = option.id == armedOptionId,
+                        isArmed = isArmed,
                         enabled = connected,
                         onClick = { onOption(open.modalId, option.id) },
                     )
+                    // Figma `639:2882`: the confirm hint sits directly under the armed choice, inside the
+                    // column's 8 dp gaps. The bounded server label renders through plain Text only.
+                    if (isArmed) {
+                        Text(
+                            text = stringResource(R.string.modal_armed_option_hint, label),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
                 }
             }
         }
@@ -261,7 +268,8 @@ private fun ModalContextRow(
  * Three disjoint renders, [isArmed] taking precedence:
  * - [isArmed] (an armed non-default awaiting its second confirm, #452) → a [FilledTonalButton], kept
  *   **below** the default's filled emphasis so the safe default stays visually dominant, plus the
- *   `modal_armed_option_desc` `stateDescription` ("Tap again to confirm").
+ *   `modal_armed_option_desc` `stateDescription` ("Tap again to confirm"); the visible confirm hint under it
+ *   is the caller's (#1483).
  * - [isDefault] (the fail-safe-deny default) → a high-emphasis filled [Button] + the
  *   `modal_default_option_desc` marker, so the visually prominent button is always the producer's
  *   deny/safe option (it answers on a single tap).
