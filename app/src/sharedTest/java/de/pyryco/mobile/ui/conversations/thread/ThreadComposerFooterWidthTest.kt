@@ -24,6 +24,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -179,25 +180,53 @@ class ThreadComposerFooterWidthTest {
         assertTrue("high reading clips on the right at 320dp", layout.getLineRight(0) <= layout.size.width)
     }
 
-    // Accepted trade-off (#1412): at 320dp and 1.5× font the longer "Cxt high:" text no longer fits and
-    // ellipsizes, while the content description keeps the full figure. A layout change that makes it fit
-    // can drop the ellipsis assertion.
+    // #1549, Figma 639:3308: at 320dp and 1.5× font the "Cxt high:" text does not fit beside Actions, so it
+    // moves whole to a line of its own under Actions, and the paperclip and tune stay level with Actions.
     @Test
-    fun compactWidthAndEnlargedText_highReadingKeepsTheFigureInItsDescription() {
-        renderCompactFooter(contextPercent = 84, fontScale = 1.5f)
-        assertTrue("high reading now fits at enlarged text", contextLayout().isLineEllipsized(0))
+    fun compactWidthAndEnlargedText_highReadingWrapsUnderActions() {
+        renderCompactFooter(contextPercent = 84, fontScale = 1.5f, contentBottomPadding = 12.dp)
+        val layout = contextLayout()
+        assertEquals("Cxt high: 84%", layout.layoutInput.text.text)
+        assertFalse("high reading ellipsizes at enlarged text", layout.isLineEllipsized(0))
+        assertTrue("high reading clips on the right", layout.getLineRight(0) <= layout.size.width)
         composeTestRule
             .onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true)
             .assertContentDescriptionEquals("Context usage high, 84%")
+
+        val actions = composeTestRule.onNode(hasText("Actions") and hasClickAction()).getUnclippedBoundsInRoot()
+        val actionsText = composeTestRule.onNodeWithText("Actions", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val context = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val attach = composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files)).getUnclippedBoundsInRoot()
+        val status = composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).getUnclippedBoundsInRoot()
+        assertEquals("label starts under Actions", actions.left, context.left)
+        // Measured from Actions' visible text, not from the invisible touch padding under it.
+        assertEquals("label sits 4dp under Actions", actionsText.bottom + 4.dp, context.top)
+        assertEquals("paperclip leaves Actions' row", actions.bottom, attach.bottom)
+        assertEquals("tune leaves Actions' row", actions.bottom, status.bottom)
+    }
+
+    // #1549, Figma 16:8: on a Pixel 8 at default font the label stays on Actions' row.
+    @Test
+    fun pixel8_highReadingStaysOnActionsRow() {
+        renderCompactFooter(contextPercent = 84, fontScale = 1f, size = pixel8)
+        val actions = composeTestRule.onNodeWithText("Actions", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val context = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val attach = composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files)).getUnclippedBoundsInRoot()
+        assertEquals("label leaves Actions' row", actions.bottom, context.bottom)
+        assertTrue("label is not beside Actions", context.left > actions.right)
+        assertTrue("label overlaps the paperclip", context.right < attach.left)
+        assertFalse(contextLayout().isLineEllipsized(0))
     }
 
     private fun renderCompactFooter(
         contextPercent: Int,
         fontScale: Float,
+        size: DpSize = DpSize(320.dp, 640.dp),
+        contentBottomPadding: Dp = 0.dp,
     ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
-                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
                     CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
                         ThreadComposerFooter(
                             runConfig = fullConfig.copy(contextPercent = contextPercent),
@@ -205,6 +234,7 @@ class ThreadComposerFooterWidthTest {
                             onStatusClick = {},
                             onAnchorChanged = { _, _ -> },
                             onAttach = {},
+                            contentBottomPadding = contentBottomPadding,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
