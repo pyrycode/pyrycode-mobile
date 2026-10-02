@@ -2,30 +2,33 @@
 
 - **App commit:** `main` at `ddebd393` (the merge base of `feature/1433` at the rework capture), plus the
   test-only `PromptsDesignCaptureTest`. The first pass captured at `4c755aa6`; no file under `app/src/main`
-  changed between the two. The question captures are `feature/1484`'s and the permission and trust captures
-  `feature/1483`'s, as the re-capture bullets below say.
+  changed between the two. Every capture now is `feature/1501`'s, as the re-capture bullets below say.
 - **Figma:** the Questions and permissions board `635:2036` of `g2HIq2UyPhslEoHRokQmHG`, inspected and exported
   with `get_screenshot` on 2026-10-02. Gaps, sizes and positions are measured against `get_metadata`
   coordinates, not by eye. Behaviour reference: the specification `640:2838`.
 - **Capture:** `PromptsDesignCaptureTest` on the full `pixel8Api35` image (API 35) with
   `requireRealSystemBars=true`, density 1.0, fixed dark theme, real 24 px status and navigation bars. Each `.txt`
   records the measured values.
-- **Result:** `prompts-results.xml` is #1484's latest whole-class run, below: 6 executed, 0 failed, 0 skipped.
-  The switching captures come from the #1433 whole-class run after its second rework (6 executed, 0 failures),
-  the four `question-*` captures from #1484 and the six permission and trust items from #1483.
+- **Result:** `prompts-results.xml` is #1501's whole-class run, below: 6 executed, 0 failed, 0 skipped. Every
+  capture in this folder now comes from that run.
 - **#1484 re-capture:** `feature/1484` (merge base `ca50716f`) changed the question actions. The whole class ran
   again in one run on the same device and arguments: 6 executed, 0 failed, 0 skipped. The `question-unanswered`,
   `question-answered`, `question-keyboard` and `question-compact` captures and their comparisons come from that
   run; `question-answered.png` came out byte-identical. After the rework that limits the actions reveal to the last
   question, the whole class ran once more on `feature/1484` with `main` at `9fef692a` merged in: 6 executed, 0
-  failed, 0 skipped, now in `prompts-results.xml`, and all four question captures came out byte-identical. The
-  switching captures are kept from the #1433 run, and the permission and trust captures from the #1483 run.
+  failed, 0 skipped, and all four question captures came out byte-identical. #1501's run has since replaced
+  them.
 - **Re-capture for #1483:** the six permission and trust items below were re-captured on `feature/1483`, from a
   whole-class run of `PromptsDesignCaptureTest` on 2026-10-02 (6 executed; `permissionFrames` and
   `permissionCompactFrame` passed; `questionKeyboardFrame` failed on the known 332 px keyboard, see that item).
   A run that starts with `permissionFrames` draws its first capture over a 63 px navigation bar, so the whole class
-  ran to keep every bar at 24 px. The switching captures stay #1433's; `prompts-results.xml` and the question
-  captures are #1484's.
+  ran to keep every bar at 24 px. #1501's run has since replaced them.
+- **#1501 re-capture:** `feature/1501` (merge base `e3f57945`) changed the permission context and choice spacing
+  and the Other row. The whole class ran once on the same device and arguments, starting with
+  `questionCompactFrame`: 6 executed, 0 failed, 0 skipped, now in `prompts-results.xml`. Every `.png` and `.txt`
+  here, and every comparison, comes from that run; the question keyboard capture showed the 240 px test IME. Each
+  `.txt` now also records `spPx`, the pixels the platform renders 14, 16, 20, 22, 24 and 28 sp as at the capture's
+  font scale.
 
 **How these captures differ from onboarding's.** Both prompts set `FLAG_SECURE` on the activity window while
 they show, which blacks out the harness's `UiAutomation` screenshot. The class draws the decor view into a
@@ -46,11 +49,14 @@ Typography, Colour and Icon paths and routes it to #1485, which holds the design
 sits 24 px lower than Figma's. As in the onboarding audit, that move is not a mismatch; everything else is
 compared at 1:1.
 
-**Top-bar title at 150 %.** In both compact frames (`636:4066`, `639:3308`) the title "Client planning" is
-about 26 px from cap to descender in the app and about 34 px in Figma. Android 14+ scales large text
-non-linearly, which likely explains it, but the board then draws something the platform cannot render. It is a
-mismatch in both items, routed to #1501, which decides whether the board's compact frames show platform
-scaling or the app matches the frames.
+**Compact frames at 150 %: the platform's scaling (#1501).** The two compact frames (`636:4066`, `639:3308`)
+scale every type size and line box linearly. API 35 at font scale 1.5 renders 16 sp as 23 px, 22 sp as 27 px,
+24 sp as 28 px and 28 sp as 29.3 px (`spPx` in `permission-compact.txt` and `question-compact.txt`), where the
+board uses 24, 33, 36 and 42. That measured difference is the cause of both compact items' remaining mismatches:
+the 52 px buttons are 8 + 36 + 8 on a linear 24 sp line box, and the app's are about 42 px on a 28 px one; the
+top-bar title's 28 sp line box is 42 px in Figma and 29.3 px in the app, about 34 against 26 px from cap to
+descender. The app keeps the platform's text size rather than overriding the user's font-size setting, and #1543
+asks for the two frames to be redrawn with Android's scaling.
 
 ### Questions · Unanswered — `636:3279`
 
@@ -62,9 +68,9 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: each question card is about 6 px taller than Figma's 242 px (the Other row, see Spacing). Otherwise as Figma inside the bars: the 24 px status bar pushes the stream down, so "Claude has questions" and the LANGUAGE header scroll under the top bar; the batch is reachable by scrolling |
+| Geometry | match since #1501: each question card is 240 px against Figma's 242 px; Figma's 1 px border sits inside its 16 px padding and the app's draws over it. As Figma inside the bars: the 24 px status bar pushes the stream down, so "Claude has questions" and the LANGUAGE header scroll under the top bar; the batch is reachable by scrolling |
 | Padding | match: 20 px gutters, 16 px card padding |
-| Spacing | mismatch in the Other row: Figma puts the field 28 px below the "Other" label's top and the radio top-aligned with the label; the app's field sits about 6 px lower and its radio is centred in a 48 dp row, about 10 px below the label. Kotlin to Rust rows match at 56 px; actions 12 px below the card |
+| Spacing | match since #1501: the radio is top-aligned with the "Other" label and the 32 px field sits 28 px below the label's top, as Figma; the field keeps a 48 dp touch target outside layout. Kotlin to Rust rows match at 56 px; actions 12 px below the card |
 | Typography | mismatch: footer "Cxt high: 84%". Question, option label and description, header and actions match |
 | Colour | mismatch: footer label in the warning colour. The disabled Continue matches since #1484: the primary fill and on-primary label at 38 % opacity, as `636:3535` |
 | Borders | match: primary-container card border, outlined Cancel |
@@ -72,7 +78,7 @@ scaling or the app matches the frames.
 | Icon paths | mismatch: footer tune icon. Header snowflake glyphs, radios and checkboxes match |
 | Component state | match: nothing selected, Continue disabled, "Waiting for answers" |
 
-- **Routed:** #1501 (Other row spacing and radio alignment), #1485 (footer). Disabled Continue fixed by #1484
+- **Routed:** #1485 (footer). Other row fixed by #1501, disabled Continue by #1484
 
 ### Questions · Answers selected — `636:3540`
 
@@ -84,9 +90,9 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: cards about 6 px taller, as Unanswered |
+| Geometry | match since #1501: cards 240 px, as Unanswered |
 | Padding | match |
-| Spacing | mismatch: the Other row, as Unanswered |
+| Spacing | match since #1501: the Other row, as Unanswered |
 | Typography | mismatch: footer "Cxt high: 84%". The "Web" draft and every label match |
 | Colour | mismatch: footer warning colour. Selected radio and checkboxes and the enabled Continue match |
 | Borders | match |
@@ -94,7 +100,7 @@ scaling or the app matches the frames.
 | Icon paths | mismatch: footer tune icon. Filled radio and checkmarks match |
 | Component state | match: Kotlin; Kotlin and Other "Web"; Continue enabled |
 
-- **Routed:** #1501 (Other row), #1485 (footer)
+- **Routed:** #1485 (footer). Other row fixed by #1501
 
 ### Questions · Other and keyboard — `636:3803`
 
@@ -111,7 +117,7 @@ scaling or the app matches the frames.
 |---|---|
 | Geometry | match since #1484: at the focus scroll position the focused Other field and both Cancel and Continue are fully in view, the actions' bottom at the stream's bottom edge above "Waiting for answers", as Figma. The last question's focus scroll places the actions first, so the position no longer depends on the IME animation; an earlier question's field brings only itself into view; the test asserts the field and both actions inside the message region |
 | Padding | match |
-| Spacing | mismatch: the Other row as Unanswered. The actions sit 4 px above the stream's edge, from the batch's item gutter |
+| Spacing | match since #1501: the Other row as Unanswered. The actions sit 4 px above the stream's edge, from the batch's item gutter |
 | Typography | mismatch: footer "Cxt high: 84%" |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
@@ -121,7 +127,7 @@ scaling or the app matches the frames.
 
 - **Clipping and reach:** nothing is covered at the focus scroll position (`assertAboveComposer` in the test,
   without a scroll of its own). Both actions also scroll into view with the keyboard still open (`reachable`).
-- **Routed:** #1501 (Other row), #1485 (footer). Actions under the footer fixed by #1484
+- **Routed:** #1485 (footer). Other row fixed by #1501, actions under the footer by #1484
 
 ### Questions · Compact text at 150% — `636:4066`
 
@@ -133,10 +139,10 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: Figma's Cancel and Continue are 52 px tall (118 and 143.5 px wide); the app's are about 42 px. Since #1484 the stacked pair sits at the card's start edge with Cancel centred over Continue, as `636:4325` |
+| Geometry | mismatch, the platform's scaling (see "Compact frames at 150 %"): Figma's Cancel and Continue are 52 px tall (118 and 143.5 px wide) on a linear 36 px line box; the app's are about 42 px on the 28 px line box the platform renders. Since #1484 the stacked pair sits at the card's start edge with Cancel centred over Continue, as `636:4325` |
 | Padding | match |
-| Spacing | mismatch: the Other row, as Unanswered |
-| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px (see "Top-bar title at 150 %"); the action labels are smaller than the frame's linear 150 %; the footer reads "Cxt h…". Every label wraps |
+| Spacing | match since #1501: the Other row, as Unanswered |
+| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px and the action labels render at 23 px against the frame's 24 px, both the platform's scaling (see "Compact frames at 150 %"); the footer reads "Cxt h…". Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
@@ -145,7 +151,7 @@ scaling or the app matches the frames.
 
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, both questions, Cancel
   and Continue each scroll into view and display.
-- **Routed:** #1501 (button heights and their smaller labels, the top-bar title, Other row), #1485 (footer, truncation)
+- **Routed:** #1543 (redraw at Android's scaling: button heights, labels, top-bar title), #1485 (footer, truncation). Other row fixed by #1501
 
 ### Permission · Safe default — `639:2242`
 
@@ -159,7 +165,7 @@ scaling or the app matches the frames.
 |---|---|
 | Geometry | mismatch: the request is anchored to the stream's end with empty space above it; Figma starts it under the header. The title "Permission required" is the card's first line and Cancel is start-aligned 12 px under the card, as Figma |
 | Padding | match: 16 px card padding, 20 px gutters |
-| Spacing | mismatch: Figma puts Reject once 8 px below Allow once (y 0–40, then 48); the app shows 16 px, because the 48 dp touch floor around each 40 dp button moves layout. In the context block Figma measures 28 px from label to value, 36 px between the Reason and Folder groups and 36 px before the choices; the app measures 24, about 28 and about 28 px |
+| Spacing | match since #1501: Reject once 8 px below Allow once, each 40 px surface keeping a 48 dp touch target outside layout; in the context block 28 px from label to value, 16 px between the Reason and Folder groups and 16 px before the choices, as `639:2242`. Above the context, the prompt line's default trimmed leading puts it 3 px nearer the title and the Reason label 2 px nearer the prompt than Figma; #1501 did not measure or change it |
 | Typography | mismatch: footer "Cxt high: 84%". The title (16 px Medium, on-background), the "Folder" label and every other style match |
 | Colour | mismatch: footer warning colour. Filled primary safe default and outlined Allow once match |
 | Borders | match |
@@ -167,7 +173,7 @@ scaling or the app matches the frames.
 | Icon paths | mismatch: footer tune icon |
 | Component state | match: the status row reads "Waiting for permission" beside the snowflake. Server order and the Reject once default match |
 
-- **Routed:** #1509 (placement), #1501 (choice gap, context spacing), #1485 (footer)
+- **Routed:** #1509 (placement), #1485 (footer). Choice gap and context spacing fixed by #1501
 
 ### Permission · Session grant offered — `639:2451`
 
@@ -181,7 +187,7 @@ scaling or the app matches the frames.
 |---|---|
 | Geometry | mismatch: placement, as Safe default. Title inside the card and start-aligned Cancel match |
 | Padding | match |
-| Spacing | mismatch: choice gap and context block, as Safe default. The checkbox row and rule text match |
+| Spacing | match since #1501: choice gap and context block, as Safe default. The checkbox row and rule text match |
 | Typography | mismatch: footer "Cxt high: 84%". Title and "Folder" label match |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
@@ -189,7 +195,7 @@ scaling or the app matches the frames.
 | Icon paths | mismatch: footer tune icon. The unchecked checkbox matches |
 | Component state | match: "Waiting for permission"; grant offered and unchecked |
 
-- **Routed:** #1509, #1501, #1485
+- **Routed:** #1509, #1485. Choice gap and context spacing fixed by #1501
 
 ### Permission · Session grant selected — `639:2666`
 
@@ -203,7 +209,7 @@ scaling or the app matches the frames.
 |---|---|
 | Geometry | mismatch: placement, as Safe default. Title inside the card and start-aligned Cancel match |
 | Padding | match |
-| Spacing | mismatch: choice gap and context block, as Safe default |
+| Spacing | match since #1501: choice gap and context block, as Safe default |
 | Typography | mismatch: footer "Cxt high: 84%". Title and "Folder" label match |
 | Colour | mismatch: footer warning colour. The checked checkbox matches |
 | Borders | match |
@@ -211,7 +217,7 @@ scaling or the app matches the frames.
 | Icon paths | mismatch: footer tune icon. The checkmark matches |
 | Component state | match: "Waiting for permission"; ticked by a tap, with nothing armed or answered |
 
-- **Routed:** #1509, #1501, #1485
+- **Routed:** #1509, #1485. Choice gap and context spacing fixed by #1501
 
 ### Permission · Confirm Allow once (armed) — `639:2882`
 
@@ -225,7 +231,7 @@ scaling or the app matches the frames.
 |---|---|
 | Geometry | mismatch: placement, as Safe default. Title inside the card and start-aligned Cancel match |
 | Padding | match |
-| Spacing | mismatch: "Tap Allow once again to confirm." sits between Allow once and Reject once as Figma, but about 12 px from each button where Figma has 8 px, the touch-floor gap of Safe default; context block as Safe default |
+| Spacing | match since #1501: "Tap Allow once again to confirm." sits between Allow once and Reject once 8 px from each, as Figma; context block as Safe default |
 | Typography | mismatch: footer "Cxt high: 84%". The hint (12 px Medium, on-primary-container), title and "Folder" label match |
 | Colour | mismatch: footer warning colour. The tonal armed fill matches |
 | Borders | match |
@@ -233,7 +239,7 @@ scaling or the app matches the frames.
 | Icon paths | mismatch: footer tune icon |
 | Component state | match: "Waiting for permission"; armed by the first tap with its hint, grant still ticked and nothing sent |
 
-- **Routed:** #1509 (placement), #1501 (choice and hint gaps, context spacing), #1485
+- **Routed:** #1509 (placement), #1485. Choice and hint gaps and context spacing fixed by #1501
 
 ### Trust · Safe default — `639:3099`
 
@@ -247,7 +253,7 @@ scaling or the app matches the frames.
 |---|---|
 | Geometry | mismatch: placement, as Safe default. "Trust this folder?" inside the card and start-aligned Cancel match |
 | Padding | match |
-| Spacing | mismatch: choice gap and context block, as Safe default |
+| Spacing | match since #1501: choice gap and context block, as Safe default |
 | Typography | mismatch: footer "Cxt high: 84%". Title and "Folder" label match |
 | Colour | mismatch: footer warning colour. "Don't trust" filled as the default matches |
 | Borders | match |
@@ -255,7 +261,7 @@ scaling or the app matches the frames.
 | Icon paths | mismatch: footer tune icon |
 | Component state | match: "Waiting for permission"; server order and the default |
 
-- **Routed:** #1509, #1501, #1485
+- **Routed:** #1509, #1485. Choice gap and context spacing fixed by #1501
 
 ### Permission · Compact text at 150% — `639:3308`
 
@@ -267,10 +273,10 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: Figma's Allow once, Reject once and Cancel are 52 px tall (Cancel 118 px wide); the app's are about 42 px. Title inside the card and start-aligned Cancel match |
+| Geometry | mismatch, the platform's scaling (see "Compact frames at 150 %"): Figma's Allow once, Reject once and Cancel are 52 px tall (Cancel 118 px wide) on a linear 36 px line box; the app's are about 42 px on the platform's 28 px one. Title inside the card and start-aligned Cancel match |
 | Padding | match |
-| Spacing | mismatch: the hint sits under the armed choice as Figma, with the touch-floor gaps of Safe default; context block as Safe default |
-| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px (see "Top-bar title at 150 %"); the button labels are smaller than the frame's linear 150 %; footer "Cxt h…". The hint and "Folder" label match. Every label wraps |
+| Spacing | match since #1501: the hint sits under the armed choice 8 px from each button, as Figma; context block as Safe default, on the platform's line boxes |
+| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px and the button labels render at 23 px against the frame's 24 px, both the platform's scaling (see "Compact frames at 150 %"); footer "Cxt h…". The hint and "Folder" label match. Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
@@ -279,7 +285,7 @@ scaling or the app matches the frames.
 
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, prompt, grant, both
   choices and Cancel each scroll into view and display.
-- **Routed:** #1501 (button heights and their smaller labels, the top-bar title, choice gaps, context spacing), #1485 (footer, truncation)
+- **Routed:** #1543 (redraw at Android's scaling: button heights, labels, top-bar title), #1485 (footer, truncation). Choice gaps and context spacing fixed by #1501
 
 ### Switch chats while prompts wait — `640:2437`
 

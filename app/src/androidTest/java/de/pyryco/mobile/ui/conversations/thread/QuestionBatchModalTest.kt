@@ -202,11 +202,13 @@ class QuestionBatchModalTest {
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
             .assertIsSelected()
-        tagNode("question_other_0")
-            .performScrollTo()
-            .assertHeightIsAtLeast(48.dp)
-            .performTouchInput { click(Offset(center.x, 2f)) }
-            .assertIsFocused()
+        // #1501, Figma 636:3279: the 32 dp well is the field's layout; its 48 dp touch target lies outside it.
+        val other = tagNode("question_other_0").performScrollTo().assertHeightIsEqualTo(32.dp)
+        assertTrue(
+            "Other retains a 48dp touch region",
+            other.fetchSemanticsNode().touchBoundsInRoot.height >= with(rule.density) { 48.dp.toPx() } - 0.5f,
+        )
+        other.performTouchInput { click(Offset(center.x, height + 6.dp.toPx())) }.assertIsFocused()
         tagNode("question_other_0").performTextInput("Go")
         textNode("Kotlin").assertIsNotSelected()
         tagNode("question_control_0_other", useUnmergedTree = true).performTouchInput { click(center) }
