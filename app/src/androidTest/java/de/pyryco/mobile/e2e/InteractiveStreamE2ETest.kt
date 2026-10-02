@@ -3434,13 +3434,26 @@ class InteractiveStreamE2ETest {
             assertTrue("the Read prompt contains the witness token", token !in prompt)
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             sendFromPhone(prompt)
-            awaitReadPrompt(tokenFile.substringAfterLast('/'))
+            // #1480: Claude's think time is the host's to wait out, so the phone is judged only once the host asked.
+            val modalId =
+                try {
+                    runBlocking { peer.awaitPermissionModal(chat.id, UPSTREAM_PERMISSION_TIMEOUT_MS) }
+                } catch (e: TimeoutCancellationException) {
+                    throw AssertionError(
+                        "Claude raised no permission request within $UPSTREAM_PERMISSION_TIMEOUT_MS ms of the send",
+                        e,
+                    )
+                }
+            try {
+                awaitReadPrompt(tokenFile.substringAfterLast('/'))
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the host raised the permission modal and the phone did not render it within $REPLY_TIMEOUT_MS ms", e)
+            } catch (e: AssertionError) {
+                throw AssertionError("the host raised the permission modal and the phone did not render it within $REPLY_TIMEOUT_MS ms", e)
+            }
             // #977: the turn must end before the phone is judged, and a missing token says why.
             val mark = peer.recorded(chat.id).size
-            runBlocking {
-                val modalId = peer.awaitPermissionModal(chat.id, REPLY_TIMEOUT_MS)
-                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
-            }
+            runBlocking { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
             val allowedAt = SystemClock.elapsedRealtime()
             val turnEnd =
                 try {
@@ -7731,6 +7744,9 @@ class InteractiveStreamE2ETest {
 
         // Generous: a real claude turn over the relay can take many seconds end to end.
         const val REPLY_TIMEOUT_MS = 90_000L
+
+        // #1480: how long Claude may take to ask for a tool after the send; one upstream response took 5.5 minutes.
+        const val UPSTREAM_PERMISSION_TIMEOUT_MS = 360_000L
 
         // #849: two real claude turns back to back, the allowed wait turn and the drained ping.
         const val WAIT_TURN_TIMEOUT_MS = 240_000L
