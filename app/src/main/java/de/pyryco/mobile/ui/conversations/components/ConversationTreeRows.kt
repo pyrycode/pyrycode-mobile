@@ -365,7 +365,7 @@ private const val MAX_TEST_TAG_ID_CHARS = 256
  *
  * [workspaceName] is #729's already-resolved `HostWorkspaceGroup.displayName` — display text only,
  * never the `cwd`. The row resolves nothing: the caller binds [onEditTapped] to the group's own host and
- * `cwd`. The pencil is drawn permanently, as the host and chat rows' are, since the phone has no hover;
+ * `cwd`. The pencil is drawn permanently, as the host row's is, since the phone has no hover;
  * it is a [TreeRowControl], so a tap on it edits the workspace without folding the row. The row adds no
  * workspace: that is the host row's plus, held (#904).
  *
@@ -706,8 +706,9 @@ private fun TreeRowsPreviewMatrix() {
                 conversationName = "pyrycode discord integration",
                 selected = true,
                 onClick = {},
+                onEditTapped = {},
             )
-            TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {}, onEditTapped = {})
+            TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {})
             ConversationAttention.entries.forEach { state ->
                 TreeConversationRow(conversationName = state.name, selected = false, onClick = {}, attention = state)
             }

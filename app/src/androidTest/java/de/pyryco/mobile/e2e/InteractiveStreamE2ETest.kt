@@ -2565,7 +2565,7 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** Tap the pen of the Channels row named [name] and wait for Edit channel's title. */
+    /** Select the Channels row named [name] by opening it and pressing Back, tap its pen and wait for Edit channel's title. */
     private fun openChannelEditor(name: String) {
         selectChannelRow(name)
         composeTestRule.onNode(channelPen(name)).performClick()

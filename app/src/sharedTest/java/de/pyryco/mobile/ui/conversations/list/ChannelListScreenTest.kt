@@ -513,7 +513,8 @@ class ChannelListScreenTest {
         val secondChannel = hasText("Second channel")
         list.performScrollToNode(secondChannel)
         composeTestRule.onNode(secondChannel).assertIsNotSelected()
-        // #1336: the offline host's rows draw no pen, while the connected host's keep theirs.
+        // An unselected row draws no pen (#1523); #1336's offline suppression is covered by
+        // aDisconnectedHostDrawsNoSectionPlusOrRowPenAndTheyReturnOnReconnect.
         composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_channel_edit, "Second channel"))).assertCountEquals(0)
 
         val finalChat = hasText("Final chat")

@@ -305,16 +305,7 @@ class ConversationTreeRowsTest {
         // `captureToImage` never finishes a redraw here, so the composition's view is drawn by hand.
         ConversationAttention.entries.forEach { state ->
             attention.value = state
-            val errorPixels =
-                composeTestRule.runOnIdle {
-                    val root = checkNotNull(view)
-                    val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
-                    root.draw(Canvas(bitmap))
-                    val pixels = IntArray(bitmap.width * bitmap.height)
-                    bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-                    pixels.count { it == error.toArgb() }
-                }
-            assertEquals("$state draws the error fill", 0, errorPixels)
+            assertEquals("$state draws the error fill", 0, countPixels(view, error))
         }
     }
 
