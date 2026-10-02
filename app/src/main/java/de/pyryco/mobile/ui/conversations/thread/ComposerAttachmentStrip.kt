@@ -80,7 +80,8 @@ const val ATTACHMENT_STRIP_TEST_TAG = "composer_attachment_strip"
  * controls give way to progress indicators, the tiles dim and the row says "Sending", because the send has
  * already taken its snapshot of these entries. The tile named by [uploadProgress] fills its indicator to that
  * figure instead of spinning, and the row says "Uploading… N%" (#1327). Neither is a live region, so no chunk
- * is announced.
+ * is announced. While the thread is not [connected], the file tiles take the muted tint of Figma `627:1740`
+ * (#1532); image tiles are unchanged.
  *
  * File names come from another app's provider. They appear only as content descriptions and are never logged.
  */
@@ -91,6 +92,7 @@ fun ComposerAttachmentStrip(
     onRemove: (Long) -> Unit,
     modifier: Modifier = Modifier,
     uploadProgress: AttachmentUploadProgress? = null,
+    connected: Boolean = true,
 ) {
     val sendingDescription =
         if (uploadProgress != null) {
@@ -109,6 +111,7 @@ fun ComposerAttachmentStrip(
             AttachmentItem(
                 attachment = attachment,
                 sending = sending,
+                connected = connected,
                 percent = uploadProgress?.takeIf { it.key == attachment.key }?.percent,
                 onRemove = { onRemove(attachment.key) },
             )
@@ -120,6 +123,7 @@ fun ComposerAttachmentStrip(
 private fun AttachmentItem(
     attachment: PendingAttachment,
     sending: Boolean,
+    connected: Boolean,
     percent: Int?,
     onRemove: () -> Unit,
 ) {
@@ -138,7 +142,7 @@ private fun AttachmentItem(
                 modifier = tileModifier.clip(TileCorner),
             )
         } else {
-            FileTile(displayName = attachment.displayName, modifier = tileModifier)
+            FileTile(displayName = attachment.displayName, connected = connected, modifier = tileModifier)
         }
         Box(
             // Over the tile's top-trailing corner, the reserved overlap outside it both ways.
@@ -204,10 +208,12 @@ private fun RemoveControl(
 @Composable
 private fun FileTile(
     displayName: String,
+    connected: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    // The Figma inverse-primary page and 12sp type label fall below text contrast on the dark thread.
-    val tint = MaterialTheme.colorScheme.primary
+    // Connected, the page and 12sp type label take primary for text contrast on the dark thread. The
+    // connection frames (627:1740, 627:4657, 627:4910) mute them to inverse primary until the host is back.
+    val tint = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.inversePrimary
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Icon(
             painter = painterResource(R.drawable.ic_attachment_file),
