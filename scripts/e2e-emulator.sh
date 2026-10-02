@@ -1200,7 +1200,8 @@ elif [ -n "${LIVE}" ]; then
   # list holds 37 methods and 39 turns. Each cut is fired by the app's own RelayLog line, not by timing.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile"
-  # #1305 excludes the cross-host file method while #1369 repairs the phone after daemon #2699.
+  # #1369 restores the cross-host file method that #1305 excluded after daemon #2699.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost"
   # #1085: the second host's rename and unpair from its Edit host modal joins at no turn cost (pairing,
   # rename and a phone-local unpair), so the list holds 38 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched"

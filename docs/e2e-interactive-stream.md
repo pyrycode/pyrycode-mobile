@@ -2153,7 +2153,22 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-01 (#1410).** The dispatcher ran
+**Current live verification — 2026-10-02 (#1369).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1369` at
+`6e79da4f`, merged with `origin/main` at `b6c06182` in a detached worktree (11 commits behind before
+the merge): **50 executed, 50 passed, 0 failed, 0 skipped**, exit 0, wall clock 722.8s. This is
+full-suite evidence; no separate focused live run is claimed. The fresh XML has a passing testcase for
+`interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`, restored to the curated LIVE list
+after #1305 isolated it (`@Ignore`, dropped from the list) pending this ticket. #1369 added no production
+code — #1351 had already fixed the cause, keeping a held `message_id` row's attachments through the
+daemon's push of the sender's own delivered message — so this run is the first live confirmation of that
+fix for the cross-host collision scenario. `LIVE_MINIMUM` is counted from the curated list since
+2026-10-01, so restoring the method's list entry raised the floor by one on its own; no separate edit to
+`android-test-gate.py` or its test was needed. See
+[question-batch-modal.md's live rung-3 note](features/question-batch-modal.md#testing) for the earlier
+isolation chain, from the #966 live run that first caught the regression through #1305's isolation.
+
+**Previous live verification — 2026-10-01 (#1410).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1410` at
 `92ba45dd43`, merged with `origin/main` at `ab368c3bf2` in a detached worktree (9 commits behind before
 the merge): **48 executed, 47 passed, 1 failed, 0 skipped**, exit 1, wall clock 1146.3s. This is
