@@ -921,14 +921,20 @@ internal data class BannerPayloadDto(
 )
 
 /**
- * Map a decoded [BannerPayloadDto] to a [ThreadItem.Banner]. **Total** — an unrecognised `level` is not a
- * drop but a [BannerLevel.Notice], the protocol's "treat it as unknown" rule. [text] is copied verbatim;
+ * Map a decoded [BannerPayloadDto] to a [ThreadItem.Banner]. **Total** — `info` is a [BannerLevel.Info]
+ * (#1359), and an unrecognised `level` is not a drop but a [BannerLevel.Notice], the protocol's "treat it as
+ * unknown" rule. [text] is copied verbatim;
  * stripping is the renderer's. [occurredAt] is the caller's: the envelope `ts` on the live lane, the
  * entry timestamp on replay, which is what lets the two lanes join on one identity.
  */
 internal fun BannerPayloadDto.toRow(occurredAt: Instant): ThreadItem.Banner =
     ThreadItem.Banner(
-        level = if (level == "warning") BannerLevel.Warning else BannerLevel.Notice,
+        level =
+            when (level) {
+                "warning" -> BannerLevel.Warning
+                "info" -> BannerLevel.Info
+                else -> BannerLevel.Notice
+            },
         text = text,
         truncated = truncated,
         occurredAt = occurredAt,
