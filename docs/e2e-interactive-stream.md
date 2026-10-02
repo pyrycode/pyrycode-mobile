@@ -1993,6 +1993,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `offline-retry` (#1286) | actual Offline pill retries the same host and a new reply renders | `ping.jsonl` | one |
 | `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
 | `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to haiku"; the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
+| `mcp-failed` (#1457) | the failed-MCP-server pill (#1345) renders and tapping it opens Channel info on its MCP servers section | `mcp-failed.jsonl` | one |
 
 `refusal` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
@@ -2027,7 +2028,22 @@ DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/Workspace/Projects/pyrycod
 DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
 DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
 DETERMINISTIC=1 SCENARIO=refusal      PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # refusal switch-back
+DETERMINISTIC=1 SCENARIO=mcp-failed   PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # failed MCP server pill
 ```
+
+`mcp-failed` selects
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_failedMcpServerPillOpensChannelInfo`
+and belongs to `python3 scripts/android-test-gate.py scripted-all`. Fakeclaude's first `mcp_status`
+answer, already enabled on every deterministic run by `PYRY_FAKE_CLAUDE_MCP_STATUS=1`, names
+`pyry_mcp_test` as `failed`; the test waits for the [failed-MCP-server pill
+(#1345)](knowledge/features/thread-top-overlay.md#the-failed-mcp-server-pill-1345) by its
+`thread_mcp_server_failed` prefix, taps it, and asserts [Channel info's MCP servers
+section](knowledge/features/channel-info-sheet.md#mcp-servers-section) is shown — not the failed name
+itself, because the sheet's own later `mcp_status` ask gets fakeclaude's `connected` answer for
+`pyry_mcp_fresh`. No live rung-3 twin is possible: daemon children spawned under `--strict-mcp-config`
+load only `pyry_approve` and `pyry_files`, so [pyrycode
+#2272](https://github.com/pyrycode/pyrycode/issues/2272) pins the real-Claude shape of a failed server on
+the daemon side instead.
 
 **`stream`** — `stream.jsonl` is three `text` lines with **distinct** `message.id`s, so the producer
 emits three `assistant_delta` envelopes (same `turn_id`, `seq` 0/1/2); the last line's
@@ -2934,8 +2950,10 @@ Earlier results and failure history:
   retain the triage and its evidence limits.
 - **Dispatcher-run:** before verifier, `python3 scripts/android-test-gate.py ui` runs the non-E2E
   device tests, skipped when the branch touches only docs, scripts and the e2e-only sources
-  (see [development verification](knowledge/features/development-verification.md)), followed by one `scripted` invocation for each of `ping`, `stream`, `spinner`,
-  `tool`, `tool-failed`, `reconnect` and `replay-order`. Tagged tickets run `live` after verifier.
+  (see [development verification](knowledge/features/development-verification.md)), followed by
+  `python3 scripts/android-test-gate.py scripted-all`, covering `ping`, `stream`, `spinner`, `tool`,
+  `tool-failed`, `tool-progress`, `reconnect`, `offline-retry`, `replay-order`, `tool-then-text`,
+  `refusal` and `mcp-failed`. Tagged tickets run `live` after verifier.
   Reports must be fresh and count executed tests. The live floor is eight. Leave the baseline
   command unset because the shared retry filter currently accepts Go test names.
 - **Negative control:** `InteractiveStreamE2ETest.negativeControl_wordClaudeNeverSays_isNeverDisplayed`

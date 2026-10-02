@@ -217,6 +217,15 @@ for why that ask shares a daemon worker with sending a message and can stall beh
     "Turn interrupted" still renders — written first, and it fails against the pre-#1002 ladder.
   - **#1345:** a failed-server name renders "MCP server NAME failed" as a tappable Error pill below the
     usage pill; it is absent alongside either the Re-pair pill or the offline retry target.
+- **Emulator (rung 4, #1457):** the scripted `mcp-failed` scenario
+  (`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_failedMcpServerPillOpensChannelInfo`,
+  [Scenarios](../../e2e-interactive-stream.md#scenarios-454)) drives the pill through the real daemon and
+  relay: fakeclaude's first `mcp_status` answer names `pyry_mcp_test` as `failed`, the pill whose text
+  starts with the `thread_mcp_server_failed` prefix is tapped, and Channel info's MCP servers section is
+  asserted shown. No live rung-3 twin is possible — a child spawned under the daemon's MCP document runs
+  with `--strict-mcp-config` and loads only `pyry_approve` and `pyry_files`, so a real-Claude session never
+  sees a failed server; pyrycode #2272 pins the real-Claude shape of a failed server on the daemon side
+  instead.
 - **JVM unit** `UsageLimitDismissalsTest` — see [Usage-limit indicator §
   Testing](usage-limit-indicator.md#testing). `McpFailureAcknowledgementsTest` covers the holder in isolation
   (selection order, exact-`"failed"` matching, per-host/per-conversation isolation, `clearHost`) and
