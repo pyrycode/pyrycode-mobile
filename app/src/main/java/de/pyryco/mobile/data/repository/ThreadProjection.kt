@@ -19,6 +19,7 @@ import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toRow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -121,6 +122,18 @@ internal class ThreadProjection {
     private val pendingDrops = MutableStateFlow<Map<String, Map<Long, String>>>(emptyMap())
 
     /**
+     * `conversationId -> where this device's queued echoes stand` (#1558). A message sent while a turn runs
+     * is drawn at tap time (#1355), but the daemon delivers it only after that turn ends, so [observe] reads
+     * each [OwnEchoQueue.queued] echo below every other row, and its delivery moves it to the end of the
+     * store once ([moveOwnEchoToEnd]) — on the drain's `queue_state` or the pushed `message`, whichever
+     * arrives first.
+     *
+     * Written only by the inbound collector, through [settleQueuedEchoes] and [appendLiveMessage].
+     * Connection-scoped and in-memory like [mintedMessageIds], and observed only through [observe].
+     */
+    private val ownEchoQueues = MutableStateFlow<Map<String, OwnEchoQueue>>(emptyMap())
+
+    /**
      * Source of the client-owned [ThreadItem.UnrecognizedMessage.id] (#609). The `unrecognized_message`
      * wire frame carries neither a message id nor a `turn_id`, yet the thread's `LazyColumn` keys on
      * `"unrecognized:<id>"` — so a duplicate crashes the thread, and the id cannot be derived from the
@@ -214,11 +227,21 @@ internal class ThreadProjection {
      * sender's confirmed row carries the attachment names and send time that the pushed copy lacks. The
      * identity is [withMessage]'s, id-only and role-agnostic. A held id returns the map unchanged, so
      * nothing re-emits.
+     *
+     * The one exception is position (#1558): the push of an echo still [OwnEchoQueue.queued] is its delivery,
+     * so the held echo, unchanged, first moves to the end of the thread, after the turn it waited behind.
      */
     fun appendLiveMessage(
         conversationId: String,
         message: Message,
     ) {
+        if (message.id in ownEchoQueues.value[conversationId]?.queued.orEmpty()) {
+            moveOwnEchoToEnd(conversationId, message.id)
+            ownEchoQueues.update { all ->
+                val echoes = all[conversationId] ?: return@update all
+                all + (conversationId to OwnEchoQueue(echoes.queued - message.id, echoes.delivered + message.id))
+            }
+        }
         threadByConversation.update { current ->
             val thread = current[conversationId].orEmpty()
             val held = thread.any { it is ThreadItem.MessageItem && it.message.id == message.id }
@@ -437,8 +460,9 @@ internal class ThreadProjection {
      * echo to de-dup against.
      */
     fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
+        val queuedEchoes = ownEchoQueues.value[event.conversationId]?.queued.orEmpty()
         threadByConversation.update { current ->
-            val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now())
+            val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now(), passOver = queuedEchoes)
             val ended = event.turnId in endedTurns.value[event.conversationId].orEmpty()
             current + (event.conversationId to if (ended) rows.withSettledTurns(setOf(event.turnId)) else rows)
         }
@@ -518,6 +542,49 @@ internal class ThreadProjection {
             if (waiting.isEmpty()) all - conversationId else all + (conversationId to waiting.associate { it.key to it.value })
         }
         settled.forEach { removeOwnEcho(conversationId, it) }
+    }
+
+    /**
+     * Track this device's queued echoes against [queue]'s current snapshots (#1558), after a `queue_state`
+     * has been applied and [settleDrops] has run. In each conversation this device minted into, an echo the
+     * snapshot holds is [OwnEchoQueue.queued], and one that has left the snapshot is delivered: it moves to
+     * the end of the thread before it stops reading as queued, so no read shows it at its tap-time slot. A
+     * dropped echo has already been removed and its id spent, so the move finds nothing.
+     */
+    fun settleQueuedEchoes(queue: QueueProjection) {
+        (mintedMessageIds.value.keys + ownEchoQueues.value.keys).forEach { settleQueuedEchoes(it, queue) }
+    }
+
+    private fun settleQueuedEchoes(
+        conversationId: String,
+        queue: QueueProjection,
+    ) {
+        val inSnapshot = queue.current(conversationId).mapTo(HashSet()) { it.messageId }
+        val echoes = ownEchoQueues.value[conversationId] ?: OwnEchoQueue()
+        val drained = echoes.queued - inSnapshot
+        drained.forEach { moveOwnEchoToEnd(conversationId, it) }
+        val delivered = echoes.delivered + drained
+        val next = OwnEchoQueue(inSnapshot.intersect(mintedMessageIds.value[conversationId].orEmpty()) - delivered, delivered)
+        if (next != echoes) ownEchoQueues.update { it + (conversationId to next) }
+    }
+
+    /**
+     * Move the row this device minted under [messageId] to the end of [conversationId]'s thread, unchanged
+     * (#1558). A no-op unless the id is in [mintedMessageIds] and the first message row carrying it is a
+     * user row, so a daemon frame naming somebody else's id, or a non-user row's, never moves anything.
+     */
+    private fun moveOwnEchoToEnd(
+        conversationId: String,
+        messageId: String,
+    ) {
+        if (messageId !in mintedMessageIds.value[conversationId].orEmpty()) return
+        threadByConversation.update { current ->
+            val rows = current[conversationId] ?: return@update current
+            val index = rows.indexOfFirst { it is ThreadItem.MessageItem && it.message.id == messageId }
+            val row = rows.getOrNull(index) as? ThreadItem.MessageItem ?: return@update current
+            if (row.message.role != Role.User || index == rows.lastIndex) return@update current
+            current + (conversationId to (rows.filterIndexed { i, _ -> i != index } + row))
+        }
     }
 
     /**
@@ -617,6 +684,7 @@ internal class ThreadProjection {
     fun remove(conversationId: String) {
         endedTurns.update { it - conversationId }
         compactionFolds.update { it - conversationId }
+        ownEchoQueues.update { it - conversationId }
         threadByConversation.update { it - conversationId }
     }
 
@@ -631,9 +699,21 @@ internal class ThreadProjection {
      * Every row but the last is read settled ([withOnlyLastRowStreaming], #1350): an assistant segment
      * stops streaming once any row follows it, whichever write appended that row. This is the one read of
      * the store, so no reader sees an earlier segment still streaming.
+     *
+     * This device's queued echoes read last (#1558), in thread order, below every row of the turn they wait
+     * behind, and the last-row rule runs over the rows without them, so the running reply keeps streaming.
      */
     fun observe(conversationId: String): Flow<List<ThreadItem>> =
-        threadByConversation.map { it[conversationId].orEmpty().withOnlyLastRowStreaming() }.distinctUntilChanged()
+        combine(threadByConversation, ownEchoQueues) { threads, echoes ->
+            threads[conversationId].orEmpty().withQueuedEchoesLast(echoes[conversationId]?.queued.orEmpty())
+        }.distinctUntilChanged()
+
+    /** This thread as [observe] reads it: [queued] user rows last, the rest through [withOnlyLastRowStreaming]. */
+    private fun List<ThreadItem>.withQueuedEchoesLast(queued: Set<String>): List<ThreadItem> {
+        if (queued.isEmpty()) return withOnlyLastRowStreaming()
+        val (parked, rest) = partition { it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in queued }
+        return if (parked.isEmpty()) withOnlyLastRowStreaming() else rest.withOnlyLastRowStreaming() + parked
+    }
 
     /**
      * Every conversation's row count (#1361): the size of its thread, so an appended row of any kind raises
@@ -706,6 +786,16 @@ internal class ThreadProjection {
         } catch (e: IllegalArgumentException) {
             null
         }
+
+    /**
+     * One conversation's own queued echoes (#1558). [queued] is the minted ids its latest snapshot holds;
+     * [delivered] is the ids already moved to the end, which a later snapshot repeating one (a legal
+     * duplicate `message_id`) never queues again.
+     */
+    private data class OwnEchoQueue(
+        val queued: Set<String> = emptySet(),
+        val delivered: Set<String> = emptySet(),
+    )
 
     /** One `compacting` edge as the thread fold reads it (#1358): the outcome strings reduced to [failed]. */
     private class CompactingEdge(

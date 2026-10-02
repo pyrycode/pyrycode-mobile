@@ -118,6 +118,13 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long) {
   `queuedMessageId` all leave the thread untouched). Full correlation rules, the multi-device rationale
   and the security posture live in [Queued backlog § Dropping a queued
   entry](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466) — not duplicated here.
+- **`settleQueuedEchoes` runs right after `settleDrops` in the same arm ([#1558](https://github.com/pyrycode/pyrycode-mobile/issues/1558)).** A drain is the other way a queued own echo leaves the backlog
+  (a drop is the first): for every conversation the minted-id ledger or the echo state knows about,
+  `settleQueuedEchoes` moves to the end of the thread, once, every echo the fresh snapshot no longer holds,
+  then replaces that conversation's queued set with the snapshot's own ids intersected against the ledger.
+  Drops and drains are independent — `settleDrops` has already spent a dropped id's ledger entry by the
+  time `settleQueuedEchoes` runs, so a dropped echo is removed, never moved. See [Queued backlog § Own echo
+  position](queued-backlog.md#own-echo-position-a-queued-message-draws-below-the-turn-it-waits-behind-1558).
 - **The drain/drop race is accepted, not defended against (#859).** The daemon pushes the same
   `queue_state` for a removal and for a drain, and it ignores a dequeue it cannot apply. If the operator
   drops the head item just as the running turn ends, the item can drain before the dequeue lands; the next

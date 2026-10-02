@@ -21,6 +21,18 @@ daemon's backlog against the thread's own rows on the key [#781](../codebase/781
 `UUID`), and the list renders one row per message: the queue treatment **in place** when a send is still
 parked, gone the moment delivery removes it from the next snapshot.
 
+**"In place" means wherever `items` already puts it, which is no longer tap-time position for this device's
+own echoes ([#1558](https://github.com/pyrycode/pyrycode-mobile/issues/1558)).** The fold cannot see which
+ids this device minted — that ledger lives in `ThreadProjection`, not here — so it cannot be the layer that
+decides a queued echo belongs at the foot of a running turn rather than where it was typed; doing the move
+here would let a `queue_state` naming a foreign id drag *that* device's row out of place too. `ThreadProjection.observe`
+does the move instead, upstream of this fold: a still-queued own echo reads last in `items`, below every row
+of the turn it waits behind, before `foldQueuedRows` ever runs. The fold's own contract below is unchanged by
+this — it still never reorders anything itself — but rule 1 no longer implies "at the position it was sent";
+see [Queued backlog § Own echo
+position](queued-backlog.md#own-echo-position-a-queued-message-draws-below-the-turn-it-waits-behind-1558) for
+where that move happens and why.
+
 The signal it renders is still the **data half** — [`observeQueue(conversationId)`](queued-backlog.md)
 ([#460](../codebase/460.md)), surfaced onto [`ThreadViewModel`'s `ThreadUiState.queuedMessages`](thread-screen-how-it-works-state.md).
 This component still adds **no data access** and **no new data path** — the fold and the row together are
@@ -309,7 +321,9 @@ matches nothing this device minted (renders after the thread rows, unmatched).
   the sizing note recorded in its Revisions).
 - Upstream signal: [Queued backlog](queued-backlog.md) — `observeQueue` / `QueuedMessage`, the inbound
   `queue_state` decode this row renders; the full-replace snapshot model; the separate `message_id`-keyed
-  echo-removal-on-drop-ack mechanism (#781) that this render-time join does not touch or replace.
+  echo-removal-on-drop-ack mechanism (#781) that this render-time join does not touch or replace; since
+  [#1558](https://github.com/pyrycode/pyrycode-mobile/issues/1558), the own-echo-position move that also
+  happens upstream, in `ThreadProjection.observe`, before `items` ever reaches this fold.
 - Host: [Thread screen](thread-screen.md) — surfaces `queuedMessages` on `ThreadUiState`; since #782 also
   hosts `foldQueuedRows` and the folded `LazyColumn` — see
   [the list section](thread-screen-how-it-works-list-and-status-row.md) and
