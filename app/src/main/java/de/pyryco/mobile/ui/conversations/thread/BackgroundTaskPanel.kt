@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -75,16 +76,15 @@ private const val FINISHED_CARD_ALPHA = 0.22f
 
 private val TaskListGap = 10.dp
 
-// Compose's native text boxes are shorter than the Figma CSS boxes; 12 dp preserves the captured row rhythm.
-private val TaskRowGap = 12.dp
+private val TaskRowGap = 8.dp
 private val TagMaxWidth = 160.dp
-private val ProgressGap = 6.dp
+private val ProgressGap = 2.dp
 
 private const val META_SEPARATOR = " · "
 
 /**
  * The read-only background-task list (#678), redrawn to its Figma frames (#1041), in the shared mobile
- * modal shell with only a Close action. Closing sends nothing and changes nothing.
+ * modal shell, closed from its header glyph or Back. Closing sends nothing and changes nothing.
  *
  * [roster] is branched on before its tasks are read: `null` means nothing has been reported, an empty
  * roster is the daemon saying nothing is alive, and the two read as different sentences. The partial-list
@@ -120,7 +120,6 @@ internal fun BackgroundTaskPanel(
     }
     MobileReadOnlyModal(
         title = stringResource(R.string.background_tasks_title),
-        closeLabel = stringResource(R.string.background_tasks_close),
         onDismissRequest = onDismiss,
         modifier = modifier,
     ) {
@@ -186,7 +185,10 @@ private fun TaskGroups(
 private fun GroupLabel(text: String) {
     Text(
         text = text,
-        style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp, lineHeight = 19.sp, letterSpacing = 0.5.sp),
+        style =
+            MaterialTheme.typography.labelLarge
+                .copy(fontSize = 13.sp, lineHeight = 19.sp, letterSpacing = 0.5.sp)
+                .untrimmedLineBox(),
         color = MaterialTheme.colorScheme.secondary,
     )
 }
@@ -220,7 +222,11 @@ private fun TaskRow(task: BackgroundTask) {
             Text(
                 text = type.text,
                 modifier = Modifier.weight(1f),
-                style = typography.bodySmall.monospace().copy(lineHeight = 17.sp, letterSpacing = 0.sp),
+                style =
+                    typography.bodySmall
+                        .monospace()
+                        .copy(lineHeight = 17.sp, letterSpacing = 0.sp)
+                        .untrimmedLineBox(),
                 color = colors.primary,
             )
             TaskTag(task, Modifier.widthIn(max = TagMaxWidth))
@@ -271,7 +277,14 @@ private fun TaskProgress(progress: BackgroundTaskProgress) {
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
             color = colors.onSurfaceVariant,
         )
-        Text(text = meta, style = MaterialTheme.typography.bodySmall.copy(lineHeight = 17.sp), color = colors.outline)
+        Text(
+            text = meta,
+            style =
+                MaterialTheme.typography.bodySmall
+                    .copy(lineHeight = 17.sp)
+                    .untrimmedLineBox(),
+            color = colors.outline,
+        )
         if (wasCut(progress.truncatedFields, CUT_LAST_TOOL_NAME) || tool.cutForDisplay) CutMarker()
     }
 }
@@ -284,7 +297,13 @@ private fun LatestUpdate(update: BackgroundTaskUpdate) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             text = stringResource(R.string.background_tasks_latest_update),
-            style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp, lineHeight = 17.sp, letterSpacing = 0.5.sp),
+            style =
+                MaterialTheme.typography.labelMedium
+                    .copy(
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        letterSpacing = 0.5.sp,
+                    ).untrimmedLineBox(),
             color = colors.outline,
         )
         Box(
@@ -296,7 +315,10 @@ private fun LatestUpdate(update: BackgroundTaskUpdate) {
             if (update.patch.isEmpty()) {
                 Text(
                     text = stringResource(R.string.background_tasks_no_change),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
+                    style =
+                        MaterialTheme.typography.bodyMedium
+                            .copy(fontSize = 13.sp, lineHeight = 19.sp)
+                            .untrimmedLineBox(),
                     fontStyle = FontStyle.Italic,
                     color = colors.outline,
                 )
@@ -306,7 +328,8 @@ private fun LatestUpdate(update: BackgroundTaskUpdate) {
                     style =
                         MaterialTheme.typography.bodySmall
                             .monospace()
-                            .copy(lineHeight = 17.sp, letterSpacing = 0.sp),
+                            .copy(lineHeight = 17.sp, letterSpacing = 0.sp)
+                            .untrimmedLineBox(),
                     color = colors.onSurfaceVariant,
                 )
             }
@@ -352,7 +375,7 @@ private fun TaskField(
     color: Color,
 ) {
     val field = boundedText(raw)
-    Text(text = field.text, style = style, color = color)
+    Text(text = field.text, style = style.untrimmedLineBox(), color = color)
     // A field this client cut for display is marked as well: it was cut, whoever cut it.
     if (cutByDaemon || field.cutForDisplay) CutMarker()
 }
@@ -368,11 +391,19 @@ private fun CutMarker() {
                 val width = 1.dp.toPx()
                 val dash = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 2.dp.toPx()))
                 drawOutline(shape.createOutline(size, layoutDirection, this), color, style = Stroke(width, pathEffect = dash))
-            }.padding(horizontal = 6.dp, vertical = 1.dp),
+            }
+            // The frame's 1 px border sits inside its 20 px box, so it adds to the 1 px vertical padding.
+            .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         Text(
             text = stringResource(R.string.background_tasks_truncated),
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.3.sp),
+            style =
+                MaterialTheme.typography.labelSmall
+                    .copy(
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        letterSpacing = 0.3.sp,
+                    ).untrimmedLineBox(),
             color = color,
         )
     }
@@ -393,7 +424,13 @@ private fun PartialNotice(count: Int) {
         Box(Modifier.size(8.dp).background(content, CircleShape))
         Text(
             text = stringResource(R.string.background_tasks_partial, count),
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp, lineHeight = 19.sp, letterSpacing = 0.25.sp),
+            style =
+                MaterialTheme.typography.labelLarge
+                    .copy(
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                        letterSpacing = 0.25.sp,
+                    ).untrimmedLineBox(),
             color = content,
         )
     }
@@ -408,7 +445,7 @@ private fun EmptyReading(
 ) {
     val ringColor = MaterialTheme.colorScheme.outline
     Column(
-        // Figma's content-relative inset; the shared modal retains its accessible header and footer.
+        // Figma's content-relative inset below the shared modal's accessible header.
         modifier = Modifier.fillMaxWidth().padding(top = 160.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -441,6 +478,13 @@ private fun EmptyReading(
 }
 
 private fun TextStyle.monospace(): TextStyle = copy(fontFamily = FontFamily.Monospace)
+
+/**
+ * The full `lineHeight × lines` box, as in the Figma frames' CSS line boxes. Compose's default trims the
+ * half-leading above the first line and below the last, which left each panel text a few px short (#1534).
+ */
+internal fun TextStyle.untrimmedLineBox(): TextStyle =
+    copy(lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None))
 
 /** A daemon field as displayed: printable and bounded, and whether the bound cut it. */
 private class BoundedText(

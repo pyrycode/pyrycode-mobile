@@ -781,29 +781,36 @@ class InteractiveStreamE2ETest {
 
     /**
      * The status area names the tool claude is running (#950, rung 3; #897's label). The rung-4 twins are
-     * the `tool` and `tool-progress` scenarios. A quick command's call closes before the phone can be sure
-     * to see it open, so the call is held open the #849 way instead: [RUNNING_TOOL_PROMPT]'s `python3`
+     * the `tool` and `tool-progress` scenarios. The call is held the #849 way: [HELD_TOOL_PROMPT]'s `python3`
      * command is never auto-allowed, claude's `tool_use` arrives, and the call waits on a permission prompt
-     * that only the [SecondClientPeer] paired with `--allow-remote-permissions` can answer. While it waits
-     * the label reads `Running Bash…` with no elapsed reading; once the peer allows the command and the turn
-     * ends, the label is gone. No step depends on timing.
+     * that only the [SecondClientPeer] paired with `--allow-remote-permissions` can answer. Since #1483 the
+     * band reads "Waiting for permission" in place of the label while the prompt is open, so the hold
+     * asserts that. Once the peer allows the command, it sleeps 10 s, well short of claude's ~30 s first
+     * heartbeat. While it runs, the label reads `Running Bash…` with no elapsed reading. After the turn
+     * ends, the label is gone.
      *
-     * **One real-claude turn.**
+     * **One real-claude turn**, of at least 10 s.
      */
     @Test
     fun interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool() {
         val peer = runningToolPeer()
+        val waitingReading =
+            hasText(string(R.string.thread_status_waiting_for_permission)) and hasAnyAncestor(hasTestTag(STATUS_READING_TEST_TAG))
         try {
-            val (conversationId, modalId) = holdToolOnPermission(peer, RUNNING_TOOL_PROMPT)
+            val (conversationId, modalId) = holdToolOnPermission(peer, HELD_TOOL_PROMPT)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(waitingReading).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(waitingReading).assertIsDisplayed()
+            composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertDoesNotExist()
+
+            runBlocking { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertIsDisplayed()
 
-            runBlocking {
-                peer.allowOnce(modalId, THREAD_TIMEOUT_MS)
-                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS)
-            }
+            runBlocking { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isEmpty()
             }
@@ -5654,9 +5661,9 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** A node inside the open background-task panel, the window holding its Close. */
+    /** A node inside the open background-task panel, the dialog holding its title. */
     private fun inBackgroundPanel(): SemanticsMatcher =
-        hasAnyAncestor(hasAnyDescendant(hasText(string(R.string.background_tasks_close)) and hasClickAction()))
+        hasAnyAncestor(isDialog() and hasAnyDescendant(hasText(string(R.string.background_tasks_title))))
 
     /**
      * The `background_task_progress` frames [peer] recorded for [conversationId], decoded, that join on the
@@ -5696,7 +5703,7 @@ class InteractiveStreamE2ETest {
 
     /** Close the background-task panel and wait until it is gone. */
     private fun closeBackgroundTasks() {
-        composeTestRule.onNode(hasText(string(R.string.background_tasks_close)) and hasClickAction()).performClick()
+        composeTestRule.onNode(hasContentDescription(CD_CLOSE_SHEET) and inBackgroundPanel()).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isEmpty()
         }
@@ -7441,13 +7448,17 @@ class InteractiveStreamE2ETest {
                 "with exactly: pyrywait. Command: python3 -c \"print(849)\""
         const val DROP_PROMPT = "Reply with exactly: pyrydropped"
 
-        // #950 running-tool label. Both hold claude's Bash call on WAIT_PROMPT's permission lever; the second
-        // command then runs past claude's first tool_progress heartbeat. The sleep sits inside python3
-        // because claude's Bash tool refuses a bare `sleep` of 25 s or more. ELAPSED_SLOT stands in for the
-        // reading when the elapsed label's text is turned into a pattern.
+        // #950 running-tool label. All three hold claude's Bash call on WAIT_PROMPT's permission lever. Once
+        // allowed, HELD_TOOL_PROMPT's command stays open for 10 s so the label can be seen after the prompt
+        // closes (#1528), and ELAPSED_TOOL_PROMPT's runs past claude's first tool_progress heartbeat. The
+        // sleeps sit inside python3 because claude's Bash tool refuses a bare `sleep` of 25 s or more.
+        // ELAPSED_SLOT stands in for the reading when the elapsed label's text is turned into a pattern.
         const val RUNNING_TOOL_PROMPT =
             "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
                 "with exactly: pyryran. Command: python3 -c \"print(950)\""
+        const val HELD_TOOL_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, and wait " +
+                "for it to finish, then reply with exactly: pyryran. Command: python3 -c \"import time; time.sleep(10); print(950)\""
         const val ELAPSED_TOOL_PROMPT =
             "Run this exact shell command with your tools in the foreground, not in the background, and wait " +
                 "for it to finish, then reply with exactly: pyryran. Command: python3 -c \"import time; time.sleep(45)\""

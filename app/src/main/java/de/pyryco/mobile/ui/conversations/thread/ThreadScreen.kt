@@ -489,6 +489,7 @@ fun ThreadScreen(
                             sending = attachmentsSending,
                             onRemove = onRemoveAttachment,
                             uploadProgress = attachmentUploadProgress,
+                            connected = connected,
                             modifier =
                                 Modifier
                                     .padding(horizontal = ComposerGutter)

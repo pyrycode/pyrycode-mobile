@@ -55,9 +55,12 @@ class MarkdownReaderDesignTest {
         }
     }
 
-    private fun layout(text: String): TextLayoutResult {
+    private fun layout(
+        text: String,
+        substring: Boolean = false,
+    ): TextLayoutResult {
         val result = mutableListOf<TextLayoutResult>()
-        rule.onNodeWithText(text).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(result) }
+        rule.onNodeWithText(text, substring = substring).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(result) }
         return result.single()
     }
 
@@ -84,6 +87,21 @@ class MarkdownReaderDesignTest {
         assertEquals(64f, code.height.value, 1f)
         assertEquals(35f, quote.left.value, 1f)
         assertEquals(461f, quote.top.value, 2f)
+    }
+
+    // #1533: `553:2574` writes each item as one `•  text` paragraph, so its wrapped line returns to the gutter.
+    @Test fun wrappedListItemContinuesAtTheGutter() {
+        show()
+        val item = rule.onNodeWithText("Pin all five agents repos", substring = true)
+        val text = layout("Pin all five agents repos", substring = true)
+
+        assertTrue(
+            text.layoutInput.text.text
+                .startsWith("•"),
+        )
+        assertTrue("item did not wrap", text.lineCount > 1)
+        assertEquals(20f, item.getUnclippedBoundsInRoot().left.value, 1f)
+        assertEquals(0f, text.getLineLeft(1), 0.5f)
     }
 
     @Test fun readerCodeAndQuoteUseReferenceRoles() {

@@ -116,7 +116,7 @@ class TaskCountPillKeyboardDeviceTest {
 
         pill.performTouchInput { click() }
         rule.onNodeWithText("Background tasks").assertIsDisplayed()
-        rule.onNodeWithText("Close").performTouchInput { click() }
+        rule.onNodeWithContentDescription("Close").performTouchInput { click() }
 
         rule.onNodeWithText("Actions").performTouchInput { click() }
         rule.onNodeWithText("Background tasks (2)").assertIsDisplayed()

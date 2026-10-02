@@ -199,6 +199,44 @@ class ChannelListScreenTest {
         vararg formatArgs: Any,
     ): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId, *formatArgs)
 
+    /**
+     * `15:8` stacks host containers 16 dp apart and draws collapsed hosts and sections with an expand
+     * affordance and no children (#1521). The first host's Chats section and the whole second host are
+     * folded through their own controls, so the asserted state is the one a tap leaves.
+     */
+    @Test
+    fun collapsedRowsDrawNoChildren_andHostContainersKeepTheSixteenDpFigmaGap() {
+        setTree(
+            entry(
+                serverId = "pyry",
+                displayName = "Pyry",
+                channels = listOf(conversation("c1", "Pyry channel", "/w", true)),
+                chats = listOf(conversation("h1", "Pyry chat", "/w", false)),
+            ),
+            entry(
+                serverId = "elli",
+                displayName = "Elli",
+                channels = listOf(conversation("c2", "Elli channel", "/w", true)),
+                chats = listOf(conversation("h2", "Elli chat", "/w", false)),
+            ),
+        )
+        composeTestRule.onNode(hasText("Pyry chat")).assertExists()
+        composeTestRule.onNode(hasText("Elli channel")).assertExists()
+
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Chats on Pyry"))).performClick()
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Elli"))).performClick()
+        composeTestRule.onNode(hasText("Pyry chat")).assertDoesNotExist()
+
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_expand, "Chats on Pyry"))).assertExists()
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_expand, "Elli"))).assertExists()
+        listOf("Elli channel", "Elli chat").forEach { composeTestRule.onNode(hasText(it)).assertDoesNotExist() }
+        composeTestRule.onNode(hasText("Pyry channel")).assertExists()
+
+        val firstHostLastRow = composeTestRule.onNode(hasText("Chats")).getUnclippedBoundsInRoot()
+        val secondHost = composeTestRule.onNode(hasText("Elli")).getUnclippedBoundsInRoot()
+        assertEquals(16.dp, secondHost.top - firstHostLastRow.bottom)
+    }
+
     @Test
     fun siblingConversationRowsKeepTheFourDpFigmaGap() {
         setTree(
@@ -832,13 +870,14 @@ class ChannelListScreenTest {
         assertEquals(21.dp, glyphs[0].left - root.left)
         assertEquals(64.dp, glyphs[1].left - root.left)
         assertEquals(20.dp, root.right - glyphs[2].right)
-        assertEquals(28.dp, glyphs[0].top - root.top)
-        assertEquals(30.dp, glyphs[1].top - root.top)
-        assertEquals(28.dp, glyphs[2].top - root.top)
+        // `15:8` stacks body 4 + sidebar 24 + button row 4 above the glyphs (#1521).
+        assertEquals(32.dp, glyphs[0].top - root.top)
+        assertEquals(34.dp, glyphs[1].top - root.top)
+        assertEquals(32.dp, glyphs[2].top - root.top)
         val rule = composeTestRule.onNodeWithTag("channel-list-toolbar-rule").getUnclippedBoundsInRoot()
         assertEquals(20.dp, rule.left - root.left)
         assertEquals(20.dp, root.right - rule.right)
-        assertEquals(68.dp, rule.top - root.top)
+        assertEquals(72.dp, rule.top - root.top)
         assertEquals(1.dp, rule.bottom - rule.top)
     }
 

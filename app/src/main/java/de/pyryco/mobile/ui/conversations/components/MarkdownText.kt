@@ -79,6 +79,20 @@ import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.parser.MarkdownParser
 
 private val ListItemIndent = 8.dp
+
+// A reader item's blocks after its first paragraph: the hang the marker row gave them before #1533.
+private val ReaderListContinuationIndent = 14.dp
+
+// A list item's own syntax tokens, as opposed to the blocks it contains.
+private val ListItemSyntax =
+    setOf(
+        MarkdownTokenTypes.LIST_BULLET,
+        MarkdownTokenTypes.LIST_NUMBER,
+        GFMTokenTypes.CHECK_BOX,
+        MarkdownTokenTypes.WHITE_SPACE,
+        MarkdownTokenTypes.EOL,
+    )
+
 private val BlockquoteBarWidth = 4.dp
 private val BlockquoteContentIndent = 12.dp
 private val ReaderQuoteBarWidth = 3.dp
@@ -311,10 +325,34 @@ private fun ListBlock(
     Column(verticalArrangement = Arrangement.spacedBy(style.listItemSpacing)) {
         items.forEachIndexed { index, item ->
             val checkBox = item.children.firstOrNull { it.type == GFMTokenTypes.CHECK_BOX }
+            val blocks = item.children.filter { it.type !in ListItemSyntax }
+            val marker = if (ordered) "${index + 1}." else "•"
+            val lead = blocks.firstOrNull()
+            if (style.presentation == MarkdownPresentation.Reader && checkBox == null && lead?.type == MarkdownElementTypes.PARAGRAPH) {
+                // #1533: Figma `553:2574` writes each item as one `•  text` paragraph, so a wrapped line
+                // returns to the list's edge instead of hanging under the item text.
+                Column(verticalArrangement = Arrangement.spacedBy(style.blockSpacing)) {
+                    Text(
+                        text =
+                            buildAnnotatedString {
+                                append("$marker  ")
+                                append(buildInline(lead, source, uriHandler))
+                            },
+                        style = style.body,
+                    )
+                    // The frame draws no nested content; later blocks keep the old hang so nesting still reads.
+                    blocks.drop(1).forEach { child ->
+                        Box(Modifier.padding(start = ReaderListContinuationIndent)) {
+                            MarkdownBlock(child, source, uriHandler, style)
+                        }
+                    }
+                }
+                return@forEachIndexed
+            }
             Row {
                 if (checkBox == null) {
                     Text(
-                        text = if (ordered) "${index + 1}." else "•",
+                        text = marker,
                         style = style.body,
                     )
                 } else {
@@ -327,14 +365,7 @@ private fun ListBlock(
                 Column(
                     verticalArrangement = Arrangement.spacedBy(style.blockSpacing),
                 ) {
-                    item.children
-                        .filter {
-                            it.type != MarkdownTokenTypes.LIST_BULLET &&
-                                it.type != MarkdownTokenTypes.LIST_NUMBER &&
-                                it.type != GFMTokenTypes.CHECK_BOX &&
-                                it.type != MarkdownTokenTypes.WHITE_SPACE &&
-                                it.type != MarkdownTokenTypes.EOL
-                        }.forEach { child -> MarkdownBlock(child, source, uriHandler, style) }
+                    blocks.forEach { child -> MarkdownBlock(child, source, uriHandler, style) }
                 }
             }
         }
