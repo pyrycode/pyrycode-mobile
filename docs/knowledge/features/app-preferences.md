@@ -349,7 +349,7 @@ file. `rememberedEffort_survivesProcessDeath` here and `HostWorkspacePreferences
 above do this correctly; `ThreadViewModelEffortRecallTest.aSuccessfulTap_survivesAnAppRestart`
 (`ui/conversations/thread/`) did not and failed on every isolated run until #1075
 added the missing `job1.join()`. See [Development verification § Test scheduling
-and harnesses](development-verification.md#test-scheduling-and-harnesses) for the
+and harnesses](development-verification-test-scheduling.md#test-scheduling-and-harnesses) for the
 full mechanism.
 
 ## Edge cases / limitations

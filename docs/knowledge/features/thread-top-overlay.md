@@ -199,7 +199,7 @@ ticker (see [Usage-limit indicator § Wiring](usage-limit-indicator.md#wiring--a
 and `rePairAvailable` are all untouched by #1002 — only where their values are *rendered* changed. #1345's
 open-and-reconnect MCP status ask runs as a `viewModelScope` collector over `repositoryAvailable`, not inside
 either holder; see [Channel info sheet § MCP servers section](channel-info-sheet.md#mcp-servers-section) and
-[Development verification § Emulator and real evidence](development-verification.md#emulator-and-real-evidence)
+[Development verification § Emulator and real evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
 for why that ask shares a daemon worker with sending a message and can stall behind an unanswered one.
 
 ## Testing
@@ -262,7 +262,7 @@ only a count or a static reason, never the server name, the status or the conver
 - MCP failure: [#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345) and [Channel info sheet §
   MCP servers section](channel-info-sheet.md#mcp-servers-section) — the status report the pill reads, the
   open-and-reconnect ask, and the daemon FIFO-worker coupling recorded in [Development verification §
-  Emulator and real evidence](development-verification.md#emulator-and-real-evidence).
+  Emulator and real evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence).
 - Spec: `docs/specs/architecture/1345-mcp-failure-notice.md`.
 - Pairing notice: [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) — the rejected-pairing
   signal (`ThreadViewModel.rePairAvailable`) and the Re-pair priority over Offline Retry, described in [connection status placement](thread-screen-how-it-works-overlays-and-app-bar.md#connection-status-placement).

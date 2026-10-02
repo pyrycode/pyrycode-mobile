@@ -283,7 +283,7 @@ launch and uses the app's edge-to-edge/Scaffold shape. It taps the upper field
 surface, asserts a full-height focus target and visible IME insets, then scrolls
 to both fields, clear controls, Pair, Retry and Cancel and checks action bounds
 above the keyboard. Focus or text input alone can pass with no keyboard; see
-[Compose evidence](development-verification.md#compose-evidence). A screenshot
+[Compose evidence](development-verification-compose-evidence.md#compose-evidence). A screenshot
 of the Compose root also omits the keyboard window; the visible-IME captures use
 `UiAutomation.takeScreenshot()`.
 

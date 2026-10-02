@@ -364,15 +364,22 @@ records.
   while still answering `atStart = false` forever. The load-bearing bound against a deliberately
   adversarial daemon is the client-side `MAX_HISTORY_PAGES = 100` cap in `settled()`, which does not read
   anything the daemon sent to decide when to stop. The cap is per `ThreadViewModel` instance (so per
-  screen-open); leaving and re-entering a thread starts a fresh walk.
+  screen-open), with a fresh count on every open — **leaving and re-entering a thread does not start a
+  fresh walk any more.** As shipped by #777 it did: nothing survived a screen close. [#1354](#resuming-from-the-saved-position-1354)
+  changed that by saving the walk's position (not the count) beside the cached rows, so re-entering a
+  saved thread continues its cursor from where the last visit left off while the page budget still
+  resets to 100 for the new open.
 - **A failed ask keeps the cursor and page count, clears in-flight, and stops asking — no retry, as
   shipped here.** `failed()` set `stoppedBy = Failed` without touching `cursor` or `pagesLoaded`, so every
   row already loaded and the walk's position survived a failure. `HistoryWalkStop` was an enum rather than
   a `Boolean` specifically so [#778](../codebase/778.md) could reopen `Failed` alone — `AtStart` /
   `NotAdvancing` / `PageCap` stayed terminal. Nothing here retried, restarted on reconnect, or persisted
-  the cursor: the projections above are connection-scoped (`threadByConversation` starts empty on each
-  connection), so a cursor surviving a reconnect would be a stale-cursor bug rather than a resume point.
-  [#778](#the-retry-and-the-two-restarts-778) reopened exactly that gap.
+  the cursor **across a screen close**: the projections above are connection-scoped
+  (`threadByConversation` starts empty on each connection), so a cursor surviving a reconnect would be a
+  stale-cursor bug rather than a resume point. [#778](#the-retry-and-the-two-restarts-778) reopened the
+  reconnect gap; [#1354](#resuming-from-the-saved-position-1354) later gave the *in-memory* cursor a
+  disk-backed twin that does survive a screen close, on the far side of a received page rather than a
+  failed one — see that section for why a failed ask still writes nothing to it.
 - **The opening ask stayed unconditional as #777 shipped it**, resolving the plan's second Open Question:
   `mergeHistoryRows` (the § above) already skips any row the thread holds, keyed on the renderer's own row
   key, so a first page overlapping the `backfill_since` replay ring was fully absorbed with no duplicate
@@ -436,7 +443,10 @@ depends on here.
   re-asking immediately, #1352 instead waits for the reader's next qualifying gesture (or a Retry press,
   now gated on the ordinary `canAsk`/`canRetry` path like any other ask) to carry the empty cursor forward,
   per the ticket's "older history loads only on request" rule. A refusal of the newest-page ask (an already
-  empty cursor) still has nothing to fall back to and settles as an ordinary failure instead.
+  empty cursor) still has nothing to fall back to and settles as an ordinary failure instead. Since
+  [#1354](#resuming-from-the-saved-position-1354), the same refusal also clears the **saved** position —
+  `writeHistoryPosition(conversationId, null)` — so a stale cursor cannot keep steering both the next pull
+  and the next open back to a cursor the daemon has already rejected once.
 - **The `repositoryAvailable` collector in `ThreadViewModel.init` stays, but only for its #1311 side
   effect.** It still collects `repositoryAvailable.distinctUntilChanged().drop(1)`, but since #1352 that
   collector exists solely to call `closeLocalSendWindow("reconnect")` — it no longer restarts the walk.
@@ -446,3 +456,66 @@ slot's five states including the new offline notice — is
 [Thread screen § the oldest-end history demand](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-demand-777)
 and
 [§ the oldest-end history retry and restart](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-retry-and-restart-778).
+
+## Resuming from the saved position (#1354)
+
+[#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) made every open start
+`ThreadHistoryDemand()` from an empty cursor, so the first pull in a saved thread re-fetched the
+newest page the reader already held. [#1354](https://github.com/pyrycode/pyrycode-mobile/issues/1354)
+gives the walk a disk-backed resume point, mirroring desktop's received `coverage`
+(`src/shared/chatHistory.ts`, `chatHistoryWriter.ts`, `historyPageBridge.ts`'s `requestOlderHistory`
+in the sibling desktop checkout). The storage side — `HistoryPosition`, where it lives inside the
+thread document, and the two-writer read-modify-write rule — is
+[Conversation cache § The saved history position](conversation-cache.md#the-saved-history-position-1354);
+this section covers only `ThreadHistoryDemand`/`ThreadViewModel`, which is where the design lives.
+
+- **`ThreadHistoryDemand.restored(cursor, atStart)`** folds a saved position the same way `settled`
+  folds a received page, but takes the two scalars rather than a `HistoryPosition` for the same
+  reason `settled` takes `HistoryPage`'s two scalars: the file stays structurally unable to import a
+  daemon-authored entry type. It sets `cursor` and, when `atStart` is true, `stoppedBy = AtStart` —
+  the same terminal stop a live walk reaches by paging all the way back, so a restored "start of
+  history" asks nothing and the oldest-end slot's offline notice stays hidden exactly as it already
+  does for a walk that reached `AtStart` this visit (see [Thread screen § the oldest-end history
+  demand](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-demand-777)).
+  `pagesLoaded` is carried forward unchanged, so restoring a position never buys a fresh
+  `MAX_HISTORY_PAGES` budget — the cap stays per screen-open (see § The walk that finally calls
+  `requestHistory` above).
+- **`ThreadViewModel.historySeed`**, a `Job` launched in `viewModelScope` right after `historyDemand`
+  is constructed, reads `repository.readHistoryPosition(conversationId)` once and, if it finds one,
+  folds it with `restored`. Reading asks nothing — `onDemandOlderHistory` is still the only path that
+  calls `requestHistory`. For every in-memory repository (every unit test, and the demo
+  `FakeConversationRepository`) the default `readHistoryPosition` returns without suspending, so the
+  seed completes during construction and a test never has to await it explicitly.
+- **A pull during the seed waits for it, rather than racing it.** `onDemandOlderHistory` checks
+  `historySeed.isCompleted` first; if the read is still in flight, it launches a coroutine that joins
+  the seed and re-enters, instead of either dropping the pull or letting it carry the opening empty
+  cursor. Without this, a pull that landed before the disk read finished would re-fetch the newest
+  page — the exact bug the ticket exists to fix — only intermittently, on whichever gesture happened
+  to race the read. Extra pulls that land in the same window collapse through the ordinary `canAsk`
+  check once the first of them claims the outstanding-request slot.
+- **A received page's position is saved before the slot is released, inside `launchHistoryAsk`'s
+  single in-flight ask.** `repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor,
+  page.atStart))` runs right after `requestHistory` returns and before `historyDemand.update {
+  it.settled(...) }`, so at most one position write is ever outstanding per thread, ordered by the
+  same CAS claim that already serializes asks. A failed ask (any branch of `fetchHistoryPage`'s
+  `catch`) returns before that write, so **a failed ask changes the saved position not at all** — the
+  in-memory walk already preserves the cursor and page count on a failure (see § The walk above), and
+  the saved copy now matches that same no-op. A refused cursor is the one branch that does write:
+  `history.invalid_cursor` on a non-empty cursor calls `writeHistoryPosition(conversationId, null)`
+  alongside `cursorRefused()`, so the next pull *and* the next open both start from the newest page —
+  a stale saved cursor cannot otherwise outlive the daemon rejecting it once.
+- **The position write can run ahead of the row write it describes (accepted, PR #1470 Revisions).**
+  The page's rows reach the cache later, through `CachingConversationRepository.observeMessages`'s own
+  collector-driven `writeThread` call, not through `launchHistoryAsk`. If that row write then fails,
+  or the ViewModel is cleared before it runs, the saved position can point past rows the thread
+  document does not yet hold, and the next open skips that page. Ordering the two writes would couple
+  `ThreadViewModel` to the collector's independent write path for a window whose cost is one missing
+  page, recoverable once the position is next cleared or the thread removed — accepted rather than
+  fixed, unlike desktop, which saves coverage and rows together in one place.
+
+See [Caching conversation repository § The saved history
+position](caching-conversation-repository.md#the-saved-history-position-1354) for
+`readHistoryPosition`/`writeHistoryPosition`'s forwarding on the wrapper, and that doc's § The merge
+base for the gap-filling behavior this ticket narrowed: with no saved position a reconnect's history
+walk could still fill a gap left by more than one page arriving while offline; once a position is
+saved, the walk never returns to the newest page, so that gap now stays until the position clears.

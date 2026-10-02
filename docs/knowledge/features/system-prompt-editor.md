@@ -201,7 +201,7 @@ write line) states and that Save/Clear fire the expected callbacks and disabled 
 run coroutines launched in `backgroundScope`, so the editor never leaves `Loading` and every test fails
 on the test's own setup, not on the code under test. Pass the `TestScope` itself (or call
 `runCurrent()` after launching in `backgroundScope`). See
-[Development verification § Test scheduling and harnesses](development-verification.md#test-scheduling-and-harnesses)
+[Development verification § Test scheduling and harnesses](development-verification-test-scheduling.md#test-scheduling-and-harnesses)
 for the general rule.
 
 No device test: nothing renders.
