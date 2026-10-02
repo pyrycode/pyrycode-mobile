@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
+import de.pyryco.mobile.ui.conversations.thread.McpFailureAcknowledgements
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -67,8 +68,8 @@ class ObservablePairedServerStore(
 
 /**
  * The production [ObservablePairedServerStore.onHostRemoved]: a removed pairing takes its host's unsent
- * composer text (#790), its cached conversation content (#798) and its retained attachment files (#900)
- * with it.
+ * composer text (#790), its cached conversation content (#798), its retained attachment files (#900) and
+ * its acknowledged MCP failures (#1345) with it.
  *
  * Named rather than written inline in `appModule` so the JVM unpair test binds this exact function —
  * a restated lambda would stay green while production forgot a step.
@@ -84,11 +85,13 @@ class ObservablePairedServerStore(
  */
 internal fun forgetRemovedHost(
     drafts: ComposerDraftStore,
+    mcpAcknowledgements: McpFailureAcknowledgements,
     cache: Lazy<ConversationCache>,
     attachments: Lazy<AttachmentStore>,
 ): suspend (String) -> Unit =
     { serverId ->
         drafts.clearHost(serverId)
+        mcpAcknowledgements.clearHost(serverId)
         withContext(NonCancellable) {
             cache.value
                 .removeHost(serverId)

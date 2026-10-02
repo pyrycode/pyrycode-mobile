@@ -789,7 +789,10 @@ DAEMON_COMMAND=(env)
 if [ -n "${DETERMINISTIC}" ]; then
   # The fake speaks the current runner protocol and replays the first fragment
   # on its first user envelope. A second fragment waits for our release signal.
-  REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1
+  # #1345: the thread asks for MCP status on open and on each reconnect. The daemon serves that ask on the
+  # connection's FIFO app-frame worker, so a child that never answers holds every later send_message;
+  # the fake answers mcp_status only under this knob.
+  REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1 PYRY_FAKE_CLAUDE_MCP_STATUS=1
     "PYRY_FAKE_CLAUDE_STREAM_REPLAY_FIRST=${FIXTURE_FILE}")
   if [ -n "${FIXTURE_FILE_2}" ]; then
     REPLAY_ENV+=("PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND=${FIXTURE_FILE_2}"

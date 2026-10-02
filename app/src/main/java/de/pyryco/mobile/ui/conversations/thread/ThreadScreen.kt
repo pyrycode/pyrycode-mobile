@@ -238,6 +238,10 @@ fun ThreadScreen(
     // tap, which hides the reading the pill is showing. Defaulted so screens that never dismiss show every one.
     dismissedUsageLimits: Set<UsageLimitDismissals.Key> = emptySet(),
     onDismissUsageLimit: (UsageLimitReading) -> Unit = {},
+    // #1345: the failed MCP server the Top overlay names (ThreadViewModel.mcpFailure) and its tap, which
+    // acknowledges the report's failures and opens Channel info.
+    mcpFailure: String? = null,
+    onOpenMcpFailure: () -> Unit = {},
     // #933: this chat's pending attachments (ThreadViewModel.pendingAttachments) and whether a send carrying
     // them is under way (attachmentsSending); the picker's result, a tile's remove, and the one-shot refusal
     // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
@@ -718,6 +722,8 @@ fun ThreadScreen(
                                 .align(Alignment.TopEnd)
                                 .padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
                         agent = state.agent,
+                        mcpFailure = mcpFailure,
+                        onOpenMcpFailure = onOpenMcpFailure,
                     )
                 }
             }
