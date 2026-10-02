@@ -36,13 +36,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -91,6 +87,7 @@ internal fun PairCodeScreen(
             Modifier
                 .fillMaxSize()
                 .background(colors.surface)
+                .onboardingGlow()
                 .systemBarsPadding()
                 .imePadding(),
         ) {
@@ -101,21 +98,7 @@ internal fun PairCodeScreen(
                 Text("Pairing", style = MaterialTheme.typography.titleLarge, color = colors.onPrimaryContainer)
             }
             HorizontalDivider(Modifier.padding(start = 20.dp, end = 20.dp), color = colors.inversePrimary.copy(alpha = 0.6f))
-            BoxWithConstraints(
-                Modifier.weight(1f).fillMaxWidth().clipToBounds().drawBehind {
-                    val center = Offset(size.width * 0.48f, size.height * 0.23f)
-                    scale(scaleX = 1f, scaleY = 1.5f, pivot = center) {
-                        drawRect(
-                            Brush.radialGradient(
-                                0f to colors.primaryContainer,
-                                0.7f to Color.Transparent,
-                                center = center,
-                                radius = size.width * 0.69f,
-                            ),
-                        )
-                    }
-                },
-            ) {
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 Column(
                     Modifier
                         .fillMaxWidth()
