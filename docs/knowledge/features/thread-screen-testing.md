@@ -65,6 +65,20 @@ The pure rule itself — the label-first ordering, the unconditional win over th
 
 The `fixedRepo(conversations)` helper is an anonymous `object : ConversationRepository { … }` with `TODO("not used")` overrides plus a `flowOf(conversations)`-backed `observeConversations`. It's kept local rather than extracted — each test's bespoke conversation shape would force a builder-shaped helper that doesn't pay for itself yet. Since [#722](https://github.com/pyrycode/pyrycode-mobile/issues/722) it has a second overload, `fixedRepo(conversations: Flow<List<Conversation>>)`, that the original `fixedRepo(List<Conversation>)` now delegates to (`= fixedRepo(flowOf(conversations))`) — a one-line addition rather than a second 40-line stub, used by test 27 above for its live-emitting double.
 
+### Short-stream top anchoring (#1509)
+
+`ThreadScreenShortStreamTest` pins the arrangement change described in [Thread screen — how it works,
+the list, the chip, the empty state and the status row § `LazyColumn(reverseLayout = true)`
+](thread-screen-how-it-works-list-and-status-row.md#lazycolumnreverselayout--true--established-in-126-populated-in-246-dimmed-in-136-nested-in-a-column-since-201-rows-folded-with-the-queued-backlog-since-782):
+`verticalArrangement = Arrangement.Top` so a stream shorter than the viewport starts under the header
+instead of resting on the composer. Two cases, each asserting the content's top sits near
+`thread-message-region`'s top and that empty space remains below it: a one-message thread, and a thread
+holding only a pending permission request (asserted against `permission-request-card`, the same fixture
+shape `ThreadScreenModalTest` seeds). Both failed before the fix — the content started 358 px and 149 px
+below the region top on a bottom-anchored list — and pass after it. `ThreadScreenFollowTest` and
+`ThreadScreenHistoryTest` needed no changes: a short list still reports `FollowNewestEnd`'s first-visible
+index and offset as 0, and the oldest row still sits at the viewport's far edge for `isNearOldestEnd`.
+
 ### `ThreadViewModel` re-sourcing (#807)
 
 [#807](../codebase/807.md) added a `runConfig_*` / `on{Model,Effort,Yolo}Selected_*` / `sessionSettings_*` group to `ThreadViewModelTest.kt` (~25 tests) covering the sourcing, the write round trip and the per-conversation scoping this ticket's AC #5 requires, replacing the six deleted tests from items 20-25 above. Representative cases, by what each pins:
