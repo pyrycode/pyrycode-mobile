@@ -157,8 +157,8 @@ claude-authored string (§ above); matching it here can only withhold the offer,
 did not request, and the daemon validates the model in `set_session_settings`.
 
 **Why the offer cannot come from a row.** A `ThreadItem.ModelRefusal` looks the same whether it just arrived
-live or was restored from a history page, the cache (though refusal rows are never cached, § below) or a
-reopened thread — the type carries no "this is live" bit. So `ThreadViewModel` never derives the offer from
+live or was restored from a history page, the cache (§ below) or a reopened thread — the type carries no
+"this is live" bit. So `ThreadViewModel` never derives the offer from
 `ThreadUiState.items`. It is armed from a sibling signal, `ConversationRepository.observeLiveRefusalEvents
 (conversationId): Flow<LiveRefusalEvent>` (defaulted to `emptyFlow()`, so the many repository test fakes
 need no change, the same posture as `observeAnnouncedModel`), emitted only from the live decode path:
@@ -238,18 +238,23 @@ All the exhaustive `when`s over `ThreadItem` gained a `ModelRefusal` arm:
   since #1113). Not a session boundary for `mostRecentSessionBoundaryIndex` — unchanged.
 - **`ThreadItem.timestamp()`** — `occurredAt`.
 - **`HistoryPageReducer.alreadyHolds`** — `holdsModelRefusal(row)`.
-- **`FileConversationCache.toRecord`** — throws `IllegalStateException("model refusal rows are never cached")`.
+- **`FileConversationCache.toRecord`** — maps to `CachedRefusal(originalModel, fallbackModel, banner,
+  bannerTruncated, occurredAt)` (#1353).
 - **`RemoteConversationRepositoryTest.threadShape()`** — the test-fixture helper outside production code
   that also needs every `ThreadItem` arm to keep compiling.
 
-## Cache — never persisted
+## Cache — persisted (#1353)
 
-`cacheableThreadRows` ([Conversation cache](conversation-cache.md)) filters out `ThreadItem.ModelRefusal`
-alongside `Banner`, `CompactionBoundary` and `UnrecognizedMessage` — claude-authored model names and prose
-never reach app-private disk. `settledThreadRows` (the narrower "may still draw, connection gone" filter)
-keeps refusal rows, so a thread that has lost its connection still shows them; only `cacheableThreadRows`
-(the "may reach disk" filter) drops them. History replay is what restores a refusal after a cold start or a
-fresh cache — not the cache.
+`cacheableThreadRows` ([Conversation cache](conversation-cache.md)) keeps `ThreadItem.ModelRefusal`
+alongside `Banner` and `CompactionBoundary`; only `ThreadItem.UnrecognizedMessage` still never reaches
+app-private disk — its KDoc forbids persisting raw model-adjacent JSON. The model names and the banner
+text are claude-authored and stored verbatim, the same posture message content already has; the render
+path owns stripping either way. Before #1353 this row was dropped here and restored only by history
+replay after a cold start or a fresh cache (#875); once history loads only on the user's request, that
+replay stopped running on a routine reopen, so the row had to be cached instead. `occurredAt` plus
+`fallbackModel != null` is the row's dedupe key both ways — `ThreadRow.listKey()` for the `LazyColumn`,
+`HistoryPageReducer.holdsModelRefusal` for the merge, and `decodeThread` for rejecting a document that
+repeats it for one frame type.
 
 ## Testing
 
