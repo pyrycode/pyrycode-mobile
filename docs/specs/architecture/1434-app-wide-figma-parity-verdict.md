@@ -10,6 +10,10 @@
 - Figma `g2HIq2UyPhslEoHRokQmHG`, Mobile page `0:1` and Components page `347:5692`, read with `get_metadata` on 2026-10-02.
 - Open issues #1488, #1502, #1504 and #1529 — each carries a design decision that added Mobile frames after its audit, and owns their capture.
 
+## Design source
+
+Figma `g2HIq2UyPhslEoHRokQmHG`, Mobile page `0:1` (https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=0-1). This ticket adds no captures, so the verifier's visual check has nothing new to compare; the inventory cites each audit's own comparison.
+
 ## Context
 
 #1430 to #1433 each audited a surface group and routed its own mismatches. None of them declares app-wide parity. This ticket joins their indexes into one inventory in `design-1220/README.md`, checks it against the reachable routes and the current Mobile page, and states the verdict by a mechanical rule: parity only when no linked issue is open.
@@ -43,3 +47,14 @@ No code changes, so no unit or screen test. Checks: `spotlessCheck` (formats Mar
 ## Open Questions
 
 - Should the post-audit frames be captured here? Resolved above: no, their owning tickets already require the capture.
+
+## Revisions
+
+### 2026-10-02 — verifier rework
+
+Driven by the verifier's review on PR #1542.
+
+- **Family roots.** #1486 and #1499 closed as family roots with open children. The inventory now links each row to the children that own its mismatch: #1523 (selected and pressed rows, row pen), #1525 (host-row pen), #1519 (usage-limit pill), and the closed #1521, #1522 and #1524 for the top bar, glow, collapsed rows and status dots. New contract: when a linked issue closed as a family root, its split children are linked on the same row.
+- **#1541's blockers.** Rows covered by #1493, #1495 and #1500 link them, since their verdicts sit in `thread/index.md` but the issues are open. The Codex agent switch row is `not shipped` and does not count toward parity while #1118 is open. The verdict counts only the open issues that block #1541.
+- **#1539's frames.** The Figma section `696:4676` was re-read after #1539's design decision, so its rows become `frame only` or `no separate frame`. The launch splash links #1545, which owns its mismatch, and #1545 was added as a blocker of #1541.
+- **State and legend.** Issue states are re-recorded at `main` `832f647e`. The status legend now defines every value a row uses. The coverage check adds the two preview-only modals, the empty channel list and the platform permission dialogs.
