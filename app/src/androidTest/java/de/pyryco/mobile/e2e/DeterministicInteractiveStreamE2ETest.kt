@@ -190,9 +190,10 @@ class DeterministicInteractiveStreamE2ETest {
 
     /**
      * `refusal` scenario (#1360) — the fixture's claude line is a session-scoped `model_refusal_fallback` from
-     * `haiku` to `sonnet`, then a reply. The refusal row offers "Switch back to haiku"; one tap writes `haiku`
-     * to the session through the real daemon, the button goes once the write is acknowledged, and a fresh
-     * `request_session_settings` reply names `haiku`. `haiku` because the scripted daemon accepts only
+     * `haiku` to `sonnet`, then a reply. fakeclaude's canned menu publishes `haiku`, so the refusal row names it
+     * by its menu label (#1494) and offers "Switch back to Haiku"; one tap writes `haiku` to the session through
+     * the real daemon, the button goes once the write is acknowledged, and a fresh `request_session_settings`
+     * reply names `haiku`. `haiku` because the scripted daemon accepts only
      * fakeclaude's canned menu, which it holds once the turn has spawned fakeclaude, so the tap waits for the
      * reply. The held reading a subscription opens with is skipped, as #1397 does for the live class.
      */
@@ -201,7 +202,7 @@ class DeterministicInteractiveStreamE2ETest {
         arriveInSeededThread()
         typeAndSend(SEND_PROMPT)
 
-        val switchBack = switchBackPrefix + REFUSAL_ORIGINAL_MODEL
+        val switchBack = switchBackPrefix + REFUSAL_ORIGINAL_LABEL
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(REFUSAL_REPLY, substring = true).fetchSemanticsNodes().isNotEmpty() &&
                 composeTestRule.onAllNodes(hasText(switchBack) and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
@@ -808,6 +809,9 @@ class DeterministicInteractiveStreamE2ETest {
 
         /** `refusal.jsonl`'s `original_model` (#1360): a value fakeclaude's canned menu offers, so the write is accepted. */
         const val REFUSAL_ORIGINAL_MODEL = "haiku"
+
+        /** The label the thread's menu gives [REFUSAL_ORIGINAL_MODEL], which the Switch back button shows (#1494). */
+        const val REFUSAL_ORIGINAL_LABEL = "Haiku"
 
         /** `refusal.jsonl`'s reply text, which follows the refusal line. */
         const val REFUSAL_REPLY = "refusal handled"

@@ -18,6 +18,7 @@ internal fun MobileModal(
     onDismissRequest: () -> Unit,
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
+    onCloseRequest: () -> Unit = onDismissRequest,
     submissionEnabled: Boolean = true,
     loading: Boolean = false,
     error: String? = null,
@@ -27,9 +28,21 @@ internal fun MobileModal(
 )
 ```
 
-Close, Cancel and Back delivered to the dialog each invoke `onDismissRequest`
-once without submitting. Android Back can first hide the IME. Outside taps do not
-dismiss. The caller removes the modal from composition to close it.
+Cancel and Back delivered to the dialog each invoke `onDismissRequest` once without
+submitting; the close glyph invokes `onCloseRequest`, which defaults to
+`onDismissRequest` so every caller but one behaves exactly as before. Android Back can
+first hide the IME. Outside taps do not dismiss. The caller removes the modal from
+composition to close it.
+
+[#1560](https://github.com/pyrycode/pyrycode-mobile/issues/1560) split the close glyph
+off from `onDismissRequest` because [`EditHostModal`](mobile-modal-callers.md#callers)'s
+and [`EditWorkspaceModal`](mobile-modal-callers.md#callers)'s unpair/archive
+confirmation steps swap `onDismissRequest` itself to the step's own decline callback,
+so Cancel and Back can return to the editor instead of closing it. Before the split the
+close glyph shared that swapped callback too, so it also declined instead of closing —
+the X left the operator stuck inside an editor they meant to leave. A caller whose
+confirmation step repoints `onDismissRequest` this way must also pass its own
+(unswapped) `onDismissRequest` as `onCloseRequest`, or the same trap recurs.
 
 OK invokes `onSubmit` only when `submissionEnabled && !loading`; it never closes
 the modal automatically. Loading preserves the OK label beside a progress
