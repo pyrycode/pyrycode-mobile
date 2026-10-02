@@ -106,6 +106,20 @@ daemon serves this way, check that the scripted fake answers it, not just that u
 scenario with a live child surfaces this stall. Real Claude answers mid-turn, so production risk is a
 child that answers slowly or never; that is filed upstream as pyrycode/pyrycode#2702, not fixed client-side.
 
+A live-gate step that judges the phone's rendering against a fixed timeout starting at the send
+conflates two different waits: Claude's upstream think time and the phone's own render time. On
+\#1480, step 5 of `InteractiveStreamE2ETest#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+gave the phone 90 s (`REPLY_TIMEOUT_MS`) to show a permission prompt, counted from the send, and
+only checked the host's permission request after that wait timed out. One upstream response took
+5.5 minutes for 215 output tokens, so the test failed before Claude had even asked to use the
+tool — a flake with nothing wrong on the phone or daemon side. The fix waits for the host's
+`modal_shown` for that chat first, under its own multi-minute upstream-latency budget
+(`UPSTREAM_PERMISSION_TIMEOUT_MS`, 6 minutes), and only then holds the phone to the unchanged,
+much shorter `REPLY_TIMEOUT_MS`. Each wait gets its own failure message, so a timeout says which
+side was slow. Apply the same split to any live-gate wait that starts a short phone-side timeout
+at the send rather than at the host's event: it cannot tell "Claude hasn't asked yet" apart from
+"the host asked and the phone drew nothing" otherwise.
+
 The demo binding (`-PuseRelayRepository=false`) does not skip onboarding: the start screen is
 chosen from the paired-host store, so a demo build's channel list, thread and modal screens are
 reachable only after a real pairing. Pair through the app's own paste-a-code flow against a
