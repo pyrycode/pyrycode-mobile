@@ -129,7 +129,7 @@ context and one executed test with no failures or skips. Both images are
 top-anchored content shifted down 24 dp and bottom actions shifted up 24 dp,
 accounting for bars once. A forced denied-state preview cannot prove the real
 permission route, and an API 33 ATD skip cannot substitute for this API 35 run.
-See [Compose evidence](development-verification.md#compose-evidence).
+See [Compose evidence](development-verification-compose-evidence.md#compose-evidence).
 
 The [#1213 retained comparison](../../../app/src/androidTest/assets/scanner-1213/README.md)
 places current Figma node 32:2 beside nonblank API 35 pixels and labels the

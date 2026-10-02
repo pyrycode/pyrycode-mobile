@@ -302,7 +302,7 @@ Three fixture lessons from that test, specific to the `pixel2Api33Atd` managed d
   `android.intent.action.CLOSE_SYSTEM_DIALOGS` from the instrumentation shell clears it.
 
 Keep the keyboard-mode and IME lifecycle setup described in
-[Compose evidence](development-verification.md#compose-evidence) when extending
+[Compose evidence](development-verification-compose-evidence.md#compose-evidence) when extending
 these fixtures. The test-only IME exercises platform insets independently of a
 consumer's operation. The [plan revisions](../../specs/architecture/638-mobile-modal.md#revisions)
 record the activity-recreation failure and the required setup order.

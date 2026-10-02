@@ -145,7 +145,7 @@ existing JVM suites that construct it without a `RelayLog` sink, and the opening
 destination factory's `thread_destination_bound`. **This ask shares the daemon's per-connection FIFO
 app-frame worker with `send_message`:** if the child doesn't answer, the next send on that connection waits
 behind it with no timeout of its own. See [Development verification § Emulator and real
-evidence](development-verification.md#emulator-and-real-evidence) for the scripted `reconnect` hang this
+evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence) for the scripted `reconnect` hang this
 caused and the harness fix, and pyrycode/pyrycode#2702 for the upstream daemon issue.
 
 **Raising a notice from a failure — `McpFailureAcknowledgements`.** The [Top overlay's MCP-failure

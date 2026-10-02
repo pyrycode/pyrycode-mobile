@@ -405,7 +405,7 @@ outcome with the existing `AttachmentNotice.SAVED` / `SAVE_FAILED` snackbar stri
 
 **Lesson from implementation (screen-test provider access).** `MarkdownReaderScreenTest` lives in
 `app/src/sharedTest`, which compiles into both the JVM (Robolectric) and device test sets (see
-[Development verification § Where a screen test goes](development-verification.md#where-a-screen-test-goes)),
+[Development verification § Where a screen test goes](development-verification-gates.md#where-a-screen-test-goes)),
 so it cannot call a Robolectric-only API such as `Robolectric.setupContentProvider` to stand in for the
 document the picker returns — that would fail to compile for the device target. The test instead answers the
 picker with a `file://` URI inside the app's cache directory: Robolectric 4.17's

@@ -122,7 +122,7 @@ surface pixel: geometry assertions and a nonblank image alone can pass during
 the splash tint transition. Run it on the full `pixel8Api35`
 image with `requireRealSystemBars=true` for visual evidence; the ATD path can
 pass geometry checks without capturing pixels. See
-[Compose evidence](development-verification.md#compose-evidence) and the
+[Compose evidence](development-verification-compose-evidence.md#compose-evidence) and the
 [retained captures, metadata and command](../../../app/src/androidTest/assets/welcome-1212/capture-context.txt).
 
 ## Edge cases / limitations

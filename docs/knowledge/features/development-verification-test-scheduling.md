@@ -1,11 +1,10 @@
 # Development verification — test scheduling and harnesses
 
-Split out of [Development verification](development-verification.md) on 2026-10-02 to keep that document
-under the 50000-byte size cap the docs guard enforces. The section below moved here verbatim and kept its
-heading, so its anchor (`#test-scheduling-and-harnesses`) is unchanged here. The parent keeps the same heading
-as a pointer, so existing links to `development-verification.md#test-scheduling-and-harnesses` still land.
-Read [Development verification](development-verification.md) first for the Gradle checks, where a screen test
-goes, the device gate and Compose evidence.
+Split out of [Development verification](development-verification.md) on 2026-10-02 to keep that
+document under the 50000-byte size cap the docs guard enforces. Every section below moved here
+verbatim and kept its heading, so its anchors are unchanged. Part of
+[Development verification](development-verification.md); see that document for the other topics
+and its links.
 
 ## Test scheduling and harnesses
 

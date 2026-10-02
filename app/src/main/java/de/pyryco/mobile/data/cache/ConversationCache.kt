@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 
 /**
@@ -67,11 +68,37 @@ interface ConversationCache {
      * Replace [conversationId]'s stored thread with [cacheableThreadRows] of [rows] — never the raw
      * list, so no caller can persist an unrecognized, streaming or running row. Reports failure like
      * [writeConversations]; a failed write leaves the previous document intact.
+     *
+     * Keeps the stored [HistoryPosition] (#1354), unless [rows] were trimmed at [MAX_CACHED_THREAD_ROWS]:
+     * the oldest kept row then no longer matches it, so the position is dropped. A caller must pass the
+     * untrimmed rows for that to be seen.
      */
     suspend fun writeThread(
         serverId: String,
         conversationId: String,
         rows: List<ThreadItem>,
+    ): Result<Unit> = Result.success(Unit)
+
+    /**
+     * The history position stored beside [conversationId]'s thread (#1354), or `null`. Graceful like
+     * [readThread]: a document never written, written before positions were kept, or unreadable has none.
+     *
+     * The default stores nothing.
+     */
+    suspend fun readHistoryPosition(
+        serverId: String,
+        conversationId: String,
+    ): HistoryPosition? = null
+
+    /**
+     * Store [position] beside [conversationId]'s thread, keeping its stored rows, or clear it with `null`
+     * (#1354). Lives in the thread document, so [removeConversation] and [removeHost] remove it with the
+     * rows. Reports failure like [writeConversations]; a failed write leaves the previous document intact.
+     */
+    suspend fun writeHistoryPosition(
+        serverId: String,
+        conversationId: String,
+        position: HistoryPosition?,
     ): Result<Unit> = Result.success(Unit)
 
     /**
@@ -102,8 +129,8 @@ interface ConversationCache {
      * Remove every cached artefact keyed by [conversationId] under [serverId], leaving that host's
      * other conversations readable.
      *
-     * That is its metadata entry, its thread rows (#797) and its read position (#877). A family added later must extend this
-     * operation too, or a permanently deleted conversation would leave its content behind.
+     * That is its metadata entry, its thread rows (#797) with their history position (#1354), and its read
+     * position (#877). A family added later must extend this operation too, or a permanently deleted conversation would leave its content behind.
      *
      * An unknown conversation is a successful no-op.
      */

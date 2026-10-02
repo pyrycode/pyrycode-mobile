@@ -205,7 +205,10 @@ _(none yet — system overview will land when there's more than one screen to ma
 
 ## Shared topics added by the knowledge migration
 
-- [Development verification](features/development-verification.md) — Kotlin, Compose, Gradle, emulator and real-evidence checks.
-    - [Development verification — test scheduling and harnesses](features/development-verification-test-scheduling.md) — `Test scheduling and harnesses`, moved verbatim from the parent on 2026-10-02 (size cap); the parent keeps the heading as a pointer.
+- [Development verification](features/development-verification.md) — map only; Kotlin, Compose, Gradle, emulator and real-evidence checks live in the split children below, split on 2026-10-02.
+    - [Development verification — change surface, Gradle gates and where a test goes](features/development-verification-gates.md) — `Establish the change surface`, `Gradle and source checks`, `Where a screen test goes`, `Device gate`, moved verbatim from the parent on 2026-10-02.
+    - [Development verification — Compose evidence](features/development-verification-compose-evidence.md) — `Compose evidence`, `Probe the evidence itself`, moved verbatim from the parent on 2026-10-02.
+    - [Development verification — test scheduling and harnesses](features/development-verification-test-scheduling.md) — `Test scheduling and harnesses`, moved verbatim from the parent on 2026-10-02.
+    - [Development verification — JVM logging, emulator and real evidence](features/development-verification-emulator-evidence.md) — `JVM logging and formatting`, `Emulator and real evidence`, `Documentation evidence`, `Archive refresh regression`, moved verbatim from the parent on 2026-10-02.
 - [Shared knowledge workflow](../shared-knowledge.md) — document ownership, reading order and capture rules.
 - [Project-memory compatibility pointer](../PROJECT-MEMORY.md) — legacy path retained without new status or lessons.
