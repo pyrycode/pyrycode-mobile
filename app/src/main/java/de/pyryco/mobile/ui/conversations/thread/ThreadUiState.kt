@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.SessionCapabilities
+import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SlashCommandMenuRow
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.datetime.Instant
@@ -149,6 +150,12 @@ data class ThreadUiState(
     // menu has been received. The composer's type-ahead reads them. They are workspace-authored, so they
     // reach the screen only through slashCommandOptions' inert display text, and a pick inserts the name.
     val slashCommands: List<SlashCommandMenuRow>? = null,
+    // #1346: what Claude last reported about its session, for Channel info's Session section only. The
+    // permission mode in it is Claude's claim: it never feeds [runConfig], the permission control or the
+    // composer footer. `null` while nothing has been reported.
+    val reportedSessionFacts: SessionFacts? = null,
+    // #1346: Claude's latest positive finite estimate of the session's cost in US dollars, or `null`.
+    val sessionCostUsd: Double? = null,
     // #1344: this conversation's MCP server reading on this connection. Its server strings are Claude-authored
     // and reach the screen only as bounded inert text in Channel info.
     val mcpStatus: McpStatus = McpStatus(),

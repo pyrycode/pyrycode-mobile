@@ -96,6 +96,10 @@ sealed interface LiveSessionEvent {
      * [errorCategory] is claude's report of an API error, not a verified account state. `""` / `false`
      * means the daemon did not say. [outcome], [terminalReason] and [errorCategory] are claude-authored
      * and unsanitized: render them only as inert, attributed text.
+     *
+     * [costUsdTotal] (#1346) is Claude's own estimate of what the **whole session** has cost so far, which
+     * the daemon does not verify: `null` when not reported or not a number, otherwise the number verbatim
+     * (zero, negative or infinite included). Attribute it to Claude when shown, and never log it.
      */
     data class TurnEnd(
         override val conversationId: String,
@@ -105,6 +109,7 @@ sealed interface LiveSessionEvent {
         val isError: Boolean = false,
         val terminalReason: String = "",
         val errorCategory: String = "",
+        val costUsdTotal: Double? = null,
     ) : LiveSessionEvent
 
     /**
