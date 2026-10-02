@@ -30,3 +30,27 @@ New tests in `RemoteConversationRepositoryAttachmentTest`:
 AC 2 (a push for an id the thread does not hold draws a row from `attachment_ids`) is `observeMessages_liveUserMessage_appendsRowWithAttachmentReferences`, unchanged.
 
 Run `./gradlew testDebugUnitTest --tests` on `RemoteConversationRepositoryAttachmentTest`, `RemoteConversationRepositoryTest` and `ThreadProjectionTest`, then `python3 -m unittest scripts/test_android_test_gate.py` and `./gradlew compileDebugAndroidTestKotlin`. AC 4, the method passing in the full live gate, is the dispatcher's live run.
+
+## Live tests
+
+The ticket asks for the dispatcher's full live gate, so the PR lists `all`.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The pushed `message` crosses into the app at one place, the `MessagePayloadDto` decode in `onInbound`'s `TYPE_MESSAGE` arm, which drops a malformed frame. Its `attachment_ids` pass through `storedAttachmentReferences`, which keeps only lowercase-UUIDv4 ids, removes repeats and bounds the count at `MessageAttachmentIds.MAX`. A pushed row carries bare references and never a name or hint from the wire. This ticket changes no production code, so the boundary stays as #1351 left it, and the new tests pin it from the send side.
+- [Trust boundaries] No findings on id collision. A push for a held `message_id` cannot overwrite the phone's named row, because `appendLiveMessage` keeps a held row. A push that arrives before the ack is replaced by the confirmed insert (`appendMessages` upserts), so the phone's own copy wins in both orders. To claim the phone's row first, a push would have to guess the id `sendMessage` mints with `UUID.randomUUID()`, which draws from `SecureRandom`, before the send leaves the phone.
+- [Tokens, secrets and credentials] Not applicable by design: the ticket touches no token, key or credential path.
+- [Files and storage] No findings. Display names come only from the phone's own picker, cleaned by `attachmentDisplayName` in `sendMessage`. No path is built from a pushed id or name here.
+- [Android attack surface] Not applicable by design: no component, intent filter, pending intent or WebView changes. The e2e revert is test-only.
+- [Cryptography] Not applicable by design: the Noise session and `NoiseIkSession` are untouched.
+- [Network and I/O] No findings. The existing inbound frame cap and supervisor are unchanged. The live list gains one method, which runs only on the test daemons the harness owns.
+- [Errors, logs and telemetry] No findings. The live arm logs nothing from the payload. The new tests add no logging, and `sendMessage` keeps logging only the attachment count.
+- [Concurrency] No findings. The send's confirmed insert and the inbound push are two writers on `ThreadProjection`, and both go through an atomic `MutableStateFlow.update`. Push before ack and push after ack each end with one named row, and the new tests cover both orders.
+- [Threat model] Handled: a malicious relay may replay or reorder the push and the ack. A replayed push is a no-op (`appendLiveMessage` returns the map unchanged), and a reordered one is covered by the push-before-ack test. A hostile frame is bounded as described under trust boundaries.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-02
