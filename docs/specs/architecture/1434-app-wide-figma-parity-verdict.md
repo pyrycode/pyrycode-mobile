@@ -26,7 +26,7 @@ No production code and no test code change. No decision record is needed: the ve
 
 ### Frames added after the audits
 
-The Mobile page now holds four sections the audits did not compare: Channel Info `668:5355` and `668:5460` (#1488), List states `670:5299` (#1504), Prompt edge states `668:3051` (#1502) and Thread states · #1529 `685:3991` (#1529). Each was drawn for an open ticket whose acceptance criteria already require a `ListDesignCaptureTest`, `PromptsDesignCaptureTest` or `ThreadDesignCaptureTest` capture compared with `design-compare.py`. The inventory lists them as `frame only` and links that ticket. Capturing them here would duplicate those tickets' work and their index edits, and the 25 frames are far beyond this ticket's "small capture addition".
+The Mobile page now holds four sections the audits did not compare: Channel Info `668:5355` and `668:5460` (#1488), List states `670:5299` (#1504), Prompt edge states `668:3051` (#1502) and Thread states · #1529 `685:3991` (#1529). Each was drawn for an open ticket whose acceptance criteria already require a `ListDesignCaptureTest`, `PromptsDesignCaptureTest` or `ThreadDesignCaptureTest` capture compared with `design-compare.py`. The inventory lists them as `frame only` and links that ticket. Capturing them here would duplicate those tickets' work and their index edits, and the 24 frames are far beyond this ticket's "small capture addition".
 
 ### States with no reference
 
