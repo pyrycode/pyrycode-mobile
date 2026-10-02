@@ -618,10 +618,28 @@ fun ThreadScreen(
                             promptRows = promptRowCount,
                             sentMessages = sentMessages,
                         )
+                        // #1484: scrolls the question's actions item to the stream's bottom edge unless it is fully
+                        // shown already; only the refused-answer notice can precede it.
+                        val actionsIndex = if (answerRejected) 1 else 0
+                        val revealActions: suspend () -> Unit =
+                            remember(listState, actionsIndex) {
+                                {
+                                    val info = listState.layoutInfo
+                                    val actions = info.visibleItemsInfo.firstOrNull { it.index == actionsIndex }
+                                    val shown =
+                                        actions != null &&
+                                            actions.offset >= info.viewportStartOffset &&
+                                            actions.offset + actions.size <= info.viewportEndOffset
+                                    if (!shown) listState.scrollToItem(actionsIndex)
+                                }
+                            }
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
                             reverseLayout = true,
+                            // #1509: a reversed list defaults to bottom-anchored; Figma `640:2646` starts a
+                            // short stream under the header. An overflowing stream is unaffected.
+                            verticalArrangement = Arrangement.Top,
                         ) {
                             openRequest?.let { open ->
                                 permissionRequestItems(
@@ -669,6 +687,9 @@ fun ThreadScreen(
                                             pending.selections[index],
                                             !pending.locked,
                                             dispatch,
+                                            // Only the last field sits right above the actions, so only it can
+                                            // reveal them without leaving the viewport (Figma 636:3803).
+                                            if (index == pending.batch.questions.lastIndex) revealActions else NoReveal,
                                         )
                                     }
                                 }

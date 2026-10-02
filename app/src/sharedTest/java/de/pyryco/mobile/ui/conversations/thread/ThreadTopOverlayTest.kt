@@ -238,7 +238,11 @@ class ThreadTopOverlayTest {
             "retry pill $retryPillBounds text $retryTextBounds should show its short label on one line",
             retryPillBounds.height <= 30.dp,
         )
-        assertTrue("retry pill $retryPillBounds should stay legible", retryPillBounds.width >= 100.dp)
+        // #1499: the pill hugs its label, so legible means the label is drawn in full inside its padding.
+        assertTrue(
+            "retry pill $retryPillBounds should show its whole label $retryTextBounds",
+            retryPillBounds.width >= retryTextBounds.width + 16.dp - 0.5.dp,
+        )
         val minimumHeightPx = with(composeRule.density) { 48.dp.toPx() }
         assertTrue("retry target $retryTouch must be at least 48dp high", retryTouch.height >= minimumHeightPx)
         assertTrue("dismiss $dismissTouch must end before retry $retryTouch", dismissTouch.bottom <= retryTouch.top)
@@ -249,6 +253,22 @@ class ThreadTopOverlayTest {
         composeRule.runOnIdle { assertEquals(1, retryTaps) }
         composeRule.onNodeWithContentDescription(label("allowed_warning")).assertDoesNotExist()
         composeRule.onNodeWithContentDescription(OFFLINE_RETRY_LABEL).assertIsDisplayed()
+    }
+
+    // #1499, Figma 627:4910: the drawn pill hugs its label at the target's top-right; only the touch box is wider.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun offlineRetry_drawsATextWidePill_atTheTargetsTopRight() {
+        connectionState = ConnectionState.Offline
+        setScreen()
+
+        val targetBounds = composeRule.onNodeWithTag("offline_retry_target").getUnclippedBoundsInRoot()
+        val pillBounds = composeRule.onNodeWithContentDescription(OFFLINE_RETRY_LABEL).getUnclippedBoundsInRoot()
+        val textBounds = composeRule.onNodeWithText(OFFLINE_RETRY_LABEL, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertTrue("pill $pillBounds should be narrower than its target $targetBounds", pillBounds.width < targetBounds.width)
+        assertEquals(targetBounds.right.value, pillBounds.right.value, 0.5f)
+        assertEquals(targetBounds.top.value, pillBounds.top.value, 0.5f)
+        assertEquals((textBounds.width + 16.dp).value, pillBounds.width.value, 0.5f)
     }
 
     // AC #4: a live usage reading no longer masks live turn status.

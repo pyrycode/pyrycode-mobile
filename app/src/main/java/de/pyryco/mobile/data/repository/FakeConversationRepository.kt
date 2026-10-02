@@ -644,8 +644,7 @@ class FakeConversationRepository(
                                             seedMsg(Role.User, "Let's tackle the empty state first.", "2026-05-03T14:15:00Z"),
                                             seedMsg(Role.Assistant, "Started a sketch in.", "2026-05-03T14:24:00Z"),
                                         ),
-                                    nextBoundaryReason = BoundaryReason.WorkspaceChange,
-                                    nextWorkspaceCwd = "~/Workspace/pyrycode-mobile",
+                                    nextBoundaryReason = BoundaryReason.Clear,
                                 ),
                             ),
                         currentMessages =
