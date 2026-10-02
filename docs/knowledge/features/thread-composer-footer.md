@@ -185,7 +185,7 @@ remain in `footerMenu`, but no separate footer button opens them after #1196.
 
 The current dark Input area places the footer 16 px from either side and 4 px below the input content. Actions and context form a left cluster with a 16 px gap; both use theme body-small text and primary colour. Actions' upward chevron uses the supplied 8 × 4 path with a 4 px label gap. The attachment icon keeps the supplied 11 × 12 paperclip path. The text and icons align to the bottom of their 32 dp tap row: centring a small glyph in that row makes the visible footer sit too high even when tap-target coordinates match Figma.
 
-### Trailing icons stay outside the weighted text region (#1032)
+### Trailing icons stay outside the weighted text region (#1032, wrap shape #1549)
 
 The outer `Row` measures the paperclip and Run configuration opener as fixed
 32dp boxes beside the weighted `FooterTextRow`, preserving both tap targets
@@ -193,6 +193,23 @@ when the Actions label or context reading grows. `FooterTextRow` gives the
 `ContextSegment` whatever width the Actions button leaves. See
 [context usage](thread-composer-footer-context-usage.md) for the original
 width failure and its measurement rule.
+
+Since [#1549](https://github.com/pyrycode/pyrycode-mobile/issues/1549) (design decision on
+[#1485](https://github.com/pyrycode/pyrycode-mobile/issues/1485), 2026-10-02), `FooterTextRow` first checks
+whether Actions, the gap and the label fit one row at their natural widths. If they do, layout is unchanged
+from #1032: one row, bottom-aligned. If not, the label moves whole to its own line under the button row,
+`FooterLineGap` (4dp, Figma `679:4116`) below the buttons' visible text — measured above
+`contentBottomPadding`, the 12dp of invisible touch overflow the thread passes in, not above the buttons'
+full touch box, since a 4dp gap from the touch box rendered as roughly 16dp on device. The layout reports a
+`FooterFirstRowBottom` `HorizontalAlignmentLine` at the button row's bottom; the outer `Row` aligns
+`FooterTextRow` by that line and the paperclip/tune boxes by their own bottoms (`Modifier.alignBy`), so all
+three stay level with Actions whether or not the label has wrapped. `alignBy` places the aligned group at
+the *top* of a row taller than its content, unlike the old `Alignment.Bottom`, so the outer `Row` also takes
+`wrapContentHeight(Alignment.Bottom)` to keep the footer's bottom placement in a slot taller than its
+content (a forced test size, or any fixed-height parent). `ContextSegment` still has `maxLines = 1` and
+`TextOverflow.Ellipsis`: the wrapped line is only `FooterTextRow`'s own width, so a wide enough font scale
+could still ellipsize it, but #1549's 150%-text acceptance scope fits in full. See [context
+usage](thread-composer-footer-context-usage.md) for the test coverage and the accepted ellipsis boundary.
 
 ### Wiring in `ThreadScreen`
 
