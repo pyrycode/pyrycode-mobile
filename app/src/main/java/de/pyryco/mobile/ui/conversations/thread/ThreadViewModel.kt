@@ -59,9 +59,11 @@ import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -559,12 +561,14 @@ class ThreadViewModel(
      * Restores the history position saved when this thread was last open (#1354), so the first pull asks
      * past the rows the cache already drew instead of re-fetching the newest page. Reading asks nothing.
      * [onDemandOlderHistory] waits for it, so no ask can carry the opening empty cursor once a saved one
-     * exists.
+     * exists. Completes `true` when no position was saved: this phone never loaded the thread's history,
+     * and the `init` block asks for the newest page once (#1569).
      */
-    private val historySeed: Job =
-        viewModelScope.launch {
-            val saved = repository.readHistoryPosition(conversationId) ?: return@launch
+    private val historySeed: Deferred<Boolean> =
+        viewModelScope.async {
+            val saved = repository.readHistoryPosition(conversationId) ?: return@async true
             historyDemand.update { it.restored(cursor = saved.cursor, atStart = saved.atStart) }
+            false
         }
 
     /**
@@ -1298,6 +1302,16 @@ class ThreadViewModel(
         // #1352: neither opening the thread nor a reconnect asks for history; only the reader does
         // (onDemandOlderHistory). The walk keeps its cursor across a reconnect.
         //
+        // #1569, the one exception: a thread with no saved history position asks for the newest page once,
+        // when its host is first available. A dormant channel created on another client otherwise opened
+        // empty. The claim admits only the untouched walk, so a pull that got there first asks instead.
+        viewModelScope.launch {
+            if (!historySeed.await()) return@launch
+            hostAvailable.first { it }
+            val claimed = claimHistorySlot { if (it == ThreadHistoryDemand()) it.asking() else null } ?: return@launch
+            launchHistoryAsk(claimed)
+        }
+
         // #1311: a drop and the return both end the round trip the local-send window was waiting on.
         // `drop(1)` skips the availability the thread opened on, which the flow hands every collector.
         viewModelScope.launch {
@@ -1451,7 +1465,8 @@ class ThreadViewModel(
 
     /**
      * The reader pulled toward older messages at the thread's oldest end (#1352) — ask for the next page
-     * back. The only ask besides Retry: opening, a reconnect and a page arriving never ask.
+     * back. The only ask besides Retry and a never-loaded thread's one opening ask (#1569): a reconnect
+     * and a page arriving never ask.
      *
      * Sends nothing while the host is not connected. [ThreadHistoryDemand.canAsk] drops an ask that
      * arrives while a request is outstanding or after the walk reached a terminal stop, and drops it
