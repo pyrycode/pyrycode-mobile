@@ -96,3 +96,11 @@ captures are compared with `scripts/design-compare.py`; device-only because it s
 ## Open Questions
 
 - Whether the 242 dp card needs the question line on `Trim.None` too: settle by measurement in the shared test.
+
+## Revisions
+
+- **2026-10-02, open question resolved.** With only the Other row fixed, the shared test measured the card at
+  236 dp: the question line was trimmed to about 16 dp, and Figma's 1 dp border sits inside its 16 dp padding
+  (content at y 17) while the app's border draws over its padding. The question text now uses the same
+  `Trim.None` line box (`FrameLineBox`, shared with the Other label), giving 240 dp, within the criterion's 2 dp.
+  The 1 dp border inset stays as it is in every other card.

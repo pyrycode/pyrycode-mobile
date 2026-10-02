@@ -5,6 +5,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
@@ -13,12 +14,17 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -27,8 +33,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
@@ -46,6 +54,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 class ThreadInlineQuestionTest {
@@ -374,6 +384,44 @@ class ThreadInlineQuestionTest {
         assertTrue("stacked", cancel.bottom <= continueButton.top)
         assertEquals(actions.left.value, continueButton.left.value, 0.5f)
         assertEquals((continueButton.left + continueButton.right).value / 2, (cancel.left + cancel.right).value / 2, 0.5f)
+    }
+
+    // #1501, Figma 636:3279: the control top-aligned with "Other", the 32 dp well 28 dp below the label's top, 242 dp cards.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w412dp-h892dp")
+    fun other_choice_matches_the_frame_and_keeps_a_48dp_field_target() {
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ThreadScreen(
+                    ThreadUiState("chat", "Client planning", isPromoted = false),
+                    {},
+                    {},
+                    ConnectionState.Connected,
+                    {},
+                    questionState = twoQuestions,
+                )
+            }
+        }
+        for (index in 0..1) {
+            val label =
+                rule
+                    .onNode(hasText("Other") and hasAnyAncestor(hasTestTag("question_control_${index}_other_row")), useUnmergedTree = true)
+                    .getUnclippedBoundsInRoot()
+            val control = rule.onNodeWithTag("question_control_${index}_other", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            val field = rule.onNodeWithTag("question_other_$index").getUnclippedBoundsInRoot()
+            val card = rule.onNodeWithTag("question_card_$index", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            assertEquals("question $index: control top-aligned with the label", label.top.value, control.top.value, 0.5f)
+            assertEquals("question $index: field 28 dp below the label's top", 28f, (field.top - label.top).value, 0.5f)
+            assertEquals("question $index: 32 dp well", 32f, field.height.value, 0.5f)
+            assertEquals("question $index: card height", 242f, card.height.value, 2f)
+        }
+
+        val field = rule.onNodeWithTag("question_other_1")
+        with(rule.density) { assertTrue(field.fetchSemanticsNode().touchBoundsInRoot.height >= 48.dp.toPx() - 0.5f) }
+        // A real tap 6 dp below the visible well, in the card's padding, still focuses the field.
+        field.performTouchInput { click(Offset(centerX, height + 6.dp.toPx())) }
+        field.assertIsFocused()
     }
 
     private fun DpRect.contains(other: DpRect): Boolean =

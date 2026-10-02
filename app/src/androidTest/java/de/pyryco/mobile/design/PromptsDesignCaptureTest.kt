@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.util.TypedValue
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.ui.test.SemanticsMatcher
@@ -374,11 +375,21 @@ class PromptsDesignCaptureTest {
         File(output, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
         // The keyboard frame's viewport assumes the harness's 240 px test IME; record which keyboard showed.
         val keyboard = if (ime.bottom > 0) " keyboard=${shellOutput("settings get secure default_input_method")}" else ""
+        // #1501: what the platform renders each type size and line height as at this font scale (non-linear from API 34).
+        val spPx =
+            listOf(
+                14f,
+                16f,
+                20f,
+                22f,
+                24f,
+                28f,
+            ).joinToString(",") { sp -> "$sp:${TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, metrics)}" }
         File(output, "$name.txt").writeText(
             "activity=MainActivity figma=$figmaNode sizePx=${metrics.widthPixels}x${metrics.heightPixels} " +
                 "capturePx=${image.width}x${image.height} density=${metrics.density} " +
                 "fontScale=${root.resources.configuration.fontScale} staticDark=true secure=$secure decorViewDraw=true " +
-                "syntheticBars=$syntheticBars systemBarsPx=$bars imePx=$ime$keyboard api=${Build.VERSION.SDK_INT} device=${Build.MODEL}\n",
+                "syntheticBars=$syntheticBars systemBarsPx=$bars imePx=$ime spPx=$spPx$keyboard api=${Build.VERSION.SDK_INT} device=${Build.MODEL}\n",
         )
         image.recycle()
     }
