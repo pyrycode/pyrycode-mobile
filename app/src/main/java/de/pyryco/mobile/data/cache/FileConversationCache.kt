@@ -10,7 +10,9 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -103,8 +105,54 @@ class FileConversationCache(
         rows: List<ThreadItem>,
     ): Result<Unit> =
         mutate("write_thread") {
-            val record = CachedThread(VERSION, cacheableThreadRows(rows).map { it.toRecord() })
-            writeAtomically(threadDocumentFor(serverId, conversationId), MobileJson.encodeToString(record))
+            val document = threadDocumentFor(serverId, conversationId)
+            val kept = cacheableThreadRows(rows)
+            // #1354: keep the saved history position, unless trimming moved the oldest row away from it.
+            val trimmed = kept.size < settledThreadRows(rows).count { it !is ThreadItem.UnrecognizedMessage }
+            val history = if (trimmed) null else storedHistoryOrNull(document)
+            val record = CachedThread(VERSION, kept.map { it.toRecord() }, history)
+            writeAtomically(document, MobileJson.encodeToString(record))
+        }
+
+    override suspend fun readHistoryPosition(
+        serverId: String,
+        conversationId: String,
+    ): HistoryPosition? =
+        withContext(ioDispatcher) {
+            mutex.withLock {
+                try {
+                    decodeThreadDocument(threadDocumentFor(serverId, conversationId))?.history?.toDomain()
+                } catch (error: Exception) {
+                    val code = failureCode(error) ?: throw error
+                    RelayLog.d { "conversation_cache operation=read_history status=failed code=$code" }
+                    null
+                }
+            }
+        }
+
+    /**
+     * Rewrites the thread document with [position] beside the rows currently readable in it (#1354), the
+     * same read-modify-write rule as [removeConversation]: rows that cannot be read are not kept. Clearing a
+     * thread that was never written writes nothing, so a clear never conjures a document.
+     */
+    override suspend fun writeHistoryPosition(
+        serverId: String,
+        conversationId: String,
+        position: HistoryPosition?,
+    ): Result<Unit> =
+        mutate("write_history") {
+            val document = threadDocumentFor(serverId, conversationId)
+            if (position == null && !document.isFile) return@mutate
+            val rows =
+                try {
+                    decodeThreadDocument(document)?.rows.orEmpty()
+                } catch (error: Exception) {
+                    val code = failureCode(error) ?: throw error
+                    RelayLog.d { "conversation_cache operation=write_history_read status=failed code=$code" }
+                    emptyList()
+                }
+            val record = CachedThread(VERSION, rows, position?.let { CachedHistoryPosition(it.cursor, it.atStart) })
+            writeAtomically(document, MobileJson.encodeToString(record))
         }
 
     override suspend fun readReadPositions(serverId: String): Map<String, ReadPosition> =
@@ -185,17 +233,31 @@ class FileConversationCache(
         MobileJson.encodeToString(CachedConversations(VERSION, conversations.map { it.toRecord() })),
     )
 
+    private fun decodeThread(document: File): List<ThreadItem> = readThreadRecord(document)?.let(::validatedRows).orEmpty()
+
     /**
-     * Decodes a thread document, rejecting what would mislead or crash the thread: a row that is neither
-     * a message nor a boundary, a running tool (a permanent spinner), and a repeated message id or
-     * boundary identity (two `LazyColumn` rows with one key). A writer never produces any of these.
-     * A boundary's identity is its session pair and instant, the triple its list key encodes (#775):
-     * an idle-evicted session keeps its id, so two evictions legitimately share a pair.
+     * The thread document, or `null` when none was written, rejected whole unless every row passes
+     * [validatedRows], so a position is never read from a document whose rows are unreadable (#1354).
      */
-    private fun decodeThread(document: File): List<ThreadItem> {
-        if (!document.isFile) return emptyList()
+    private fun decodeThreadDocument(document: File): CachedThread? = readThreadRecord(document)?.also { validatedRows(it) }
+
+    private fun readThreadRecord(document: File): CachedThread? {
+        if (!document.isFile) return null
         val stored = MobileJson.decodeFromString<CachedThread>(document.readText())
         require(stored.version == VERSION) { "unsupported conversation cache version" }
+        return stored
+    }
+
+    /**
+     * Decodes a thread document's rows, rejecting what would mislead or crash the thread: a row of no kind or
+     * of several, a running tool (a permanent spinner), and a repeated list key (two `LazyColumn` rows
+     * with one key). A writer never produces any of these. A boundary's identity is its session pair and
+     * instant, the triple its list key encodes (#775): an idle-evicted session keeps its id, so two
+     * evictions legitimately share a pair. A banner and a compaction divider key on their instant, and a
+     * refusal on its frame type and instant (#1353), and a stopped turn on its turn id (#1356) — the keys
+     * `holdsBanner`, `holdsCompactionBoundary`, `holdsModelRefusal` and `holdsStoppedTurn` dedupe on.
+     */
+    private fun validatedRows(stored: CachedThread): List<ThreadItem> {
         val rows = stored.rows.map { it.toDomain() }
         val messages = rows.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
         require(messages.none { it.toolCall?.status == ToolCallStatus.Running }) { "running tool in thread cache" }
@@ -204,7 +266,34 @@ class FileConversationCache(
         require(boundaries.distinctBy { Triple(it.previousSessionId, it.newSessionId, it.occurredAt) }.size == boundaries.size) {
             "duplicate thread cache boundary identity"
         }
+        val banners = rows.filterIsInstance<ThreadItem.Banner>()
+        require(banners.distinctBy { it.occurredAt }.size == banners.size) { "duplicate thread cache banner identity" }
+        val compactions = rows.filterIsInstance<ThreadItem.CompactionBoundary>()
+        require(compactions.distinctBy { it.occurredAt }.size == compactions.size) { "duplicate thread cache compaction identity" }
+        val refusals = rows.filterIsInstance<ThreadItem.ModelRefusal>()
+        require(refusals.distinctBy { (it.fallbackModel != null) to it.occurredAt }.size == refusals.size) {
+            "duplicate thread cache refusal identity"
+        }
+        val stopped = rows.filterIsInstance<ThreadItem.StoppedTurn>()
+        require(stopped.distinctBy { it.turnId }.size == stopped.size) { "duplicate thread cache stopped turn identity" }
         return rows
+    }
+
+    /**
+     * The history position in [document], read without decoding its rows, for the row writer to keep
+     * (#1354). Anything unreadable is no position: the row writer replaces the document either way.
+     */
+    private fun storedHistoryOrNull(document: File): CachedHistoryPosition? {
+        if (!document.isFile) return null
+        return try {
+            MobileJson
+                .decodeFromString<CachedThreadHeader>(document.readText())
+                .takeIf { it.version == VERSION }
+                ?.history
+        } catch (error: Exception) {
+            failureCode(error) ?: throw error
+            null
+        }
     }
 
     private fun readPositionsOrEmpty(
@@ -390,18 +479,49 @@ private fun CachedConversation.toDomain() =
         workspaceLabel = workspaceLabel,
     )
 
-/** Versioned envelope for one conversation's settled thread rows (#797), newest last. */
+/**
+ * Versioned envelope for one conversation's settled thread rows (#797), newest last, and the history
+ * position received for them (#1354). [history] defaults to `null`, so a document written before positions
+ * were kept reads as rows with no position, and the row writer never adds one.
+ */
 @Serializable
 private data class CachedThread(
     val version: Int,
     val rows: List<CachedThreadRow>,
+    val history: CachedHistoryPosition? = null,
 )
 
-/** Exactly one of [message] or [boundary]; a row with neither or both is unreadable. */
+/** [CachedThread] without its rows: the row writer reads only the position it keeps (#1354). */
+@Serializable
+private data class CachedThreadHeader(
+    val version: Int,
+    val history: CachedHistoryPosition? = null,
+)
+
+/** A [HistoryPosition] (#1354). [cursor] is opaque and stays out of [toString]. */
+@Serializable
+private data class CachedHistoryPosition(
+    val cursor: String,
+    val atStart: Boolean,
+) {
+    fun toDomain() = HistoryPosition(cursor, atStart)
+
+    override fun toString(): String = "CachedHistoryPosition(atStart=$atStart)"
+}
+
+/**
+ * Exactly one field set; a row with none or several is unreadable. Every field defaults to `null`, so a
+ * document written before banners, compaction dividers and refusals were kept (#1353), or before stopped
+ * turns were (#1356), still reads.
+ */
 @Serializable
 private data class CachedThreadRow(
     val message: CachedMessage? = null,
     val boundary: CachedBoundary? = null,
+    val banner: CachedBanner? = null,
+    val compaction: CachedCompaction? = null,
+    val refusal: CachedRefusal? = null,
+    val stopped: CachedStoppedTurn? = null,
 )
 
 /** A settled [Message]: there is no `isStreaming`, because an in-flight row is never written. */
@@ -457,7 +577,51 @@ private data class CachedBoundary(
     val workspaceCwd: String? = null,
 )
 
-// Only settled messages and boundaries reach here: `cacheableThreadRows` has already dropped the rest.
+/** A [ThreadItem.Banner] (#1353). [text] is claude-authored, stored as the row holds it and rendered inert on restore. */
+@Serializable
+private data class CachedBanner(
+    val level: BannerLevel,
+    val text: String,
+    val truncated: Boolean,
+    val occurredAt: String,
+)
+
+/**
+ * A [ThreadItem.CompactionBoundary] (#1353): a `null` token count is omitted on encode and read back as `null`.
+ * [failed] (#1358) defaults to `false`, so a divider saved before failures were kept reads as not failed.
+ */
+@Serializable
+private data class CachedCompaction(
+    val preTokens: Long? = null,
+    val postTokens: Long? = null,
+    val manual: Boolean,
+    val occurredAt: String,
+    val failed: Boolean = false,
+)
+
+/** A [ThreadItem.ModelRefusal] (#1353). Model names and [banner] are claude-authored, stored as the row holds them. */
+@Serializable
+private data class CachedRefusal(
+    val originalModel: String,
+    val fallbackModel: String? = null,
+    val banner: String,
+    val bannerTruncated: Boolean,
+    val occurredAt: String,
+)
+
+/**
+ * A [ThreadItem.StoppedTurn] (#1356). [reason] and [category] are agent-authored, stored as the row holds them
+ * and sanitized again when a restored row renders.
+ */
+@Serializable
+private data class CachedStoppedTurn(
+    val turnId: String,
+    val reason: String,
+    val category: String,
+    val occurredAt: String,
+)
+
+// Only settled rows reach here: `cacheableThreadRows` has already dropped in-flight and unrecognized ones.
 private fun ThreadItem.toRecord(): CachedThreadRow =
     when (this) {
         is ThreadItem.MessageItem ->
@@ -481,18 +645,21 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
             CachedThreadRow(
                 boundary = CachedBoundary(previousSessionId, newSessionId, reason, occurredAt.toString(), workspaceCwd),
             )
+        is ThreadItem.Banner -> CachedThreadRow(banner = CachedBanner(level, text, truncated, occurredAt.toString()))
+        is ThreadItem.CompactionBoundary ->
+            CachedThreadRow(compaction = CachedCompaction(preTokens, postTokens, manual, occurredAt.toString(), failed))
+        is ThreadItem.ModelRefusal ->
+            CachedThreadRow(
+                refusal = CachedRefusal(originalModel, fallbackModel, banner, bannerTruncated, occurredAt.toString()),
+            )
+        is ThreadItem.StoppedTurn -> CachedThreadRow(stopped = CachedStoppedTurn(turnId, reason, category, occurredAt.toString()))
         is ThreadItem.UnrecognizedMessage -> throw IllegalStateException("unrecognized rows are never cached")
-        is ThreadItem.Banner -> throw IllegalStateException("banner rows are never cached")
-        is ThreadItem.CompactionBoundary -> throw IllegalStateException("compaction rows are never cached")
-        is ThreadItem.ModelRefusal -> throw IllegalStateException("model refusal rows are never cached")
     }
 
 private fun CachedThreadRow.toDomain(): ThreadItem {
-    val message = message
-    val boundary = boundary
-    require((message == null) != (boundary == null)) { "thread cache row must be one kind" }
-    return if (message != null) {
-        ThreadItem.MessageItem(
+    require(listOfNotNull(message, boundary, banner, compaction, refusal, stopped).size == 1) { "thread cache row must be one kind" }
+    if (message != null) {
+        return ThreadItem.MessageItem(
             Message(
                 id = message.id,
                 sessionId = message.sessionId,
@@ -505,11 +672,29 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
                 segment = message.segment?.toDomain(message.content),
             ),
         )
-    } else {
-        checkNotNull(boundary).let {
-            ThreadItem.SessionBoundary(it.previousSessionId, it.newSessionId, it.reason, Instant.parse(it.occurredAt), it.workspaceCwd)
-        }
     }
+    boundary?.let {
+        return ThreadItem.SessionBoundary(it.previousSessionId, it.newSessionId, it.reason, Instant.parse(it.occurredAt), it.workspaceCwd)
+    }
+    banner?.let { return ThreadItem.Banner(it.level, it.text, it.truncated, Instant.parse(it.occurredAt)) }
+    compaction?.let {
+        return ThreadItem.CompactionBoundary(
+            it.preTokens,
+            it.postTokens,
+            it.manual,
+            Instant.parse(it.occurredAt),
+            it.failed,
+        )
+    }
+    stopped?.let { return ThreadItem.StoppedTurn(it.turnId, it.reason, it.category, Instant.parse(it.occurredAt)) }
+    val refusal = checkNotNull(refusal)
+    return ThreadItem.ModelRefusal(
+        refusal.originalModel,
+        refusal.fallbackModel,
+        refusal.banner,
+        refusal.bannerTruncated,
+        Instant.parse(refusal.occurredAt),
+    )
 }
 
 /**

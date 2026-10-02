@@ -159,6 +159,9 @@ private fun ThreadItem.listKey(): String =
         is ThreadItem.CompactionBoundary -> "compaction:$occurredAt"
         // The frame type and the daemon's per-refusal ts, which both thread writers dedup on (`holdsModelRefusal`, #875).
         is ThreadItem.ModelRefusal -> if (fallbackModel != null) "refusal:fallback:$occurredAt" else "refusal:no-fallback:$occurredAt"
+        // The turn id, which both thread writers dedup a stopped row on (`holdsStoppedTurn`, #1356). It is the
+        // key's whole tail, so no separator inside it can make two ids spell one key.
+        is ThreadItem.StoppedTurn -> "stopped:$turnId"
     }
 
 /**

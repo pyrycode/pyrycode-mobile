@@ -64,7 +64,7 @@ for the full mechanism.
 sends no reply to `question_answer` / `question_refused` and the batch is only truly resolved by the later
 `question_dismissed`. A modal that unlocked itself after `Sent` would let a second Continue race the first
 send. `answers()` returns one `QuestionAnswer` per question — option labels in **option order**, then the
-Other text **verbatim** when ticked and non-blank — or `null` if any question has no value; `canContinue`
+Other text **trimmed** when ticked and non-blank — or `null` if any question has no value; `canContinue`
 composes that with `!locked`.
 
 ## Batch ownership: process-lifetime drafts, source- and request-bound sends
@@ -132,11 +132,13 @@ and the source's own held batch for that conversation `=== batch` — synchronou
 sending, and always sends through the **captured** source, never a freshly selected one. Locks are always
 taken store → coordinator, so the two synchronized blocks cannot deadlock.
 
-**Verbatim, not trimmed.** The AC requires Other text sent "verbatim". Desktop's `resolveQuestionAnswers`
-trims it before sending; mobile does not — `values()` uses `otherText.isNotBlank()` only to decide whether
-Other counts as answered, and sends the exact typed string. A caller porting behaviour from the desktop
-`questionResolution.ts` reference should check each such transform against the ticket's own AC rather than
-assuming parity.
+**Trimmed, as desktop does.** #1305 shipped Other text sent verbatim; #1349 refined the AC to match desktop's
+`resolveQuestionAnswers`, which adds `otherText.trim()` only when Other is ticked and the trimmed text is
+non-empty. `values()` now does the same — `otherText.trim().takeIf { otherTicked && it.isNotEmpty() }` — so
+whitespace-only Other text still counts as no value. Only the sent value is trimmed; the held draft
+(`otherText` in `QuestionDraftStore`) stays untrimmed, so the text field keeps exactly what the operator
+typed. A caller porting behaviour from the desktop `questionResolution.ts` reference should still check each
+such transform against the ticket's own AC rather than assuming parity by default.
 
 **The question path never touches `answerModal` / `cancelModal`.** It holds its own
 `answerQuestionBatch` / `refuseQuestionBatch` lambdas, defaulted inert like every other outbound send this
@@ -328,11 +330,15 @@ question rows).
   [Real-claude e2e coverage](../../e2e-interactive-stream.md)). The full rung-3 live suite at `7fba6c4b`
   merged with `origin/main` `207ff366` reported **44 executed, 43 passed, 1 failed, 0 skipped**, with this
   method executed and passed. The one failure,
-  `interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`, is an inherited, unrelated regression
-  (also fails on `origin/main` alone, traced to daemon #2699) and was isolated in the same branch
-  (`@Ignore`, removed from the LIVE list, `LIVE_MINIMUM` lowered to 43) with no production change — tracked
-  by #1369, which is expected to restore all three. See the `LIVE_MINIMUM` history in [Real-claude e2e
-  coverage](../../e2e-interactive-stream.md) for the full chain.
+  `interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`, was an inherited, unrelated regression
+  (also failed on `origin/main` alone, traced to daemon #2699) and was isolated in the same branch
+  (`@Ignore`, removed from the LIVE list, `LIVE_MINIMUM` lowered to 43) with no production change. #1351
+  fixed the underlying cause — the live `message` arm now keeps a held row's attachments instead of
+  replacing them — and #1369 reverted the isolation; `android-test-gate.py`'s floor is counted from the
+  curated list since 2026-10-01, so only the `@Ignore` and the LIVE-list entry needed restoring. The
+  dispatcher's full live gate at `6e79da4f` merged with `origin/main` `b6c06182` reported **50 executed,
+  50 passed, 0 failed, 0 skipped**, with the restored method passing. See the `LIVE_MINIMUM` history in
+  [Real-claude e2e coverage](../../e2e-interactive-stream.md) for the full chain.
 
 ## Related
 

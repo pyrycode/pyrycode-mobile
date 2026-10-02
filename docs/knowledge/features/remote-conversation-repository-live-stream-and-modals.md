@@ -105,29 +105,44 @@ repository stays plain orchestration: decode runs behind the authenticated Noise
 the new arm or the drop branch logs the payload** (`title`/`prompt`/option-`label` are operator content —
 pyrycode#701 "never log modal body text"). See [Modal events § Trust boundary](modal-events.md#trust-boundary--no-payload-logging).
 
-## The compaction-boundary decode+fold seam (#874)
+## The compaction-boundary decode+fold seam (#874, #1358)
 
 A new `TYPE_COMPACTION_BOUNDARY = "compaction_boundary"` arm joins the `onInbound` `when (envelope.type)`
 demux, gated on `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the reused #385 supplier) — a finished
 compaction, folded into the thread as a `ThreadItem.CompactionBoundary` divider rather than emitted on
-[`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385).
+[`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385). Since #1358 the
+`TYPE_COMPACTING` arm also reaches the thread: after `CompactingProjection.apply(envelope)` runs
+unchanged for the status indicator, `ThreadProjection.applyCompacting(envelope)` runs too, so a falling
+edge draws the divider before any boundary frame arrives.
 
 - **`decodeCompactionBoundary(envelope)`** decodes the `CompactionBoundaryPayloadDto` and
   `Instant.parse(envelope.ts)` inside one `try`/`catch (IllegalArgumentException)` — the `decodeBanner`
-  drop idiom — and routes by the payload's own `conversation_id`. `appendCompactionBoundary` end-appends
-  the mapped row inside one atomic `threadByConversation.update`, unless the thread already holds one
-  stamped that `ts` (`holdsCompactionBoundary`) — the `appendBanner` dedup shape, because the daemon hands
-  the same `ts` to both this arm and a later history page holding the same frame.
-- **Renders no `LiveSessionEvent` and clears no stall.** The frame is conversation-scoped with no
-  `turn_id` and can arrive with no preceding `compacting` edge; `compacting` alone still drives the
-  status-area indicator (unchanged by this arm — see [Compacting
-  indicator](compacting-indicator.md#edge-cases--limitations)). Exactly one write, and nothing on this
-  arm logs the envelope, its `conversation_id`, or either count.
+  drop idiom — and routes by the payload's own `conversation_id`. `applyCompactionBoundary` folds the
+  mapped row through the shared `withCompactionBoundary` fold (#1358) inside one atomic
+  `threadByConversation.update`: it replaces a still-pending divider from an earlier `compacting` falling
+  edge **in place**, taking this frame's `ts`, counts and trigger; with no pending divider it appends,
+  unless the thread already holds one stamped this `ts` (`holdsCompactionBoundary`) — the `appendBanner`
+  dedup shape, because the daemon hands the same `ts` to both this arm and a later history page holding
+  the same frame; and when the thread already holds this `ts` while a divider is still pending (a history
+  page raced the live lane and brought the filled-in row first), the pending divider is removed instead of
+  being given a second row under that same key. `decodeCompactingEdge(envelope)` decodes
+  `CompactingPayloadDto` the same way, reducing `compact_result`/`compact_error` to one `failed` boolean
+  (`failed()`) before anything downstream sees it; `applyCompacting` folds its edge through
+  `withCompactingEdge`, which on a falling edge appends a divider stamped with the edge's own `ts` (unless
+  already held) and leaves it pending for a later boundary unless `failed`. See [Session boundary
+  delimiter § CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874-1358)
+  for the fold's full shape, shared with the history reduction.
+- **Renders no `LiveSessionEvent` and clears no stall.** Both frames are conversation-scoped with no
+  `turn_id`, and a `compaction_boundary` can still arrive with no preceding `compacting` edge; `compacting`
+  alone still drives the status-area indicator (unchanged by #1358 — see [Compacting
+  indicator](compacting-indicator.md#edge-cases--limitations)). Each fold is one write inside its own
+  atomic update, and nothing on either arm logs the envelope, its `conversation_id`, either count, or
+  `compact_error`.
 - **Counts and trigger are narrowed at the DTO mapper (`toRow`), not here** — a non-negative safe integer
   or `null` per count, an exact-`"manual"` boolean for the open `trigger` string — so no claude-authored
   token reaches the row or a log.
 - The row, its label rules, and its cache exclusion are documented at [Session boundary delimiter §
-  CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874) and
+  CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874-1358) and
   [Conversation cache](conversation-cache.md); this section records only the decode seam.
 
 `security-sensitive`, the same posture as the sibling arms above: decode runs behind the authenticated
@@ -203,44 +218,53 @@ Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`.
 - **Latest always wins** — `apply` does the same plain `readingByConversation.update { it +
   (id to reading) }` the #890 pair uses. Routing is the payload's own daemon-authored `conversation_id` — a
   frame for one conversation never touches another's reading, pinned by a dedicated test.
-- **The phone sends no ask, since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946) Rework 1.**
+- **The phone asks again, from the thread rather than the projection, since [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410).**
   `ContextUsageProjection` originally sent a fire-and-forget `request_context_usage` on a conversation's 0→1
   subscriber edge (the `ModelMenuProjection` shape) and again after a `session_transition`, tracked by an
   `observerCounts: ConcurrentHashMap<String, Int>`. [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946)
   was that ask's first production subscriber (`ThreadViewModel.runConfigFlow`), and its scripted `reconnect`
-  scenario found that the daemon's `handleRequestContextUsage` answers a mid-turn ask only after the turn ends,
-  blocking every later frame on that connection's serial frame worker behind it — a reconnect mid-turn then
-  deadlocked, because the queued `send_message` that would end the turn was itself stuck behind the ask. The
-  phone cannot tell whether a turn is open when it subscribes (a fresh connection has seen no `turn_state`), so
-  asking only when believed-idle would still race the next queued turn. `ask`, `observerCounts`,
-  `negotiatedCapabilities`, `nextRequestId` and the constructor's `send` parameter were removed outright rather
-  than gated — `ContextUsageProjection` now takes no constructor arguments. `RequestContextUsagePayloadDto` and
-  `TYPE_REQUEST_CONTEXT_USAGE` stay as wire documentation, marked unsent. The daemon-side fix is
-  [pyrycode/pyrycode#2563](https://github.com/pyrycode/pyrycode/issues/2563) (open); once it lands, a future
-  mobile ticket can restore the ask from git history — none exists yet.
-- **`onSessionTransition` only clears, it no longer re-asks.** The conversation's old reading described a
-  session that is now gone, so it is dropped (`readingByConversation.update { it - conversationId }`) with no
-  follow-up request. A conversation therefore shows "unavailable" from a transition until its **next completed
-  turn** on the current connection pushes a fresh reading — the same is true of a brand-new idle conversation,
-  which the removed ask used to fill in immediately.
-- **The reconnect case needs no dedicated hook, only for a different reason than before.**
+  scenario found that the daemon's `handleRequestContextUsage` answered a mid-turn ask only after the turn
+  ended, blocking every later frame on that connection's serial frame worker behind it — a reconnect mid-turn
+  then deadlocked, because the queued `send_message` that would end the turn was itself stuck behind the ask.
+  #946 removed `ask`, `observerCounts`, `negotiatedCapabilities`, `nextRequestId` and the constructor's `send`
+  parameter outright rather than gating them; `ContextUsageProjection` has taken no constructor arguments
+  since. [pyrycode/pyrycode#2563](https://github.com/pyrycode/pyrycode/issues/2563) (closed 2026-09-24) fixed
+  the daemon side: a mid-turn ask now defers its answer to turn end instead of holding up later frames. #1410
+  restores the ask on top of that fix, but not inside `ContextUsageProjection` — that class is now pairing-scoped,
+  held in [`HostReadings`](relay-repository-coordinator.md) across a reconnect, and a connection-scoped `send`
+  cannot live there without threading a socket through state that outlives it. The ask is
+  `RemoteConversationRepository.requestContextUsage(conversationId)` instead: the same empty-id and
+  `interactive`-capability guards as `askForModelMenu`, one envelope from `relayRequests.nextRequestId()`, a
+  `send` wrapped in try/catch with no retry and no logged id. `ThreadViewModel` calls it off `repositoryAvailable` —
+  once on a live open, once per later `false → true` edge — so the projection itself still sends nothing; see
+  [Thread composer footer § Context usage segment](thread-composer-footer-context-usage.md) for the trigger and
+  its live-test trap.
+- **`onSessionTransition` only clears; the re-ask, when one happens, comes from the thread.** The conversation's
+  old reading described a session that is now gone, so it is dropped
+  (`readingByConversation.update { it - conversationId }`) with no projection-side follow-up. A conversation
+  shows "unavailable" from a transition until the open thread's next ask or the current connection's next
+  completed turn pushes a fresh reading, whichever comes first.
+- **The reconnect case still needs no dedicated hook inside the projection, for the same reason as before, plus the thread's own ask on top.**
   [`StableConversationRepository.observeContextUsage`](stable-conversation-repository.md) is
   `switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }`, the `observeAnnouncedModel`
   shape: a fresh connection publishes a fresh `RemoteConversationRepository`, and `flatMapLatest` cancels the old
   subscription and subscribes the new one. State is connection-scoped by construction — one
-  `ContextUsageProjection` instance per repository, and a reconnect or host switch starts from an empty map with
-  nothing to carry over. Previously this 0→1 edge was also what sent a fresh connection's ask; now it sends
-  nothing, and the reading simply stays absent until the next turn-end push on that connection.
+  `ContextUsageProjection` instance per repository (sourced from the pairing-scoped `HostReadings`, so a reconnect
+  starts from the last pushed reading rather than nothing). The projection's own 0→1 edge sends nothing either
+  way; it is `ThreadViewModel`'s `repositoryAvailable` collector, one level up, that now sends the reconnect ask
+  on that same edge.
 - **Never writes `SessionSettings`, and is never derived from it.** `SessionSettings.usedTokens`/`.windowTokens`
   are transcript-derived numbers on an unrelated read; `percentage` here is claude's own arithmetic, held
   verbatim, and the two are never cross-checked or substituted for each other.
 - **Rendered since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946), split from
   [#591](https://github.com/pyrycode/pyrycode-mobile/issues/591).** The composer footer's `Cxt:` segment and the
   Status sheet's Context-window section both read the identical value off `ThreadRunConfig.contextPercent` — see
-  [Thread composer footer § Context usage segment](thread-composer-footer.md#context-usage-segment-946) and
+  [Thread composer footer — context usage segment](thread-composer-footer-context-usage.md) and
   [StatusSheet — running model and context window readings § `ContextWindowSection`](status-sheet-readings.md#contextwindowsection).
   A rung-3 scenario, `interactiveTurn_pingPrompt_footerShowsContextUsage`, proves one live reading after a real
-  turn — see [e2e coverage](../../e2e-interactive-stream.md). See [`ContextUsage`](conversation-repository.md#shape)
+  turn, and since [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410)
+  `interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn` proves one arriving from the ask
+  alone, before any turn — see [e2e coverage](../../e2e-interactive-stream.md). See [`ContextUsage`](conversation-repository.md#shape)
   for the domain type and its untrusted-text KDoc (there is none to carry — every string on the frame is left
   undecoded).
 

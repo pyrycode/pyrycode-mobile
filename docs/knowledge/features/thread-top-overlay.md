@@ -1,7 +1,8 @@
 # Thread top overlay — `ThreadTopOverlay`
 
 The **notice surface** for the thread ([#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002)):
-claude's usage-limit report, the pairing-error notice and Offline Retry, drawn as a right-aligned stack of
+claude's usage-limit report, a failed MCP server ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345)),
+the pairing-error notice and Offline Retry, drawn as a right-aligned stack of
 [`NoticePill`](notice-pill.md)s pinned over the top of the message area — replacing the two arms they used
 to share with live turn status inside `ThreadStatusArea`.
 
@@ -37,6 +38,8 @@ internal fun ThreadTopOverlay(
     connectionState: ConnectionState = ConnectionState.Connected,
     onRetryConnection: () -> Unit = {},
     agent: ConversationAgent = ConversationAgent.Claude,
+    mcpFailure: String? = null,
+    onOpenMcpFailure: () -> Unit = {},
 )
 ```
 
@@ -44,7 +47,7 @@ internal fun ThreadTopOverlay(
 `state.agent`, forwarded unchanged to `usageLimitLabel` below. Defaulting to `Claude` — `Conversation.agent`'s
 own default — keeps every prior call site and preview compiling unchanged.
 
-Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, and
+Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, `mcpFailure == null`,
 `!showRePair`, and `connectionState != Offline`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
 nothing and the message area draws exactly as if it were absent. Otherwise a `Column(horizontalAlignment =
 End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill gap — with, top to bottom:
@@ -56,6 +59,29 @@ When `usageLimit != null && !usageLimitDismissed`: `NoticePill(text = usageLimit
 indicator](usage-limit-indicator.md) for `usageLimitLabel` / `usageLimitIsWarning` and the wording
 guarantees behind them, including how `agent` ([#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115))
 names the conversation's own agent in the lead string instead of a fixed "Claude".
+
+### The failed-MCP-server pill ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345))
+
+When `mcpFailure != null` and neither `showRePair` nor the offline pill shows: `NoticePill(text =
+stringResource(R.string.thread_mcp_server_failed, boundMcpText(mcpFailure)), isError = true, onClick =
+onOpenMcpFailure, maxLines = 2)`. Ports desktop #1494's `openMcpFailure` onto this overlay. `mcpFailure` is
+`ThreadViewModel.mcpFailure`: the first server in the thread's current MCP status report that is exactly
+`"failed"` and not yet acknowledged for this host and conversation, or `null` while the host isn't
+`Connected`. See [Channel info sheet § MCP servers
+section](channel-info-sheet.md#mcp-servers-section) for the status report this reads and for
+`McpFailureAcknowledgements`, the holder that tracks what's been acknowledged.
+
+Tapping the pill (`onOpenMcpFailure = vm::onMcpFailureTapped`) acknowledges every server the current report
+shows as failed, then opens Channel info through the same `ThreadEvent.ChannelInfo` path as the overflow
+item, which also asks for fresh status. A repeat report with the same failures stays quiet; a server failing
+for the first time raises its own notice; a server no longer reported as failed stops showing. `maxLines = 2`
+is a deliberate deviation from the Figma pill (normally one line): the server name is Claude-authored and can
+run to 256 code points, bounded further by `boundMcpText`, and two lines keep it from covering the message
+area — recorded as a security SHOULD FIX in the [#1345 plan](../../specs/architecture/1345-mcp-failure-notice.md#security-review).
+
+Mutually exclusive with the pairing and offline pills below: a rejected pairing or a dropped connection is a
+worse signal than a stale MCP report, and the MCP reading itself starts empty on a fresh connection anyway,
+so there is nothing to show while either of those pills would.
 
 ### The pairing or Offline pill
 
@@ -127,12 +153,54 @@ limit indicator § Security](usage-limit-indicator.md#security)).
 `collectAsStateWithLifecycle()`, and passes `dismissedUsageLimits = dismissed` /
 `onDismissUsageLimit = dismissals::dismiss` into `ThreadScreen`.
 
+## Acknowledgement — `McpFailureAcknowledgements`
+
+```kotlin
+class McpFailureAcknowledgements {
+    fun observe(serverId: String, conversationId: String): Flow<Set<String>>
+    fun acknowledge(serverId: String, conversationId: String, names: Collection<String>)
+    fun clearHost(serverId: String)
+}
+```
+
+Package: `de.pyryco.mobile.ui.conversations.thread` (`McpFailureAcknowledgements.kt`). Same app-process-heap
+idiom as [`UsageLimitDismissals`](#dismissal--usagelimitdismissals) above, bound `single {
+McpFailureAcknowledgements() }` in `AppModule.kt` beside it, and injected into `ThreadViewModel` the same way
+(`permissionDraftStore` pattern: an optional constructor parameter, a private instance when the caller passes
+none).
+
+**Keyed by host, then conversation — not the reading alone.** Unlike the usage-limit key, which is the
+account-level reading, an MCP server belongs to one host and one conversation, so the map is
+`host → conversation → names`, the shape [`ComposerDraftStore`](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership)
+already uses. Acknowledging a failure in one chat leaves every other chat's notice showing, including
+another conversation on the *same* host. Acknowledgements are never pruned by a later report — a server that
+recovers and then fails again stays quiet for the rest of the app run, matching desktop, which never prunes
+either.
+
+**Never persisted, never logged, names compared only for equality.** No `DataStore`, no saved-instance state
+— a process restart (or a second `ThreadViewModel` on the same shared holder, i.e. leaving and reopening the
+chat) forgets nothing *within* the run, because the holder itself is a `single`, but a real process restart
+starts every holder empty again. The server name is Claude-authored: it is rendered as inert text through
+`boundMcpText`, never logged, and never appears in an exception message — see [Channel info sheet § MCP
+servers section § Plain text only](channel-info-sheet.md#mcp-servers-section) for the same rule applied to
+the rest of the MCP surface.
+
+**Cleared on unpair.** `ObservablePairedServerStore.forgetRemovedHost` calls `mcpAcknowledgements.clearHost(serverId)`
+right after `drafts.clearHost(serverId)`, so removing a host's pairing drops every conversation's
+acknowledgements for that host; other hosts' entries are untouched.
+
 ## State + concurrency model
 
-No coroutine is launched anywhere in this slice. `UsageLimitDismissals` holds one `MutableStateFlow`,
-mutated with `update` (compare-and-set) on the main thread from a click. The usage reading's own flow, its
-30 s re-read ticker (see [Usage-limit indicator § Wiring](usage-limit-indicator.md#wiring--a-30-s-re-read-ticker-not-a-timer-from-resets_at))
-and `rePairAvailable` are all untouched by #1002 — only where their values are *rendered* changed.
+No coroutine is launched by either holder. `UsageLimitDismissals` and `McpFailureAcknowledgements` each hold
+one `MutableStateFlow`, mutated only with `update` (compare-and-set) — the former on the main thread from a
+click, the latter from `onMcpFailureTapped` and from `forgetRemovedHost`'s unpair path, so a concurrent
+acknowledge and an unpair cannot lose each other's write. The usage reading's own flow, its 30 s re-read
+ticker (see [Usage-limit indicator § Wiring](usage-limit-indicator.md#wiring--a-30-s-re-read-ticker-not-a-timer-from-resets_at))
+and `rePairAvailable` are all untouched by #1002 — only where their values are *rendered* changed. #1345's
+open-and-reconnect MCP status ask runs as a `viewModelScope` collector over `repositoryAvailable`, not inside
+either holder; see [Channel info sheet § MCP servers section](channel-info-sheet.md#mcp-servers-section) and
+[Development verification § Emulator and real evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
+for why that ask shares a daemon worker with sending a message and can stall behind an unanswered one.
 
 ## Testing
 
@@ -147,8 +215,13 @@ and `rePairAvailable` are all untouched by #1002 — only where their values are
   - **the regression proof (AC #4):** with an `allowed_warning` reading live, "Running Bash…" still renders
     in the status row (a busy state with an open tool row), the wrapping-up reset label still renders, and
     "Turn interrupted" still renders — written first, and it fails against the pre-#1002 ladder.
+  - **#1345:** a failed-server name renders "MCP server NAME failed" as a tappable Error pill below the
+    usage pill; it is absent alongside either the Re-pair pill or the offline retry target.
 - **JVM unit** `UsageLimitDismissalsTest` — see [Usage-limit indicator §
-  Testing](usage-limit-indicator.md#testing).
+  Testing](usage-limit-indicator.md#testing). `McpFailureAcknowledgementsTest` covers the holder in isolation
+  (selection order, exact-`"failed"` matching, per-host/per-conversation isolation, `clearHost`) and
+  `ThreadViewModelMcpFailureTest` covers `ThreadViewModel.mcpFailure` / `onMcpFailureTapped` / the open-and-
+  reconnect ask — see [Channel info sheet § Tests](channel-info-sheet.md#tests).
 - **Kept unchanged**, `ThreadScreenRePairTest`: still finds the pairing notice by its `R.string.thread_re_pair`
   text and clicks it, still checks the connection banner is withheld — the test needed no change because it
   asserts by text, not by composable identity, so it holds whether the notice is a status-row button or a
@@ -173,11 +246,24 @@ above) — no disk, no backup-eligible state, no log. No intent, deep link, prov
 overlay's only actions are hiding a notice locally or opening the existing re-pair screen the user already
 had one tap away. Dismissal tells the daemon nothing.
 
+**#1345's MCP pill** adds no new trust boundary either: the server name already reaches this screen through
+Channel info's MCP servers section (#1344), rendered the same bounded way through `boundMcpText`. The only
+new comparison is `status == "failed"`, a client constant, not daemon-chosen branching. `maxLines = 2`
+bounds the pill's height against the full 256-code-point name. `McpFailureAcknowledgements` is heap-only like
+`UsageLimitDismissals` (see [Acknowledgement](#acknowledgement--mcpfailureacknowledgements) above); logs
+around it (`event=mcp_failure_acknowledged count=N`, `event=mcp_status_requested reason=reconnect`) carry
+only a count or a static reason, never the server name, the status or the conversation id.
+
 ## Related
 
-- Content: [Notice pill](notice-pill.md) — the shared pill composable both notices render through.
+- Content: [Notice pill](notice-pill.md) — the shared pill composable all three notices render through.
 - Usage reading: [Usage-limit indicator](usage-limit-indicator.md) — the label/warning helpers, the
   dismissal key extension, and the removed status-row arm's history.
+- MCP failure: [#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345) and [Channel info sheet §
+  MCP servers section](channel-info-sheet.md#mcp-servers-section) — the status report the pill reads, the
+  open-and-reconnect ask, and the daemon FIFO-worker coupling recorded in [Development verification §
+  Emulator and real evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence).
+- Spec: `docs/specs/architecture/1345-mcp-failure-notice.md`.
 - Pairing notice: [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) — the rejected-pairing
   signal (`ThreadViewModel.rePairAvailable`) and the Re-pair priority over Offline Retry, described in [connection status placement](thread-screen-how-it-works-overlays-and-app-bar.md#connection-status-placement).
 - Host: [Thread screen](thread-screen.md) — the `Box` overlap this composable draws into, and the two new

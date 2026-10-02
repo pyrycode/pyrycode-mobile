@@ -5,13 +5,11 @@ import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
-import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.batchFor
-import de.pyryco.mobile.data.model.latestOutstanding
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
@@ -123,8 +121,8 @@ class RelayRepositoryCoordinator(
     internal val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks()
 
     /**
-     * The five readings this host pushes and the phone never asks for again (#1317), held for the host's
-     * pairing as desktop does, so a return to the foreground does not blank them until the next turn ends.
+     * The five readings this host pushes (#1317), of which the phone also asks only for context usage (#1410),
+     * held for the host's pairing as desktop does, so a return to the foreground does not blank them until the next turn ends.
      * Lives here for [replayCursor]'s reason, and [teardownActive] never touches it. Threaded into each
      * repository in [onConnection]; the thread reads it while disconnected. [close] drops it, which is the
      * pairing-scoped clear: registry reconcile closes the coordinator on unpair and re-pair. Built with [now]
@@ -236,16 +234,6 @@ class RelayRepositoryCoordinator(
         modalEvents
             .scan(HostModalState()) { state, event -> if (event == null) HostModalState() else state.reduce(event) }
             .stateIn(scope, SharingStarted.Eagerly, HostModalState())
-
-    /**
-     * The single-value view of [hostModals] the conversation-list attention readers still take (#1337, until
-     * #1338 switches them to the whole list): the most recently shown outstanding prompt, else
-     * [ModalUiState.Hidden]. Threads never read it; they scope [hostModals] instead.
-     */
-    val currentModal: StateFlow<ModalUiState> =
-        hostModals
-            .map { it.latestOutstanding }
-            .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 
     /**
      * Every clarification batch outstanding on this host (#822), across all its conversations. A per-

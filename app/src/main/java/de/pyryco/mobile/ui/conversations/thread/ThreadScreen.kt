@@ -2,6 +2,9 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.rememberScrollableState
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +15,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
@@ -40,7 +44,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -55,6 +58,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -70,6 +74,7 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
+import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -95,21 +100,27 @@ import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
+import de.pyryco.mobile.ui.conversations.components.StoppedTurnRow
+import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
+import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
+import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.theme.threadColors
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
 private const val ABOVE_DELIMITER_ALPHA = 0.55f
+
+/** The status band's reading box (#1312), so a test can tell a band reading from the same words in a message. */
+internal const val STATUS_READING_TEST_TAG = "thread-status-reading"
 
 // Figma 16:8's `Input area` (533:1957) and its offsets inside the 412dp reference frame: a 20dp
 // content gutter (372dp of content), 8dp between the area's three bands, 12dp of air above it where
@@ -124,11 +135,6 @@ private val AttachmentStripTouchOverlap = 5.dp
 // without entering the input surface. The visible controls stay in their 20dp design band.
 private val FooterTouchBottomOverflow = 12.dp
 private val FrameFooterTouchHeight = 32.dp
-
-// The three status indicators each carry their own 16dp horizontal padding, sized for the full-bleed
-// foot-of-list mount they had until #643. Inset them by the remainder so their content lands on the
-// same 20dp gutter as the input field and the footer, with their own files untouched.
-private val ComposerStatusGutter = ComposerGutter - 16.dp
 
 // Figma's top overlay shares the message area's top edge.
 private val TopOverlayTopGap = 0.dp
@@ -174,7 +180,7 @@ fun ThreadScreen(
     usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report; #1002 draws it in the Top overlay
     resetting: ResetStatus? = null, // #872: Reset session's phase, below usage limit and above compaction
     isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
-    turnOutcome: TurnOutcomeReport? = null, // #805: how the last turn failed or was interrupted, above thinking
+    turnOutcome: TurnRecoveryNotice? = null, // #1357: recovery advice after a stopped turn, above thinking
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
     isStalled: Boolean = false, // #1311: the daemon reported a stall; the band's stall arm
@@ -184,6 +190,9 @@ fun ThreadScreen(
     onOverflowEvent: (ThreadEvent) -> Unit = {},
     // #807: a published ModelMenuRow.value / effort level, forwarded verbatim — never a device enum.
     onModelSelected: (String) -> Unit = {},
+    // #1360: the switch-back offer, drawn on the refusal row that armed it, and its tap.
+    switchBackOffer: SwitchBackOffer? = null,
+    onSwitchBack: () -> Unit = {},
     onEffortSelected: (String) -> Unit = {},
     // #650: a PermissionModeOption wire value from the footer's permission menu.
     onPermissionModeSelected: (String) -> Unit = {},
@@ -211,9 +220,8 @@ fun ThreadScreen(
     // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id). Since #782 it is bound
     // per row by the fold rather than handed to a foot-of-list section.
     onDropQueued: (Long) -> Unit = {},
-    // #777: the reader has reached the oldest loaded row — ask for the next page back. Wired by
-    // MainActivity → vm::onDemandOlderHistory. Safe to fire repeatedly: the ViewModel's demand drops an
-    // ask that arrives while a request is outstanding or after the walk has stopped.
+    // #1352: the reader pulled toward older messages at the thread's oldest end — ask for the next page
+    // back. Wired by MainActivity → vm::onDemandOlderHistory, which decides whether the ask is sent.
     onDemandOlderHistory: () -> Unit = {},
     // #778: the reader pressed the oldest-end retry affordance. Wired by MainActivity →
     // vm::onRetryOlderHistory, and inert unless the walk stopped on a retryable failure.
@@ -224,6 +232,9 @@ fun ThreadScreen(
     // bar owned its own text.
     draft: String = "",
     onDraftChange: (String) -> Unit = {},
+    // #1342: the open Channel info sheet's System prompt state (ThreadViewModel.systemPrompt); its edits,
+    // Save and Clear go through onOverflowEvent.
+    systemPrompt: SystemPromptEditorState? = null,
     // #843: this thread's host rejected the saved pairing (ThreadViewModel.rePairAvailable). Draws the
     // Top overlay's pairing pill (#1002) and withholds the connection banner, whose retry cannot succeed then.
     // The tap is bound by MainActivity to the code-pair route keyed by the destination's own server id.
@@ -233,6 +244,10 @@ fun ThreadScreen(
     // tap, which hides the reading the pill is showing. Defaulted so screens that never dismiss show every one.
     dismissedUsageLimits: Set<UsageLimitDismissals.Key> = emptySet(),
     onDismissUsageLimit: (UsageLimitReading) -> Unit = {},
+    // #1345: the failed MCP server the Top overlay names (ThreadViewModel.mcpFailure) and its tap, which
+    // acknowledges the report's failures and opens Channel info.
+    mcpFailure: String? = null,
+    onOpenMcpFailure: () -> Unit = {},
     // #933: this chat's pending attachments (ThreadViewModel.pendingAttachments) and whether a send carrying
     // them is under way (attachmentsSending); the picker's result, a tile's remove, and the one-shot refusal
     // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
@@ -438,12 +453,23 @@ fun ThreadScreen(
                 ) {
                     // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
                     val openTool = remember(state.items) { openToolCall(state.items) }
+                    // #1357: the context notice's Compact pill takes the Actions menu's path, and no tap while
+                    // the published menu proves the command absent.
+                    val onCompact =
+                        remember(state.absentActions, onComposerCommand) {
+                            if (ComposerAction.CompactSession in state.absentActions) {
+                                null
+                            } else {
+                                { onComposerCommand(ComposerAction.CompactSession) }
+                            }
+                        }
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         resetting = resetting,
                         isCompacting = isCompacting,
                         isStalled = isStalled,
                         turnOutcome = turnOutcome,
+                        onCompact = onCompact,
                         isThinking = isThinking,
                         isBusy = isBusy,
                         localSendPending = localSendPending,
@@ -531,11 +557,21 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
+                    // #1352: a pull toward older messages is the only history ask. Inert while a page is
+                    // loading, so a second pull sends nothing; the ViewModel still decides the rest.
+                    val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
+                    val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
+                    val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
                     if (!state.hasMessages && state.queuedMessages.isEmpty() && shownQuestion == null && openRequest == null) {
+                        // An empty thread is at its oldest end. The scrollable consumes nothing; it only lets
+                        // a drag reach the pull.
+                        val emptyThreadPull = remember { OlderHistoryGesture(nearOldestEnd = { true }, onDemand = pullForOlderHistory) }
                         EmptyThreadState(
                             modifier =
                                 Modifier
                                     .fillMaxSize()
+                                    .olderHistoryPull(emptyThreadPull)
+                                    .scrollable(rememberScrollableState { 0f }, Orientation.Vertical)
                                     .padding(horizontal = 24.dp),
                         )
                     } else {
@@ -548,33 +584,20 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                         val listState = rememberLazyListState()
-                        // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
-                        // visible index, not the first.
-                        //
-                        // The row count is read through rememberUpdatedState over the THREAD ITEMS, never through
-                        // layoutInfo.totalItemsCount: the latter counts the oldest-end loading row itself, so a
-                        // page answering atStart = false with zero entries would self-drive with no further user
-                        // input — ask, the indicator mounts, the count rises, the page settles, the indicator
-                        // unmounts, the count falls, the predicate re-fires. Reading the thread's own count makes
-                        // the indicator's presence unable to move the predicate: at the oldest end the last
-                        // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
-                        // so distinctUntilChanged sees no edge and no second demand is issued.
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0)
-                        val historyRowCount by rememberUpdatedState(rows.size + promptRowCount)
-                        val hasHistoryRows by rememberUpdatedState(rows.isNotEmpty())
-                        val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
-                        LaunchedEffect(listState) {
-                            snapshotFlow {
-                                val oldestVisible =
-                                    listState.layoutInfo.visibleItemsInfo
-                                        .lastOrNull()
-                                        ?.index ?: -1
-                                hasHistoryRows && oldestVisible >= historyRowCount - 1
-                            }.distinctUntilChanged()
-                                .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
-                        }
+                        // #1352: prompt rows take the lowest indices of the reversed list and are never
+                        // history, so the oldest thread row sits after them.
+                        val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
+                        val askBandPx by rememberUpdatedState(with(LocalDensity.current) { HistoryAskBand.toPx() })
+                        val listPull =
+                            remember(listState) {
+                                OlderHistoryGesture(
+                                    nearOldestEnd = { listState.layoutInfo.isNearOldestEnd(oldestRowIndex, askBandPx) },
+                                    onDemand = pullForOlderHistory,
+                                )
+                            }
                         // #1314: one following state, derived from position on every scroll as desktop's
                         // useThreadScrollPin does, replaces the #185 streaming pin, the #981 newest-row pin and
                         // the #1305/#1306 prompt reveal. New rows, streamed growth and a new prompt pin a reader
@@ -586,11 +609,12 @@ fun ThreadScreen(
                             newestRow = rows.lastOrNull(),
                             promptIdentity = promptIdentity,
                             promptPresent = questionState != null || openRequest != null,
+                            promptRows = promptRowCount,
                             sentMessages = sentMessages,
                         )
                         LazyColumn(
                             state = listState,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
                             reverseLayout = true,
                         ) {
                             openRequest?.let { open ->
@@ -665,9 +689,21 @@ fun ThreadScreen(
                                                     )
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
-                                                is ThreadItem.Banner -> BannerNoticeRow(item = item, agent = state.agent)
+                                                // #1359: an info banner keeps its row and key but draws
+                                                // nothing, as desktop's TimelineRow does.
+                                                is ThreadItem.Banner ->
+                                                    if (item.level != BannerLevel.Info) {
+                                                        BannerNoticeRow(item = item, agent = state.agent)
+                                                    }
                                                 is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
-                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item, agent = state.agent)
+                                                is ThreadItem.ModelRefusal ->
+                                                    ModelRefusalRow(
+                                                        item = item,
+                                                        agent = state.agent,
+                                                        switchBack = switchBackOffer?.takeIf { it.armedBy(item) },
+                                                        onSwitchBack = onSwitchBack,
+                                                    )
+                                                is ThreadItem.StoppedTurn -> StoppedTurnRow(item = item, agent = state.agent)
                                             }
                                         // One render path for both kinds of queued row — the one the echo
                                         // correlated to and the one this device minted no echo for — so the
@@ -691,6 +727,7 @@ fun ThreadScreen(
                                 ThreadHistoryTail.Retry ->
                                     item(key = HISTORY_TAIL_KEY) { HistoryRetryRow(onRetry = onRetryOlderHistory) }
                                 ThreadHistoryTail.DeadEnd -> item(key = HISTORY_TAIL_KEY) { HistoryDeadEndRow() }
+                                ThreadHistoryTail.Offline -> item(key = HISTORY_TAIL_KEY) { HistoryOfflineRow() }
                             }
                         }
                     }
@@ -707,6 +744,8 @@ fun ThreadScreen(
                                 .align(Alignment.TopEnd)
                                 .padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
                         agent = state.agent,
+                        mcpFailure = mcpFailure,
+                        onOpenMcpFailure = onOpenMcpFailure,
                     )
                 }
             }
@@ -842,6 +881,12 @@ fun ThreadScreen(
             onDelete = { onOverflowEvent(ThreadEvent.Delete) },
             onInstallMemoryPlugin = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) },
             onDismiss = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
+            systemPrompt = systemPrompt ?: SystemPromptEditorState.Loading,
+            onSystemPromptChange = { onOverflowEvent(ThreadEvent.SystemPromptEdit(it)) },
+            onSystemPromptSave = { onOverflowEvent(ThreadEvent.SystemPromptSave) },
+            onSystemPromptClear = { onOverflowEvent(ThreadEvent.SystemPromptClear) },
+            onMcpReconnect = { name -> onOverflowEvent(ThreadEvent.McpReconnect(name)) },
+            onMcpToggle = { name, enabled -> onOverflowEvent(ThreadEvent.McpToggle(name, enabled)) },
         )
     }
     if (state.deleteConfirmVisible) {
@@ -893,8 +938,13 @@ fun ThreadScreen(
  *
  * Notices are not turn status and are not here: claude's usage-limit report and the pairing error draw as
  * pills in the message area's [ThreadTopOverlay] (#1002), so a live reading never hides the running tool,
- * the wrap-up or "interrupted". When no signal is live every arm returns without emitting, so the band
- * contributes no node and the composer column's gap above the input field collapses with it.
+ * the wrap-up or "interrupted". When no signal is live every arm returns without emitting, but the band
+ * stays composed at its 24dp height with the snowflake alone (#1312), so the input field never moves.
+ *
+ * **The snowflake (#1312).** The band, not an arm, draws one [ThreadStatusGlyph] at its leading edge in
+ * every state, as desktop's `ComposerStatusArea` draws `PyryMark`; only waiting for answers puts its own
+ * question glyph there instead. It turns while [isBusy] or [localSendPending] holds, desktop's
+ * `isStatusIconTurning`, and is still otherwise, including an api-retry, compaction or stall while idle.
  *
  * [thinkingProgress] (#803) adds **no arm**: it decorates the daemon's thinking phase only, so every arm
  * above pre-empts a live reading for free and the local-send window never shows a stale one.
@@ -903,8 +953,7 @@ fun ThreadScreen(
  * "Working…" or "Thinking…" (#1311), never to nothing while [isBusy] holds.
  *
  * [taskCount] (#1043) is not an arm either: above zero, a pill reading it sits at the band's right end
- * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel. At zero
- * the band is exactly the reading, so with nothing live it still contributes no node.
+ * beside whichever reading shows, or alone, and [onTasksClick] opens the background-task panel.
  */
 @Composable
 private fun ThreadStatusArea(
@@ -912,7 +961,8 @@ private fun ThreadStatusArea(
     resetting: ResetStatus?,
     isCompacting: Boolean,
     isStalled: Boolean,
-    turnOutcome: TurnOutcomeReport?,
+    turnOutcome: TurnRecoveryNotice?,
+    onCompact: (() -> Unit)?,
     isThinking: Boolean,
     isBusy: Boolean,
     localSendPending: Boolean,
@@ -924,77 +974,73 @@ private fun ThreadStatusArea(
     onTasksClick: () -> Unit,
     agent: ConversationAgent,
 ) {
-    val reading: @Composable (Modifier) -> Unit = { modifier ->
+    // #1312: one always-composed band. The glyph is its first child in every state, so a reading change or
+    // the task pill never gives the snowflake a new composition node and its turn never restarts.
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 24.dp).padding(horizontal = ComposerGutter),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         if (waitingForAnswers) {
-            Row(
-                modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Image(
-                    painterResource(R.drawable.ic_question_glyph),
-                    contentDescription = null,
-                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.size(14.dp, 16.dp),
-                )
+            Image(
+                painterResource(R.drawable.ic_question_glyph),
+                contentDescription = null,
+                colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.size(14.dp, 16.dp),
+            )
+        } else {
+            ThreadStatusGlyph(turning = isBusy || localSendPending)
+        }
+        // Always present, so the pill keeps the band's right end while no reading shows.
+        Box(Modifier.weight(1f).testTag(STATUS_READING_TEST_TAG)) {
+            if (waitingForAnswers) {
                 Text(
                     stringResource(R.string.question_waiting_for_answers),
+                    modifier = Modifier.padding(vertical = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
+            } else {
+                StatusReading(
+                    arm =
+                        statusArm(
+                            connectionState = connectionState,
+                            resetting = resetting != null,
+                            apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
+                            isCompacting = isCompacting,
+                            isStalled = isStalled,
+                            hasTurnOutcome = turnOutcome != null,
+                            isThinking = isThinking,
+                            isBusy = isBusy,
+                            localSendPending = localSendPending,
+                            hasOpenTool = runningTool != null,
+                        ),
+                    apiRetry = apiRetry,
+                    resetting = resetting,
+                    turnOutcome = turnOutcome,
+                    onCompact = onCompact,
+                    isThinking = isThinking,
+                    thinkingProgress = thinkingProgress,
+                    runningTool = runningTool,
+                    connectionState = connectionState,
+                    agent = agent,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-        } else {
-            StatusReading(
-                arm =
-                    statusArm(
-                        connectionState = connectionState,
-                        resetting = resetting != null,
-                        apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
-                        isCompacting = isCompacting,
-                        isStalled = isStalled,
-                        hasTurnOutcome = turnOutcome != null,
-                        isThinking = isThinking,
-                        isBusy = isBusy,
-                        localSendPending = localSendPending,
-                        hasOpenTool = runningTool != null,
-                    ),
-                apiRetry = apiRetry,
-                resetting = resetting,
-                turnOutcome = turnOutcome,
-                isThinking = isThinking,
-                thinkingProgress = thinkingProgress,
-                runningTool = runningTool,
-                connectionState = connectionState,
-                agent = agent,
-                modifier = modifier,
-            )
         }
-    }
-    if (taskCount <= 0) {
-        reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
-        return
-    }
-    // The reading's own 16dp padding lands its content on the 20dp gutter; the pill ends on it. A reading
-    // that emits nothing takes its weight with it, and Arrangement.End keeps the pill at the right end.
-    // The reading and pill share Figma's 24dp band at normal text scale, and can grow with text scale.
-    val bandModifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter)
-    Row(
-        modifier = bandModifier,
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        reading(Modifier.weight(1f))
-        // Figma's band is 24dp, the pill's own height. The clickable Surface would otherwise lay out at the
-        // 48dp minimum touch target; the hit test still widens its touch bounds to that minimum without it.
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            NoticePill(
-                text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount),
-                isError = false,
-                onClick = onTasksClick,
-                modifier = Modifier.sizeIn(minWidth = 104.dp, minHeight = 24.dp),
-                // Figma 568:3162 sits in the band, not over the messages, so it has no overlay shadow.
-                shadowElevation = 0.dp,
-            )
+        if (taskCount > 0) {
+            // Figma's band is 24dp, the pill's own height. The clickable Surface would otherwise lay out at the
+            // 48dp minimum touch target; the hit test still widens its touch bounds to that minimum without it.
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                NoticePill(
+                    text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount),
+                    isError = false,
+                    onClick = onTasksClick,
+                    modifier = Modifier.sizeIn(minWidth = 104.dp, minHeight = 24.dp),
+                    // Figma 568:3162 sits in the band, not over the messages, so it has no overlay shadow.
+                    shadowElevation = 0.dp,
+                )
+            }
         }
     }
 }
@@ -1011,8 +1057,7 @@ internal enum class StatusArm { None, Connection, Resetting, ApiRetry, Compactin
  * pill owns it.
  *
  * A pending local send hides a turn outcome: that outcome belongs to the turn before the send, and the new
- * turn's first `thinking` / `responding` would clear it anyway. An `idle` answer closes the window and the
- * outcome shows again, since the outcome fold keeps it on `idle`.
+ * turn's first `thinking` / `responding` would clear it anyway. Since #1357 the send itself clears it too.
  */
 internal fun statusArm(
     connectionState: ConnectionState,
@@ -1041,13 +1086,14 @@ internal fun statusArm(
         else -> StatusArm.None
     }
 
-/** The band's one live reading, [arm], drawn; see [ThreadStatusArea]. Emits nothing for [StatusArm.None]. */
+/** The band's one live reading, [arm], as text or pill; see [ThreadStatusArea]. Emits nothing for [StatusArm.None]. */
 @Composable
 private fun StatusReading(
     arm: StatusArm,
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    turnOutcome: TurnOutcomeReport?,
+    turnOutcome: TurnRecoveryNotice?,
+    onCompact: (() -> Unit)?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
@@ -1061,8 +1107,7 @@ private fun StatusReading(
         StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
         StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        StatusArm.TurnOutcome -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
-        // One branch, so the glyph keeps its composition identity, and its pulse, across these readings.
+        StatusArm.TurnOutcome -> TurnOutcomeIndicator(notice = turnOutcome, agent = agent, onCompact = onCompact, modifier = modifier)
         StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
                 isThinking = arm == StatusArm.Thinking,
@@ -1110,6 +1155,7 @@ private fun ThreadItem.timestamp(): Instant =
         is ThreadItem.Banner -> occurredAt
         is ThreadItem.CompactionBoundary -> occurredAt
         is ThreadItem.ModelRefusal -> occurredAt
+        is ThreadItem.StoppedTurn -> occurredAt
     }
 
 internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now()): ChannelInfoUiModel =
@@ -1125,6 +1171,7 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         agent = agent,
         sessionFacts = reportedSessionFacts,
         sessionCostUsd = sessionCostUsd,
+        mcpServers = mcpStatus.takeIf { runConfig.mcpServersSupported },
     )
 
 /**

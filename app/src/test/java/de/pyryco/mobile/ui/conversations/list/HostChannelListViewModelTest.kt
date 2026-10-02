@@ -47,6 +47,7 @@ import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
 import de.pyryco.mobile.di.forgetRemovedHost
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
+import de.pyryco.mobile.ui.conversations.thread.McpFailureAcknowledgements
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -1368,6 +1369,27 @@ class HostChannelListViewModelTest {
             // Every other host keeps its pairing, its name and its own cached workspace.
             assertEquals(listOf("host"), f.store.list().map { it.record.serverId })
             assertEquals("/w/other", f.prefs.defaultWorkspace("host").first())
+        }
+
+    @Test
+    fun confirmingUnpairDropsThatHostsMcpAcknowledgements_andKeepsTheOtherHosts() =
+        runTest(dispatcher) {
+            // #1345 AC #3: removing the pairing clears that host's acknowledged MCP failures, through the
+            // production hook the fixture binds.
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.mcpAcknowledgements.acknowledge("Host", "c1", listOf("github"))
+            f.mcpAcknowledgements.acknowledge("host", "c1", listOf("github"))
+
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+            f.vm.confirmHostUnpair()
+            runCurrent()
+
+            assertNull(f.store.loadById("Host"))
+            assertEquals(mapOf("host" to mapOf("c1" to setOf("github"))), f.mcpAcknowledgements.acknowledged.value)
         }
 
     @Test
@@ -2732,13 +2754,13 @@ class HostChannelListViewModelTest {
             assertEquals(listOf<Pair<String, String?>>("same" to "  New prompt  "), f.b.repo.promptWrites)
             assertNull(f.channelEditor())
 
-            // Both, on the other host; an emptied box over stored text is a real change, sent as "".
+            // Both, on the other host; an emptied box over stored text clears it with null (#1342, promptWriteFor).
             f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
             f.vm.submitChannelEdit("Both", "")
             runCurrent()
             assertEquals(listOf("same" to "Both"), f.a.repo.renames)
-            assertEquals(listOf<Pair<String, String?>>("same" to ""), f.a.repo.promptWrites)
+            assertEquals(listOf<Pair<String, String?>>("same" to null), f.a.repo.promptWrites)
 
             // No stored prompt and an empty box: nothing to write.
             f.a.repo.storedPrompts
@@ -3130,6 +3152,9 @@ class HostChannelListViewModelTest {
         // #790: hoisted for the same reason, so a test can seed drafts and read back which survived.
         val drafts = ComposerDraftStore()
 
+        // #1345: hoisted likewise, so a test can read back which host's MCP acknowledgements survived.
+        val mcpAcknowledgements = McpFailureAcknowledgements()
+
         // #798: the real file cache, so a test can seed conversation content and read back which host's
         // content survived an unpair. Bound through the production hook below, not a restatement of it.
         val cache = FileConversationCache(tmp.newFolder(), dispatcher)
@@ -3156,7 +3181,7 @@ class HostChannelListViewModelTest {
                     single<PairedServerCollectionStore> {
                         ObservablePairedServerStore(
                             store,
-                            forgetRemovedHost(drafts, lazyOf(cache), lazyOf(attachments)),
+                            forgetRemovedHost(drafts, mcpAcknowledgements, lazyOf(cache), lazyOf(attachments)),
                         )
                     }
                 },

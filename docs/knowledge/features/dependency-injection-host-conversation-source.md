@@ -99,11 +99,14 @@ empty a host.
 ### Attention state (#877)
 
 Every conversation row on every host carries exactly one `ConversationAttention`
-(`di/ConversationAttention.kt`): `WaitingForAnswer`, `Running`, `Failed`, `Unread`,
+(`di/ConversationAttention.kt`): `WaitingForAnswer`, `Running`, `Unread`,
 `Idle`, declared in precedence order and resolved by the total function
-`resolveAttention(waiting, running, failed, unread)` — desktop's
+`resolveAttention(waiting, running, unread)` — desktop's
 `resolveConversationStatus` order (`../pyrycode-desktop/src/renderer/src/store/conversationStatus.ts`)
-with mobile's extra `Failed`, which sits after `Running` and before `Unread`.
+exactly, with no mobile-only state. An earlier mobile-only `Failed` state sat after `Running`
+and before `Unread`; #1451 removed it to match desktop, which has no failed state — a turn
+that ends Failed or StoppedEarly while not viewed now folds as an ordinary completed turn and
+resolves Unread, then Idle once opened.
 Drawing the state on `TreeConversationRow` is a separate, blocked ticket; this
 slice only publishes it.
 
@@ -119,26 +122,71 @@ The fold itself is the internal, pure `HostAttentionState` data class — no clo
 I/O, no logging, because every id it touches is daemon-authored and used only as an
 equality key:
 
+**`busy` (#1452).** A conversation blinks `Running` not only while a turn runs, but also while it
+is stalled, retrying the API, compacting or resetting — desktop's `isWorking`
+(`../pyrycode-desktop/src/renderer/src/store/conversationStatus.ts`). `HostAttentionState.busy` is
+a sibling of `running`, folded by `withBusy(ids: Set<String>)` (full-set replace, since the
+repository already holds the edges) rather than by `onEvent`, which stays `running`-only. `resolve`
+treats `running = id in running || id in busy`, and `disconnected()` clears `busy` alongside
+`running`. The ids come from `ConversationRepository.observeBusyConversations()` (default
+`flowOf(emptySet())`), implemented in `RemoteConversationRepository` as the union of
+`StallProjection`, `ApiRetryProjection`, `CompactingProjection` and `ResettingProjection`'s own
+host-wide `observeIds()` reads — see [Stall state](stall-state.md#how-it-surfaces-in-the-repository),
+[API-retry status](api-retry-status.md#how-it-surfaces-in-the-repository),
+[Compacting state](compacting-state.md#how-it-surfaces-in-the-repository) and
+[Resetting state](resetting-state.md#how-it-surfaces-in-the-repository). The four edges are reused
+**unchanged**, because the thread's own indicators read the same projections, which keeps two
+deliberate differences from desktop's `isWorking`: a stall's blink clears on any decoded live
+event rather than only `turn_state`, and a reset's blink also clears on `session_transition`,
+since desktop has no such edge. No new visuals: a busy conversation resolves to the existing
+`ConversationAttention.Running`, which already draws the blink.
+
 - `onEvent(event, viewing)` folds one `LiveSessionEvent`. `TurnState` Thinking/Responding
-  adds the conversation to `running` and clears it from `failed` (a next turn starting
-  retires the previous turn's failure); `TurnState` Idle clears `running`. `TurnEnd`
+  adds the conversation to `running`; `TurnState` Idle clears `running`. `TurnEnd`
   clears `running` and, unless its `turnId` is blank, over `MAX_TURN_ID_CHARS` (256), or
   already **counted** — in the bounded per-conversation `counted` list (newest last, capped
   at `MAX_COUNTED_TURNS_PER_CONVERSATION` = 16) or equal to the stored position's
-  `completedTurnId`/`readTurnId` — records the turn as counted, sets a `ReadPosition`
+  `completedTurnId`/`readTurnId` — records the turn as counted and sets a `ReadPosition`
   (read immediately if `viewing`, else `completedTurnId` only, keeping the prior
-  `readTurnId`), and marks the conversation failed only when not viewing and
-  `turnOutcomeReport(event)?.kind` is `Failed` or `StoppedEarly` (`Interrupted` never
-  counts). Every other event is a no-op.
-- `opened(conversationId)` clears `failed` and sets `readTurnId = completedTurnId`.
-- `disconnected()` clears `running` only — positions and `failed` survive a lost
+  `readTurnId`). `completed` draws no distinction by how the turn ended — a failed, interrupted
+  or early-stopped turn sets that same `ReadPosition` like any other completed turn (#1451
+  removed the separate `failed` fold this used to feed; [#1357](turn-outcome-indicator.md)
+  later removed the outcome classifier itself, which this fold never called), so it resolves
+  Unread when not viewed and Idle once opened. Every other event is a no-op.
+- `rowsAdded(conversationId, viewing, token)` (#1361) is the other way a conversation turns
+  Unread: a row — a text delta's bubble, a tool call, a banner, a session boundary, a
+  compaction divider, a refusal, an attachment offer, a `TurnEnd` — appended to the thread,
+  rather than only a turn ending. A compaction divider now counts from two triggers (#1358):
+  the `compacting` falling edge itself appends one as soon as the compaction ends, before any
+  `compaction_boundary` frame arrives and replaces it in place, so ending a background
+  conversation's compaction marks it Unread on that edge alone — `HostConversationSourceAttentionTest`
+  opens the chat before asserting the edge's own clear, the same exception it already held for a
+  `session_transition`. Desktop's `isConversationUnread` counts rows the same way;
+  this fold is mobile's trigger change onto mobile's own storage and bounds. A viewed
+  conversation is unchanged (opening is what reads it, below), and a conversation already
+  Unread keeps its stored position rather than overwriting it — a fresh token there would
+  drop the turn id `isCounted` needs to recognise a `TurnEnd` re-delivered to a cold process.
+  Otherwise the conversation's position becomes `ReadPosition(token, previous readTurnId)`,
+  moved to the newest end of the bounded map exactly as `onEvent`'s `TurnEnd` branch does.
+  `token` is a value **this phone mints** per call — a random UUID, not a daemon id — so it
+  can never collide with a stored read token or a turn id; `ReadPosition`'s two fields are
+  therefore no longer both daemon-authored (contrast the KDoc update in
+  `ConversationCache.kt`). A `TurnEnd` that follows rows already counted by `rowsAdded` still
+  runs its own counted/alert bookkeeping — the two folds are independent, so a turn with no
+  rows still marks Unread as before, and a turn after rows still alerts once.
+- `opened(conversationId)` sets `readTurnId = completedTurnId`.
+- `disconnected()` clears `running` only — positions survive a lost
   connection in memory, matching the lifecycle driver closing a supervisor and the
   collector below seeing a null repository.
 - `restored(stored)` merges positions read from the cache under the live ones — a live
   completion always wins over a stale restore.
-- `resolve(modal, batches)` returns the non-Idle map: `WaitingForAnswer` comes from a
-  `ModalUiState.Open` whose `conversationId` matches and is non-blank (a blank-id prompt
-  belongs to no row, #816) or from `batches.batchFor(id) != null`.
+- `resolve(prompts, batches)` returns the non-Idle map: `WaitingForAnswer` comes from **any**
+  `ModalUiState.Open` in `prompts` whose `conversationId` matches and is non-blank (a blank-id prompt
+  belongs to no row, #816) or from `batches.batchFor(id) != null`. Before [#1338](current-modal-state.md#related)
+  `resolve` took one `ModalUiState` — the host's single most-recently-shown prompt — so a second chat's
+  prompt silently evicted the first's waiting state; `resolve` now takes the whole
+  `List<ModalUiState.Open>`, matching desktop's `selectHasOutstandingFor`
+  (`src/renderer/src/store/modalPrompts.ts`), and a chat waits while *any* outstanding prompt names it.
 - `positions` is capped at `MAX_READ_POSITIONS` (1000) per host, oldest insertion order
   dropped first — see the [security review](../../specs/architecture/877-conversation-attention-state.md#security-review)
   for why these three bounds exist (an unbounded daemon could otherwise mint ids or huge
@@ -152,18 +200,55 @@ constructor parameter (`relay(...)` and `demo(...)` both default to a fresh inst
 folds `viewing.viewed` per host, re-opening every currently-viewed conversation of that
 host on each change. `ChannelListViewModel.onHostRowTapped` calls
 `hostSource.markOpened(serverId, conversationId)` directly instead — the list tap has no
-`ConversationViewing` handle of its own, so opening it also clears `failed`, but does not
-hold the conversation read past that one call the way a thread's view does.
+`ConversationViewing` handle of its own, so opening it also advances the read position via
+`opened`, but does not hold the conversation read past that one call the way a thread's view does.
 
-`HostConversationSource.launchAttention(entry)` runs four collectors under the same
+`HostConversationSource.launchAttention(entry)` runs six collectors under the same
 `entry.job` `reconcile` already cancels on bundle replacement or removal: the live-event
 fold (reading `viewing` under the class monitor via `updateAttention`), a `repositories`
-null emission → `disconnected()`, the combined `modal`/`questionBatches` → `resolve`, and,
-only when a `cache` is bound, a one-shot restore followed by a collector over each
-distinct positions map, written through `ConversationCache.writeReadPositions`. All four
+null emission → `disconnected()`, a second, independent `connection.repositories.collectLatest`
+that folds each repository's `observeBusyConversations()` into `busy` via `withBusy(ids)`
+(#1452, a null repository observes nothing), a third `connection.repositories.collectLatest`
+(#1361) that folds each repository's `observeThreadRowCounts(): Flow<Map<String, Int>>` (a
+defaulted empty `ConversationRepository` member; `RemoteConversationRepository` returns
+`ThreadProjection.observeRowCounts()`, the per-conversation thread list's size) against a
+local `seen` map that **starts empty on every repository**, not on whatever counts the
+collector happens to observe first — a connection's `ThreadProjection` itself starts empty, so
+rows a replay (`last_event_id`) delivered before this collector's first read are genuinely new
+against that zero baseline, not an in-place jump to be ignored. Each emission's conversations
+whose count exceeds `seen[id] ?: 0` fold through `rowsAdded(id, viewing.isViewing(serverId,
+id), UUID.randomUUID().toString())` in one `updateAttention` call, then `seen` becomes that
+emission; `collectLatest` cancels the previous repository's `seen` along with its collection on
+replacement, so the next repository restarts at zero rather than carrying over the old one's
+counts. The combined `modals`/`questionBatches` → `resolve`, and, only when a `cache` is
+bound, a one-shot restore followed by a collector over each distinct positions map, written
+through `ConversationCache.writeReadPositions`, round out the six. All of them
 route through one `@Synchronized updateAttention(entry, change)`, which reuses `update`'s
 staleness guard (factored out as `isCurrent(entry)`) so a retired bundle cannot publish or
 persist.
+
+Rows the phone already had re-enter a repository's `ThreadProjection` only through
+`observeMessages`'s `backfill_since` and `requestHistory` pages, and only `ThreadViewModel`
+asks for those, whose lifetime is the `ConversationViewing` view — so a conversation's own
+backfill, including the one a reconnect repeats against the new repository, lands while it is
+viewed and `rowsAdded` leaves it alone. An attachment offer's first-seen row already comes
+from `AttachmentOfferProjection.apply` (#983) appending into the same thread store, so it
+needs no separate counting path.
+
+**Known gap: a disconnect can race a stale busy write.** The null-repository collector clears
+`busy` with `disconnected()`, and the separate `observeBusyConversations()` collector writes
+it with `withBusy(ids)` — two different coroutines, with no ordering between them. In the gap
+`RelayRepositoryCoordinator.teardownActive` leaves between nulling `activeConnection` and
+cancelling the repository scope, a busy emission already in flight (or a rising `stall`/
+`compacting` frame applied right there) can take the monitor after `disconnected()` runs and
+write the retired repository's ids back; `isCurrent(entry)` checks only the generation, not
+repository identity, so it does not catch this. Flagged as a verifier SHOULD FIX on the #1452
+PR and left open: the existing `running` path has the identical shape (the same gap can replay
+a stale `turn_state`), the window is narrow, and the next connection's first — empty — emission
+heals it. A fix needs to close both paths together, either by folding the clear into the same
+`collectLatest` block as the busy write (so cancellation serializes them) or by guarding the
+write with `connection.repositories.value === repository`, the way the snapshot path's
+`update(entry, repository)` already does.
 
 **Known gap: a restore landing after a view opens does not re-mark it read.** The restore
 collector folds `attention.restored(written)` directly, without re-applying `opened` for
@@ -193,30 +278,38 @@ own fold treats the same way.
   a restored `positions` entry recognises the latest turn after process death). Emitted whether or not
   the conversation is viewed — a backgrounded thread composition can stay alive.
 - **Prompt:** emitted inside the modal/batches collector by diffing the current prompt-key set
-  (the private `promptKeys(modal, batches)`) against `Held.prompts`, the previous set for that
-  generation; only keys new since the last emission alert. A `StateFlow` re-publish of the same modal or
-  batch therefore emits nothing. Whether a reconnect re-emits depends on whether the key actually left
+  (the private `promptKeys(modals, batches)`) against `Held.prompts`, the previous set for that
+  generation; only keys new since the last emission alert. A `StateFlow` re-publish of the same modals or
+  batches therefore emits nothing. Whether a reconnect re-emits depends on whether the key actually left
   `Held.prompts` in between: a question batch that a reconnect drops and then shows again *does* re-emit,
   because its id left the held set while it was gone — suppressing that repeat is the consumer's job (see
   [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685)),
   not this flow's. **Before [#1337](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure),
-  a retained permission modal did not re-emit across a reconnect:** `currentModal` carried the same open
-  modal straight across the gap, so `modal:$modalId` never left `Held.prompts`, and a re-shown copy with the
-  same id (even with different prompt text) was not a new key. **Since #1337, a *new* connection clears
-  `coordinator.hostModals`** (a plain teardown still does not), so the single-value `currentModal` this
-  source reads goes `Open` → `Hidden` → `Open` across that reconnect when the daemon re-sends the same
-  prompt — `modal:$modalId` now **does** leave `Held.prompts` while the connection is re-established, and
-  this flow re-emits the alert exactly like a dropped-and-reshown question batch. Suppressing that repeat is
+  a retained permission modal did not re-emit across a reconnect:** the single `ModalUiState` this source
+  read carried the same open modal straight across the gap, so `modal:$modalId` never left `Held.prompts`,
+  and a re-shown copy with the same id (even with different prompt text) was not a new key. **Since #1337, a
+  *new* connection clears `coordinator.hostModals`** (a plain teardown still does not), so the prompt this
+  source reads goes empty → populated across that reconnect when the daemon re-sends the same prompt —
+  `modal:$modalId` now **does** leave `Held.prompts` while the connection is re-established, and this flow
+  re-emits the alert exactly like a dropped-and-reshown question batch. Suppressing that repeat is
   still the consumer's job: `AttentionNotifier`'s `AlertLedger` (see [Push messaging service § Attention
   alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685)) already
   dedupes on the alert's digest regardless of how many times this flow re-emits it, so the push path still
   posts exactly one notification across the reconnect —
   `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` is the live proof.
   `HostConversationSourceAttentionTest.aPromptAlertsOncePerModalOrBatchAndABlankConversationPromptAlertsNothing`
-  still pins the no-second-alert contract for a same-value re-publish that never passes through `Hidden` —
+  still pins the no-second-alert contract for a same-value re-publish that never passes through empty —
   the case this flow's own diff handles identically before and after #1337. `promptKeys` drops a
   blank-`conversationId` modal or batch, the same way `resolve` above does — its tap could never route to
   anything.
+  **Since [#1338](current-modal-state.md#related), `promptKeys` keys every outstanding prompt**, not only
+  the host's most-recently-shown one: `HostConversationConnection.modal: StateFlow<ModalUiState>` became
+  `modals: StateFlow<HostModalState>`, wired from `coordinator.hostModals`, and `promptKeys` maps
+  `modals.outstanding` to one `"modal:$modalId"` key per prompt. A second chat's prompt arriving no longer
+  evicts the first's key, so each prompt still alerts exactly once —
+  `HostConversationSourceAttentionTest.everyChatHoldingAPromptWaitsAndAlertsOnce_andAnsweringOneLeavesTheOther`
+  pins two prompts held at once alerting once each, a re-emit of the same list alerting nothing, and
+  answering one leaving the other's waiting state and key untouched.
 - **Hot, not replayed, bounded:** `MutableSharedFlow(extraBufferCapacity = 64, onBufferOverflow = DROP_OLDEST)`,
   emitted with `tryEmit` under the same class monitor `updateAttention` already holds — no new lock and
   no suspension inside the fold. A late subscriber sees nothing emitted before it subscribed; the one
@@ -397,3 +490,6 @@ compatibility selection any longer.
 
 - [Dependency injection](dependency-injection.md) — the parent document: `appModule`,
   the flag-gated selector pattern, testing and configuration.
+- [Current-modal state](current-modal-state.md) — the coordinator-side `HostModalState` fold that
+  `HostConversationConnection.modals` is wired from, and [#1338](current-modal-state.md#related)'s removal
+  of the single-value `currentModal` projection this source and `resolve` used to read.

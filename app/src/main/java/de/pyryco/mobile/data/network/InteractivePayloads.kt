@@ -306,9 +306,9 @@ internal fun ApiRetryPayloadDto.toStatus(): ApiRetryStatus =
  * phone never sends one. Always decode through [MobileJson].
  *
  * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`CompactingPayload`) +
- * `docs/protocol-mobile.md` § `compacting`. Shape: `{conversation_id, active}` — exactly two fields,
- * both **strict-required, non-null** (the Go struct sets no `omitempty`, so `active: false` always
- * serializes). A missing field, or one whose JSON shape cannot be read as its declared type (a number
+ * `docs/protocol-mobile.md` § `compacting`. Shape: `{conversation_id, active}` plus the two optional
+ * outcome fields below. The two edge fields are **strict-required, non-null** (the Go struct sets no
+ * `omitempty`, so `active: false` always serializes). A missing edge field, or one whose JSON shape cannot be read as its declared type (a number
  * where a `String` is declared, an object or array where a `Boolean` is), fails the structural decode
  * with a [kotlinx.serialization.SerializationException] and the one envelope is dropped (AC #5). The
  * measured latitude documented on [ApiRetryPayloadDto] applies here too: kotlinx's *tree* decoder
@@ -317,20 +317,33 @@ internal fun ApiRetryPayloadDto.toStatus(): ApiRetryStatus =
  *
  * [active] is the edge — `true` on onset, `false` once compaction finished. Unlike [StallPayloadDto]
  * this carries a **real falling edge**, so the state must never stick after it (the sibling `stall`
- * infers recovery from forward progress instead). **Banner-only:** the upstream detector streams no
- * compaction progress, so there is deliberately no counter, percent, or ETA field.
+ * infers recovery from forward progress instead). The upstream detector streams no compaction progress,
+ * so there is deliberately no counter, percent, or ETA field.
  *
  * No `toX()` mapper, following [StallPayloadDto]'s precedent and deliberately unlike
  * [ApiRetryPayloadDto.toStatus]: that one exists to collapse four wire fields into a counter-carrying
  * domain type, whereas these two wire fields already *are* the domain shape (a `String` routing key
  * plus a `Boolean`), so a mapper would be a ceremonial identity function. This is also *state*, not
  * one of the five [LiveSessionEvent] streaming events, so it never lands on the live event stream.
+ *
+ * [compactResult] and [compactError] (#1358, pyrycode#2236) are the falling edge's outcome, optional on
+ * the wire, so an absent key decodes to `""`. Both are claude-authored: [failed] reduces them to one
+ * boolean here, and neither string is held past this DTO, displayed or logged.
  */
 @Serializable
 internal data class CompactingPayloadDto(
     @SerialName("conversation_id") val conversationId: String,
     val active: Boolean,
+    @SerialName("compact_result") val compactResult: String = "",
+    @SerialName("compact_error") val compactError: String = "",
 )
+
+/**
+ * Whether the compaction this frame closes failed (#1358), desktop's rule: `compact_result` is exactly
+ * `failed`, or `compact_error` is non-empty. `compact_result` is an open set, so any other token is not a
+ * failure. Read only on a falling edge; the rising edge carries both fields empty.
+ */
+internal fun CompactingPayloadDto.failed(): Boolean = compactResult == "failed" || compactError.isNotEmpty()
 
 /**
  * The `resetting` control event (#871, pyrycode#2478): the daemon is running a conversation Reset — a
@@ -938,14 +951,20 @@ internal data class BannerPayloadDto(
 )
 
 /**
- * Map a decoded [BannerPayloadDto] to a [ThreadItem.Banner]. **Total** — an unrecognised `level` is not a
- * drop but a [BannerLevel.Notice], the protocol's "treat it as unknown" rule. [text] is copied verbatim;
+ * Map a decoded [BannerPayloadDto] to a [ThreadItem.Banner]. **Total** — `info` is a [BannerLevel.Info]
+ * (#1359), and an unrecognised `level` is not a drop but a [BannerLevel.Notice], the protocol's "treat it as
+ * unknown" rule. [text] is copied verbatim;
  * stripping is the renderer's. [occurredAt] is the caller's: the envelope `ts` on the live lane, the
  * entry timestamp on replay, which is what lets the two lanes join on one identity.
  */
 internal fun BannerPayloadDto.toRow(occurredAt: Instant): ThreadItem.Banner =
     ThreadItem.Banner(
-        level = if (level == "warning") BannerLevel.Warning else BannerLevel.Notice,
+        level =
+            when (level) {
+                "warning" -> BannerLevel.Warning
+                "info" -> BannerLevel.Info
+                else -> BannerLevel.Notice
+            },
         text = text,
         truncated = truncated,
         occurredAt = occurredAt,

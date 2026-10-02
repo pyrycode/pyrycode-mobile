@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -83,6 +84,44 @@ class StableConversationRepositoryTest {
             assertEquals(listOf<Message?>(null), lastMessages)
             assertEquals(listOf(emptyList<String>()), workspaces)
         }
+
+    // ---- #1360: live refusal events follow the live connection and are never held ------------------
+
+    @Test
+    fun liveRefusalEvents_followTheLiveConnection_andTheGapEmitsNothing() =
+        runTest {
+            val repoA = RefusalEventsRepository()
+            val repoB = RefusalEventsRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+            val events = mutableListOf<LiveRefusalEvent>()
+            backgroundScope.launch { facade.observeLiveRefusalEvents("c1").collect { events += it } }
+            runCurrent()
+
+            repoA.events.emit(LiveRefusalEvent.SessionReplaced)
+            current.value = null
+            runCurrent()
+            current.value = repoB
+            runCurrent()
+            repoA.events.emit(LiveRefusalEvent.SessionReplaced)
+            repoB.events.emit(LiveRefusalEvent.Refused(REFUSAL, scope = "session"))
+            runCurrent()
+
+            assertEquals(listOf(LiveRefusalEvent.SessionReplaced, LiveRefusalEvent.Refused(REFUSAL, scope = "session")), events)
+            assertEquals(listOf("c1", "c1"), repoA.observed + repoB.observed)
+        }
+
+    private class RefusalEventsRepository(
+        fake: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by fake {
+        val events = MutableSharedFlow<LiveRefusalEvent>()
+        val observed = mutableListOf<String>()
+
+        override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> {
+            observed += conversationId
+            return events
+        }
+    }
 
     // ---- AC #2 / #3: a cold read resumes the moment a connection arrives -------------------------
 
@@ -947,6 +986,27 @@ class StableConversationRepositoryTest {
             facade.refreshSessionSettings("c1")
         }
 
+    // ---- #1410: requestContextUsage forwards to the live connection, silent while none is live --------
+
+    @Test
+    fun requestContextUsage_delegatesToLiveRepo() =
+        runTest {
+            val repo = RecordingConversationRepository()
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(repo))
+
+            facade.requestContextUsage("c1")
+
+            assertEquals(listOf("c1"), repo.requestContextUsageCalls)
+        }
+
+    @Test
+    fun requestContextUsage_whileAbsent_isSilentNoOp() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            facade.requestContextUsage("c1")
+        }
+
     // ---- #507: mutationsSupported capability — delegates to the live value, fail-safe-deny false --
 
     @Test
@@ -1202,6 +1262,12 @@ class StableConversationRepositoryTest {
             refreshSessionSettingsCalls += conversationId
         }
 
+        val requestContextUsageCalls = mutableListOf<String>()
+
+        override fun requestContextUsage(conversationId: String) {
+            requestContextUsageCalls += conversationId
+        }
+
         override suspend fun createDiscussion(workspace: String?): Conversation {
             createDiscussionCalls += workspace
             return createDiscussionResult
@@ -1326,6 +1392,8 @@ class StableConversationRepositoryTest {
     }
 
     private companion object {
+        val REFUSAL = ThreadItem.ModelRefusal("a", "b", "", bannerTruncated = false, occurredAt = Instant.parse("2026-09-23T10:00:00Z"))
+
         /** One settings reading (#590) — the values are arbitrary; only their survival is asserted. */
         val READING =
             SessionSettings(

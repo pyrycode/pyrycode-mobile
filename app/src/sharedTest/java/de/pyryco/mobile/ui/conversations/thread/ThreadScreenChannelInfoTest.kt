@@ -260,7 +260,7 @@ class ThreadScreenChannelInfoTest {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
-        composeTestRule.onNodeWithText("Rename").performClick()
+        composeTestRule.onNodeWithText("Rename").performScrollTo().performClick()
 
         assertEquals(listOf(ThreadEvent.Rename, ThreadEvent.ChannelInfoDismiss), events)
     }
@@ -279,7 +279,7 @@ class ThreadScreenChannelInfoTest {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
-        composeTestRule.onNodeWithText("Archive").performClick()
+        composeTestRule.onNodeWithText("Archive").performScrollTo().performClick()
 
         assertEquals(listOf(ThreadEvent.Archive), events)
     }

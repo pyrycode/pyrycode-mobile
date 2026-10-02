@@ -83,9 +83,10 @@ older one, so an unrecognised token is not a legacy signal to reinterpret — it
 so the positional `TurnEnd(conversationId, turnId, stopReason)` construction the existing test fixtures
 use still compiles against the trailing defaults. The three new strings are claude's own account of the
 stop and cross this seam **unsanitized**, the same posture as `stopReason`/`text`/`inputSummary`/
-`resultSummary` below — the render trust boundary lives one layer up, in
-[`turnOutcomeReport`](turn-outcome-indicator.md#classification--sanitization), not here. See
-[Turn-outcome indicator](turn-outcome-indicator.md) for the consumer that classifies and renders them.
+`resultSummary` below. Since [#1357](turn-outcome-indicator.md#classification--sanitization) the one
+consumer, `turnRecoveryNotice`, only compares these tokens against known values and never renders any of
+them, so no render trust boundary is needed for this seam any more. See
+[Turn-outcome indicator](turn-outcome-indicator.md) for that consumer.
 
 `TurnEndPayloadDto.costUsdTotal` (#1346) widened the frame again, as an **optional `JsonElement?`**
 rather than a `Double?`. `MobileJson` has no `isLenient`, so a plain `Double?` slot throws — and drops

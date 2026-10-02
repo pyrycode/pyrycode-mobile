@@ -89,8 +89,9 @@ for what it pins.
 
 No daemon-authored text reaches this file directly — its call sites pass already-sanitised text
 (`usageLimitLabel(reading)`, the local `R.string.thread_re_pair` resource, or the client-owned plural
-`R.plurals.thread_task_count` formatted against a device-side `Int` count, or the outcome's bounded
-`turnOutcomeReport`). `NoticePill` renders `text`
+`R.plurals.thread_task_count` formatted against a device-side `Int` count, or the turn-outcome arm's
+client-owned recovery copy, `turnRecoveryNotice`, which compares daemon tokens but never renders them,
+[#1357](turn-outcome-indicator.md)). `NoticePill` renders `text`
 as a plain `Text` argument only, same as every sibling status-row indicator; it performs no further
 sanitisation of its own; see [Usage-limit indicator § Security](usage-limit-indicator.md#security) for why
 the caller's sanitisation bound is the one that matters (the pill wraps instead of `maxLines`-capping, so

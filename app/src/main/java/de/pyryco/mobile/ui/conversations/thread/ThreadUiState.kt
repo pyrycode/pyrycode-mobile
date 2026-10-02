@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -37,6 +38,40 @@ sealed interface ThreadEvent {
     data object ChannelInfo : ThreadEvent
 
     data object ChannelInfoDismiss : ThreadEvent
+
+    /**
+     * The Channel info sheet's System prompt box changed (#1342). [toString] is overridden: the generated
+     * one would print the prompt, which may hold a pasted credential.
+     */
+    data class SystemPromptEdit(
+        val text: String,
+    ) : ThreadEvent {
+        override fun toString(): String = "SystemPromptEdit(text=<redacted>)"
+    }
+
+    /** Save in the System prompt section: the box, verbatim. */
+    data object SystemPromptSave : ThreadEvent
+
+    /** Clear in the System prompt section: removes the stored prompt. */
+    data object SystemPromptClear : ThreadEvent
+
+    /**
+     * Reconnect on one row of Channel info's MCP servers section (#1344). [serverName] is Claude-authored and
+     * only put on the wire, so [toString] leaves it out.
+     */
+    data class McpReconnect(
+        val serverName: String,
+    ) : ThreadEvent {
+        override fun toString(): String = "McpReconnect(serverName=<redacted>)"
+    }
+
+    /** The on/off switch on one MCP server row (#1344): [enabled] is the state asked for. [toString] as [McpReconnect]. */
+    data class McpToggle(
+        val serverName: String,
+        val enabled: Boolean,
+    ) : ThreadEvent {
+        override fun toString(): String = "McpToggle(serverName=<redacted>, enabled=$enabled)"
+    }
 
     /** The Run configuration sheet opened (#1309); the thread re-reads its settings. */
     data object RunConfigOpen : ThreadEvent
@@ -99,10 +134,10 @@ data class ThreadUiState(
     // one carrier for all three keeps the footer and the Status sheet agreeing by construction.
     val runConfig: ThreadRunConfig = ThreadRunConfig(),
     val mutationsSupported: Boolean = true,
-    // #777/#778: what the thread's single oldest-end slot shows — loading, a retry, a dead end or
-    // nothing. The walk's TERMINATION reasons deliberately do not reach the screen, only its failures:
-    // the screen asks, the VM decides whether the ask is honoured, and a second copy of that decision in
-    // Compose would be a second place to get it wrong.
+    // #777/#778/#1352: what the thread's single oldest-end slot shows — loading, a retry, a dead end, the
+    // offline notice or nothing. The walk's TERMINATION reasons deliberately do not reach the screen, only
+    // its failures: the screen asks, the VM decides whether the ask is honoured, and a second copy of that
+    // decision in Compose would be a second place to get it wrong.
     val historyTail: ThreadHistoryTail = ThreadHistoryTail.None,
     // #884: the Actions menu's commands this conversation's published slash-command menu proves absent,
     // greyed out in the menu.
@@ -121,6 +156,9 @@ data class ThreadUiState(
     val reportedSessionFacts: SessionFacts? = null,
     // #1346: Claude's latest positive finite estimate of the session's cost in US dollars, or `null`.
     val sessionCostUsd: Double? = null,
+    // #1344: this conversation's MCP server reading on this connection. Its server strings are Claude-authored
+    // and reach the screen only as bounded inert text in Channel info.
+    val mcpStatus: McpStatus = McpStatus(),
 )
 
 /**
@@ -249,6 +287,9 @@ data class ThreadRunConfig(
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
+
+    /** Whether this session answers MCP status (#1344): only an explicit `mcp_servers: false` hides Channel info's section. */
+    val mcpServersSupported: Boolean get() = capabilities?.mcpServers ?: true
 
     /** No pick and no explicit saved model: the conversation runs whatever the daemon's default resolves to. */
     private val inherited: Boolean

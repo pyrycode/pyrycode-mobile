@@ -17,7 +17,7 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Rule
@@ -82,7 +82,7 @@ class RunningToolIndicatorTest {
     private var isBusy by mutableStateOf(true)
     private var progress by mutableStateOf<ThinkingProgress?>(null)
     private var isCompacting by mutableStateOf(false)
-    private var turnOutcome by mutableStateOf<TurnOutcomeReport?>(null)
+    private var turnOutcome by mutableStateOf<TurnRecoveryNotice?>(null)
 
     private fun setThreadScreen() {
         composeTestRule.setContent {
@@ -195,7 +195,7 @@ class RunningToolIndicatorTest {
         composeTestRule.onNodeWithText("Running Bash…").assertDoesNotExist()
 
         isCompacting = false
-        turnOutcome = TurnOutcomeReport(TurnOutcomeReport.Kind.Interrupted, emptyList(), null)
+        turnOutcome = TurnRecoveryNotice.ContextTooLong
 
         composeTestRule.onNodeWithText("Running Bash…").assertDoesNotExist()
     }
