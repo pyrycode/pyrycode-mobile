@@ -52,6 +52,7 @@ import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -224,13 +225,13 @@ private fun TitleRow(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 12.dp),
+                .padding(start = 16.dp, end = 4.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = title,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleLarge.copy(lineHeightStyle = FrameLineBox),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -245,6 +246,12 @@ private fun TitleRow(
     }
 }
 
+/**
+ * Keeps each line's full box, as the frames `668:5355` and `668:5460` draw it (#1488). Compose's default trim
+ * drops the leading above the first line and below the last, which shrank the 40 px About rows to 35 px.
+ */
+private val FrameLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
+
 @Composable
 private fun SectionHeader(text: String) {
     Text(
@@ -253,7 +260,7 @@ private fun SectionHeader(text: String) {
             Modifier
                 .fillMaxWidth()
                 .padding(start = 24.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = FrameLineBox),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
@@ -274,7 +281,7 @@ private fun AboutRow(
         Text(
             text = label,
             modifier = if (valueIsPath) Modifier else Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = FrameLineBox),
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
@@ -286,9 +293,10 @@ private fun AboutRow(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
+                        lineHeightStyle = FrameLineBox,
                     )
                 } else {
-                    MaterialTheme.typography.bodyMedium
+                    MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = FrameLineBox)
                 },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = if (valueIsPath) 1 else 2,
@@ -344,7 +352,7 @@ private fun SessionRow(
         Text(
             text = label,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = FrameLineBox),
             color = MaterialTheme.colorScheme.onSurface,
         )
         Column(
@@ -354,7 +362,7 @@ private fun SessionRow(
             Text(
                 text = value.text ?: "Not reported",
                 modifier = if (valueTag != null) Modifier.testTag(valueTag) else Modifier,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = FrameLineBox),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
@@ -423,11 +431,13 @@ private fun MemoryRow(
     onInstall: () -> Unit,
 ) {
     val compact = LocalConfiguration.current.screenWidthDp < 360 || LocalDensity.current.fontScale >= 1.3f
+    // #1488: beside the label, Install's 48 dp touch target alone fills the frame's 52 px row.
+    val inlineInstall = report.shouldOfferMemoryInstall() && !compact
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = if (inlineInstall) 2.dp else 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -695,7 +705,7 @@ private fun Footer(channelId: String) {
     ) {
         Text(
             text = "Channel ID: $channelId",
-            modifier = Modifier.alpha(0.5f),
+            modifier = Modifier.alpha(0.55f),
             style =
                 MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
