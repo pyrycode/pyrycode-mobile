@@ -2179,7 +2179,18 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-02 (#1352).** The dispatcher ran
+**Current live verification — 2026-10-02 (#1456).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1456` at
+`af31cd6ecd`, merged with `origin/main` at `cad0672435` in a detached worktree (8 commits behind before
+the merge): **50 executed, 50 passed, 0 failed, 0 skipped**, exit 0, wall clock 676.1s. This is
+full-suite evidence; no separate focused live run is claimed. `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
+has a passing testcase in the fresh XML with no failures or errors in the suite. The ticket added no new
+live method and changed no production code — only step 5's wait, which now goes through
+`awaitPingReplyNamingLayer` (see § *Coverage — hardened* below) — so this run is the first live exercise
+of that wrapper's passing path; it was not exercised by the diagnosis's own `PingReplyDiagnosisTest`,
+which is JVM-only and never reaches a device. `LIVE_MINIMUM` stayed at 50.
+
+**Previous live verification — 2026-10-02 (#1352).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1352` at
 `4251829d37`, merged with `origin/main` at `8dc5a6b483` in a detached worktree (16 commits behind before
 the merge): **50 executed, 50 passed, 0 failed, 0 skipped**, exit 0, wall clock 716.6s. This is full-suite
@@ -3410,6 +3421,39 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `compileDebugAndroidTestKotlin` checks the wiring; AC 3, the live pass with
   pyrycode/pyrycode-relay#154 deployed to the production relay, is the dispatcher's post-verifier
   real-claude gate.
+
+- **Coverage — hardened:** [#1456](https://github.com/pyrycode/pyrycode-mobile/issues/1456) made step
+  5's follow-up-ping wait in `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` (#965)
+  name which layer lost the reply on a timeout, instead of a bare `ComposeTimeoutException`. A #1410 gate
+  run saw the Stop step pass (the peer recorded `turn_end`/`cancelled`, the phone showed Interrupted) and
+  then time out in the old `awaitDisplayedPingReply`, with Claude's `ping` reply proven to have reached
+  the daemon from the kept transcript but never displayed on the phone — a different shape from #1036's
+  dead peer link. The step now goes through `awaitPingReplyNamingLayer`
+  (`InteractiveStreamE2ETest.kt`), which on a `ComposeTimeoutException` reads `PingReplyEvidence`
+  (`app/src/sharedTest/.../e2e/PingReplyDiagnosis.kt`, JVM-tested in `PingReplyDiagnosisTest`) and throws
+  an `AssertionError` naming the first of: host (the peer recorded neither the ping turn's `turn_end` nor
+  its reply), phone repository (the peer got the reply, the phone's live repository holds none), thread
+  screen (no matching bubble is composed) or thread list (one bubble is composed but not displayed) —
+  plus every raw reading, so a reader can disagree with the verdict. The passing path is unchanged; only
+  the `ComposeTimeoutException` catch is new. The code reading this ticket did for all three candidates
+  (posted on the ticket) found none reproducible from the code: a fresh `turn_id` and reset `seq` on every
+  daemon turn (`interactiveTurnEmitterV2.startTurnIfNeeded`/`endTurn` in `../pyrycode/cmd/pyry`) rule out
+  the host conflating turns; `HistoryPageReducer.withAssistantDelta` drops a delta only on a repeated
+  `seq` or a colliding key, which a fresh `turn_id` cannot hit, and `ThreadFold.render` never removes a
+  finished row, ruling out the phone's own reduction; Stop, Interrupted and the composer all sit outside
+  the reversed `LazyColumn` and the accepted send re-follows through `FollowNewestEnd`'s `sentMessages`
+  effect, ruling out lost scroll-follow. So this ticket files no `pyrycode/pyrycode` ticket and adds no
+  pinning test — a genuine single-connection frame loss is still possible on the daemon side
+  (`v2.push.drop`, `stream_turn.not_active`) but logs at Debug only, so a future "phone repository" verdict
+  from this wrapper is the cue to check those lines first. **Known gap (verifier SHOULD FIX, not
+  blocking):** `PingReplyEvidence.failure`'s host check, `peerTurnEnds >= expectedTurnEnds ||
+  peerSawReply`, clears the host from the `turn_end` count alone; if Claude answers with anything other
+  than exactly `ping`, the message blames the phone repository for a reply the host never sent as `ping`.
+  The raw readings printed alongside the verdict still show the truth, which is why the verifier passed
+  it rather than sending it back. The post-verifier live gate (2026-10-02) executed all 50 curated
+  scenarios with `stopRunningTurn` passing outright — see [Verification status](#verification-status) —
+  so the wrapper's passing path is live-proven; its failing path (which layer gets named) has no live
+  exercise yet, by nature, since nothing has reproduced the underlying loss since #1410.
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the **cross-device** Stop scenario in `InteractiveStreamE2ETest`: with real turns
