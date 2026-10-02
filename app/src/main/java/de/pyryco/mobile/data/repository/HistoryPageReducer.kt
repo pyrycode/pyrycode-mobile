@@ -309,10 +309,20 @@ private fun List<ThreadItem>.highestSeqOf(turnId: String): Int =
  * (#1350) — and a row keyed by the bare turn id with no segment record — to [Message.isStreaming]
  * `= false` in place, so the thread renders the completed reply as static markdown rather than the
  * streaming caret view. **No-op when no streaming row of the turn exists** — a tool-only or empty turn
- * carries no assistant text — and a duplicate changes nothing. `turn_end` carries no final text, so
- * nothing is appended here.
+ * carries no assistant text — and a duplicate changes nothing. `turn_end` carries no final text.
+ *
+ * A turn that did not end cleanly then leaves a [ThreadItem.StoppedTurn] stamped [occurredAt] at the end,
+ * after the turn's last row (#1356), unless the thread already holds one for that turn ([holdsStoppedTurn]).
+ * Both lanes come through here, so a live row and a history row of one turn are built by one rule.
  */
-internal fun List<ThreadItem>.withFinalizedTurn(event: LiveSessionEvent.TurnEnd): List<ThreadItem> = withSettledTurns(setOf(event.turnId))
+internal fun List<ThreadItem>.withFinalizedTurn(
+    event: LiveSessionEvent.TurnEnd,
+    occurredAt: Instant,
+): List<ThreadItem> {
+    val settled = withSettledTurns(setOf(event.turnId))
+    val stopped = event.stoppedTurn(occurredAt) ?: return settled
+    return if (settled.holdsStoppedTurn(stopped.turnId)) settled else settled + stopped
+}
 
 /**
  * [withFinalizedTurn] for every turn in [turnIds] in one pass (#1419): the projection settles each row of a
@@ -441,7 +451,7 @@ private fun List<ThreadItem>.withHistoryEntry(
                         is LiveSessionEvent.ToolUse -> withToolUse(event, entry.timestamp)
                         is LiveSessionEvent.ToolResult -> withToolResult(event)
                         is LiveSessionEvent.AssistantDelta -> withAssistantDelta(event, entry.timestamp)
-                        is LiveSessionEvent.TurnEnd -> withFinalizedTurn(event)
+                        is LiveSessionEvent.TurnEnd -> withFinalizedTurn(event, entry.timestamp)
                         else -> this
                     }
                 }
@@ -613,6 +623,7 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  *  - a [ThreadItem.Banner] joins on its `ts` — see [holdsBanner].
  *  - a [ThreadItem.CompactionBoundary] joins on its `ts` — see [holdsCompactionBoundary].
  *  - a [ThreadItem.ModelRefusal] joins on its frame type and `ts` — see [holdsModelRefusal].
+ *  - a [ThreadItem.StoppedTurn] joins on its `turn_id` — see [holdsStoppedTurn].
  *
  * A duplicate is **skipped, not merged in place.** The only overlap a walk can produce is the narrow
  * ask-versus-answer race the protocol names, and in that window the live lane owns the newer state and
@@ -856,6 +867,7 @@ private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
         is ThreadItem.Banner -> holdsBanner(row)
         is ThreadItem.CompactionBoundary -> holdsCompactionBoundary(row)
         is ThreadItem.ModelRefusal -> holdsModelRefusal(row)
+        is ThreadItem.StoppedTurn -> holdsStoppedTurn(row.turnId)
     }
 
 /**
@@ -870,6 +882,7 @@ private fun ThreadItem.joinIdentity(): Any =
         is ThreadItem.Banner -> listOf("banner", occurredAt)
         is ThreadItem.CompactionBoundary -> listOf("compaction", occurredAt)
         is ThreadItem.ModelRefusal -> listOf("refusal", fallbackModel != null, occurredAt)
+        is ThreadItem.StoppedTurn -> listOf("stopped", turnId)
     }
 
 /**
@@ -939,3 +952,13 @@ internal fun List<ThreadItem>.holdsModelRefusal(refusal: ThreadItem.ModelRefusal
             (it.fallbackModel != null) == (refusal.fallbackModel != null) &&
             it.occurredAt == refusal.occurredAt
     }
+
+/**
+ * Whether this thread already holds the stopped-turn row of [turnId] (#1356): one turn ends once, so its id
+ * is the row's identity whichever lane or instant brought it.
+ *
+ * **One identity, three readers:** this history merge, [withFinalizedTurn] on both lanes, and the list key
+ * `ThreadRow.listKey` gives the row, so two stopped rows this predicate lets into one thread never share a
+ * key. A replayed `turn_end` whose fields differ loses to the row already held — the fail-safe direction.
+ */
+internal fun List<ThreadItem>.holdsStoppedTurn(turnId: String): Boolean = any { it is ThreadItem.StoppedTurn && it.turnId == turnId }

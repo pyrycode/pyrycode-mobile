@@ -233,6 +233,23 @@ the pre-#805 state. No token is ever a branch input beyond the documented `"succ
 exclusions and the daemon's own closed `stop_reason` set — no retry, navigation or action is keyed on any
 of them. Nothing is persisted or logged; the report lives in a VM `StateFlow` and dies with it.
 
+## How this differs from the stopped-turn row (#1356)
+
+This component is the status-area arm: a `StateFlow` that the next turn's `Thinking`/`Responding` clears,
+so the reason is lost once the user sends again. [#1356](https://github.com/pyrycode/pyrycode-mobile/issues/1356)
+added [`ThreadItem.StoppedTurn`](stopped-turn-row.md), a persistent "Stopped: …" row in the thread itself,
+built from the same `turn_end` by a different rule: desktop's `stoppedTurnText`/`stoppedReportText`, not this
+component's `turnOutcomeReport`/`inertOutcomeToken`. The two rules disagree on purpose — `turnOutcomeReport`
+raises on `stopReason` in `max_tokens`/`max_turn_requests`/`refusal` even with a clean `outcome`, while
+`stoppedTurn` does not add a row for any of those three on their own — so the two arms can show for a
+different set of turns, and their wording differs (`inertOutcomeToken` truncates at 40 characters and
+misses a few sanitizer edge cases this component's § Classification & sanitization records; `stoppedTurn`'s
+sanitizer never truncates and iterates code points, so it has no such gap). This component is unchanged by
+\#1356; its own status-area arm is changed separately by
+[#1357](https://github.com/pyrycode/pyrycode-mobile/issues/1357). Until #1357 lands, the status area and the
+new row both describe the current turn, with different copy, for as long as the turn's status stays in the
+ladder.
+
 ## Edge cases / limitations
 
 - **The sanitizer misses supplementary-plane `Cf`, surrogate splitting, and `Zl`/`Zp`** — see §
@@ -263,4 +280,6 @@ of them. Nothing is persisted or logged; the report lives in a VM `StateFlow` an
   `docs/specs/architecture/1113-agent-name-in-thread-notices.md` (§ The agent name, #1113).
 - Follow-up: [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679) (live real-claude
   verification of this arm).
+- Sibling surface: [Stopped-turn row](stopped-turn-row.md) — the thread's persistent "Stopped: …" row built
+  from the same `turn_end`, by a different rule; see § How this differs above.
 - Server SSOT: `docs/protocol-mobile.md § turn_end` — cited, not restated.

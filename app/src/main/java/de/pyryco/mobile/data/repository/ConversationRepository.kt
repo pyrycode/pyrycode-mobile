@@ -1009,6 +1009,32 @@ sealed interface ThreadItem {
         val bannerTruncated: Boolean,
         val occurredAt: Instant,
     ) : ThreadItem
+
+    /**
+     * A turn that failed or stopped early (#1356), kept so its reason survives the next turn — desktop's
+     * `turnBoundary` row. Built from a `turn_end` only when `stoppedTurn` says the turn did not end cleanly;
+     * a cancelled or successful turn has no row.
+     *
+     * Both strings already crossed `stoppedReportText`, so they hold no control, format or separator
+     * character and at most 256 UTF-8 bytes. They are still agent-authored: consumers render them as plain
+     * text after client-owned copy (see `StoppedTurnRow`) and must not log them. The thread cache stores the
+     * row (#1356), and a restored row renders through the same sanitizer.
+     *
+     * Identity: [turnId]. Invariant: unique among a thread's stopped rows. The thread's `LazyColumn` keys the
+     * row on it, so a duplicate crashes the list; uniqueness is a producer obligation — both thread writers
+     * skip one the thread already holds (`holdsStoppedTurn`) — documented here and asserted in tests, not
+     * enforced at construction (as [SessionBoundary]).
+     *
+     * @param reason The reason token the row's copy is chosen by; empty reads as a bare error.
+     * @param category The API error category the agent reported; empty when none.
+     * @param occurredAt When the turn ended: the stored entry's `ts`, or the arrival instant on the live lane.
+     */
+    data class StoppedTurn(
+        val turnId: String,
+        val reason: String,
+        val category: String,
+        val occurredAt: Instant,
+    ) : ThreadItem
 }
 
 /**

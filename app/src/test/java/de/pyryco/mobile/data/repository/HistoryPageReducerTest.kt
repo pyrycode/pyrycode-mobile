@@ -205,6 +205,7 @@ class HistoryPageReducerTest {
                 ThreadItem.Banner(BannerLevel.Warning, "live", false, at(3)),
                 ThreadItem.CompactionBoundary(24000, 3000, true, at(4)),
                 ThreadItem.ModelRefusal("opus", "sonnet", "live", false, at(5)),
+                ThreadItem.StoppedTurn("turn-1", "max_turns", "", at(6)),
             )
         // Each twin differs from its live row only outside the key; the last refusal is the other frame type.
         val otherType = ThreadItem.ModelRefusal("opus", null, "cached", false, at(5))
@@ -217,6 +218,7 @@ class HistoryPageReducerTest {
                 ThreadItem.Banner(BannerLevel.Info, "cached", true, at(3)),
                 ThreadItem.CompactionBoundary(null, null, false, at(4)),
                 ThreadItem.ModelRefusal("haiku", "sonnet-5", "cached", true, at(5)),
+                ThreadItem.StoppedTurn("turn-1", "api_error", "overloaded", at(7)),
                 otherType,
             )
 
@@ -356,6 +358,84 @@ class HistoryPageReducerTest {
         assertEquals(listOf("turn-1"), rows.messageIds())
         assertEquals("hello world", rows.messageRow("turn-1")?.content)
         assertFalse(rows.messageRow("turn-1")?.isStreaming ?: true)
+    }
+
+    // ---- #1356: a stopped turn leaves its reason in the thread --------------------------------------
+
+    @Test
+    fun reduce_aFailedTurnEnd_addsOneStoppedRowAfterTheTurnsLastRow_stampedWithTheEntryTs() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(4, "message", messagePayload("m2", "user", "next"), ts = "2026-09-05T10:04:00Z"),
+                    entry(3, "turn_end", turnEndPayload("turn-1", failure = FAILED), ts = "2026-09-05T10:03:00Z"),
+                    entry(2, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                    entry(1, "assistant_delta", assistantDeltaPayload("turn-1", seq = 0, text = "hello")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(
+            ThreadItem.StoppedTurn("turn-1", "prompt_too_long", "invalid_request", Instant.parse("2026-09-05T10:03:00Z")),
+            rows[2],
+        )
+        assertEquals(listOf("turn-1", "t1", "m2"), rows.messageIds())
+        assertEquals(4, rows.size)
+    }
+
+    @Test
+    fun reduce_aCancelledOrCleanTurnEnd_addsNoRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "turn_end", turnEndPayload("turn-2", stopReason = "cancelled", failure = FAILED)),
+                    entry(1, "turn_end", turnEndPayload("turn-1", failure = """"outcome":"success"""")),
+                ),
+                interactive = true,
+            )
+
+        assertTrue(rows.isEmpty())
+    }
+
+    @Test
+    fun reduce_aRepeatedTurnEnd_addsOneStoppedRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "turn_end", turnEndPayload("turn-1", failure = FAILED), ts = "2026-09-05T10:02:00Z"),
+                    entry(1, "turn_end", turnEndPayload("turn-1", failure = FAILED), ts = "2026-09-05T10:01:00Z"),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf("turn-1"), rows.filterIsInstance<ThreadItem.StoppedTurn>().map { it.turnId })
+    }
+
+    @Test
+    fun merge_aHistoryStoppedRow_joinsTheLiveOneByTurnId() {
+        val event =
+            LiveSessionEvent.TurnEnd(CONVERSATION, "turn-1", "end_turn", isError = true, terminalReason = "prompt_too_long")
+        val live = listOf(messageItem("m0")).withFinalizedTurn(event, Instant.parse("2026-09-05T11:00:00Z"))
+        val page = reduceHistoryPage(listOf(entry(1, "turn_end", turnEndPayload("turn-1", failure = FAILED))), interactive = true)
+
+        val merged = live.mergeHistoryRows(page)
+
+        assertSame(live, merged)
+        assertEquals(1, merged.count { it is ThreadItem.StoppedTurn })
+    }
+
+    @Test
+    fun withFinalizedTurn_appendsTheStoppedRowOnce_andAnotherTurnsRowStill() {
+        val at = Instant.parse("2026-09-05T11:00:00Z")
+        val failed = LiveSessionEvent.TurnEnd(CONVERSATION, "turn-1", "end_turn", outcome = "error_max_turns")
+
+        val once = emptyList<ThreadItem>().withFinalizedTurn(failed, at)
+        val twice = once.withFinalizedTurn(failed, Instant.parse("2026-09-05T11:00:01Z"))
+        val other = twice.withFinalizedTurn(failed.copy(turnId = "turn-2"), at)
+
+        assertEquals(listOf(ThreadItem.StoppedTurn("turn-1", "max_turns", "", at)), once)
+        assertSame(once, twice)
+        assertEquals(listOf("turn-1", "turn-2"), other.map { (it as ThreadItem.StoppedTurn).turnId })
     }
 
     @Test
@@ -1365,8 +1445,12 @@ class HistoryPageReducerTest {
         text: String,
     ): String = """{"conversation_id":"$CONVERSATION","turn_id":"$turnId","seq":$seq,"text":"$text"}"""
 
-    private fun turnEndPayload(turnId: String): String =
-        """{"conversation_id":"$CONVERSATION","turn_id":"$turnId","stop_reason":"end_turn"}"""
+    /** [failure] is a raw `"key":value` fragment of the outcome fields (#1356); empty leaves a clean turn. */
+    private fun turnEndPayload(
+        turnId: String,
+        stopReason: String = "end_turn",
+        failure: String = "",
+    ): String = """{"conversation_id":"$CONVERSATION","turn_id":"$turnId","stop_reason":"$stopReason"${extraFields(failure)}}"""
 
     private fun sessionTransitionPayload(
         previous: String,
@@ -1424,6 +1508,7 @@ class HistoryPageReducerTest {
         const val ID_B = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
         const val TS = "2026-09-05T10:00:00Z"
         const val OCCURRED_AT = "2026-09-05T09:59:00Z"
+        const val FAILED = """"outcome":"success","is_error":true,"terminal_reason":"prompt_too_long","error_category":"invalid_request""""
         val TS_INSTANT: Instant = Instant.parse(TS)
     }
 }

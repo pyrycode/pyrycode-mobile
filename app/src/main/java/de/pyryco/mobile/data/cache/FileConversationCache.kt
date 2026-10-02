@@ -254,8 +254,8 @@ class FileConversationCache(
      * with one key). A writer never produces any of these. A boundary's identity is its session pair and
      * instant, the triple its list key encodes (#775): an idle-evicted session keeps its id, so two
      * evictions legitimately share a pair. A banner and a compaction divider key on their instant, and a
-     * refusal on its frame type and instant (#1353) — the keys `holdsBanner`, `holdsCompactionBoundary`
-     * and `holdsModelRefusal` dedupe on.
+     * refusal on its frame type and instant (#1353), and a stopped turn on its turn id (#1356) — the keys
+     * `holdsBanner`, `holdsCompactionBoundary`, `holdsModelRefusal` and `holdsStoppedTurn` dedupe on.
      */
     private fun validatedRows(stored: CachedThread): List<ThreadItem> {
         val rows = stored.rows.map { it.toDomain() }
@@ -274,6 +274,8 @@ class FileConversationCache(
         require(refusals.distinctBy { (it.fallbackModel != null) to it.occurredAt }.size == refusals.size) {
             "duplicate thread cache refusal identity"
         }
+        val stopped = rows.filterIsInstance<ThreadItem.StoppedTurn>()
+        require(stopped.distinctBy { it.turnId }.size == stopped.size) { "duplicate thread cache stopped turn identity" }
         return rows
     }
 
@@ -509,7 +511,8 @@ private data class CachedHistoryPosition(
 
 /**
  * Exactly one field set; a row with none or several is unreadable. Every field defaults to `null`, so a
- * document written before banners, compaction dividers and refusals were kept (#1353) still reads.
+ * document written before banners, compaction dividers and refusals were kept (#1353), or before stopped
+ * turns were (#1356), still reads.
  */
 @Serializable
 private data class CachedThreadRow(
@@ -518,6 +521,7 @@ private data class CachedThreadRow(
     val banner: CachedBanner? = null,
     val compaction: CachedCompaction? = null,
     val refusal: CachedRefusal? = null,
+    val stopped: CachedStoppedTurn? = null,
 )
 
 /** A settled [Message]: there is no `isStreaming`, because an in-flight row is never written. */
@@ -601,6 +605,18 @@ private data class CachedRefusal(
     val occurredAt: String,
 )
 
+/**
+ * A [ThreadItem.StoppedTurn] (#1356). [reason] and [category] are agent-authored, stored as the row holds them
+ * and sanitized again when a restored row renders.
+ */
+@Serializable
+private data class CachedStoppedTurn(
+    val turnId: String,
+    val reason: String,
+    val category: String,
+    val occurredAt: String,
+)
+
 // Only settled rows reach here: `cacheableThreadRows` has already dropped in-flight and unrecognized ones.
 private fun ThreadItem.toRecord(): CachedThreadRow =
     when (this) {
@@ -632,11 +648,12 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
             CachedThreadRow(
                 refusal = CachedRefusal(originalModel, fallbackModel, banner, bannerTruncated, occurredAt.toString()),
             )
+        is ThreadItem.StoppedTurn -> CachedThreadRow(stopped = CachedStoppedTurn(turnId, reason, category, occurredAt.toString()))
         is ThreadItem.UnrecognizedMessage -> throw IllegalStateException("unrecognized rows are never cached")
     }
 
 private fun CachedThreadRow.toDomain(): ThreadItem {
-    require(listOfNotNull(message, boundary, banner, compaction, refusal).size == 1) { "thread cache row must be one kind" }
+    require(listOfNotNull(message, boundary, banner, compaction, refusal, stopped).size == 1) { "thread cache row must be one kind" }
     if (message != null) {
         return ThreadItem.MessageItem(
             Message(
@@ -657,6 +674,7 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
     }
     banner?.let { return ThreadItem.Banner(it.level, it.text, it.truncated, Instant.parse(it.occurredAt)) }
     compaction?.let { return ThreadItem.CompactionBoundary(it.preTokens, it.postTokens, it.manual, Instant.parse(it.occurredAt)) }
+    stopped?.let { return ThreadItem.StoppedTurn(it.turnId, it.reason, it.category, Instant.parse(it.occurredAt)) }
     val refusal = checkNotNull(refusal)
     return ThreadItem.ModelRefusal(
         refusal.originalModel,
