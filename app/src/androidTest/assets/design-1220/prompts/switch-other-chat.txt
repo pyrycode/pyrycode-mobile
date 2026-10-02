@@ -1,0 +1,1 @@
+activity=MainActivity figma=640:2646 sizePx=412x892 capturePx=412x892 density=1.0 fontScale=1.0 staticDark=true secure=false decorViewDraw=true syntheticBars=false systemBarsPx=Insets{left=0, top=24, right=0, bottom=24} imePx=Insets{left=0, top=0, right=0, bottom=0} api=35 device=sdk_gphone64_arm64

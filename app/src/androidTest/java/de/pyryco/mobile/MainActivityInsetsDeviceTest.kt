@@ -458,12 +458,11 @@ class MainActivityInsetsDeviceTest {
         rule.onNodeWithText("I already have pyrycode").performClick()
         val paste = rule.onNodeWithText("Trouble scanning? Paste the pairing code instead")
         paste.assertIsDisplayed()
-        val scannerTop = bounds(rule.onNodeWithContentDescription("Back")).top
-        assertEquals(bars.top + 18 * density, scannerTop, 1f)
+        assertEquals(bars.top + 24 * density, bounds(rule.onNodeWithTag("pairing_header_title")).top, 1f)
         clearOfBars(paste)
         capture("scanner")
         paste.performClick()
-        assertEquals(bars.top.toFloat(), bounds(rule.onNodeWithContentDescription("Back")).top, 1f)
+        assertEquals(bars.top + 24 * density, bounds(rule.onNodeWithTag("pairing_header_title")).top, 1f)
         for (label in listOf("Host name", "Pairing code", "Pair", "Cancel")) clearOfBars(rule.onNodeWithText(label))
         capture("pair")
 

@@ -121,6 +121,30 @@ question batch; and no thread code reads
 `ConversationRepository.observeAttachmentOffers`, so overriding it changes
 nothing on screen.
 
+`PromptsDesignCaptureTest` (#1433) audited the questions and permissions board
+through this harness and found more: both prompts set `FLAG_SECURE`, which blacks
+out `DesignCapture.capture`'s `UiAutomation` screenshot, so a protected surface
+needs its own decor-view draw, asserting the flag rather than only recording it.
+`DesignCapture.insets()` substitutes synthetic bars for a zero-inset ATD read, so
+a capture that bypasses `capture()` for its own draw must read the decor view's
+real root insets itself — otherwise a real-bars check can never fail. A capture
+also needs a settled frame: right after launch the emulator can report a
+transient navigation bar, and right after `FLAG_SECURE` is set it can report no
+insets at all for over a second, each silently shifting the layout rather than
+failing the test; wait until the bar insets hold steady before drawing, and
+assert the test IME's exact inset (240 px) rather than trusting that a keyboard
+opened. Compare spacing and sizes against Figma's `get_metadata` coordinates, not
+by eye — `minimumInteractiveComponentSize()` wrapping a smaller control inside
+`spacedBy` doubles the visible gap between items, and that reads as "match within
+4 px" on a visual scan. The harness's fake repository outlives each test in the
+process, so channels created per test accumulate and duplicate list rows across a
+class; reuse or remove what a test creates instead of assuming a clean list. When
+judging whether two capture PNGs across a rerun are the same evidence or stale
+leftovers, a byte-identical pair from a deterministic decor-view draw is
+expected, not proof of staleness — check provenance in the paired `.txt`
+metadata (for example a field like `syntheticBars` that only a rewritten run
+carries), not the PNG history.
+
 `MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
 (unrelated to the #1352 history-paging change, caught in its PR's UI gate and
 triaged there) hit the same `wm size` race, confirmed by two focused re-runs
