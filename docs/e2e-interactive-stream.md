@@ -1001,8 +1001,13 @@ behaviour change. Two real claude turns: the ping before the cut and the ping af
 its slash-command menu), cuts and restores the link, then types `/` and asserts the rows, labels and
 completion match `slashCommandTypeAheadRows` / `slashCommandOptions` / `completeSlashCommand` on the
 reconnected menu — not restated here. Actions → Compact session then shows the `cd_thread_compacting`
-indicator, then the session-boundary divider for a manual compaction ("Conversation compacted … by you"),
-and the indicator clears. Two real claude turns: the ping and the compaction. On the live relay the
+indicator, and the indicator clears. Since #1358 the `compacting` falling edge itself draws the divider,
+unreported ("Conversation compacted"), before the `compaction_boundary` frame replaces it in place with
+its counts and "by you"; a one-shot read after the edge clears can therefore catch the divider still
+unfilled. The test's `dividerText()` helper waits until the text credits the compaction to you
+("Conversation compacted … by you") rather than reading once, then asserts **exactly one** compaction
+divider in the thread — proving the boundary replaced the edge's own divider in place rather than adding
+a second. Two real claude turns: the ping and the compaction. On the live relay the
 reconnect's fresh connection can itself drop and be redialled within about a second — \#1051 traced this to
 the relay's per-phone outbox overflowing on the daemon's connect-time reconcile burst, fixed in
 pyrycode/pyrycode-relay\#154; before #1029 the scenario held the pre-redial connection's repository and the

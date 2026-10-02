@@ -2,7 +2,7 @@
 
 Stateless composable (#135) that renders a single [`ThreadItem.SessionBoundary`](./conversation-repository.md) marker as a horizontal-rule delimiter inside the thread `LazyColumn`. It shows the reset reason (`Clear` / `WorkspaceChange` / `IdleEvict`) and time, always explains that the conversation's agent does not remember messages above the line, and offers the memory-plugin docs link only when the current session's report confirms absence. The boundary marker itself is produced by `ConversationRepository.observeMessages`; this component is the rendering half.
 
-Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/SessionBoundaryDelimiter.kt`). Sibling of [`MessageBubble`](./message-bubble.md), [`ToolCallRow`](./tool-call-row.md), [`ConnectionBanner`](./connection-banner.md). Figma reference: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8)'s `Session reset` row (`119:3843`), a rule / label / rule arrangement, restyled here since #644. The explanation sentence and the `Install` button below it have no Figma node of their own and stay implemented per the textual spec — see [Rule / label / rule, explanation retained below (#644)](#rule--label--rule-explanation-retained-below-644). The same file also hosts [`CompactionBoundaryDivider`](#compactionboundarydivider-874) (#874), a finished-compaction row that reuses this component's rule/label/rule layout but is not a session boundary.
+Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/SessionBoundaryDelimiter.kt`). Sibling of [`MessageBubble`](./message-bubble.md), [`ToolCallRow`](./tool-call-row.md), [`ConnectionBanner`](./connection-banner.md). Figma reference: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8)'s `Session reset` row (`119:3843`), a rule / label / rule arrangement, restyled here since #644. The explanation sentence and the `Install` button below it have no Figma node of their own and stay implemented per the textual spec — see [Rule / label / rule, explanation retained below (#644)](#rule--label--rule-explanation-retained-below-644). The same file also hosts [`CompactionBoundaryDivider`](#compactionboundarydivider-874-1358) (#874, #1358), a finished-compaction row that reuses this component's rule/label/rule layout but is not a session boundary.
 
 ## Shape
 
@@ -118,12 +118,17 @@ Fixtures use a fixed `Instant.parse("2026-05-17T14:32:00Z")` so previews are det
   Codex test pins the agent name and, with an explicit absent report, the Install button.
 - **Unbounded `workspaceCwd` can still drive a layout-cost DoS — pre-existing, not addressed by #644.** The label interpolates `boundary.workspaceCwd` with no length bound on the inbound path; it renders into an unweighted `Text` in a `Row` since the restyle, which wraps identically to the pre-#644 centred `Text`. #644's security review named this rather than fixing it: the right home is a content-length bound in the decode layer, which would cover every render surface (this label and [`MessageBubble`](./message-bubble.md)'s `Message.content`) rather than each component defending itself.
 
-## CompactionBoundaryDivider (#874)
+## CompactionBoundaryDivider (#874, #1358)
 
-A finished compaction, folded from the daemon's `compaction_boundary` frame (split from #654, landed the
-way [`Banner` landed](banner-notice-row.md): one ticket for the type, both decode lanes, and the row).
-Lives in this same file, beside `SessionBoundaryDelimiterContent`, because it draws the same Figma
-`Session reset` rule / label / rule row and the decoder and the renderer are each other's only consumer.
+A compaction, folded from two daemon frames rather than one. The `compacting` falling edge (split from \#654,
+landed the way [`Banner` landed](banner-notice-row.md): one ticket for the type, both decode lanes,
+and the row) now draws the divider itself, stamped with that edge's own `ts`, as soon as the compaction
+ends — reading "Compaction failed" when the edge reported one, else the unreported "Conversation
+compacted" below. A following `compaction_boundary` frame then replaces that divider **in place** (#1358):
+same row position, but the boundary's `ts`, counts and trigger. A `compaction_boundary` with no edge
+before it — the only shape mobile decoded before #1358 — still appends a divider on its own. Lives in this
+same file, beside `SessionBoundaryDelimiterContent`, because it draws the same Figma `Session reset` rule
+/ label / rule row and the decoders and the renderer are each other's only consumer.
 
 ```kotlin
 @Composable
@@ -141,13 +146,17 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
   cutoff and changes no above-delimiter de-emphasis; the row inherits the same `Modifier.alpha(rowAlpha)`
   wrapper as its neighbours purely because every `LazyColumn` item does.
 - **`internal fun compactionBoundaryLabel(item: ThreadItem.CompactionBoundary): String`** — desktop's
-  `compactionBoundaryTitle` without its failed branch (mobile decodes `compaction_boundary` only, never
-  `compact_result`/`compact_error`): `"Conversation compacted"`, then `", $pre → $post tokens"` **only**
-  when both `item.preTokens` and `item.postTokens` are non-null, then `" by you"` **only** when
-  `item.manual`. A missing, `null`, negative, or unsafe-large count claims no size — never `"→ 0"` — because
+  `compactionBoundaryTitle`, including its failed branch since #1358: `item.failed` short-circuits to
+  `"Compaction failed"` with no counts and no "by you", regardless of whatever else the row carries.
+  Otherwise `"Conversation compacted"`, then `", $pre → $post tokens"` **only** when both
+  `item.preTokens` and `item.postTokens` are non-null, then `" by you"` **only** when `item.manual`. A
+  missing, `null`, negative, or unsafe-large count claims no size — never `"→ 0"` — because
   [`ThreadItem.CompactionBoundary`](conversation-repository.md)'s counts are already narrowed to a
   validated `Long?` before this label ever sees them; an unrecognised or empty `trigger` never reaches
-  here at all, since `manual` is a `Boolean` already reduced from the open wire string at decode.
+  here at all, since `manual` is a `Boolean` already reduced from the open wire string at decode. `failed`
+  is itself reduced at decode, from `CompactingPayloadDto.failed()` (`compact_result == "failed"` or a
+  non-empty `compact_error`) — neither claude-authored string reaches this label, the row, or the cache;
+  only the boolean does.
 - **`internal fun compactionTokenCount(value: Long): String`** — desktop's `tokenCount` for an
   already-validated non-negative value: the plain number below 1000, otherwise tenths of a thousand
   rounded half-up (`(value + 50) / 100`, integer arithmetic) with a trailing `.0` dropped and a `k` suffix
@@ -155,27 +164,50 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
   float formatter (`String.format`) would print `"1,3k"` on a German-locale phone, since the fraction
   format is entirely avoidable arithmetic rather than a locale-aware render.
 - **Cached (#1353)** — kept by `cacheableThreadRows` and mapped by `FileConversationCache.toRecord` to
-  `CachedCompaction(preTokens, postTokens, manual, occurredAt)`, a `null` token count omitted on encode
-  and read back as `null`; see [Conversation cache § The contract](conversation-cache.md#the-contract).
-  Before #1353 this row was excluded here and restored only by history replay joined to a live arrival
-  of the same frame on the envelope's `ts` — see [Remote conversation repository § The
+  `CachedCompaction(preTokens, postTokens, manual, occurredAt, failed)`, a `null` token count omitted on
+  encode and read back as `null`; `failed` (#1358) is defaulted `false` on the cached record, so a thread
+  document written before #1358 still decodes and every row it holds reads as not failed. See
+  [Conversation cache § The contract](conversation-cache.md#the-contract). Before #1353 this row was
+  excluded here and restored only by history replay joined to a live arrival of the same frame on the
+  envelope's `ts` — see [Remote conversation repository § The
   compaction-boundary decode+fold seam](remote-conversation-repository-live-stream-and-modals.md#the-compaction-boundary-decodefold-seam-874)
   — which stopped running on a routine reopen once history started loading only on request, so a
   restored thread lost this row until it was cached instead.
 - **Identity is `occurredAt`** (`ThreadItem.CompactionBoundary`'s field name for the protocol's `(type,
   ts)` join key), read by `ThreadRow.listKey()` as `"compaction:$occurredAt"` and by
-  `HistoryPageReducer.holdsCompactionBoundary` / `RemoteConversationRepository.appendCompactionBoundary`,
-  the one shared predicate both writers dedup on — the same three-reader shape [`Banner`](banner-notice-row.md#the-thread-row-type)
-  documents, so a boundary received live and again in a history page never crashes the `LazyColumn` on a
-  duplicate key.
+  `HistoryPageReducer.holdsCompactionBoundary`, the one shared predicate every writer dedups on — the same
+  three-reader shape [`Banner`](banner-notice-row.md#the-thread-row-type) documents, so a boundary
+  received live and again in a history page never crashes the `LazyColumn` on a duplicate key. Since
+  #1358 a divider's `ts` is not fixed for its whole life: a divider drawn from the `compacting` falling
+  edge takes that edge's `ts` first, and if a `compaction_boundary` later replaces it **in place**, the
+  row takes the boundary frame's `ts` instead — one shared fold (`HistoryPageReducer`'s
+  `CompactionFold`/`withCompactingEdge`/`withCompactionBoundary`) runs on both the live lane
+  (`ThreadProjection.applyCompacting`/`applyCompactionBoundary`) and the history reduction
+  (`reduceHistoryPage`), so a divider born on one lane and replayed from a history page always resolves
+  to the same `ts`, live and history never disagree on a key, and merging a page into a thread that
+  already holds a divider adds no duplicate. When a history page races the live lane and already holds
+  the filled-in row under the boundary's `ts`, the live fold removes the still-pending edge divider
+  instead of writing a second row under that same key.
 
 ### Testing
 
-- `CompactionBoundaryLabelTest` (JVM, new): sizes + manual, sizes only, manual only, neither, one count
-  `null`; `compactionTokenCount` below 1000, exact thousands, half-up rounding, and a large value.
-- `CompactionBoundaryDividerTest` (androidTest, new): the label renders; the row has no click action.
+- `CompactionBoundaryLabelTest` (JVM): sizes + manual, sizes only, manual only, neither, one count
+  `null`; a failed row (by `compact_result` or by a markup-and-URL `compact_error`) always reads
+  "Compaction failed" regardless of counts or `manual` (#1358); `compactionTokenCount` below 1000, exact
+  thousands, half-up rounding, and a large value.
+- `CompactionBoundaryDividerTest` (androidTest): the label renders; the row has no click action.
 - `SessionBoundaryDelimiterTest` (androidTest, pre-existing): unchanged and still green — the proof the
   `RuleLabelRow` extraction preserved the session delimiter's own rendering.
+- `ThreadProjectionTest` (#1358): the live lane's `withCompactingEdge`/`withCompactionBoundary` fold —
+  a failed and an unreported falling edge each add one divider at the edge's `ts`; a following boundary
+  replaces the unreported one in place at the boundary's `ts`; a boundary with no edge appends one; a
+  second rising edge forgets the pending divider; a falling edge with no rising edge adds nothing; a
+  boundary whose `ts` a merged history page already holds removes the pending divider instead of
+  duplicating it.
+- `HistoryPageReducerTest` (#1358): the same fold run over a stored page produces the same rows the live
+  lane would, and merging that page into a thread that already holds them live adds none.
+- `FileConversationCacheThreadTest` (#1358): a failed divider round-trips through the cache; a document
+  with no `failed` key reads as not failed.
 
 ## Related
 
@@ -185,7 +217,8 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
   ticket-level record.
 - Spec: `docs/specs/architecture/135-session-boundary-delimiter.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`,
   `docs/specs/architecture/874-compaction-boundary-divider.md`,
-  `docs/specs/architecture/1112-agent-name-reset-and-boundary.md`
+  `docs/specs/architecture/1112-agent-name-reset-and-boundary.md`,
+  `docs/specs/architecture/1358-failed-and-unreported-compaction-dividers.md`
 - Upstream:
   - [`#3`](../codebase/3.md) — `ThreadItem` / `SessionBoundary` / `BoundaryReason` definitions; the input contract this component consumes.
   - [`#9`](../codebase/9.md) — `buildThreadItems` projection that emits `SessionBoundary` markers between session-id deltas (the **Fake** producer, derived from full in-memory history).

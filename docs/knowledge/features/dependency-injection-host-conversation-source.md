@@ -156,7 +156,12 @@ since desktop has no such edge. No new visuals: a busy conversation resolves to 
 - `rowsAdded(conversationId, viewing, token)` (#1361) is the other way a conversation turns
   Unread: a row — a text delta's bubble, a tool call, a banner, a session boundary, a
   compaction divider, a refusal, an attachment offer, a `TurnEnd` — appended to the thread,
-  rather than only a turn ending. Desktop's `isConversationUnread` counts rows the same way;
+  rather than only a turn ending. A compaction divider now counts from two triggers (#1358):
+  the `compacting` falling edge itself appends one as soon as the compaction ends, before any
+  `compaction_boundary` frame arrives and replaces it in place, so ending a background
+  conversation's compaction marks it Unread on that edge alone — `HostConversationSourceAttentionTest`
+  opens the chat before asserting the edge's own clear, the same exception it already held for a
+  `session_transition`. Desktop's `isConversationUnread` counts rows the same way;
   this fold is mobile's trigger change onto mobile's own storage and bounds. A viewed
   conversation is unchanged (opening is what reads it, below), and a conversation already
   Unread keeps its stored position rather than overwriting it — a fresh token there would

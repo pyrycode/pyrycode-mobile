@@ -103,7 +103,7 @@ cache (enforced on write) and [`CachingConversationRepository`](caching-conversa
 
 - **`settledThreadRows(rows)`** drops only the in-flight rows — a `Message` with `isStreaming` or
   whose `toolCall?.status == ToolCallStatus.Running` — leaving `UnrecognizedMessage`,
-  [`Banner`](banner-notice-row.md), [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874)
+  [`Banner`](banner-notice-row.md), [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358)
   and [`ModelRefusal`](model-refusal-row.md) rows and the row count untouched. This is what a thread may
   keep **drawing** once its connection is gone, not what the cache may **hold**: it is also the caching
   repository's merge-base rebase on a disconnect (see that doc), where the bound would otherwise shrink a
@@ -114,7 +114,7 @@ cache (enforced on write) and [`CachingConversationRepository`](caching-conversa
   arrival order, so "newest" is the tail. This is what may reach disk.
 
   **Every other settled row kind is kept, including [`Banner`](banner-notice-row.md),
-  [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) and
+  [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358) and
   [`ModelRefusal`](model-refusal-row.md) (#1353).** Those three used to be dropped here and restored
   by history replay (#873, #874, #875) on every open. Once history loads only on the user's request
   (an owner decision outside this ticket), replay stopped running on a routine reopen, so a cached
@@ -201,7 +201,7 @@ The thread document is the same shape, file-private to `FileConversationCache.kt
 CachedBanner? = null, compaction: CachedCompaction? = null, refusal: CachedRefusal? = null)` —
 exactly one of the five is set, mapping
 `ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` / [`Banner`](banner-notice-row.md) /
-[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) /
+[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358) /
 [`ModelRefusal`](model-refusal-row.md) (never `UnrecognizedMessage`, which `cacheableThreadRows`
 drops before a `CachedThreadRow` is ever built; `ThreadItem.toRecord()` throws if it ever reaches
 it). The three newer fields (#1353) default to `null`, so a document written before this ticket —
