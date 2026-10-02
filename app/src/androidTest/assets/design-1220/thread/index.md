@@ -36,7 +36,7 @@ refusal offer, the photo file behind `retrieveAttachment` and one markdown note.
 shapes, not the frames' photo. Message text is partly the demo seed's, and timestamps follow the emulator's `en-US`
 locale ("5/10/26 - 12:00 PM" for the frames' "13.01.2026 - 13:55"). Neither is compared.
 
-**Routed defects.** #1494 refusal model names · #1496 inset sheets and the task panel's Close · #1497 Run
+**Routed defects.** #1494 refusal model names (fixed; `620:1577` and `646:4707` retaken) · #1496 inset sheets and the task panel's Close · #1497 Run
 configuration · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills · #1485 compact footer ·
 #1512 delimiter rule inset · #1513 photo above text and photo bubble width · #1529 states with no frame (Gaps) ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
@@ -114,48 +114,50 @@ verdicts apply to each of those frames, which list only what differs.
 
 ### Notification text — `620:1577`
 
-- **Owning ticket:** #875 (refusal row), #1290 (message attachment)
-- **Capture:** `notification-text.png` (412x892, 1.0)
+- **Owning ticket:** #875 (refusal row), #1290 (message attachment), #1494 (model names)
+- **Capture:** `notification-text.png` (412x892, 1.0), retaken for #1494 with the menu seeded
+  (`notice-1494-results.xml`, `threadNoticeFramesAt412By892`, 1 executed, 0 failures)
 - **Side-by-side:** `notification-text-side-by-side.png`
 - **Overlay:** `notification-text-overlay.png`
-- **Verdict:** mismatch
+- **Verdict:** match
 - Reference components: `figma-620-1576.png`, `figma-390-7145.png`.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the refusal title wraps to two lines where the frame's is one |
+| Geometry | match: "Refused on Opus, continued on Sonnet" on one line, as the frame |
 | Padding | match |
 | Spacing | match: Show details sits 4 px under the title |
-| Typography | mismatch: models are named by raw identifier in a monospace span ("`claude-opus-5-5`"); the frame uses display names in the body style ("Opus") |
+| Typography | match: the menu's labels "Opus" and "Sonnet" in the title's body style and colour (#1494). An identifier the menu does not know keeps its monospace span |
 | Colour | match |
 | Borders | match |
 | Radii | match |
 | Icon paths | match: document outline with folded corner and "PDF" |
 | Component state | match: collapsed refusal with Show details |
 
-- **Routed:** #1494
+- **Routed:** none
 
 ### Refusal switch back — `646:4707`
 
-- **Owning ticket:** #1360
-- **Capture:** `refusal-switch-back.png` (412x892, 1.0)
+- **Owning ticket:** #1360, #1494 (model names)
+- **Capture:** `refusal-switch-back.png` (412x892, 1.0), retaken for #1494 with the menu seeded
+  (`notice-1494-results.xml`, 1 executed, 0 failures)
 - **Side-by-side:** `refusal-switch-back-side-by-side.png`
 - **Overlay:** `refusal-switch-back-overlay.png`
-- **Verdict:** mismatch
+- **Verdict:** match
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the two-line title pushes the button down one line; the button is wider for the identifier |
+| Geometry | match: one-line title; the button is about 150 px wide, as the frame's |
 | Padding | match: 16 px button side padding |
 | Spacing | match: 12 px from Show details to the button |
-| Typography | mismatch: "Switch back to `claude-opus-5-5`" with a monospace identifier, frame "Switch back to Opus" |
+| Typography | match: "Switch back to Opus" in the button's style, the menu label its own span (#1494) |
 | Colour | match: outlined primary button |
 | Borders | match: 1 px outline |
 | Radii | match |
 | Icon paths | match (none) |
 | Component state | match: offer armed, not pending |
 
-- **Routed:** #1494
+- **Routed:** none
 
 ### Session notice — `627:5466`
 
