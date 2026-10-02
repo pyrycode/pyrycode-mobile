@@ -50,9 +50,76 @@ fun onOverflowEvent(event: ThreadEvent) {
         ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false // added in #226
         ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true // added in #208 — opens the #137 picker
         ThreadEvent.NewSession -> sendNewSession()                        // added in #540 — see below, not guarded
+        ThreadEvent.EditChannel -> openChannelEditor()                    // added in #1561 — see below
+        is ThreadEvent.ChannelEditSubmit ->                               // added in #1561
+            channelEditor.submit(event.name, event.systemPrompt, event.muted)
+        ThreadEvent.ChannelEditArchive -> channelEditor.archive()         // added in #1561
+        ThreadEvent.ChannelEditDismiss -> channelEditor.dismiss()         // added in #1561
     }
 }
 ```
+
+### EditChannel — `ChannelEditorController` (#1561)
+
+A channel's Rename slot became Edit (Figma `675:5883`): the four events above delegate straight to a
+`ChannelEditorController` instance (`ui/conversations/list/ChannelEditorController.kt`) the VM
+constructs in its own `init`, exactly the class [`ChannelListViewModel`](channel-list-viewmodel.md#channeleditorcontroller-667--1561)
+built for its Channels row pencil (#667) and now shares rather than copies:
+
+```kotlin
+private val channelEditor =
+    ChannelEditorController(
+        scope = viewModelScope,
+        isHostLive = { hostAvailable.value },
+        repositoryFor = { repository },
+        awaitRepository = { hostAvailable.first { it }; repository },
+        onArchived = { leaveForList() },
+    )
+```
+
+Three differences from the list's instance, all a consequence of the thread already holding one fixed
+repository and one fixed host rather than resolving either per press: `isHostLive` and `awaitRepository`
+read this VM's existing `hostAvailable: StateFlow<Boolean>` instead of a host snapshot lookup;
+`repositoryFor` always returns the same `repository`, never re-resolved by server id; and `onArchived`
+calls `leaveForList()` — the same navigation `sendArchive()` (this doc, above) drives on a successful
+`Archive` — so a confirmed archive from the modal leaves the thread exactly as the menu's own Archive
+does, through one shared exit rather than two. `state` folds `channelEditor.state` and `hostAvailable`
+into `ThreadUiState.channelEditor` / `.hostAvailable` through one more `combine` stage chained after the
+existing `mcpStatusReading` fold (see [`ThreadUiState`](thread-screen-how-it-works-state.md)) — not inside
+the five-arity ceiling `TransientDialogs` already sits at, since this fold is chained rather than joining
+that group.
+
+`EditChannel`'s own handler, `openChannelEditor()`, is not a one-line delegation like the other three —
+it has its own async unknown-channel check, since the thread (unlike the list) does not keep a live
+snapshot of every channel's name and mute flag on hand for a synchronous lookup:
+
+```kotlin
+private fun openChannelEditor() {
+    viewModelScope.launch {
+        val channel = conversations.first().firstOrNull { it.id == conversationId && it.isPromoted }
+        if (channel == null) {
+            RelayLog.d { "event=channel_editor_open_rejected code=unknown_channel" }
+            return@launch
+        }
+        channelEditor.open(HostConversationTarget(serverId, conversationId), channel.name, channel.muted)
+    }
+}
+```
+
+`conversations` is this VM's own existing conversation-list flow (already collected elsewhere in the
+class); `firstOrNull { it.id == conversationId && it.isPromoted }` is the guard that keeps `EditChannel` a
+no-op on a discussion — reachable only if a caller dispatches the event directly, since
+[`ThreadOverflowMenu`](thread-overflow-menu.md) itself only ever emits it when `isPromoted` is already
+true. A channel's new name reaches the thread title the same way a rename always has — through
+`conversations` re-emitting off the repository's own stream — so this method patches nothing locally.
+
+**No disconnect-sweep parity with the list's #1336 rule.** `ChannelListViewModel`'s `init` block calls
+`channelEditor.closeUnless { it.serverId in live }` on every snapshot so a host that drops closes its own
+open editor; `ThreadViewModel` does not call the equivalent here, so the thread's Edit channel modal stays
+open across a host disconnect and relies on `hostAvailable` to disable its OK and Archive, the same gate
+the list's other, non-#1336-swept modals use. This was a considered, not accidental, omission — see
+[Open Questions](../../specs/architecture/1561-thread-edit-channel.md) in the ticket's plan — revisit only
+if a later ticket asks for it.
 
 - **`Archive` was the only side effect through [#252](../codebase/252.md); [#141](../codebase/141.md) added `RenameSubmit`; [#142](../codebase/142.md) added `SaveAsChannelSubmit`; [#227](../codebase/227.md) added `DeleteConfirm`.** Through [#549](../codebase/549.md) all four read the conversation id from `state.value` (one-grep convention with `sendMessage`) and launched via `launchGuardedRepoCall` on `viewModelScope` (guarded since [#490](../codebase/490.md)); **[#556](../codebase/556.md) moved `Archive` out of this group** onto its own `sendArchive()` (see below) — the mutation-before-`send(PopBack)` ordering below still describes `DeleteConfirm` (and described `Archive` pre-#556). `RenameSubmit` / `SaveAsChannelSubmit` carry no follow-on side effect; **`DeleteConfirm` does** — since [#227](../codebase/227.md) it first closes the sheet (`pendingChannelInfo.value = false`), then inside the launch runs the suspend repo call **before** `navigationChannel.send(ThreadNavigation.PopBack)`. That mutation-before-`send` ordering is load-bearing: once `MainActivity` consumes `PopBack` and calls `popBackStack()`, the VM's `viewModelScope` is cancelled, but the mutation has already returned (same ordering `ChannelListViewModel.CreateDiscussionTapped` relies on; full rationale in [the per-ticket notes](../codebase/227.md#lessons-learned)). `Archive`'s own `sendArchive()` ([#556](../codebase/556.md)) preserves the same mutation-before-`PopBack` ordering, just inside its own coroutine rather than the guarded block — see the dispatcher code block above and the `Archive` bullet in the surfacing note below. **`ChangeWorkspace` left the no-op group in [#208](../codebase/208.md)** — it flips the existing `pendingWorkspacePicker: MutableStateFlow<Boolean>` (the [`WorkspacePicker`](workspace-picker.md) host-visibility flag introduced by [#137](../codebase/137.md)) to `true`, opening the same picker the empty-thread chip opens; the picked / dismissed handlers (`onWorkspacePicked` / `onWorkspacePickerDismissed`) are reused as-is — no parallel flow, no new field, no new render call (see [the per-ticket notes](../codebase/208.md)). **`NewSession` left the no-op group last, in [#540](../codebase/540.md)** — a private `sendNewSession()` launches `repository.startNewSession(conversationId)` (the VM's own id, `workspace` defaulted null, return discarded) inside a two-catch try: `CancellationException` rethrown first (JVM: it extends `IllegalStateException`, so ordering is load-bearing), then `IllegalStateException` (not-connected) sends once on a new one-shot `newSessionErrorChannel` → `newSessionErrors: Flow<Unit>`, collected by [`ThreadScreen`](thread-screen.md) as a second snackbar (the `modalSendErrors` idiom cloned, fixed local string `new_session_failed`, never the exception message). Success is passive — no repo reply exists to await; the [#336](../codebase/336.md) fold renders the session-boundary delimiter when `session_transition` later arrives. **`ChannelInfo` left the no-op group in [#226](../codebase/226.md)** — it flips a private `pendingChannelInfo: MutableStateFlow<Boolean>` (the [`ChannelInfoSheet`](channel-info-sheet.md) host-visibility flag), with `ChannelInfoDismiss` flipping it back. **`Delete` / `DeleteDismiss` ([#227](../codebase/227.md))** flip a fourth `pendingDeleteConfirm: MutableStateFlow<Boolean>` (the delete-confirmation `AlertDialog` flag); `Delete` opens it with **no repo call** (AC #2), `DeleteDismiss` closes it only (AC #3). All four transient flags route through the same `transientDialogs` pre-combiner (widened 3→4 args in #227, keeping the outer `state` `combine` at five-arity).
 - **One-shot pop-back via `Channel` + `receiveAsFlow`** ([#227](../codebase/227.md)). The VM owns `private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)` exposed as `val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()`; `Archive` / `DeleteConfirm` `send(PopBack)` after mutating, and `MainActivity` collects it via `LaunchedEffect(vm)` to call `navController.popBackStack()`. A `Channel` (not a `StateFlow<Boolean>`) because it delivers each element once and never replays — on rotation the consumed `PopBack` is gone, so the thread doesn't pop a second time (AC #5). Copies the `ChannelListViewModel` nav pattern verbatim; the collection-site rule (NavHost concern → collect in `MainActivity`, in-screen effect → collect in-screen) is documented in [`ThreadScreen`](thread-screen-how-it-works-sheets.md#channelinfosheet-archivedelete--pop-back-nav-post-227).

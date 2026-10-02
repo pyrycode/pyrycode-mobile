@@ -47,13 +47,25 @@ fun ThreadOverflowMenu(
                     onEvent(ThreadEvent.NewSession)
                 },
             )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.thread_overflow_rename)) },
-                onClick = {
-                    onDismiss()
-                    onEvent(ThreadEvent.Rename)
-                },
-            )
+            // #1561, Figma `675:5883`: a channel edits its name, prompt and mute in Edit channel; a
+            // discussion keeps the rename dialog.
+            if (isPromoted) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.thread_overflow_edit)) },
+                    onClick = {
+                        onDismiss()
+                        onEvent(ThreadEvent.EditChannel)
+                    },
+                )
+            } else {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.thread_overflow_rename)) },
+                    onClick = {
+                        onDismiss()
+                        onEvent(ThreadEvent.Rename)
+                    },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.thread_overflow_archive)) },
                 onClick = {

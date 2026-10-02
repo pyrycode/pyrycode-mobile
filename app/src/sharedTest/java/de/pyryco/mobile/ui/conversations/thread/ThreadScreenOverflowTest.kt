@@ -16,7 +16,10 @@ import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.MemorySearchAvailability
 import de.pyryco.mobile.data.repository.MemorySearchProvider
 import de.pyryco.mobile.data.repository.MemorySearchReport
+import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.list.ChannelEditorState
+import de.pyryco.mobile.ui.conversations.list.ChannelPromptReading
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -116,7 +119,7 @@ class ThreadScreenOverflowTest {
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
 
         composeTestRule.onNodeWithText("Reset session").assertIsDisplayed()
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_edit)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
@@ -168,15 +171,48 @@ class ThreadScreenOverflowTest {
     }
 
     @Test
-    fun tapping_rename_fires_event_and_closes_menu() {
+    fun tapping_edit_fires_event_and_closes_menu() {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).performClick()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_edit)).performClick()
 
-        assertEquals(listOf(ThreadEvent.Rename), events)
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertDoesNotExist()
+        assertEquals(listOf(ThreadEvent.EditChannel), events)
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_edit)).assertDoesNotExist()
+    }
+
+    @Test
+    fun edit_channel_modal_shows_while_open_and_reports_ok_and_cancel() {
+        val events = mutableListOf<ThreadEvent>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state =
+                        baseState().copy(
+                            channelEditor =
+                                ChannelEditorState(
+                                    serverId = "host-a",
+                                    conversationId = "c1",
+                                    savedName = "Personal",
+                                    prompt = ChannelPromptReading.Read("stored", SessionPromptStatus.NoSession),
+                                    savedMuted = true,
+                                ),
+                        ),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    onOverflowEvent = { events += it },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.edit_channel_title)).assertIsDisplayed()
+        composeTestRule.onNodeWithText("OK").performClick()
+        composeTestRule.onNodeWithText("Cancel").performClick()
+
+        assertEquals(listOf(ThreadEvent.ChannelEditSubmit("Personal", "stored", muted = true), ThreadEvent.ChannelEditDismiss), events)
     }
 
     @Test

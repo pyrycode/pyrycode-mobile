@@ -77,6 +77,7 @@ import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -855,6 +856,29 @@ fun ThreadScreen(
             initialName = state.displayName,
             onSubmit = { onOverflowEvent(ThreadEvent.RenameSubmit(it)) },
             onDismiss = { onOverflowEvent(ThreadEvent.RenameDismiss) },
+        )
+    }
+    state.channelEditor?.let { editor ->
+        // #1561: the list's Edit channel binding, on this thread's host. Both failure strings are static: the
+        // shell announces them aloud, and the daemon's message never reaches this screen.
+        EditChannelModal(
+            conversationId = editor.conversationId,
+            initialName = editor.savedName,
+            prompt = editor.prompt,
+            initialMuted = editor.savedMuted,
+            onSubmit = { name, systemPrompt, muted ->
+                onOverflowEvent(ThreadEvent.ChannelEditSubmit(name, systemPrompt, muted))
+            },
+            onArchiveRequested = { onOverflowEvent(ThreadEvent.ChannelEditArchive) },
+            onDismissRequest = { onOverflowEvent(ThreadEvent.ChannelEditDismiss) },
+            hostAvailable = state.hostAvailable,
+            loading = editor.saving,
+            error =
+                when {
+                    editor.archiveFailed -> stringResource(R.string.archive_failed)
+                    editor.failed -> stringResource(R.string.edit_channel_save_failed)
+                    else -> null
+                },
         )
     }
     state.saveAsChannelDialog?.let { dialogState ->
