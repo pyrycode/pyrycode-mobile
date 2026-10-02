@@ -64,3 +64,12 @@ Device-only (real activity, real pixels, IME, `wm` resizing), on the full image:
 
 - Whether the markdown reader and composer attachment tiles are reachable in the demo graph without a production change. If not, they are gaps.
 - Whether the base frame's thinking label holds long enough to capture after `TurnState.Thinking`.
+
+## Revisions
+
+### 2026-10-02 — methods, thread inputs and open questions
+
+- **Methods.** The seven planned methods became six: `threadStatusFramesAt412By892`, `threadNoticeFramesAt412By892`, `backgroundTaskPanelAt412By892`, `runConfigurationAndReaderAt412By892`, `menusAndKeyboardAt412By892` and `compactAt320By700`. The reader shares a launch with Run configuration; coverage is unchanged.
+- **Thread inputs.** The first captures showed no "Thinking…" label: the status band reads `observeTurnPhase`, which the live event alone does not set. The class's override now also serves `observeTurnPhase` and `observeUsageLimit` (for `568:3139`'s usage pill). The composer strip is staged through the view model's `addPickedAttachments`, with MediaStore PNGs so image thumbnails load; `@After` removes the staged files. The draft is set to the frames' "My message" on open, because the draft store outlives one test in the process. Task and model fixtures copy the frames' data, and model rows carry real resolved identifiers.
+- **Compact comparisons.** Compact captures have no 320x700 frame, so they get no side-by-side or overlay; the index checks them for clipping, overlap and reachability.
+- **Open questions resolved.** The markdown reader is reachable through `onOpenMarkdownLink` over the override's `readWorkspaceFile`, and composer tiles through `addPickedAttachments`; neither is a gap. The thinking label holds once the turn phase is held.
