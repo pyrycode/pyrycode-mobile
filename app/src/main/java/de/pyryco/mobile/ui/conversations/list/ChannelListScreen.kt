@@ -804,6 +804,7 @@ private fun LazyListScope.treeHost(
             key = { _, conversation -> treeItemKey("conversation", section.name, host.serverId, conversation.id) },
         ) { rowIndex, conversation ->
             val target = HostConversationTarget(host.serverId, conversation.id)
+            val selected = target == hostState.selected
             // Inset on the start only: rows end on the host row's edge, so every pen lines up with the host's.
             Box(
                 modifier =
@@ -816,12 +817,13 @@ private fun LazyListScope.treeHost(
                     conversationName =
                         conversation.name?.takeIf { it.isNotBlank() }
                             ?: stringResource(R.string.untitled_discussion),
-                    selected = target == hostState.selected,
+                    selected = selected,
                     onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
                     modifier = Modifier.testTag(section.rowTestTag),
                     attention = entry.attentionFor(conversation.id),
+                    // 15:8 draws the pen on its Hover row only; on the phone that is the selected row (#1523).
                     onEditTapped =
-                        if (!connected) {
+                        if (!connected || !selected) {
                             null
                         } else {
                             when (section) {

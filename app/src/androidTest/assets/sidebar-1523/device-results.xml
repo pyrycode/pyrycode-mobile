@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="5" failures="0" errors="0" skipped="0" time="14.471" timestamp="2026-10-02T14:04:36" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.list.SharedDarkColourCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="3.826" timestamp="2026-10-02T14:04:36" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="sidebarAt412By892" classname="de.pyryco.mobile.ui.conversations.list.SharedDarkColourCaptureTest" time="3.826" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest" tests="4" failures="0" errors="0" skipped="0" time="9.309" timestamp="2026-10-02T14:04:36" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="compactCoordinateTapsOpenTheIntendedHostEditor" classname="de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest" time="1.992" />
+    <testcase name="treeAt412By892" classname="de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest" time="2.483" />
+    <testcase name="enlargedTextAt412By892" classname="de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest" time="2.461" />
+    <testcase name="compactAt320By800" classname="de.pyryco.mobile.ui.conversations.list.SidebarTreeCaptureTest" time="2.373" />
+  </testsuite>
+</testsuites>
