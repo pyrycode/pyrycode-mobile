@@ -677,9 +677,11 @@ class RemoteConversationRepository(
                 }
             }
             TYPE_COMPACTING -> {
-                // Context-compaction status (#596): see [CompactingProjection.apply].
+                // Context-compaction status (#596): see [CompactingProjection.apply]. The same frame folds
+                // the thread's compaction divider (#1358): see [ThreadProjection.applyCompacting].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     compactingProjection.apply(envelope)
+                    threadProjection.applyCompacting(envelope)
                 }
             }
             TYPE_RATE_LIMITED -> {
@@ -821,7 +823,7 @@ class RemoteConversationRepository(
                 // A finished compaction (#874, pyrycode#2237). Same `interactive` gate as its thread-row
                 // siblings (fail-closed). Decode-or-drop: a malformed payload or ts yields null → drop one
                 // envelope, the lone collector survives. Routes strictly by the payload's conversation_id.
-                // Exactly ONE write — appendCompactionBoundary folds the divider — and inert toward every
+                // Exactly ONE write — withCompactionBoundary fills the pending divider or appends one — and inert toward every
                 // neighbour: `compacting` alone drives the status indicator, so this arm clears no compacting
                 // state, emits no liveSessionEvents, and opens, closes or alters no turn. Nothing logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
@@ -1625,8 +1627,9 @@ class RemoteConversationRepository(
         /**
          * Capability-gated status event: claude is auto-compacting a conversation's context
          * `{conversation_id, active}` (#596, pyrycode#1074) — `active` is the edge (`true` onset /
-         * `false` finished). Banner-only: the upstream detector streams no progress, so the payload
-         * carries no counter, percent, or ETA. Unlike [TYPE_STALL] this **has** a clearing edge on the
+         * `false` finished). It drives the status indicator, and its falling edge also draws a thread
+         * compaction divider, failed or unreported (#1358). The upstream detector streams no progress, so
+         * the payload carries no counter, percent, or ETA. Unlike [TYPE_STALL] this **has** a clearing edge on the
          * wire, so the state is cleared explicitly rather than inferred from forward progress.
          */
         const val TYPE_COMPACTING = "compacting"

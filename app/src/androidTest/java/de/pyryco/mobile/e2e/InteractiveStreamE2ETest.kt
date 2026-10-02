@@ -3900,7 +3900,8 @@ class InteractiveStreamE2ETest {
      *    publishes for the chat on the new connection, and picking the first puts its completion in the
      *    composer. The rows, labels and completion come from the production rules, not restated here.
      *  * **Compaction feedback.** Compact session shows the compacting indicator, then the divider for a
-     *    compaction by you, and the indicator goes.
+     *    compaction by you, and the indicator goes. The thread holds exactly one compaction divider (#1358):
+     *    the boundary fills in the divider the falling edge drew rather than adding a second.
      *
      * **Two real-claude turns**: the ping and the compaction.
      */
@@ -3976,15 +3977,26 @@ class InteractiveStreamE2ETest {
         } catch (e: ComposeTimeoutException) {
             throw AssertionError("no compaction divider followed the compacting indicator", e)
         }
-        val dividerText =
+
+        // #1358: the falling edge draws "Conversation compacted" first and the `compaction_boundary` after it
+        // fills that same divider in, so wait for the filled-in text rather than reading the first one shown.
+        fun dividerText(): String =
             composeTestRule
                 .onAllNodes(divider)
                 .onFirst()
                 .fetchSemanticsNode()
                 .config[SemanticsProperties.Text]
                 .joinToString("") { it.text }
-        assertTrue("the divider does not credit the compaction to you", dividerText.endsWith(COMPACTION_BY_YOU))
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { dividerText().endsWith(COMPACTION_BY_YOU) }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("the divider does not credit the compaction to you", e)
+        }
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(compacting).fetchSemanticsNodes().isEmpty() }
+        // One compaction leaves one divider: the boundary replaced the edge's divider rather than adding a second.
+        val anyDivider =
+            (hasText(COMPACTION_DIVIDER, substring = true) or hasText(COMPACTION_FAILED)) and hasAnyAncestor(hasScrollToNodeAction())
+        composeTestRule.onAllNodes(anyDivider).assertCountEquals(1)
     }
 
     /**
@@ -7544,6 +7556,7 @@ class InteractiveStreamE2ETest {
         // compaction, ends with the second.
         const val COMPACTION_DIVIDER = "Conversation compacted"
         const val COMPACTION_BY_YOU = " by you"
+        const val COMPACTION_FAILED = "Compaction failed"
 
         // A `python3` command, so it needs permission (see WAIT_PROMPT) and no `sleep` refusal applies, run in
         // the background so it outlives the turn. Forty seconds is long enough to open the menu while it runs.

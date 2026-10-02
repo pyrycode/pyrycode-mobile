@@ -213,7 +213,7 @@ case).
   compaction, distinct from this component's *in-progress* `compacting` edge. The two never interact:
   `compacting` alone still drives this indicator (unchanged by #874), the divider is folded and rendered
   independently, and neither arm reads or clears the other's state. See [Session boundary delimiter §
-  CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874).
+  CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874-1358).
 
 ## Related
 

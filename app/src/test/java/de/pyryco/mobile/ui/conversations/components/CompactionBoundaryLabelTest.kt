@@ -29,6 +29,20 @@ class CompactionBoundaryLabelTest {
         assertEquals("Conversation compacted", compactionBoundaryLabel(boundary(null, null, manual = false)))
     }
 
+    // #1358: desktop's failed branch wins over any count or trigger.
+    @Test
+    fun label_failed_readsCompactionFailed() {
+        val failed =
+            ThreadItem.CompactionBoundary(
+                null,
+                null,
+                manual = false,
+                occurredAt = Instant.parse("2026-09-23T12:00:00Z"),
+                failed = true,
+            )
+        assertEquals("Compaction failed", compactionBoundaryLabel(failed))
+    }
+
     @Test
     fun label_zeroIsAStatedCount_notAMissingOne() {
         assertEquals("Conversation compacted, 24k → 0 tokens", compactionBoundaryLabel(boundary(24000, 0, manual = false)))

@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.BannerPayloadDto
+import de.pyryco.mobile.data.network.CompactingPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
@@ -13,6 +14,7 @@ import de.pyryco.mobile.data.network.ModelRefusalNoFallbackPayloadDto
 import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
 import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
+import de.pyryco.mobile.data.network.failed
 import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toRow
 import kotlinx.coroutines.flow.Flow
@@ -72,6 +74,14 @@ internal class ThreadProjection {
      * [mintedMessageIds], and dropped with the thread by [remove].
      */
     private val endedTurns = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+
+    /**
+     * `conversationId -> where its compaction fold stands` (#1358): whether a compaction is open, and the
+     * divider its falling edge drew that the next `compaction_boundary` fills in ([CompactionFold]). Written
+     * only by the inbound collector, through [foldCompaction], and dropped by [remove]. Connection-scoped
+     * like the thread: a fresh connection starts with no compaction open, as desktop does.
+     */
+    private val compactionFolds = MutableStateFlow<Map<String, CompactionFold>>(emptyMap())
 
     /**
      * `conversationId -> the message ids this device minted and echoed into the thread` (#781) — the
@@ -143,9 +153,30 @@ internal class ThreadProjection {
         decodeBanner(envelope)?.let { (conversationId, row) -> appendBanner(conversationId, row) }
     }
 
-    /** Apply one `compaction_boundary` envelope (#874): decode it, then fold its divider. A malformed one is dropped. */
+    /**
+     * Apply one `compaction_boundary` envelope (#874): decode it, then fold its divider through
+     * [withCompactionBoundary], which fills in the divider a falling edge left pending (#1358). A malformed
+     * one is dropped.
+     */
     fun applyCompactionBoundary(envelope: Envelope) {
-        decodeCompactionBoundary(envelope)?.let { (conversationId, row) -> appendCompactionBoundary(conversationId, row) }
+        decodeCompactionBoundary(envelope)?.let { (conversationId, row) ->
+            foldCompaction(conversationId) { rows, fold -> rows.withCompactionBoundary(fold, row) }
+        }
+    }
+
+    /**
+     * Apply one `compacting` envelope to the thread (#1358): a falling edge draws a divider through
+     * [withCompactingEdge], stamped with the envelope's `ts`. A malformed payload or `ts` drops the frame for
+     * the thread only.
+     *
+     * Unlike this class's other frames, this one also feeds [CompactingProjection], which decodes it on its
+     * own: its `apply(envelope)` is kept as it is, so the status indicator is untouched by this fold. Only the
+     * failure boolean leaves the decode; the claude-authored outcome strings never do.
+     */
+    fun applyCompacting(envelope: Envelope) {
+        decodeCompactingEdge(envelope)?.let { (conversationId, edge) ->
+            foldCompaction(conversationId) { rows, fold -> rows.withCompactingEdge(fold, edge.active, edge.failed, edge.occurredAt) }
+        }
     }
 
     /**
@@ -266,19 +297,25 @@ internal class ThreadProjection {
     }
 
     /**
-     * End-append a [ThreadItem.CompactionBoundary] to [conversationId]'s thread (#874), **unless the thread
-     * already holds one with its `ts`** ([holdsCompactionBoundary]) — the [appendBanner] shape, for the same
-     * reason: the daemon stamps one `ts` per compaction and hands it to both lanes, so a repeat is the same
-     * boundary arriving twice. The check runs inside the one atomic [MutableStateFlow.update].
+     * Run one compaction [step] on [conversationId]'s thread and its [compactionFolds] entry (#874, #1358).
+     * The step runs inside the one atomic [MutableStateFlow.update], so a concurrent merge cannot slip a twin
+     * divider in between check and write, and an unchanged thread writes nothing. The next fold depends on
+     * the previous fold and the frame only, never on the thread, so a retried update yields the same fold;
+     * it is stored after the update by the single inbound collector, the only writer.
      */
-    private fun appendCompactionBoundary(
+    private fun foldCompaction(
         conversationId: String,
-        row: ThreadItem.CompactionBoundary,
+        step: (List<ThreadItem>, CompactionFold) -> Pair<List<ThreadItem>, CompactionFold>,
     ) {
+        val fold = compactionFolds.value[conversationId] ?: CompactionFold()
+        var next = fold
         threadByConversation.update { threads ->
             val thread = threads[conversationId].orEmpty()
-            if (thread.holdsCompactionBoundary(row)) threads else threads + (conversationId to (thread + row))
+            val (rows, stepped) = step(thread, fold)
+            next = stepped
+            if (rows === thread) threads else threads + (conversationId to rows)
         }
+        if (next != fold) compactionFolds.update { it + (conversationId to next) }
     }
 
     /**
@@ -578,6 +615,7 @@ internal class ThreadProjection {
      */
     fun remove(conversationId: String) {
         endedTurns.update { it - conversationId }
+        compactionFolds.update { it - conversationId }
         threadByConversation.update { it - conversationId }
     }
 
@@ -664,6 +702,26 @@ internal class ThreadProjection {
         try {
             val dto = MobileJson.decodeFromJsonElement<CompactionBoundaryPayloadDto>(envelope.payload)
             dto.conversationId to dto.toRow(occurredAt = Instant.parse(envelope.ts))
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /** One `compacting` edge as the thread fold reads it (#1358): the outcome strings reduced to [failed]. */
+    private class CompactingEdge(
+        val active: Boolean,
+        val failed: Boolean,
+        val occurredAt: Instant,
+    )
+
+    /**
+     * Decode one `compacting` envelope (#1358) to its routing conversation id and its [CompactingEdge], or
+     * **null** when it cannot be folded. A malformed `ts` drops the frame as a malformed payload does. Mirrors
+     * [decodeCompactionBoundary], and like it logs nothing.
+     */
+    private fun decodeCompactingEdge(envelope: Envelope): Pair<String, CompactingEdge>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<CompactingPayloadDto>(envelope.payload)
+            dto.conversationId to CompactingEdge(dto.active, dto.failed(), Instant.parse(envelope.ts))
         } catch (e: IllegalArgumentException) {
             null
         }

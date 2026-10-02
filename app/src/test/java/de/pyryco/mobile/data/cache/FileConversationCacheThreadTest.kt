@@ -236,7 +236,8 @@ class FileConversationCacheThreadTest {
         pre: Long? = 24000,
         post: Long? = 3000,
         manual: Boolean = true,
-    ) = ThreadItem.CompactionBoundary(pre, post, manual, Instant.parse(at))
+        failed: Boolean = false,
+    ) = ThreadItem.CompactionBoundary(pre, post, manual, Instant.parse(at), failed)
 
     private fun refusal(
         at: String,
@@ -254,6 +255,7 @@ class FileConversationCacheThreadTest {
                     banner("2026-09-22T10:00:01Z", BannerLevel.Notice, truncated = true),
                     compaction("2026-09-22T10:00:02Z"),
                     compaction("2026-09-22T10:00:03Z", pre = null, post = null, manual = false),
+                    compaction("2026-09-22T10:00:03.5Z", pre = null, post = null, manual = false, failed = true),
                     boundary(),
                     refusal("2026-09-22T10:00:04Z"),
                     refusal("2026-09-22T10:00:05Z", fallback = null, truncated = true),
@@ -287,6 +289,21 @@ class FileConversationCacheThreadTest {
 
             val expected = message("m0", role = Role.User).let { it.copy(message = it.message.copy(content = "hi")) }
             assertEquals(listOf(expected, boundary()), cache().readThread("server-a", "conv-1"))
+        }
+
+    // #1358: a divider saved before failures were kept has no failed key and reads as not failed.
+    @Test
+    fun `a compaction row saved without the failed key reads as not failed`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            threadFiles().single().writeText(
+                """{"version":1,"rows":[{"compaction":{"manual":false,"occurredAt":"2026-09-22T10:00:02Z"}}]}""",
+            )
+
+            assertEquals(
+                listOf(compaction("2026-09-22T10:00:02Z", pre = null, post = null, manual = false)),
+                cache().readThread("server-a", "conv-1"),
+            )
         }
 
     @Test
