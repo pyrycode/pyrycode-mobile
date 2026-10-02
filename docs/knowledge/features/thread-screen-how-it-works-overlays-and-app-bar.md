@@ -129,7 +129,7 @@ A clickable `Surface` inside a 24dp band would otherwise lay out at M3's 48dp mi
 double the band's height — `CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides
 Dp.Unspecified)` around the pill keeps the layout at Figma's 24dp while Compose's hit-test still expands the
 pill's *touch* bounds to 48dp, so the tap target is unaffected. This is the app's first use of that local.
-`TaskCountPillTest` (`app/src/sharedTest/.../thread/`, `@GraphicsMode(NATIVE)` — see [Compose evidence](development-verification.md#compose-evidence))
+`TaskCountPillTest` (`app/src/sharedTest/.../thread/`, `@GraphicsMode(NATIVE)` — see [Compose evidence](development-verification-compose-evidence.md#compose-evidence))
 proves the band's collapse is exact rather than assumed: it measures the newest message row's bottom edge
 (not the input field's top — the composer is a bottom-anchored `bottomBar`, so only the band's own height
 moves that edge) at zero tasks, again once the pill raises it by exactly 32dp (the pill's 24dp plus the
