@@ -19,9 +19,12 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -50,6 +53,7 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.STATUS_GLYPH_TEST_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -183,7 +187,7 @@ class ThreadScreenModalTest {
         composeTestRule.runOnIdle { accepted = true }
         assertEquals(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         composeTestRule.onNodeWithTag("permission-request-card").assertDoesNotExist()
-        composeTestRule.onNode(hasScrollToIndexAction()).performScrollToIndex(32)
+        composeTestRule.onNode(hasScrollToIndexAction()).performScrollToIndex(31)
         // #1352: reaching the oldest row is not a pull, so it asks nothing.
         composeTestRule.runOnIdle { assertEquals(0, demands) }
         composeTestRule.runOnIdle { modal = openModal().copy(modalId = "m2") }
@@ -304,7 +308,8 @@ class ThreadScreenModalTest {
         composeTestRule
             .onNodeWithText(text)
             .fetchSemanticsNode()
-            .boundsInRoot.top
+            // Unclipped, so a row scrolled above the message area still orders (#1483 made the card taller).
+            .positionInRoot.y
 
     @Test
     fun context_rows_render_between_the_prompt_and_the_options_in_desktop_order() {
@@ -470,8 +475,8 @@ class ThreadScreenModalTest {
             ).performScrollTo()
             .assertIsEnabled()
             // #1312: the always-present status band leaves the scroll stopping with this row at the message
-            // area's top, under the Offline retry pill; tap its lower part, which the pill does not cover.
-            .performTouchInput { click(percentOffset(0.5f, 0.85f)) }
+            // area's top, under the Offline retry pill at its end; tap its start, which the pill does not cover.
+            .performTouchInput { click(percentOffset(0.1f, 0.5f)) }
         composeTestRule.runOnIdle {
             assertTrue("no option may be forwarded while offline", tapped.isEmpty())
             assertEquals(0, cancelled)
@@ -693,6 +698,97 @@ class ThreadScreenModalTest {
         // second tap of the same option confirms.
         composeTestRule.onNodeWithText("Allow once").performClick()
         assertEquals(listOf("allow_once"), sent)
+    }
+
+    // ---- #1483: the Questions and permissions frames (`639:2242`, `639:2882`) ------------------------
+
+    @Test
+    fun title_is_the_cards_first_line_and_keeps_heading_semantics() {
+        setContent(openModal())
+
+        composeTestRule
+            .onNode(hasTestTag("permission-request-title") and hasAnyAncestor(hasTestTag("permission-request-card")))
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))
+            .assertTextEquals("Permission required")
+        assertTrue("the title sits above the prompt", top("Permission required") < top(openModal().prompt))
+    }
+
+    @Test
+    fun cancel_is_start_aligned_with_the_card() {
+        setContent(openModal())
+
+        val card = composeTestRule.onNodeWithTag("permission-request-card").fetchSemanticsNode().boundsInRoot
+        val cancel = composeTestRule.onNodeWithText(string(R.string.modal_cancel)).fetchSemanticsNode().boundsInRoot
+        assertEquals(card.left, cancel.left)
+    }
+
+    @Test
+    fun blocked_path_row_is_labelled_folder() {
+        setContent(openModal().copy(context = ModalContext(blockedPath = "/projects/client")))
+
+        composeTestRule.onNodeWithText("Folder").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("/projects/client").assertIsDisplayed()
+    }
+
+    @Test
+    fun armed_choice_shows_its_confirm_hint_directly_under_it_until_the_arm_clears() {
+        var armed by mutableStateOf<String?>("allow_once")
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = baseState(),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    modalState = openModal(),
+                    armedOptionId = armed,
+                )
+            }
+        }
+        val hint = "Tap Allow once again to confirm."
+
+        composeTestRule.onNodeWithText(hint).performScrollTo().assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("again to confirm.", substring = true)).assertCountEquals(1)
+        val button = composeTestRule.onNodeWithText("Allow once").fetchSemanticsNode().boundsInRoot
+        val next = composeTestRule.onNodeWithText("Allow always").fetchSemanticsNode().boundsInRoot
+        val line = composeTestRule.onNodeWithText(hint).fetchSemanticsNode().boundsInRoot
+        assertTrue("the hint sits between the armed choice and the next", button.bottom < line.top && line.bottom < next.top)
+
+        composeTestRule.runOnIdle { armed = null }
+        composeTestRule.onAllNodes(hasText("again to confirm.", substring = true)).assertCountEquals(0)
+    }
+
+    @Test
+    fun status_band_reads_waiting_for_permission_while_a_request_is_open_and_connected() {
+        var connection by mutableStateOf<ConnectionState>(ConnectionState.Connected)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = baseState(),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = connection,
+                    onRetry = {},
+                    modalState = openModal(),
+                )
+            }
+        }
+        val waiting = string(R.string.thread_status_waiting_for_permission)
+
+        composeTestRule.onNodeWithText(waiting).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(STATUS_GLYPH_TEST_TAG, useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithText(string(R.string.question_waiting_for_answers)).assertDoesNotExist()
+
+        composeTestRule.runOnIdle { connection = ConnectionState.Connecting }
+        composeTestRule.onNodeWithText(waiting).assertDoesNotExist()
+    }
+
+    @Test
+    fun status_band_has_no_permission_reading_without_a_request() {
+        setContent(ModalUiState.Hidden)
+
+        composeTestRule.onNodeWithText(string(R.string.thread_status_waiting_for_permission)).assertDoesNotExist()
     }
 
     // ---- #1340: a refused answer stays in its chat as a Default notice with an X ----------------------
