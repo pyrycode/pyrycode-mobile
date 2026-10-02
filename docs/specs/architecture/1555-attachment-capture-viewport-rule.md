@@ -21,3 +21,7 @@ The rule is at `order = 0` with the compose rule at `order = 1`, but wrapped so 
 ## Testing strategy
 
 Device-only by nature: real `wm size` / density and real window pixels on the managed device, which Robolectric cannot give. Run the class five times with `./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.components.AttachmentVisualCaptureTest` and record each XML's executed count (3) and failures (0) on the PR, plus the presence and pixel sizes of the two captures and their sidecars.
+
+## Revisions
+
+- 2026-10-02: The first device runs passed, but the split 320x640 capture showed two of the three pending image tiles still on their PNG placeholder. Before the split, that capture ran after the 412x892 one had already waited for the thumbnails; now it starts cold. The thumbnail wait moves into a private `awaitPendingThumbnails` helper that both geometry methods call before capturing, so both captures show the decoded rock tiles. Assertions and capture names are unchanged.

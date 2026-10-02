@@ -161,17 +161,7 @@ class AttachmentVisualCaptureTest {
     fun pendingAndSentAttachments_matchReferenceGeometryAt412By892() {
         withThreadFixture { state, states, pending, decoder ->
             showThread(state, states, pending, decoder)
-            rule.waitForIdle()
-            rule.waitUntil(10_000) {
-                listOf("rock.png", "rock-2.png", "rock-3.png").all { name ->
-                    val tile =
-                        rule
-                            .onNode(hasContentDescription(name) and hasAnyAncestor(hasTestTag(ATTACHMENT_STRIP_TEST_TAG)))
-                            .captureToImage()
-                            .asAndroidBitmap()
-                    Color.red(tile.getPixel(10, 10)) > 80
-                }
-            }
+            awaitPendingThumbnails()
             val strip = rule.onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG).getUnclippedBoundsInRoot()
             assertTrue(strip.width >= 45.dp * 4 + 12.dp * 3)
             capture("emulator-412x892.png", 412, 892)
@@ -183,6 +173,7 @@ class AttachmentVisualCaptureTest {
     fun compactLargeText_fileRowFitsAt320By640() {
         withThreadFixture { state, states, pending, decoder ->
             showThread(state, states, pending, decoder, fontScale = 1.5f)
+            awaitPendingThumbnails()
             val file = rule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).getUnclippedBoundsInRoot()
             assertTrue("file row overflows compact viewport: $file", file.right <= 320.dp)
             capture("emulator-320x640-large-text.png", 320, 640)
@@ -256,6 +247,21 @@ class AttachmentVisualCaptureTest {
             block(state, states, pending, decoder)
         } finally {
             resolver.delete(imageUri, null, null)
+        }
+    }
+
+    /** Waits until the pending strip's three image tiles show the decoded rock rather than their placeholder. */
+    private fun awaitPendingThumbnails() {
+        rule.waitForIdle()
+        rule.waitUntil(10_000) {
+            listOf("rock.png", "rock-2.png", "rock-3.png").all { name ->
+                val tile =
+                    rule
+                        .onNode(hasContentDescription(name) and hasAnyAncestor(hasTestTag(ATTACHMENT_STRIP_TEST_TAG)))
+                        .captureToImage()
+                        .asAndroidBitmap()
+                Color.red(tile.getPixel(10, 10)) > 80
+            }
         }
     }
 
