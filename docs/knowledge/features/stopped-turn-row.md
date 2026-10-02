@@ -6,7 +6,9 @@ The thread's persistent answer to how a turn ended: a turn that failed or stoppe
 turn's ending was `ThreadViewModel.turnOutcome`, a status-area value the next turn's `Thinking`/`Responding`
 clears — see [Turn-outcome indicator § How this differs](turn-outcome-indicator.md#how-this-differs-from-the-stopped-turn-row-1356).
 Desktop keeps a `turnBoundary` row per `turn_end`, live and from history; this ticket copies desktop's rule
-and its copy exactly, rather than reusing mobile's own `inertOutcomeToken` sanitizer.
+and its copy exactly, rather than reusing mobile's own sanitizer from the then-current turn-outcome arm
+(removed in [#1357](turn-outcome-indicator.md), which narrowed that arm to client-owned recovery copy with
+no daemon text to sanitize).
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`).
 File: `StoppedTurnRow.kt`. Rule + type: `data/repository/StoppedTurn.kt` (pure, no Android imports),
@@ -56,11 +58,10 @@ sealed interface ThreadItem {
 `stoppedReportText(value: String): String` is desktop's `stoppedReportText`: empty when `value`'s UTF-8
 length exceeds 256 bytes (a lone surrogate counts as the three bytes `TextEncoder` writes for its U+FFFD
 replacement), else `value` with every code point of type `Cc`/`Cf`/`Zl`/`Zp` removed — removed, not
-replaced, and never cut to a fixed length, unlike `TurnOutcomeIndicator`'s `inertOutcomeToken`. It iterates
-code points, so a supplementary-plane format character (e.g. an invisible tag, U+E0000–E007F) is stripped
-too — the gap `inertOutcomeToken` has (see [Turn-outcome indicator § Classification &
-sanitization](turn-outcome-indicator.md#classification--sanitization)) does not exist here, because this
-sanitizer was written to iterate code points from the start.
+replaced, and never cut to a fixed length. It iterates code points, so a supplementary-plane format
+character (e.g. an invisible tag, U+E0000–E007F) is stripped too — this is the only sanitizer left in the
+thread that still renders daemon-authored text, since [#1357](turn-outcome-indicator.md) removed the
+turn-outcome arm's own `inertOutcomeToken` along with every string it bounded.
 
 `LiveSessionEvent.TurnEnd.stoppedTurn(occurredAt: Instant): ThreadItem.StoppedTurn?` is desktop's
 `stoppedTurnText` rule, read only off the agent's own result fields:
