@@ -3229,13 +3229,13 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             pickFooterOption(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude))
-            pickFooterOption(changeEffortLabel, level.inert())
-            awaitFooter(changeEffortLabel, level.inert())
+            pickFooterOption(changeEffortLabel, effortLabel(level))
+            awaitFooter(changeEffortLabel, effortLabel(level))
 
             val chosen = freshSettings(chat.id)
             assertEquals("saved effort after the tap", level, chosen.effort)
             assertTrue("claude reports an applied effort before any turn", chosen.effectiveEffort !is EffectiveEffort.Applied)
-            awaitFooter(changeEffortLabel, level.inert())
+            awaitFooter(changeEffortLabel, effortLabel(level))
 
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
@@ -3243,7 +3243,7 @@ class InteractiveStreamE2ETest {
 
             leaveThread()
             openChatRow(name)
-            awaitFooter(changeEffortLabel, level.inert()) { it == null }
+            awaitFooter(changeEffortLabel, effortLabel(level)) { it == null }
         } finally {
             restoreSettings(originals)
         }
@@ -3293,8 +3293,8 @@ class InteractiveStreamE2ETest {
             assertSaved(priming.id, "", "")
             openChatRow(primingName)
             awaitFooter(changeModelLabel, inheritedModelLabel(publishedMenu(priming.id)))
-            pickFooterOption(changeEffortLabel, remembered.inert())
-            awaitFooter(changeEffortLabel, remembered.inert())
+            pickFooterOption(changeEffortLabel, effortLabel(remembered))
+            awaitFooter(changeEffortLabel, effortLabel(remembered))
             assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
             leaveThread()
 
@@ -3330,10 +3330,10 @@ class InteractiveStreamE2ETest {
 
             // 5. A saved effort of its own is kept: settled on it, confirmed by the reply, and still settled.
             openChatRow(explicitName)
-            awaitFooter(changeEffortLabel, explicit.inert())
+            awaitFooter(changeEffortLabel, effortLabel(explicit))
             assertEquals("the explicit saved effort was overwritten", explicit, freshSettings(explicitChat.id).effort)
             composeTestRule.waitForIdle()
-            awaitFooter(changeEffortLabel, explicit.inert())
+            awaitFooter(changeEffortLabel, effortLabel(explicit))
         } finally {
             restoreSettings(originals)
             relaunched?.close()
@@ -6193,7 +6193,7 @@ class InteractiveStreamE2ETest {
                 if (applied.value.isEmpty()) {
                     EFFORT_PLACEHOLDER_LABEL to claudeNote(R.string.thread_effort_note_default_unavailable)
                 } else {
-                    applied.value.inert() to null
+                    effortLabel(applied.value) to null
                 }
         }
 
@@ -6205,7 +6205,7 @@ class InteractiveStreamE2ETest {
         conversationId: String,
         level: String,
     ) {
-        awaitFooter(changeEffortLabel, level.inert())
+        awaitFooter(changeEffortLabel, effortLabel(level))
         assertEquals("the recalled saved effort before the first message", level, freshSettings(conversationId).effort)
         sendFromPhone(PING_PROMPT)
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
@@ -6269,6 +6269,12 @@ class InteractiveStreamE2ETest {
             runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeAnnouncedModel(conversationId).filterNotNull().first() } }
         return announced.model.takeUnless { announced.truncated }.orEmpty()
     }
+
+    /**
+     * Run configuration's effort label for the published [level] (#1497): its first letter capitalised,
+     * restated here so the scenario does not share the code it checks. Saved and applied values stay verbatim.
+     */
+    private fun effortLabel(level: String): String = level.inert().replaceFirstChar { it.uppercaseChar() }
 
     /** Desktop's family rule, restated here so the scenario does not share the code it checks. */
     private fun claudeFamily(identifier: String): String =
