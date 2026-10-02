@@ -479,7 +479,7 @@ fun TreeConversationRow(
                     ).padding(start = ConversationRowIndent),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ConversationStatusDot(attention = attention)
+            ConversationStatusDot(attention = attention, selected = selected)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = bounded,
@@ -631,18 +631,27 @@ private fun TreeRowControl(
  * The conversation row's leading dot (#878), after desktop's `ConversationStatusDot`: the design's idle
  * ring on every state, with the state's fill inside it.
  *
+ * Figma 15:8 binds the ring to `inversePrimary` (#32628D) under the static dark palette (#1524); other
+ * palettes keep `primary`, where `inversePrimary` would vanish on a light surface. An Idle dot on the
+ * [selected] row is filled with its ring colour, the frame's open-row dot and desktop's open-row rule.
+ *
  * The dot names its state, so the meaning never rests on colour; the row's `selectable` merges that name
  * with the conversation's. Only Running blinks, and the alpha is read in the layer, so the blink redraws
  * the dot without recomposing the row.
  */
 @Composable
-private fun ConversationStatusDot(attention: ConversationAttention) {
+private fun ConversationStatusDot(
+    attention: ConversationAttention,
+    selected: Boolean,
+) {
+    val ring =
+        if (LocalStaticDarkPalette.current) MaterialTheme.colorScheme.inversePrimary else MaterialTheme.colorScheme.primary
     val fill =
         when (attention) {
             ConversationAttention.WaitingForAnswer -> MaterialTheme.colorScheme.warning
             ConversationAttention.Running -> MaterialTheme.colorScheme.tertiary
             ConversationAttention.Unread -> MaterialTheme.colorScheme.success
-            ConversationAttention.Idle -> Color.Transparent
+            ConversationAttention.Idle -> if (selected) ring else Color.Transparent
         }
     val description = stringResource(attention.descriptionRes())
     val blink =
@@ -666,7 +675,7 @@ private fun ConversationStatusDot(attention: ConversationAttention) {
                 .size(TreeDotSize)
                 .graphicsLayer { alpha = blink?.value ?: 1f }
                 .background(fill, CircleShape)
-                .border(TreeDotRingWidth, MaterialTheme.colorScheme.primary, CircleShape)
+                .border(TreeDotRingWidth, ring, CircleShape)
                 .clearAndSetSemantics { contentDescription = description },
     )
 }
