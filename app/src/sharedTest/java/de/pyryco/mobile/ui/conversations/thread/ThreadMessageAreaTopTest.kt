@@ -1,8 +1,10 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
@@ -30,7 +32,8 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * #1562: the message area starts at the header's rule (Figma `16:8`, `685:4337`). Scrolled rows draw up to
  * the rule, while a short or empty thread, the top pills and the input area keep their earlier positions.
- * The expected y values are the 412 × 892 reference frame's, measured before the change.
+ * The expected y values are the 412 × 892 reference frame's: [RULE_BOTTOM] is the Figma anchor the region now
+ * starts at, and the others were measured on the layout before the change.
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -52,11 +55,14 @@ class ThreadMessageAreaTopTest {
         val region = rule.onNodeWithTag(MESSAGE_REGION)
         assertEquals("the message area starts at the rule's bottom edge", RULE_BOTTOM, region.getUnclippedBoundsInRoot().top.value, 1f)
         // Clipped bounds, in the forced frame's pixels: the list clips what scrolls past its top edge, so the
-        // highest drawn row content shows where rows stop. Top content padding must not hold them below it.
+        // highest drawn message text shows where rows stop. Only text nodes count, so the list's own
+        // full-region node cannot stand in for a row. Top content padding must not hold them below it.
         val highestDrawn =
             rule
-                .onAllNodes(hasAnyAncestor(hasTestTag(MESSAGE_REGION)), useUnmergedTree = true)
-                .fetchSemanticsNodes()
+                .onAllNodes(
+                    hasAnyAncestor(hasTestTag(MESSAGE_REGION)) and SemanticsMatcher.keyIsDefined(SemanticsProperties.Text),
+                    useUnmergedTree = true,
+                ).fetchSemanticsNodes()
                 .map { it.boundsInRoot }
                 .filter { it.height > 0f }
                 .minOfOrNull { it.top } ?: error("no message rows drawn")
@@ -123,7 +129,7 @@ class ThreadMessageAreaTopTest {
         // Figma 533:1948's rule closes the bar at y 68–69; 621:3571, the message area, starts at y 69.
         const val RULE_BOTTOM = 69f
 
-        // Pre-change positions in the reference frame.
+        // Pre-change positions in the reference frame. The pill's dp-exact top is 97, one frame pixel lower.
         const val EMPTY_TEXT_CENTRE = 423.9f
         const val INPUT_FIELD_TOP = 814.2f
         const val TOP_PILL_TOP = 95.5f
