@@ -47,3 +47,7 @@ Device-only (real pixels, real `MainActivity`, `wm` viewport and IME): `./gradle
 ## Open Questions
 
 - Whether the list has any row or folder menu to open. Source shows none at this commit (pens open modals); the index records the menu-open check against the thread overflow menu, the only menu on the path to a list-side surface.
+
+## Revisions
+
+- **2026-10-02, device runs:** (1) Each surface starts from a fresh `design.launch()` instead of dismissing the previous one, because Back from Archive did not return to the list within the wait and one surface's dismissal path should not steer the next. (2) Edit host is not captured: `DesignCapture`'s startup store answers `list()` only, so the host editor rejects the demo host (`host_editor_open_rejected code=unknown_host`). Fixing it edits the harness, outside this ticket's write scope; routed to #1489 with the keyboard-open state. (3) The Open Question resolved as planned: no list menu exists, and the menu-open check uses the thread overflow menu.
