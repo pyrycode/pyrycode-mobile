@@ -4,10 +4,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -67,7 +69,9 @@ class ThreadTopOverlayTest {
     private var resetting by mutableStateOf<ResetStatus?>(null)
     private var turnOutcome by mutableStateOf<TurnOutcomeReport?>(null)
     private var connectionState by mutableStateOf<ConnectionState>(ConnectionState.Connected)
+    private var mcpFailure by mutableStateOf<String?>(null)
     private var rePairTaps = 0
+    private var mcpTaps = 0
     private var retryTaps = 0
 
     private fun setScreen() {
@@ -84,6 +88,8 @@ class ThreadTopOverlayTest {
                     onDismissUsageLimit = { dismissed = dismissed + it.dismissalKey() },
                     showRePair = showRePair,
                     onRePair = { rePairTaps++ },
+                    mcpFailure = mcpFailure,
+                    onOpenMcpFailure = { mcpTaps++ },
                     isBusy = isBusy,
                     resetting = resetting,
                     turnOutcome = turnOutcome,
@@ -170,6 +176,50 @@ class ThreadTopOverlayTest {
         composeRule.runOnIdle { assertEquals(1, rePairTaps) }
     }
 
+    // #1345: a failed MCP server is an Error pill with no X below the usage pill; its tap opens Channel info.
+    @Test
+    fun aFailedMcpServer_isATappablePillBelowTheUsagePill() {
+        usageLimit = warning
+        mcpFailure = "github"
+        setScreen()
+
+        val usageBounds = composeRule.onNodeWithContentDescription(label("allowed_warning")).getUnclippedBoundsInRoot()
+        val mcpBounds = composeRule.onNodeWithContentDescription(MCP_FAILED_LABEL).getUnclippedBoundsInRoot()
+        assertEquals(12f, (mcpBounds.top - usageBounds.bottom).value, 0.5f)
+        composeRule.onAllNodesWithContentDescription(dismissDescription).assertCountEquals(1)
+
+        composeRule.onNodeWithText(MCP_FAILED_LABEL).performClick()
+        composeRule.runOnIdle { assertEquals(1, mcpTaps) }
+
+        mcpFailure = null
+        composeRule.onNodeWithContentDescription(MCP_FAILED_LABEL).assertDoesNotExist()
+    }
+
+    @Test
+    fun aFailedMcpServer_isNeverShownBesideThePairingOrOfflinePill() {
+        mcpFailure = "github"
+        showRePair = true
+        setScreen()
+        composeRule.onNodeWithContentDescription(RE_PAIR_LABEL).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(MCP_FAILED_LABEL).assertDoesNotExist()
+
+        showRePair = false
+        connectionState = ConnectionState.Offline
+        composeRule.onNodeWithContentDescription(OFFLINE_RETRY_LABEL).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(MCP_FAILED_LABEL).assertDoesNotExist()
+
+        connectionState = ConnectionState.Connected
+        composeRule.onNodeWithContentDescription(MCP_FAILED_LABEL).assertIsDisplayed()
+    }
+
+    @Test
+    fun aLongServerName_isBounded() {
+        mcpFailure = "x".repeat(300)
+        setScreen()
+
+        composeRule.onNodeWithContentDescription("MCP server ${"x".repeat(256)}… failed").assertExists()
+    }
+
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun offlineRetry_hasA48dpTarget_belowAUsagePill_withoutStealingDismissTaps() {
@@ -246,5 +296,6 @@ class ThreadTopOverlayTest {
     private companion object {
         const val RE_PAIR_LABEL = "Pairing error - Re-pair"
         const val OFFLINE_RETRY_LABEL = "Offline · Retry"
+        const val MCP_FAILED_LABEL = "MCP server github failed"
     }
 }

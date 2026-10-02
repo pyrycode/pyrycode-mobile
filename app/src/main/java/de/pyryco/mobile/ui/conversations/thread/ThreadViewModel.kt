@@ -133,6 +133,9 @@ class ThreadViewModel(
     // #1306: the app-scoped session-grant drafts, so Back keeps the checkbox for the same request. Absent in
     // tests and the demo host, where a private store stands in.
     permissionDraftStore: PermissionDraftStore? = null,
+    // #1345: the app-scoped acknowledgements of failed MCP servers, so a tapped notice stays quiet when the chat
+    // is reopened. Absent in tests and the demo host, where a private holder stands in.
+    mcpFailureAcknowledgements: McpFailureAcknowledgements? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
     // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
     backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
@@ -600,6 +603,24 @@ class ThreadViewModel(
      */
     private val hostConnection: StateFlow<ConnectionState?> =
         connectionStateSource.observe().stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val mcpAcknowledgements = mcpFailureAcknowledgements ?: McpFailureAcknowledgements()
+
+    /**
+     * The failed MCP server the Top overlay's notice names (#1345), desktop's `selectUnacknowledgedMcpFailureFor`:
+     * the first server in report order whose status is exactly `failed` and that this host and conversation
+     * have not acknowledged. `null` unless the host is [ConnectionState.Connected]. The name is Claude-authored:
+     * the screen renders it bounded and inert, and nothing here logs it.
+     */
+    val mcpFailure: StateFlow<String?> =
+        combine(
+            mcpStatusReading,
+            mcpAcknowledgements.observe(serverId, conversationId),
+            hostConnection,
+        ) { mcp, acknowledged, connection ->
+            if (connection == ConnectionState.Connected) firstUnacknowledgedMcpFailure(mcp.report, acknowledged) else null
+        }.distinctUntilChanged()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
      * Whether a prompt answer may be sent now (#1321): only while the host is [ConnectionState.Connected].
@@ -1159,6 +1180,22 @@ class ThreadViewModel(
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
         viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
 
+        // #1345: the MCP reading starts empty on every connection, so the thread asks once when its repository is
+        // first available and again on each return, keyed there for the #861 reason above. Gated as Channel
+        // info's ask is. Only the reconnect ask logs: construction stays log-free, and the opening is already
+        // logged as `thread_destination_bound`.
+        viewModelScope.launch {
+            var opened = false
+            repositoryAvailable.distinctUntilChanged().collect { available ->
+                if (!available) return@collect
+                if (state.value.runConfig.mcpServersSupported) {
+                    repository.requestMcpStatus(conversationId)
+                    if (opened) RelayLog.d { "event=mcp_status_requested reason=reconnect" }
+                }
+                opened = true
+            }
+        }
+
         // #1410: ask for a fresh context reading when the thread opens on a live host and each time the host's
         // repository returns, as desktop does on open. Unlike the walk restart above there is no `drop(1)`: the
         // opening availability is the open's own ask, and nothing else sends it. An opening `false` waits for the
@@ -1173,6 +1210,18 @@ class ThreadViewModel(
                     opened = true
                 }
         }
+    }
+
+    /**
+     * The Top overlay's MCP notice was tapped (#1345), desktop's `openMcpFailure`: acknowledge every server the
+     * current report shows as failed, not only the one named, then open Channel info, which asks for fresh
+     * status. Logs the count only.
+     */
+    fun onMcpFailureTapped() {
+        val failed = failedMcpServerNames(state.value.mcpStatus.report)
+        mcpAcknowledgements.acknowledge(serverId, conversationId, failed)
+        RelayLog.d { "event=mcp_failure_acknowledged count=${failed.size}" }
+        onOverflowEvent(ThreadEvent.ChannelInfo)
     }
 
     private fun openLocalSendWindow() {
@@ -1398,7 +1447,11 @@ class ThreadViewModel(
         // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
         if (text.isBlank()) return
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
-        if (attachments.isNotEmpty()) return sendWithAttachments(text, attachments)
+        if (attachments.isNotEmpty()) {
+            return sendWithAttachments(text, attachments) {
+                if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+            }
+        }
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
@@ -1417,12 +1470,14 @@ class ThreadViewModel(
      * anything else is uploaded or sent; a thrown upload or send is swallowed by [launchGuardedRepoCall].
      * Either way the text and every entry stay in the draft — the way a failed text send is reported.
      *
-     * On success the text clears under [sendMessage]'s in-flight guard, and only the snapshot's entries
-     * are removed, so an attachment added while this send was in flight survives it.
+     * On success [onSent] runs — [sendMessage]'s guarded draft clear, or [onComposerCommand]'s log, which
+     * leaves the draft alone (#1348) — and only the snapshot's entries are removed, so an attachment added
+     * while this send was in flight survives it.
      */
     private fun sendWithAttachments(
         text: String,
         attachments: List<PendingAttachment>,
+        onSent: () -> Unit,
     ) {
         _attachmentsSending.value = true
         launchGuardedRepoCall {
@@ -1442,7 +1497,7 @@ class ThreadViewModel(
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
                 sendInLocalWindow { repository.sendMessage(target, text, references) }
-                if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+                onSent()
                 draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
             } finally {
                 // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
@@ -1671,10 +1726,13 @@ class ThreadViewModel(
 
     /**
      * Send the Actions menu's [action] command (#884) as an ordinary message to this conversation, through
-     * the same guarded send [sendMessage] runs, so a failed send is handled exactly as a composer message's.
-     * It leaves the typed draft alone, so there is no clear on success. A command the published menu proves
-     * absent is refused here too, behind the greyed-out row. Reset session carries no command and never
-     * comes this way. Logs static codes only.
+     * a guarded send, so a failed send is handled exactly as a composer message's. With pending files it goes
+     * through [sendWithAttachments], as desktop's `sendText` takes them for both its callers (#1348), and so
+     * opens the local send window that a text-only command does not; it is refused while an earlier
+     * attachment send still owns them. It leaves the
+     * typed draft alone, so there is no clear on success. A command the published menu proves absent is
+     * refused here too, behind the greyed-out row. Reset session carries no command and never comes this
+     * way. Logs static codes only.
      */
     fun onComposerCommand(action: ComposerAction) {
         if (!connectedFor("composer_action")) return
@@ -1682,6 +1740,16 @@ class ThreadViewModel(
         if (action in state.value.absentActions) {
             RelayLog.d { "event=composer_action action=${action.value} outcome=absent" }
             return
+        }
+        if (_attachmentsSending.value) {
+            RelayLog.d { "event=composer_action action=${action.value} outcome=busy" }
+            return
+        }
+        val attachments = draftStore.attachmentsFor(serverId, conversationId)
+        if (attachments.isNotEmpty()) {
+            return sendWithAttachments(command, attachments) {
+                RelayLog.d { "event=composer_action action=${action.value} outcome=sent" }
+            }
         }
         launchGuardedRepoCall {
             effortRecall.awaitWrite()

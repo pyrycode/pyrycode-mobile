@@ -650,6 +650,17 @@ capture, check its redacted context, expected event count and reader version. Do
 not copy credentials, pairing codes, user prompts, host paths or raw daemon
 payloads into evidence.
 
+A client request the daemon serves by waiting on the Claude child — `mcp_status_request`, for one
+(#1345) — runs on the same per-connection FIFO app-frame worker as `send_message`, and the daemon's wait
+has no timeout of its own. `fakeclaude` only answers `mcp_status` when `PYRY_FAKE_CLAUDE_MCP_STATUS` is
+set; unset, it leaves the request unanswered forever. The scripted `reconnect` scenario hung this way once
+\#1345 added a reconnect ask: the next `send_message` on that connection queued behind the unanswered
+request and never got accepted. `scripts/e2e-emulator.sh` now sets `PYRY_FAKE_CLAUDE_MCP_STATUS=1` in the
+deterministic `REPLAY_ENV`, whose canned reply includes a `"failed"` row. Before adding any other ask the
+daemon serves this way, check that the scripted fake answers it, not just that unit tests pass — only a
+scenario with a live child surfaces this stall. Real Claude answers mid-turn, so production risk is a
+child that answers slowly or never; that is filed upstream as pyrycode/pyrycode#2702, not fixed client-side.
+
 The demo binding (`-PuseRelayRepository=false`) does not skip onboarding: the start screen is
 chosen from the paired-host store, so a demo build's channel list, thread and modal screens are
 reachable only after a real pairing. Pair through the app's own paste-a-code flow against a
