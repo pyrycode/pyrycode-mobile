@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
@@ -54,6 +55,31 @@ class ThreadProjectionTest {
 
             assertEquals(listOf(ThreadItem.MessageItem(first), ThreadItem.MessageItem(peer)), c1.last())
             assertEquals(listOf(emptyList<ThreadItem>()), c2)
+        }
+
+    // #1356 AC #1: a live failed turn_end leaves one stopped row after the turn's last row, and it stays
+    // there once the next turn starts; a duplicate turn_end and a cancelled one add nothing.
+    @Test
+    fun finalizeAssistantTurn_failedTurn_appendsOneStoppedRowThatOutlivesTheNextTurn() =
+        runTest {
+            val projection = ThreadProjection()
+            val rows = collect(projection, "c1")
+            runCurrent()
+
+            projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c1", "turn-1", 0, "partial"))
+            val failed = LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn", isError = true, terminalReason = "max_turns")
+            projection.finalizeAssistantTurn(failed)
+            projection.finalizeAssistantTurn(failed)
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-0", "cancelled", isError = true))
+            projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c1", "turn-2", 0, "next"))
+            runCurrent()
+
+            val thread = rows.last()
+            assertEquals(3, thread.size)
+            assertEquals("turn-1", (thread[0] as ThreadItem.MessageItem).message.id)
+            val stopped = thread[1] as ThreadItem.StoppedTurn
+            assertEquals("turn-1" to "max_turns", stopped.turnId to stopped.reason)
+            assertEquals("turn-2", (thread[2] as ThreadItem.MessageItem).message.id)
         }
 
     // ---- #1358: a compaction leaves a divider from its falling edge, filled in by the boundary ----

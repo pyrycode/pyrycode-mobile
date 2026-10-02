@@ -456,15 +456,15 @@ internal class ThreadProjection {
      * [LiveSessionEvent.TurnEnd.turnId] (#1350) to [Message.isStreaming] `= false` in place, so the thread renders the completed reply as static markdown rather than the
      * streaming caret view. One atomic [MutableStateFlow.update]. **No-op when no streaming assistant
      * row exists for the turn** — a tool-only or empty turn carries no assistant text (AC #3), and a
-     * duplicate `turn_end` re-applies the same flip (idempotent). `turn_end` carries no final text, so
-     * nothing is appended here; [LiveSessionEvent.TurnEnd.stopReason] is not consumed by this slice
-     * (turn-outcome mapping is a later consumer concern). The turn is first recorded in [endedTurns], so
-     * a row of it that a later merge brings in lands settled too (#1419).
+     * duplicate `turn_end` re-applies the same flip (idempotent). `turn_end` carries no final text; a turn
+     * that did not end cleanly leaves a [ThreadItem.StoppedTurn] stamped with its arrival instant, once
+     * (#1356, see [withFinalizedTurn]). The turn is first recorded in [endedTurns], so a row of it that a
+     * later merge brings in lands settled too (#1419).
      */
     fun finalizeAssistantTurn(event: LiveSessionEvent.TurnEnd) {
         recordEnded(event.conversationId, setOf(event.turnId))
         threadByConversation.update { current ->
-            current + (event.conversationId to current[event.conversationId].orEmpty().withFinalizedTurn(event))
+            current + (event.conversationId to current[event.conversationId].orEmpty().withFinalizedTurn(event, Clock.System.now()))
         }
     }
 

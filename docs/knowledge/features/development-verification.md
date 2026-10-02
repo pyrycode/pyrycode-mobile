@@ -272,17 +272,19 @@ need different final sizes, read the size from a private runtime annotation on
 the test method (`@Viewport("320x692")`) instead of branching on the method
 name, so the size stays attached to the test it belongs to.
 `ToolRowDesignCaptureTest` (#1425) copied the same shape for its own
-412x892/320x700 pair. The rule is now a plain copy in two classes; extract it
-to a shared `TestRule` before a third capture test needs it rather than
-copying it again.
+412x892/320x700 pair, and `MarkdownReaderCaptureTest` (#1467) copied it again
+for the same pair. Several androidTest capture classes now carry their own
+copy of this rule; extracting a shared `TestRule` is separate work, not a
+prerequisite for adding another copy.
 
 `MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
 (unrelated to the #1352 history-paging change, caught in its PR's UI gate and
 triaged there) hit the same `wm size` race, confirmed by two focused re-runs
 both passing 2/2 — the race is intermittent, not a property of the test
 itself, so a single red run proves nothing about whose change caused it.
-Filed as #1467. A third class now needs this shape: the shared `TestRule`
-extraction flagged above is overdue.
+Filed as #1467 and fixed there: the class moved its resize into the same
+`order = 0` `TestRule` shape, reading `compactLargeTextKeepsControlsAndBodyReachable`'s
+320x700 size from `@Viewport("320x700")`, with the compose rule at `order = 1`.
 
 Reply assertions must not depend on total substring-count growth: removing queued
 prompt text can offset a newly displayed assistant reply. For fresh discussions
@@ -611,6 +613,13 @@ after the only `Flow.map` call moved elsewhere, because `List.map` still appears
 in the file and the check cannot tell the two `map`s apart. `spotlessApply` will
 not remove it either. Check each import a move leaves behind for an actual caller
 of that specific symbol, not just any identically-spelled one (#916).
+
+`spotlessApply` (ktlint) rewrites a lower-case `\uXXXX` escape in a Kotlin string
+literal into the literal invisible character it denotes — a bidi override or an
+isolate stops reading as an escape sequence in the diff and the source file. An
+upper-case hex escape (`‮` as written, not what it renders) is left alone.
+A hostile-text test fixture (e.g. `StoppedTurnTest`, #1356) stays readable in the
+source only if its escapes are typed in upper case.
 
 ## Emulator and real evidence
 
