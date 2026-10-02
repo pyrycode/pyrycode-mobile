@@ -84,6 +84,28 @@ above it that the live side also holds, and only goes in front when it has no su
 older rows a reconnect's newest page does not reach, or a page that does not overlap the cache at
 all. Several cache-only rows sharing one anchor keep their cached relative order.
 
+**The merge is key-indexed, not quadratic (#1353, verifier rework).** `mergeCachedRows` builds a
+`HashMap<Any, Int>` once per call, mapping each live row's `joinIdentity()` to the first live index
+holding it, then looks each cached row up in that map — O(live + cached) rather than the original
+O(cached × live) `indexOfFirst { listOf(it).alreadyHolds(row) }` scan. This mattered only once
+`MAX_CACHED_THREAD_ROWS` moved from 200 to 100000 in the same ticket (see [Conversation cache § What's
+deliberately not here](conversation-cache.md#whats-deliberately-not-here)): `observeMessages` calls
+`mergeCachedRows` on every emission of the delegate, in-flight `assistant_delta` updates included,
+with no `flowOn` between `RemoteConversationRepository` and the `ViewModel`'s `stateIn`, so the merge
+runs on `Main.immediate`. At a 200-row cap the quadratic scan was cheap; at 100000 — a normal size for
+a persistent channel after weeks of tool-call-heavy use — it was roughly a million lambda calls plus
+a one-element-list allocation per pair on every streaming delta, well past a 16 ms frame. The lesson:
+lifting a cap on a cached or persisted collection changes the cost of whatever already runs over that
+collection on each live emission, not only what gets written — the planned change (the cache format)
+and the thing it broke (an unrelated merge function's complexity) were in different files, so neither
+the plan's own file list nor its "no new writes during streaming" state-and-concurrency note caught it.
+`joinIdentity()` encodes the same six keys `alreadyHolds` and the `holds*` predicates already use
+(message id; boundary `(previousSessionId, newSessionId, occurredAt)`; unrecognized id; banner
+`occurredAt`; compaction `occurredAt`; refusal `(fallbackModel != null, occurredAt)`), each led by its
+kind so rows of different kinds can't collide — a second encoding of the same identity, flagged
+non-blocking in review as worth deriving from one source later, but pinned equivalent for now by
+`HistoryPageReducerTest.mergeCached_eachKindJoinsItsLiveTwinOnItsKeyAlone`.
+
 **Why a plain prepend broke on a row only the cache holds (PR #987, verifier rework).** An attachment
 offer (#983) is the first kind of row the daemon never replays — the cache is its only retention —
 so after a reconnect or a cold restart it is the one row in a turn the live side's newest page does
@@ -311,6 +333,16 @@ One further case (#899): `retrieveAttachment` goes through a fake `AttachmentSto
 this wrapper's own `serverId` and the delegate's `fetchAttachment` as the fetch function — a wiring
 regression guard, not a proof of the store's own behaviour (that lives in
 [`AttachmentStoreTest`](attachment-retrieval.md#testing)).
+
+Four further cases (#1353): a `FileConversationCache`-backed restore draws a banner, a compaction
+divider and a model refusal in their original positions alongside a message and a boundary, offline
+— pinning that the real file-backed cache round-trips the three kinds end to end, not only the fakes
+above; and one case per kind where the live page re-delivers the same cached row (same identity,
+different incidental fields) and it draws once, in place, through `mergeCachedRows`'s `alreadyHolds`
+join rather than twice. `HistoryPageReducerTest.mergeCached_eachKindJoinsItsLiveTwinOnItsKeyAlone`
+pins the same join at the `joinIdentity()`/`heldAt` level (see § How the restore merges with live
+rows above) for all six kinds, including that a refusal of the other frame type stays a separate
+row.
 
 No Compose UI test: restored rows draw through the same composables a live row does, below the
 existing [`ConnectionBanner`](connection-banner.md) in its offline state. Live continuity across

@@ -4862,11 +4862,7 @@ class InteractiveStreamE2ETest {
      *    no such id, and host B itself answers the id as not found.
      *
      * **One real-claude turn**: the phone's message on host A.
-     *
-     * Ignored and left out of the live list since daemon #2699 pushes the sender's own message back: the
-     * phone's ready file row never appears, on `main` too. #1369 tracks the fix and restores both.
      */
-    @Ignore("blocked on #1369 — the phone's file row is missing after daemon #2699 pushes the sent message back")
     @Test
     fun interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost() {
         val serverIdA = twoHostArg(ARG_SERVER_ID)

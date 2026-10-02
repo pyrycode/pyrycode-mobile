@@ -154,11 +154,14 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
   — `24000` → `"24k"`, `1250` → `"1.3k"`. **Integer arithmetic is load-bearing, not a style choice**: a
   float formatter (`String.format`) would print `"1,3k"` on a German-locale phone, since the fraction
   format is entirely avoidable arithmetic rather than a locale-aware render.
-- **Never cached** — excluded from `cacheableThreadRows` and throws from `FileConversationCache.toRecord`,
-  the [`Banner`](banner-notice-row.md) posture; see [Conversation
-  cache § The contract](conversation-cache.md#the-contract). History replay restores it, joined to a live
-  arrival of the same frame on the envelope's `ts` — see [Remote conversation repository § The
-  compaction-boundary decode+fold seam](remote-conversation-repository-live-stream-and-modals.md#the-compaction-boundary-decodefold-seam-874).
+- **Cached (#1353)** — kept by `cacheableThreadRows` and mapped by `FileConversationCache.toRecord` to
+  `CachedCompaction(preTokens, postTokens, manual, occurredAt)`, a `null` token count omitted on encode
+  and read back as `null`; see [Conversation cache § The contract](conversation-cache.md#the-contract).
+  Before #1353 this row was excluded here and restored only by history replay joined to a live arrival
+  of the same frame on the envelope's `ts` — see [Remote conversation repository § The
+  compaction-boundary decode+fold seam](remote-conversation-repository-live-stream-and-modals.md#the-compaction-boundary-decodefold-seam-874)
+  — which stopped running on a routine reopen once history started loading only on request, so a
+  restored thread lost this row until it was cached instead.
 - **Identity is `occurredAt`** (`ThreadItem.CompactionBoundary`'s field name for the protocol's `(type,
   ts)` join key), read by `ThreadRow.listKey()` as `"compaction:$occurredAt"` and by
   `HistoryPageReducer.holdsCompactionBoundary` / `RemoteConversationRepository.appendCompactionBoundary`,

@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CoroutineDispatcher
@@ -186,11 +187,13 @@ class FileConversationCache(
     )
 
     /**
-     * Decodes a thread document, rejecting what would mislead or crash the thread: a row that is neither
-     * a message nor a boundary, a running tool (a permanent spinner), and a repeated message id or
-     * boundary identity (two `LazyColumn` rows with one key). A writer never produces any of these.
-     * A boundary's identity is its session pair and instant, the triple its list key encodes (#775):
-     * an idle-evicted session keeps its id, so two evictions legitimately share a pair.
+     * Decodes a thread document, rejecting what would mislead or crash the thread: a row of no kind or
+     * of several, a running tool (a permanent spinner), and a repeated list key (two `LazyColumn` rows
+     * with one key). A writer never produces any of these. A boundary's identity is its session pair and
+     * instant, the triple its list key encodes (#775): an idle-evicted session keeps its id, so two
+     * evictions legitimately share a pair. A banner and a compaction divider key on their instant, and a
+     * refusal on its frame type and instant (#1353) — the keys `holdsBanner`, `holdsCompactionBoundary`
+     * and `holdsModelRefusal` dedupe on.
      */
     private fun decodeThread(document: File): List<ThreadItem> {
         if (!document.isFile) return emptyList()
@@ -203,6 +206,14 @@ class FileConversationCache(
         val boundaries = rows.filterIsInstance<ThreadItem.SessionBoundary>()
         require(boundaries.distinctBy { Triple(it.previousSessionId, it.newSessionId, it.occurredAt) }.size == boundaries.size) {
             "duplicate thread cache boundary identity"
+        }
+        val banners = rows.filterIsInstance<ThreadItem.Banner>()
+        require(banners.distinctBy { it.occurredAt }.size == banners.size) { "duplicate thread cache banner identity" }
+        val compactions = rows.filterIsInstance<ThreadItem.CompactionBoundary>()
+        require(compactions.distinctBy { it.occurredAt }.size == compactions.size) { "duplicate thread cache compaction identity" }
+        val refusals = rows.filterIsInstance<ThreadItem.ModelRefusal>()
+        require(refusals.distinctBy { (it.fallbackModel != null) to it.occurredAt }.size == refusals.size) {
+            "duplicate thread cache refusal identity"
         }
         return rows
     }
@@ -397,11 +408,17 @@ private data class CachedThread(
     val rows: List<CachedThreadRow>,
 )
 
-/** Exactly one of [message] or [boundary]; a row with neither or both is unreadable. */
+/**
+ * Exactly one field set; a row with none or several is unreadable. Every field defaults to `null`, so a
+ * document written before banners, compaction dividers and refusals were kept (#1353) still reads.
+ */
 @Serializable
 private data class CachedThreadRow(
     val message: CachedMessage? = null,
     val boundary: CachedBoundary? = null,
+    val banner: CachedBanner? = null,
+    val compaction: CachedCompaction? = null,
+    val refusal: CachedRefusal? = null,
 )
 
 /** A settled [Message]: there is no `isStreaming`, because an in-flight row is never written. */
@@ -457,7 +474,35 @@ private data class CachedBoundary(
     val workspaceCwd: String? = null,
 )
 
-// Only settled messages and boundaries reach here: `cacheableThreadRows` has already dropped the rest.
+/** A [ThreadItem.Banner] (#1353). [text] is claude-authored, stored as the row holds it and rendered inert on restore. */
+@Serializable
+private data class CachedBanner(
+    val level: BannerLevel,
+    val text: String,
+    val truncated: Boolean,
+    val occurredAt: String,
+)
+
+/** A [ThreadItem.CompactionBoundary] (#1353): a `null` token count is omitted on encode and read back as `null`. */
+@Serializable
+private data class CachedCompaction(
+    val preTokens: Long? = null,
+    val postTokens: Long? = null,
+    val manual: Boolean,
+    val occurredAt: String,
+)
+
+/** A [ThreadItem.ModelRefusal] (#1353). Model names and [banner] are claude-authored, stored as the row holds them. */
+@Serializable
+private data class CachedRefusal(
+    val originalModel: String,
+    val fallbackModel: String? = null,
+    val banner: String,
+    val bannerTruncated: Boolean,
+    val occurredAt: String,
+)
+
+// Only settled rows reach here: `cacheableThreadRows` has already dropped in-flight and unrecognized ones.
 private fun ThreadItem.toRecord(): CachedThreadRow =
     when (this) {
         is ThreadItem.MessageItem ->
@@ -481,18 +526,20 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
             CachedThreadRow(
                 boundary = CachedBoundary(previousSessionId, newSessionId, reason, occurredAt.toString(), workspaceCwd),
             )
+        is ThreadItem.Banner -> CachedThreadRow(banner = CachedBanner(level, text, truncated, occurredAt.toString()))
+        is ThreadItem.CompactionBoundary ->
+            CachedThreadRow(compaction = CachedCompaction(preTokens, postTokens, manual, occurredAt.toString()))
+        is ThreadItem.ModelRefusal ->
+            CachedThreadRow(
+                refusal = CachedRefusal(originalModel, fallbackModel, banner, bannerTruncated, occurredAt.toString()),
+            )
         is ThreadItem.UnrecognizedMessage -> throw IllegalStateException("unrecognized rows are never cached")
-        is ThreadItem.Banner -> throw IllegalStateException("banner rows are never cached")
-        is ThreadItem.CompactionBoundary -> throw IllegalStateException("compaction rows are never cached")
-        is ThreadItem.ModelRefusal -> throw IllegalStateException("model refusal rows are never cached")
     }
 
 private fun CachedThreadRow.toDomain(): ThreadItem {
-    val message = message
-    val boundary = boundary
-    require((message == null) != (boundary == null)) { "thread cache row must be one kind" }
-    return if (message != null) {
-        ThreadItem.MessageItem(
+    require(listOfNotNull(message, boundary, banner, compaction, refusal).size == 1) { "thread cache row must be one kind" }
+    if (message != null) {
+        return ThreadItem.MessageItem(
             Message(
                 id = message.id,
                 sessionId = message.sessionId,
@@ -505,11 +552,20 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
                 segment = message.segment?.toDomain(message.content),
             ),
         )
-    } else {
-        checkNotNull(boundary).let {
-            ThreadItem.SessionBoundary(it.previousSessionId, it.newSessionId, it.reason, Instant.parse(it.occurredAt), it.workspaceCwd)
-        }
     }
+    boundary?.let {
+        return ThreadItem.SessionBoundary(it.previousSessionId, it.newSessionId, it.reason, Instant.parse(it.occurredAt), it.workspaceCwd)
+    }
+    banner?.let { return ThreadItem.Banner(it.level, it.text, it.truncated, Instant.parse(it.occurredAt)) }
+    compaction?.let { return ThreadItem.CompactionBoundary(it.preTokens, it.postTokens, it.manual, Instant.parse(it.occurredAt)) }
+    val refusal = checkNotNull(refusal)
+    return ThreadItem.ModelRefusal(
+        refusal.originalModel,
+        refusal.fallbackModel,
+        refusal.banner,
+        refusal.bannerTruncated,
+        Instant.parse(refusal.occurredAt),
+    )
 }
 
 /**
