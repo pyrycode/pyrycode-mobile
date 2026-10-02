@@ -42,7 +42,7 @@ class ChannelListColoursTest {
         val bitmap = draw()
         assertPanel(bitmap, Color.rgb(11, 14, 17))
         assertToolbarRule(bitmap, Color.rgb(34, 65, 92))
-        assertSelectedRowFill(bitmap, Color.rgb(0, 51, 85))
+        assertSelectedRowFill(bitmap, Color.rgb(19, 74, 116))
     }
 
     @Test
@@ -180,7 +180,7 @@ class ChannelListColoursTest {
                 .boundsInRoot
         val x = bounds.left.roundToInt() + 2
         val y = bounds.top.roundToInt() + 2
-        assertEquals("Selected row uses Schemes/On Primary", expected, bitmap.getPixel(x, y))
+        assertEquals("Selected row uses Schemes/Primary Container", expected, bitmap.getPixel(x, y))
     }
 
     private fun closeColour(

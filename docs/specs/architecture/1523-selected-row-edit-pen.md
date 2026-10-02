@@ -33,3 +33,5 @@ Edit channel and Edit chat stay reachable by opening the row, pressing Back and 
 ## Revisions
 
 **2026-10-02:** `SharedDarkColourCaptureTest` (device-only, #1225) asserted the old selected fill `Schemes/On Primary` (`#003355`) in its static-dark capture, whose fixture selects `pyrycode discord integration`. It now asserts `Schemes/Primary Container` (`#134a74`), because the swap in `TreeConversationRow` makes that the selected fill. The test asserts nothing else new. The shared `ChannelListScreenTest` harness `TreeContent` also mirrors the view model's `lastOpenedTarget` by selecting a row on `TreeRowTapped`, so the column test can select each row before measuring its pen.
+
+**2026-10-02 (rework 1):** The verifier found `ChannelListColoursTest.darkPanelAndBarMatchTheReferenceWithOneBlueGreyRule` (shared, Robolectric) still pinning the static-dark selected fill to `Schemes/On Primary` (`#003355`). It now asserts `Schemes/Primary Container` (`#134a74`), the same change as `SharedDarkColourCaptureTest` above. `TreeRowsPreviewMatrix` moves its pen to the selected row, so the preview shows a state the screen can produce. No production behaviour changes.
