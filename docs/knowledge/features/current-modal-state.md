@@ -42,11 +42,14 @@ modal_shown / modal_dismissed  ──(#437 decode, capability-gated)──▶  M
         ▼
 RelayRepositoryCoordinator.modalEvents : Flow<ModalEvent?>   ◀── #445 seam, now #492-PRIVATE; #1337 prefixes each
         │                                                        connection's inner flow with a null reconnect marker
-        │  scan + HostModalState.reduce (modalId-keyed, hold-all) — a null input resets to HostModalState(),
-        │  stateIn(scope, Eagerly)   ◀── #492 hoists the fold here; #1337 widens it to every outstanding prompt
+        │  one eager collector folds HostModalState.reduce(event) / .reconnected() (a null input) into a
+        │  MutableStateFlow via update {} (#1340 — was a scan + stateIn; see § below). recordModalAction(action)
+        │  folds this phone's own answer/cancel/rejection actions into the same MutableStateFlow, also via
+        │  update {}, so neither writer loses the other's change (#1340).
         ▼
 RelayRepositoryCoordinator.hostModals : StateFlow<HostModalState>   ◀── #1337 the process-scoped fold: every
         │                                                               outstanding prompt + this connection's resolved ids
+        │                                                               + (#1340) the chats showing a rejection notice
         │  HostModalState.scopedTo(conversationId)   ◀── #1337 per-thread filter (this ViewModel's own conversationId)
         ▼
 ThreadViewModel.hostModal : StateFlow<HostModalState>   ◀── #1337 taken verbatim as a private ctor property (renamed from a
@@ -60,8 +63,9 @@ ThreadScreen → modal overlay (#446 renders it; #451 answers it, #452 renders t
 
 **As of [#1338](#related) the conversation-list attention readers take the whole `hostModals.outstanding`
 list, not a single-value projection.** `RelayRepositoryCoordinator.currentModal` and
-`RelayConnectionRegistry.currentModal` (the `hostModals.map { it.latestOutstanding }` view) and
-`HostModalState.latestOutstanding` itself are gone; `HostAttentionState.resolve` and
+`RelayConnectionRegistry.currentModal` (the `hostModals.map { it.latestOutstanding }` view) are gone;
+`HostModalState.latestOutstanding` itself stayed as dead code until [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340)
+deleted it. `HostAttentionState.resolve` and
 `HostConversationSource.promptKeys` now take `List<ModalUiState.Open>` directly, matching desktop's
 `selectHasOutstandingFor` — a chat waits while *any* outstanding prompt belongs to it, not only the most
 recent one. No thread screen ever read `currentModal`; threads scope `hostModals` directly, unaffected by
@@ -97,25 +101,44 @@ private val modalEvents: Flow<ModalEvent?> =
         conn?.repo?.modalEvents?.onStart<ModalEvent?> { emit(null) } ?: emptyFlow()
     }
 
-// #1337: every outstanding prompt + this connection's resolved ids, folded once at this process-scoped
-// layer. A null input (the reconnect marker) resets to an empty HostModalState — see § below.
-val hostModals: StateFlow<HostModalState> =
-    modalEvents
-        .scan(HostModalState()) { state, event -> if (event == null) HostModalState() else state.reduce(event) }
-        .stateIn(scope, SharingStarted.Eagerly, HostModalState())
+// #1340: a MutableStateFlow, not a stateIn(scan(...)), so recordModalAction (below) can fold this phone's
+// own actions into the same state synchronously. One collector, launched Eagerly in the coordinator's
+// process-scoped `scope`, folds every frame: a null input (the reconnect marker) folds HostModalState
+// .reconnected() — every outstanding/resolved prompt is cleared, but rejectedConversations survives
+// (§ below) — and an event folds HostModalState.reduce(event), same table as #1337.
+private val hostModalState = MutableStateFlow(HostModalState())
+val hostModals: StateFlow<HostModalState> = hostModalState.asStateFlow()
+
+init {
+    scope.launch {
+        modalEvents.collect { event ->
+            hostModalState.update { state -> if (event == null) state.reconnected() else state.reduce(event) }
+        }
+    }
+}
+
+/**
+ * Folds one of this phone's own prompt actions (#1340: an answer/cancel closing its own prompt, a refused
+ * answer, or the user dismissing that refusal) into [hostModals] synchronously, through the same
+ * `update {}` the wire collector above uses, so a `modal_shown` arriving mid-tap is never lost to a race
+ * between the two writers.
+ */
+fun recordModalAction(action: ModalAction) {
+    hostModalState.update { it.reduce(action) }
+}
 ```
 
 `flatMapLatest` switches to the fresh connection's repo and cancels the prior on reconnect; `emptyFlow()`
 covers between-connections. `onStart { emit(null) }` is the **reconnect marker**: it is the first emission
 of the new inner flow, so it folds strictly after the old connection's collection is cancelled and strictly
 before the new connection's first `modal_shown` is collected — the clear can never race a re-sent frame in
-either direction. The `.scan` sits **downstream** of `flatMapLatest`, so across the switch the inner source
-changes but the outer `scan` is **not** restarted — its accumulator only resets when a `null` marker reaches
-it, i.e. on a **new connection being published**, never on a plain teardown (`activeConnection → null`
-switches to `emptyFlow()`, which emits nothing and folds nothing — see [Lifecycle, errors,
-edge cases](#lifecycle-errors-edge-cases)). `modalEvents` stays `private` because nothing outside the
-coordinator reads the raw event stream; its element type widened to `ModalEvent?` in #1337 is an
-implementation detail of the marker, invisible past `hostModals`.
+either direction. The collector sits **downstream** of `flatMapLatest`, so across the switch the inner
+source changes but the collector itself is **not** restarted — it only resets `hostModalState` to
+`reconnected()` when a `null` marker reaches it, i.e. on a **new connection being published**, never on a
+plain teardown (`activeConnection → null` switches to `emptyFlow()`, which emits nothing and folds nothing
+— see [Lifecycle, errors, edge cases](#lifecycle-errors-edge-cases)). `modalEvents` stays `private` because
+nothing outside the coordinator reads the raw event stream; its element type widened to `ModalEvent?` in
+\#1337 is an implementation detail of the marker, invisible past `hostModals`.
 
 ### 2. The `HostModalState` fold (#1337) + the ViewModel re-exposure
 
@@ -129,7 +152,9 @@ has no Android/UI dependency), **no logging** of any field:
 | any → `Shown(id=X)`, X held in `outstanding` | that entry **replaced in place**, same position | a re-shown prompt (e.g. a refreshed offer) updates rather than reorders (AC #1) |
 | any → `Shown(id=X)`, X new | **appended** to `outstanding` as `Open` carrying the event verbatim | a second chat's prompt no longer evicts the first's — the #1337 fix (AC #1) |
 | `Dismissed(id=X)`, X held in `outstanding` | X removed from `outstanding`, appended to `resolved` as `Dismissed(modalId, outcome, source, conversationId = held.conversationId)` | the prompt resolved; its conversation is copied from the held `Open` since the wire dismiss carries none (#816) (AC #3) |
-| `Dismissed(id=X)`, X not held | unchanged | **spoofed-dismiss safety** — an out-of-band dismiss can't clear a prompt that isn't open (AC #3) |
+| `Dismissed(id=X)`, X not held | unchanged | **spoofed-dismiss safety** — an out-of-band dismiss can't clear a prompt that isn't open (AC #3); this is also why the daemon's own `modal_dismissed` for a prompt this phone just answered itself is a no-op (#1340 — `AnsweredHere` already removed it from `outstanding`) |
+
+Since [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340), `HostModalState.reduce` is overloaded on a second, local `ModalAction` sealed type — this phone's own answer/cancel/rejection-dismissal, folded beside the wire's `ModalEvent`s but never derived from one. `AnsweredHere(modalId)` for a held id removes it from `outstanding` and appends a `Dismissed(..., answeredHere = true)` to `resolved` — the same shape the wire fold produces, so the existing `Shown`-ignores-a-resolved-id row above also keeps a repeated `modal_shown` for it from reopening the card, with no second table needed. `Rejected(conversationId)` and `RejectionDismissed(conversationId)` add to and remove from `rejectedConversations` and never touch `outstanding`/`resolved`. See that doc for the ViewModel side (`recordModalAction`, `sendAnswer`/`sendCancel`, `answerRejected`).
 
 `HostModalState(outstanding: List<ModalUiState.Open>, resolved: List<ModalUiState.Dismissed>)` replaces the
 pre-#1337 single `ModalUiState` accumulator. `outstanding` is in first-shown order; `resolved` only accumulates
@@ -151,17 +176,23 @@ Two scoping functions sit on top, both pure:
 ```kotlin
 fun HostModalState.scopedTo(conversationId: String): ModalUiState =
     outstanding.firstOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }
-        ?: resolved.lastOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }
+        ?: resolved.lastOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }?.takeUnless { it.answeredHere }
         ?: ModalUiState.Hidden
 ```
 
 `scopedTo(conversationId)` — what `ThreadViewModel.currentModal` is built from — is **first outstanding,
-else most recent dismissal, else Hidden**, each step reusing `ModalUiState.scopedTo` (unchanged since #816:
-a blank or non-matching `conversationId` always yields `Hidden`). The "most recent dismissal" fallback is
-why `ThreadScreen`'s `LaunchedEffect(modalState.modalId)` resolved-snackbar can fire again: reopening a
-conversation re-reads the same `Dismissed` from `resolved` until the next reconnect clears it — see [§
-Permission-modal overlay](permission-modal-overlay.md#the-dismissal-dismissed) for the render-side
-consequence.
+else most recent dismissal (unless this phone made it itself), else Hidden**, each step reusing
+`ModalUiState.scopedTo` (unchanged since #816: a blank or non-matching `conversationId` always yields
+`Hidden`). The "most recent dismissal" fallback is why `ThreadScreen`'s `LaunchedEffect(modalState.modalId)`
+resolved-snackbar can fire again: reopening a conversation re-reads the same `Dismissed` from `resolved`
+until the next reconnect clears it — see [§ Permission-modal overlay](permission-modal-overlay.md#the-dismissal-dismissed)
+for the render-side consequence. The `takeUnless { it.answeredHere }` is [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340):
+without it, a local answer's own `Dismissed` record would be handed back the same way a remote one is, and
+the screen's dismissal-reason `LaunchedEffect` would announce the user's own tap. It also fixes a trap the
+naive fix (just filtering `answeredHere` out of the fallback's own match) would have left: once the newest
+resolution for a chat is `answeredHere` and is skipped, `lastOrNull` does not fall further back to that
+chat's *older* remote dismissal — the whole fallback collapses to `Hidden` for that chat, so an older
+"Resolved on another device" cannot resurface either.
 
 ### The `alwaysAllowRules` field (#818)
 
@@ -215,23 +246,30 @@ This is the **load-bearing design call** of the fold — a deliberate deviation 
 `WhileSubscribed(5_000)` of the sibling signals (`isThinking`, `isStalled`, `connectionState`). Its
 rationale moved verbatim from the VM to the coordinator in #492 (the reasoning is now the coordinator's):
 
-- `scan` **re-emits its initial accumulator on every fresh upstream collection.** Under `WhileSubscribed`,
-  when collection stops past the timeout the upstream cancels; on resubscription `scan` restarts and emits
-  an empty `HostModalState`, **overwriting every held prompt**. Because the source `modalEvents` is
-  `replay = 0`, the prior events do **not** replay to rebuild the accumulator — still-open prompts would
-  silently clear. This is a deterministic consequence of `scan` + `replay = 0`, not a speculative guard.
+- A `scan`-backed `stateIn` **re-emits its initial accumulator on every fresh upstream collection.** Under
+  `WhileSubscribed`, when collection stops past the timeout the upstream cancels; on resubscription `scan`
+  restarts and emits an empty `HostModalState`, **overwriting every held prompt**. Because the source
+  `modalEvents` is `replay = 0`, the prior events do **not** replay to rebuild the accumulator — still-open
+  prompts would silently clear. This was the deterministic argument against `WhileSubscribed` while the fold
+  was a `scan`. [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340)
+  replaced the `scan` with a `MutableStateFlow` folded by one `Eagerly`-launched collector plus
+  `recordModalAction`'s synchronous `update {}` — so the collector, not an operator restart, is now the
+  thing a `WhileSubscribed` policy would have to govern, and the same conclusion holds: nothing subscribes
+  to stop or restart it, so it must run for the coordinator's own lifetime, independent of any screen.
 - `Eagerly` collects for the **coordinator's process lifetime** (the `scope` is `SupervisorJob() +
-  dispatcher`, created at `createdAtStart` Koin init and cancelled only by `close()`), so the `scan`
-  accumulator runs **exactly once** per coordinator and is monotonic *within a connection*; `.value` is
-  always the true current projection. This matches the coordinator's own accumulate-a-`replay=0`-stream
-  precedent (`currentRepository` / `connectionStatus`, both `Eagerly`). Cost is negligible — modals are
-  low-rate and the lists are cleared on every reconnect (§ below), so they cannot grow across the app's
-  whole session. **Collection begins at coordinator construction — before any thread screen — which is
-  precisely why a pre-subscriber `modal_shown` is no longer dropped.**
+  dispatcher`, created at `createdAtStart` Koin init and cancelled only by `close()`), so the fold runs
+  **exactly once** per coordinator and is monotonic *within a connection*; `.value` is always the true
+  current projection. This matches the coordinator's own accumulate-a-`replay=0`-stream precedent
+  (`currentRepository` / `connectionStatus`, both `Eagerly`). Cost is negligible — modals are low-rate and
+  the outstanding/resolved lists are cleared on every reconnect (§ below; the `rejectedConversations` set
+  since #1340 is the one part that is not and is bounded by the number of chats with a live rejection, never
+  growing per modal), so they cannot grow across the app's whole session. **Collection begins at coordinator
+  construction — before any thread screen — which is precisely why a pre-subscriber `modal_shown` is no
+  longer dropped.**
 - The sibling `isThinking` is safe under `WhileSubscribed` **only because `mapNotNull` never re-emits a
   stale value on resubscription** (a non-matching event produces no emission, so `.value` is retained).
-  The same policy is wrong for a `scan` accumulator. Pick the started policy from the operator
-  (`scan` accumulates vs `mapNotNull` transitions), not from the sibling.
+  The same policy is wrong for an accumulating fold with no replay behind it. Pick the started policy from
+  what the fold actually does (accumulate vs transition), not from the sibling.
 
 ## Why a sibling `StateFlow`, not a `ThreadUiState` field
 
@@ -247,37 +285,52 @@ holds every outstanding prompt across the host.
 
 ## Lifecycle, errors, edge cases
 
-- **Lifecycle** — `stateIn(scope, Eagerly, HostModalState())` on the coordinator's **process-lived** scope
-  (not `viewModelScope`): the host fold collects for the coordinator's lifetime, cancelled only by
-  `close()`. The VM layers its own `stateIn(viewModelScope, Eagerly, …)` on top to compute the scoped
-  `currentModal`, cancelled with the VM; no parallel mutable modal state exists on either layer, and the
-  scoping `map` is pure (no dispatcher switch).
+- **Lifecycle** — `hostModalState` is a `MutableStateFlow` folded by one collector launched `Eagerly` in
+  the coordinator's **process-lived** `scope` (not `viewModelScope`; #1340, was a `scan`-backed `stateIn`):
+  the host fold collects for the coordinator's lifetime, cancelled only by `close()`.
+  `recordModalAction` folds beside it through the same `update {}`, non-suspending, so a synchronous caller
+  (the VM's `sendAnswer`/`sendCancel`) sees its own write land before anything else runs. The VM layers its
+  own `stateIn(viewModelScope, Eagerly, …)` on top to compute the scoped `currentModal`, cancelled with the
+  VM; no parallel mutable modal state exists on either layer, and the scoping `map` is pure (no dispatcher
+  switch).
 - **Errors** — none. `modalEvents` is a `SharedFlow` that never completes-with-error; malformed envelopes
   are already dropped at the #437 decode boundary, so every event reaching the fold is well-typed and the
   fold is total over the sealed `ModalEvent` plus the `null` reconnect marker. Absence of a live source is
-  the empty flow ⇒ the fold holds whatever it already had (no event ⇒ no reduce call — see teardown below).
-  No `catch`, no result type.
-- **Connection teardown still RETAINs; a new connection now CLEARS (#1337 revises #492's decision).**
+  the empty flow ⇒ the fold holds whatever it already had (no event ⇒ no `update` call — see teardown
+  below). No `catch`, no result type.
+- **Connection teardown still RETAINs; a new connection CLEARS the prompts but, since #1340, KEEPS the
+  rejection notices (#1337 revised #492's decision; #1340 revises #1337's).**
   On a connection drop `activeConnection` goes `null → emptyFlow()`, so no event flows — including no
-  reconnect marker — and the `scan` **holds its last accumulator**: every still-outstanding prompt is
-  retained, *not* reset to empty. This half of #492's decision is unchanged and for the same reason: the
-  answer path is guarded by **deterministic code**, never by this projection — `coordinator.answerModal` /
-  `cancelModal` throw `IllegalStateException` on no active connection (surfaced as a one-shot
-  `modalSendErrors` snackbar), and `modalId`s are unique per instance so a stale answer can't match a fresh
-  prompt on a new connection (daemon rejects → `RelayErrorException` → same one-shot error). Belt-and-
-  suspenders with **different fabric**: the projection is UI state, the guard is deterministic code (the
-  [#490](../codebase/490.md) pairing pattern).
+  reconnect marker — and the collector simply stops being fed: it **holds its last fold**, every
+  still-outstanding prompt retained, *not* reset to empty. This half of #492's decision is unchanged and for
+  the same reason: the answer path is guarded by **deterministic code**, never by this projection —
+  `coordinator.answerModal` / `cancelModal` throw `IllegalStateException` on no active connection (since
+  #1340, nothing is shown for it — the next connection re-sends the still-outstanding prompt), and
+  `modalId`s are unique per instance so a stale answer can't match a fresh prompt on a new connection
+  (daemon rejects → `RelayErrorException` → since #1340 the chat that sent it shows the rejection notice).
+  Belt-and-suspenders with **different fabric**: the projection is UI state, the guard is deterministic code
+  (the [#490](../codebase/490.md) pairing pattern).
   <br><br>
-  What #492 left open — "should a connection drop clear a stale `Open`?" — #1337 answers for the **new
+  What #492 left open — "should a connection drop clear a stale `Open`?" — #1337 answered for the **new
   connection**, not the drop: when `activeConnection` switches to a *fresh* `Connection`, the `onStart {
-  emit(null) }` marker (§ above) resets the fold to an empty `HostModalState` before that connection's first
-  `modal_shown` is collected. This is now safe because the daemon **guarantees** a connect-time re-send of
-  every still-outstanding prompt (`protocol-mobile.md` § Reconcile on (re)connect) — the "unconfirmed
-  re-raise" gap #492 cited no longer exists. Net effect: a prompt held across a **plain disconnect** (no new
-  connection yet) stays exactly as #492 left it; a prompt held into a **new connection** is dropped and only
-  returns if the daemon re-sends it — which per the protocol it always does for anything still outstanding,
-  and never does for anything already answered. See [Permission-modal overlay](permission-modal-overlay.md)
-  for what this means for the don't-ask-again draft and the resolved-snackbar.
+  emit(null) }` marker (§ above) folds `HostModalState.reconnected()` before that connection's first
+  `modal_shown` is collected. **#1340 narrows what `reconnected()` actually clears**: it empties
+  `outstanding` and `resolved` exactly as #1337's full reset did, but keeps `rejectedConversations` —
+  the chats showing "Your answer was rejected." survive a reconnect, since nothing about a rejection is
+  per-connection and only the user's own dismissal (or the end of the pairing) should clear it. Clearing
+  `outstanding`/`resolved` is still safe for the reason #1337 established: the daemon **guarantees** a
+  connect-time re-send of every still-outstanding prompt (`protocol-mobile.md` § Reconcile on (re)connect)
+  — the "unconfirmed re-raise" gap #492 cited still doesn't exist, and an `answeredHere` resolution
+  (§ below) is exactly the kind of thing that *should* drop on reconnect, since its only job was to keep a
+  repeated `modal_shown` from reopening a card on the connection that already closed it. Net effect: a
+  prompt held across a **plain disconnect** (no new connection yet) stays exactly as #492 left it; a prompt
+  (or an `answeredHere` record) held into a **new connection** is dropped — a still-outstanding one only
+  returns if the daemon re-sends it, which per the protocol it always does for anything still outstanding
+  and never does for anything already answered — while a rejection notice is not dropped at all. See
+  [Permission-modal overlay](permission-modal-overlay.md) for what the outstanding/resolved reset means for
+  the don't-ask-again draft and the resolved-snackbar, and [Modal answer flow § Local close on tap and the
+  in-chat rejection notice](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340)
+  for the rejection notice itself.
 
 ## Wiring
 
@@ -289,10 +342,13 @@ viewModel {
     ThreadViewModel(
         get(), get(), get(), get(),
         coordinator.liveSessionEvents,
-        // #1337: the process-scoped fold of every outstanding prompt, cleared on each new connection.
+        // #1337: the process-scoped fold of every outstanding prompt, cleared on each new connection
+        // (since #1340, except for its rejection notices).
         hostModal = coordinator.hostModals,
         answerModal = coordinator::answerModal,
         cancelModal = coordinator::cancelModal,
+        // #1340: folds this phone's own answer/cancel/rejection actions into the same hostModals state.
+        recordModalAction = coordinator::recordModalAction,
         …,
     )
 }
@@ -341,5 +397,9 @@ to a thread that isn't its own.
   (shipped) that collects this `currentModal` in the route host and draws the overlay.
 - Sibling slices: **#446** the render overlay (shipped) · **#444** answering / cancelling, split into
   [**#451**](modal-answer-flow.md) the behavior (shipped) and **#452** the render of the armed affordance.
+- [Modal answer flow § Local close on tap and the in-chat rejection notice](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340)
+  ([#1340](modal-answer-flow.md)) — replaced the `scan`-backed `stateIn` here with the `MutableStateFlow` +
+  `recordModalAction` fold described above, added `rejectedConversations` and `reconnected()`, and the
+  `answeredHere` resolution `scopedTo` now skips.
 - Producer SSOT: pyrycode#716 (surfaces only `permission` / `trust` classes; fail-safe-deny
   `default_option_id`, no per-option destructive marker), ADR 025 § Phase 3 modals, EPIC pyrycode#597.
