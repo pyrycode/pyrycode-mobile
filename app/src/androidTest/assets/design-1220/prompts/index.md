@@ -9,8 +9,8 @@
 - **Capture:** `PromptsDesignCaptureTest` on the full `pixel8Api35` image (API 35) with
   `requireRealSystemBars=true`, density 1.0, fixed dark theme, real 24 px status and navigation bars. Each `.txt`
   records the measured values.
-- **Result:** `prompts-results.xml`, the whole class in one run: 6 executed, 0 failures. Every capture here
-  comes from that run.
+- **Result:** `prompts-results.xml`, the whole class in one run after the second rework: 6 executed, 0 failures.
+  Every capture here comes from that run.
 
 **How these captures differ from onboarding's.** Both prompts set `FLAG_SECURE` on the activity window while
 they show, which blacks out the harness's `UiAutomation` screenshot. The class draws the decor view into a
@@ -31,13 +31,19 @@ Typography, Colour and Icon paths and routes it to #1485, which holds the design
 sits 24 px lower than Figma's. As in the onboarding audit, that move is not a mismatch; everything else is
 compared at 1:1.
 
-**Platform text scaling.** At 150 % Android 14+ scales large text non-linearly, so the top bar title grows
-less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the platform, not the app.
+**Top-bar title at 150 %.** In both compact frames (`636:4066`, `639:3308`) the title "Client planning" is
+about 26 px from cap to descender in the app and about 34 px in Figma. Android 14+ scales large text
+non-linearly, which likely explains it, but the board then draws something the platform cannot render. It is a
+mismatch in both items, routed to #1501, which decides whether the board's compact frames show platform
+scaling or the app matches the frames.
 
 ### Questions · Unanswered — `636:3279`
 
 - **Owning ticket:** #1305 (inline questions), #1299 (question components)
-- **Capture:** `question-unanswered.png` (412x892, 1.0) · **Side-by-side:** `question-unanswered-side-by-side.png` · **Overlay:** `question-unanswered-overlay.png`
+- **Capture:** `question-unanswered.png` (412x892, 1.0)
+- **Side-by-side:** `question-unanswered-side-by-side.png`
+- **Overlay:** `question-unanswered-overlay.png`
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
@@ -56,7 +62,10 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 ### Questions · Answers selected — `636:3540`
 
 - **Owning ticket:** #1305, #1299
-- **Capture:** `question-answered.png` (412x892, 1.0) · **Side-by-side:** `question-answered-side-by-side.png` · **Overlay:** `question-answered-overlay.png`
+- **Capture:** `question-answered.png` (412x892, 1.0)
+- **Side-by-side:** `question-answered-side-by-side.png`
+- **Overlay:** `question-answered-overlay.png`
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
@@ -75,13 +84,17 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 ### Questions · Other and keyboard — `636:3803`
 
 - **Owning ticket:** #1305
-- **Capture:** `question-keyboard.png` (412x792 window, 240 px test keyboard, 412x552 app area, 1.0) · **Side-by-side:** `question-keyboard-side-by-side.png` · **Overlay:** `question-keyboard-overlay.png`
+- **Capture:** `question-keyboard.png` (412x792 window, 240 px test keyboard, 412x552 app area, 1.0)
+- **Side-by-side:** `question-keyboard-side-by-side.png`
+- **Overlay:** `question-keyboard-overlay.png`
 - The test IME is 240 px and the frame's keyboard is 340 px, so the window is 792 px tall and the app has the
-  frame's 552 px above the keyboard. The capture is cropped at the keyboard's top.
+  frame's 552 px above the keyboard. The capture is cropped at the keyboard's top. The test asserts the 240 px
+  inset, and the `.txt` records the keyboard that showed: one run of this rework drew a 332 px keyboard.
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the focused Other field is in view, but Cancel and Continue are hidden under the composer footer; Figma shows both above "Waiting for answers". The first pass found them half under; the focus scroll offset varies, and both runs hide them |
+| Geometry | mismatch: the focused Other field is in view, but Cancel and Continue are half under the composer footer; Figma shows both above "Waiting for answers". The focus scroll offset varies between runs: the first and this run leave them half under, the first rework run hid them fully. Every run covers them |
 | Padding | match |
 | Spacing | mismatch: the actions have no gap above the footer (see Geometry); the Other row as Unanswered |
 | Typography | mismatch: footer "Cxt high: 84%" |
@@ -89,7 +102,7 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 | Borders | match |
 | Radii | match |
 | Icon paths | mismatch: footer tune icon |
-| Component state | match: Other focused with "Web" and the caret; the draft is kept |
+| Component state | match: Other focused with "Web" (the caret blinks and is in its off phase in this capture); the draft is kept |
 
 - **Clipping and reach:** Cancel and Continue are covered by the footer at the focus scroll position. Both
   scroll into view and display with the keyboard still open (`reachable` in the test). No control is unreachable.
@@ -98,14 +111,17 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 ### Questions · Compact text at 150% — `636:4066`
 
 - **Owning ticket:** #1305
-- **Capture:** `question-compact.png` (320x700, 1.5) · **Side-by-side:** `question-compact-side-by-side.png` · **Overlay:** `question-compact-overlay.png`
+- **Capture:** `question-compact.png` (320x700, 1.5)
+- **Side-by-side:** `question-compact-side-by-side.png`
+- **Overlay:** `question-compact-overlay.png`
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
 | Geometry | mismatch: Cancel and Continue stack, but centred, where Figma stacks them at the card's start edge. Figma's Cancel and Continue are 52 px tall (118 and 143.5 px wide); the app's are about 42 px |
 | Padding | match |
 | Spacing | mismatch: the Other row, as Unanswered |
-| Typography | mismatch: the action labels are smaller than the frame's linear 150 %, and the footer reads "Cxt h…". Every label wraps; the top bar title is smaller because of platform scaling (see above) |
+| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px (see "Top-bar title at 150 %"); the action labels are smaller than the frame's linear 150 %; the footer reads "Cxt h…". Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
@@ -114,12 +130,15 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, both questions, Cancel
   and Continue each scroll into view and display.
-- **Routed:** #1484 (stacked action alignment), #1501 (button heights, Other row), #1485 (footer, truncation)
+- **Routed:** #1484 (stacked action alignment), #1501 (button heights and their smaller labels, the top-bar title, Other row), #1485 (footer, truncation)
 
 ### Permission · Safe default — `639:2242`
 
 - **Owning ticket:** #1306 (inline permissions), #1300 (permission components)
-- **Capture:** `permission-safe-default.png` (412x892, 1.0) · **Side-by-side:** `permission-safe-default-side-by-side.png` · **Overlay:** `permission-safe-default-overlay.png`
+- **Capture:** `permission-safe-default.png` (412x892, 1.0)
+- **Side-by-side:** `permission-safe-default-side-by-side.png`
+- **Overlay:** `permission-safe-default-overlay.png`
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
@@ -138,7 +157,10 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 ### Permission · Session grant offered — `639:2451`
 
 - **Owning ticket:** #1306, #818 (session grant)
-- **Capture:** `permission-grant-offered.png` (412x892, 1.0) · **Side-by-side:** `permission-grant-offered-side-by-side.png` · **Overlay:** `permission-grant-offered-overlay.png`
+- **Capture:** `permission-grant-offered.png` (412x892, 1.0)
+- **Side-by-side:** `permission-grant-offered-side-by-side.png`
+- **Overlay:** `permission-grant-offered-overlay.png`
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
@@ -157,7 +179,10 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 ### Permission · Session grant selected — `639:2666`
 
 - **Owning ticket:** #1306, #818
-- **Capture:** `permission-grant-selected.png` (412x892, 1.0) · **Side-by-side:** `permission-grant-selected-side-by-side.png` · **Overlay:** `permission-grant-selected-overlay.png`
+- **Capture:** `permission-grant-selected.png` (412x892, 1.0)
+- **Side-by-side:** `permission-grant-selected-side-by-side.png`
+- **Overlay:** `permission-grant-selected-overlay.png`
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
@@ -176,7 +201,10 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 ### Permission · Confirm Allow once (armed) — `639:2882`
 
 - **Owning ticket:** #1306, #451 (arm then confirm)
-- **Capture:** `permission-armed.png` (412x892, 1.0) · **Side-by-side:** `permission-armed-side-by-side.png` · **Overlay:** `permission-armed-overlay.png`
+- **Capture:** `permission-armed.png` (412x892, 1.0)
+- **Side-by-side:** `permission-armed-side-by-side.png`
+- **Overlay:** `permission-armed-overlay.png`
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
@@ -195,7 +223,10 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 ### Trust · Safe default — `639:3099`
 
 - **Owning ticket:** #1306
-- **Capture:** `trust-safe-default.png` (412x892, 1.0) · **Side-by-side:** `trust-safe-default-side-by-side.png` · **Overlay:** `trust-safe-default-overlay.png`
+- **Capture:** `trust-safe-default.png` (412x892, 1.0)
+- **Side-by-side:** `trust-safe-default-side-by-side.png`
+- **Overlay:** `trust-safe-default-overlay.png`
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
@@ -214,14 +245,17 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 ### Permission · Compact text at 150% — `639:3308`
 
 - **Owning ticket:** #1306
-- **Capture:** `permission-compact.png` (320x700, 1.5) · **Side-by-side:** `permission-compact-side-by-side.png` · **Overlay:** `permission-compact-overlay.png`
+- **Capture:** `permission-compact.png` (320x700, 1.5)
+- **Side-by-side:** `permission-compact-side-by-side.png`
+- **Overlay:** `permission-compact-overlay.png`
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
 | Geometry | mismatch: "Permission required" sits above the card instead of inside it as the first line; Cancel is centred where Figma start-aligns it. Figma's Allow once, Reject once and Cancel are 52 px tall (Cancel 118 px wide); the app's are about 42 px |
 | Padding | match |
 | Spacing | mismatch: no confirm hint under the armed choice, which sits about 14 px above Reject once; context block as Safe default |
-| Typography | mismatch: "Blocked path" label; the button labels are smaller than the frame's linear 150 %; footer "Cxt h…". Every label wraps |
+| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px (see "Top-bar title at 150 %"); "Blocked path" label; the button labels are smaller than the frame's linear 150 %; footer "Cxt h…". Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
@@ -230,35 +264,46 @@ less than in Figma's linear 150 % frames (`636:4066`, `639:3308`). That is the p
 
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, prompt, grant, both
   choices and Cancel each scroll into view and display.
-- **Routed:** #1483 (title, Cancel, hint, label, status text), #1501 (button heights, context spacing), #1485 (footer, truncation)
+- **Routed:** #1483 (title, Cancel, hint, label, status text), #1501 (button heights and their smaller labels, the top-bar title, context spacing), #1485 (footer, truncation)
 
 ### Switch chats while prompts wait — `640:2437`
 
-- **Owning ticket:** #1305, #1306, #1338 (list waiting marks)
-- **Captures:** each at (412x892, 1.0): `switch-question-chat.png` (question in "Client planning"),
-  `switch-list.png` against `640:2440`, `switch-other-chat.png` against `640:2646` with the keyboard closed,
-  and `switch-permission-chat.png` (permission in "kitchenclaw refactor"). Side-by-side and overlay for the
-  list and the other chat.
+- **Owning ticket:** #1305, #1306, #1338 (list waiting marks), #1337 (grant draft per conversation)
+- **Capture:** `switch-list.png` against `640:2440` (412x892, 1.0); `switch-other-chat.png` against `640:2646`,
+  keyboard closed (412x892, 1.0); `switch-question-chat.png`, the question in "Client planning" (412x892, 1.0);
+  `switch-permission-chat.png`, the permission in "kitchenclaw refactor" (412x892, 1.0)
+- **Side-by-side:** `switch-list-side-by-side.png`, `switch-other-chat-side-by-side.png`
+- **Overlay:** `switch-list-overlay.png`, `switch-other-chat-overlay.png`
 - `promptsWaitInTheirOwnChats` holds a question for "Client planning" and a permission for "kitchenclaw refactor"
   at once. Each chat shows only its own prompt, asserted on the view model's `questionModal` and
   `currentModal`. "Release notes" shows neither and takes a draft typed through the keyboard, which is closed
   again before the capture. Back on "Client planning" the question is still there.
 - `640:2646` draws "Release notes" with an earlier message and a "Ready" status line. The harness channel is
   empty, so the app shows its empty state. The thread surface itself is #1432's audit.
-- `640:2440` is the full channel tree with servers and folders; the list surface itself is #1431's audit, so
-  this item judges only that the list stays usable and each prompt stays in its chat.
-- **List waiting marks are not judged here.** The override feeds prompts to the thread's view model only; the
-  list reads waiting state from the host coordinator, so both chats show as idle in `switch-list.png`. #1338's
-  own tests cover the marks.
-- **Question drafts across chats are not judged here.** The harness override passes no question draft store
-  (`DesignInputs`), so each thread opening builds a fresh one. Production binds the host's shared store, which
-  #1305 covers in unit tests.
+- `640:2440` is the full channel tree with servers and folders. #1431 audits Channel List `15:8`, not this
+  frame, so this item judges that the list stays usable while both prompts wait, and the waiting marks below.
+- **Specification `640:2838`, asserted on the view models:**
+  - Item 3, switching away clears the arm: Allow once is armed in "kitchenclaw refactor", the test leaves for
+    "Release notes" and returns, and `armedOptionId` is null with the permission still shown.
+  - Composer drafts stay with their chat: back in "Release notes" the draft is "Release notes draft", and back
+    in "Client planning" it is still "My message". Neither is set again on return.
+- **Not judged here, with the reason and the owner:**
+  - **List waiting marks.** `640:2440` draws "Client planning" with a filled status dot and the other rows
+    hollow. The harness feeds prompts to the thread's view model only, and the list reads
+    `ConversationAttention` from the host source, so every row in `switch-list.png` is idle. Routed to #1507,
+    a harness input and a capture against `640:2440`.
+  - **Item 4, the session-grant checkbox kept across chats.** The override passes no `PermissionDraftStore`
+    (`DesignInputs`), so each thread opening builds a fresh one and a ticked grant cannot survive the switch in
+    the harness. Production binds the shared store; #1337 owns it and covers it in unit tests.
+  - **Question drafts across chats.** The override passes no question draft store either, so each thread
+    opening builds a fresh one. Production binds the host's shared store, which #1305 covers in unit tests.
+- **Verdict:**
 
 | Aspect | Verdict |
 |---|---|
-| Component state | match: each prompt inside its own conversation; the list and another chat open and usable while both wait |
+| Component state | match for what is judged: each prompt inside its own conversation, the list and another chat open and usable while both wait, the arm cleared on return and composer drafts kept. Not judged: the list's waiting marks (every row idle in the capture, against the filled dot in `640:2440`), the grant draft and question drafts across chats, as listed above |
 
-- **Routed:** none from this item; the list surface is audited by #1431
+- **Routed:** #1507 (list waiting marks against `640:2440`)
 
 ## Gaps
 
