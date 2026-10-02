@@ -89,7 +89,8 @@ class MarkdownReaderScreenTest {
 
         composeRule.onNodeWithText("Plan.md").assertIsDisplayed()
         composeRule.onNodeWithText("Builder Plan").assertIsDisplayed()
-        composeRule.onNodeWithText("Pin the dispatcher").assertIsDisplayed()
+        // The item's marker is part of its paragraph in the reader (#1533).
+        composeRule.onNodeWithText("Pin the dispatcher", substring = true).assertIsDisplayed()
         // Rendered, not shown as source: the heading's `#` and the bold markers are gone.
         composeRule.onNodeWithText("# Builder Plan").assertDoesNotExist()
         composeRule.onNodeWithText("Some bold prose.").assertIsDisplayed()
