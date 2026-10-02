@@ -212,16 +212,43 @@ gate (`connectionState == ConnectionState.Connected`) and passes it alongside `p
 editable while the host is down, since only the two sends need the gate. See § Batch ownership above for the
 VM-side `promptSendAllowed` check this mirrors.
 
+**A disabled Continue draws as the enabled button, faded (#1484, Figma `636:3535`).** `ButtonDefaults.buttonColors`
+sets `disabledContainerColor`/`disabledContentColor` to the same `primary`/`onPrimary` pair as the enabled
+colours, and a separate `Modifier.alpha(0.38f)` applies only while disabled. Figma's 38 % is a layer opacity on
+the whole button, not a per-colour alpha, so the label composites onto the fill first and the group fades
+together; setting alpha on the colours instead would fade the label a second time against the already-dim fill.
+The enabled button is unchanged. In the stacked layout (compact width or large text, Figma `636:4325`), the
+`Column` holding Cancel and Continue drops `fillMaxWidth()`, so it wraps to the wider Continue and sits at the
+`BoxWithConstraints`' start edge instead of spanning the card; `horizontalAlignment = CenterHorizontally` keeps
+Cancel centred over Continue. The side-by-side `Row` used above that width threshold is unchanged.
+
 Whole single-choice rows sit in one `selectableGroup()` with `Role.RadioButton`; multiple-choice
 rows use `Role.Checkbox` independently. The visible tertiary selectors are 20 dp, with a dot for a
 selected radio and the exported check vector for a selected checkbox. Rows retain a 48 dp touch
 floor even though the wider Figma component example has a tighter vertical rhythm. Other is part
 of its choice row: its `BasicTextField` has the index-only `question_other_<index>` tag and an
 independent 48 dp focus region around the inset 6 dp `modalFieldContainer` well. The focus region
-matters because a row's selection target does not enlarge a separately focusable field. On focus (and on
-every IME height change), the field issues an explicit `BringIntoViewRequester.bringIntoView()` so the
-scrollable stream — not a dialog's own scrollable shell — carries it and the actions into view above the
-keyboard; closing the keyboard leaves the draft untouched.
+matters because a row's selection target does not enlarge a separately focusable field.
+
+**Only the last question's Other field can bring the actions into view (#1484, Figma `636:3803`).** On focus,
+and again on every IME height change, `QuestionBlock`'s `reveal` waits one frame (`withFrameNanos {}` — the
+effect can start while the lazy item is still being subcomposed inside the list's measure pass, where
+`LazyListState.scrollToItem` crashes with "performMeasureAndLayout called during measure layout";
+`BringIntoViewRequester.bringIntoView()` alone does not force a remeasure and does not crash there), then calls
+`revealActions()`, then `requester.bringIntoView()` for the field itself. `ThreadScreen` passes a real
+`revealActions` — which reads `listState.layoutInfo` and only scrolls to the actions item
+(`scrollToItem(actionsIndex)`, `1` when the refused-answer notice precedes it, else `0`) when that item is not
+already fully inside the viewport — to the **last** question's block only; every earlier question's `QuestionBlock`
+gets `NoReveal`, a no-op. This is deliberate, not a simplification left for later: only the last field sits
+directly above the actions, so only its reveal can snap them into place without first pushing the tapped field
+itself out of view. Giving every field the same `revealActions` regressed exactly that — any earlier question's
+Other field snapped the actions to the bottom before `bringIntoView()` animated the field back, so the field the
+user had just tapped left the screen for the whole keyboard animation, repeating on every IME inset frame; a
+Robolectric probe with the main clock paused showed it 14 frames out of `thread-message-region` before settling.
+`QuestionBlock` reads the callback through `rememberUpdatedState`, so a run already in flight when the
+refused-answer notice appears or is dismissed — which shifts `actionsIndex` — still targets the current index,
+not the one it started with. The last run of the IME-keyed effect sees the settled inset, so the final scroll
+position is the same on every run. Closing the keyboard leaves the draft untouched.
 
 All daemon-authored text (header, question, option label, option description) renders through plain `Text`,
 length-bounded by the file-private `MAX_QUESTION_TEXT = 8192` constant, with no `maxLines` or link
@@ -304,7 +331,13 @@ question rows).
   (`arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand`). See
   [Thread screen § list and status
   row](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305)
-  for the production side of each.
+  for the production side of each. #1484 added three more: `focusing_other_reveals_the_field_and_both_actions`
+  (the last question's Other field, the field and both actions land inside `thread-message-region`),
+  `focusing_an_earlier_other_keeps_the_field_in_view_on_every_frame` (main clock paused, `question_other_0` in a
+  two-question batch, asserted inside the region on each of 30 stepped frames — the regression test for the
+  everyone-reveals mistake above), and `stacked_actions_sit_at_the_start_with_cancel_centred_over_continue`
+  (font scale 1.5 at 320 dp: Continue's left edge equals the actions column's left edge, Cancel's centre equals
+  Continue's centre).
 - `QuestionBatchModalTest` (androidTest — the file and class names predate #1305's move out of the dialog,
   § Where it lives) now mounts the real inline `ThreadScreen` host over a fake batch flow and recording send
   lambdas, not a standalone `QuestionBatchModal` call: radio semantics and Other clearing on single choice,
@@ -323,6 +356,14 @@ question rows).
   and a real keyboard open. Static fixture text only; captures at
   `app/src/androidTest/assets/question-1305/question-{normal,compact,keyboard}.png`, attached to #1305 for
   #1220's application-wide comparison.
+- **`PromptsDesignCaptureTest`** (androidTest, the #1433 application-wide prompts audit,
+  `app/src/androidTest/assets/design-1220/prompts/`): `questionFrames`, `questionKeyboardFrame` and
+  `questionCompactFrame` cover the three `636:*` frames this ticket fixed. `questionKeyboardFrame` asserts,
+  before any further scroll, that the focused Other field and both actions are displayed and lie inside
+  `thread-message-region` — not under the composer — which is the device-only proof for the keyboard reveal
+  above, since the colour and stacked-layout fixes are judged by pixel comparison instead. #1484's re-capture
+  reported 6 executed, 0 failed, 0 skipped on `pixel8Api35`; the `636:3279`, `636:3803` and `636:4066` items in
+  `index.md` are updated for these three aspects only.
 - **Live, rung-3:** `InteractiveStreamE2ETest.interactiveTurn_questionAnswer_reachesTheAskingConversation`
   (#966) still proves the phone's answer reaches the asking claude and a peer answer removes the pending
   batch with no phone tap; #1305 adapted its selectors to the inline surface (scrolling to

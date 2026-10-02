@@ -107,7 +107,8 @@ internal fun ThreadTopOverlay(
                 NoticePill(text = stringResource(R.string.thread_re_pair), isError = true, onClick = onRePair)
             } else if (showOffline) {
                 // The visible 24dp pill keeps its 12dp gap below usage. Its 48dp target extends downward,
-                // away from the usage pill's dismiss target.
+                // away from the usage pill's dismiss target. Figma 627:4910 (#1499): the drawn pill hugs its
+                // label at the box's top-right; the wider box is touch area only.
                 Box(
                     modifier =
                         Modifier
@@ -120,7 +121,6 @@ internal fun ThreadTopOverlay(
                     NoticePill(
                         text = stringResource(R.string.thread_connection_offline_retry),
                         isError = true,
-                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }

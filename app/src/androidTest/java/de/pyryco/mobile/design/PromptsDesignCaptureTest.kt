@@ -9,7 +9,9 @@ import android.os.SystemClock
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
@@ -90,6 +92,7 @@ class PromptsDesignCaptureTest {
         // The viewport leaves 552 px only above the 240 px test keyboard; one run showed a 332 px keyboard instead.
         assertEquals("the test IME's keyboard is open", 240, design.insets().getInsets(WindowInsetsCompat.Type.ime()).bottom)
         secureCapture("question-keyboard", "636:3803")
+        assertAboveComposer(rule.onNodeWithTag("question_other_1"), rule.onNodeWithText("Cancel"), rule.onNodeWithText("Continue"))
         reachable("Cancel", "Continue")
     }
 
@@ -291,6 +294,18 @@ class PromptsDesignCaptureTest {
     private fun scrollTo(matcher: SemanticsMatcher) {
         rule.onNode(hasScrollToNodeAction()).performScrollToNode(matcher)
         rule.waitForIdle()
+    }
+
+    /**
+     * #1484: at the focus scroll position, with no scroll of its own, each node is displayed and lies wholly inside the
+     * message region, which ends where the composer starts.
+     */
+    private fun assertAboveComposer(vararg nodes: SemanticsNodeInteraction) {
+        val stream = rule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
+        for (node in nodes) {
+            val bounds = node.assertIsDisplayed().getUnclippedBoundsInRoot()
+            assertTrue("$bounds lies inside the stream $stream", bounds.top >= stream.top && bounds.bottom <= stream.bottom)
+        }
     }
 
     /** Fails unless each text can be scrolled to and displayed: the index's reachability check. */

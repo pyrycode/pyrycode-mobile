@@ -1,16 +1,16 @@
 <?xml version='1.0' encoding='UTF-8' ?>
-<testsuites tests="6" failures="0" errors="0" skipped="0" time="80.27" timestamp="2026-10-02T08:41:49" hostname="localhost">
-  <testsuite name="de.pyryco.mobile.design.PromptsDesignCaptureTest" tests="6" failures="0" errors="0" skipped="0" time="76.568" timestamp="2026-10-02T08:41:49" hostname="localhost">
+<testsuites tests="6" failures="0" errors="0" skipped="0" time="102.636" timestamp="2026-10-02T12:04:06" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.PromptsDesignCaptureTest" tests="6" failures="0" errors="0" skipped="0" time="97.315" timestamp="2026-10-02T12:04:06" hostname="localhost">
     <properties>
       <property name="device" value="pixel8Api35" />
       <property name="flavor" value="" />
       <property name="project" value=":app" />
     </properties>
-    <testcase name="questionCompactFrame" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="11.458" />
-    <testcase name="questionKeyboardFrame" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="9.978" />
-    <testcase name="permissionCompactFrame" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="7.978" />
-    <testcase name="permissionFrames" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="18.26" />
-    <testcase name="promptsWaitInTheirOwnChats" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="19.043" />
-    <testcase name="questionFrames" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="9.851" />
+    <testcase name="questionCompactFrame" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="16.583" />
+    <testcase name="questionKeyboardFrame" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="14.811" />
+    <testcase name="permissionCompactFrame" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="8.589" />
+    <testcase name="permissionFrames" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="20.353" />
+    <testcase name="promptsWaitInTheirOwnChats" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="25.738" />
+    <testcase name="questionFrames" classname="de.pyryco.mobile.design.PromptsDesignCaptureTest" time="11.241" />
   </testsuite>
 </testsuites>
