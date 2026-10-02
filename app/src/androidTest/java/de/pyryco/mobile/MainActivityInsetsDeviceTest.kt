@@ -35,6 +35,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
@@ -53,6 +54,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -198,6 +200,28 @@ class MainActivityInsetsDeviceTest {
                 }
             assertEquals("case $index: static-dark channel-list canvas", 0xFF0B0E11.toInt(), pixel)
             if (index == 0) capture("light-wallpaper-android-light")
+        }
+    }
+
+    @Test fun lightAndroidModeKeepsLightSystemBarIcons() {
+        oldNightMode = Regex("\\b(auto|yes|no)\\b").find(shell("cmd uimode night"))?.value
+        assertTrue("original night mode must be known before changing it", oldNightMode != null)
+        shell("cmd uimode night no")
+        instrumentation.waitForIdleSync()
+        // Welcome when unpaired, the channel list when paired: one screen before and one after startup routing.
+        for (isPaired in listOf(false, true)) {
+            scenario?.close()
+            paired = isPaired
+            launch()
+            val anchor = if (isPaired) rule.onNodeWithContentDescription("Open settings") else rule.onNodeWithText("Pyrycode Mobile")
+            anchor.assertIsDisplayed()
+            scenario?.onActivity { activity ->
+                val night = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+                assertEquals("Android light mode applied (paired=$isPaired)", Configuration.UI_MODE_NIGHT_NO, night)
+                val bars = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+                assertFalse("light status-bar appearance (paired=$isPaired)", bars.isAppearanceLightStatusBars)
+                assertFalse("light navigation-bar appearance (paired=$isPaired)", bars.isAppearanceLightNavigationBars)
+            }
         }
     }
 

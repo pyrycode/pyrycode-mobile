@@ -18,6 +18,23 @@ Exposes preferences as typed `Flow<T>` reads + `suspend fun` writes, covering ap
   `suspend fun setThemeMode(mode: ThemeMode)` is called through
   `SettingsViewModel.onSelectTheme(...)` when the picker is confirmed; one write
   updates the Settings projection and stored value without changing the palette.
+  Because the palette never follows Android's own light/dark setting,
+  `MainActivity.onCreate` cannot use `enableEdgeToEdge()`'s default
+  `SystemBarStyle.auto` either: `auto` picks status- and navigation-bar icon
+  colour from the phone's night mode, which would put dark icons on the app's
+  always-dark canvas on a light-mode phone ([#1510](../../specs/architecture/1510-light-system-bar-icons.md)).
+  It passes `SystemBarStyle.dark(Color.TRANSPARENT)` for both bars instead, so
+  the icons stay light regardless of the phone's setting, with a transparent
+  scrim that keeps edge-to-edge drawing unchanged. Material3 1.4's
+  `ModalBottomSheet` (`ChannelInfoSheet`, `WorkspacePickerSheet`) does not need
+  a matching per-sheet override: with no explicit
+  `ModalBottomSheetProperties.isAppearanceLight{Status,Navigation}Bars`, it
+  derives the sheet window's bar appearance from the sheet's own content
+  colour, and both sheets resolve to the dark scheme's high-luminance
+  `onSurfaceDark`, so their bars stay light too. Compose-ui `Dialog`
+  (`MobileModal`) sets no bar appearance at all and simply sits on the fixed
+  `Theme.PyrycodeMobile`, which has no `values-night` variant, so its bar
+  icons already match in both phone modes without a code change.
 - `useWallpaperColors: Flow<Boolean>` — `false` by default (#88); `booleanPreferencesKey("use_wallpaper_colors")`. [Settings ViewModel](settings-viewmodel.md) collects the saved value for the Appearance switch. `MainActivity` no longer collects it: the root passes `dynamicColor = false` to `PyrycodeMobileTheme`, so a saved `true` remains stored and visible in Settings but cannot enable wallpaper colours at runtime. Matching `suspend fun setUseWallpaperColors(enabled: Boolean)` is wired through `SettingsViewModel.onToggleUseWallpaperColors(...)` from the Settings → Appearance "Use Material You dynamic color" switch row's `onCheckedChange`.
 
 "Defaults for new conversations" preferences:
