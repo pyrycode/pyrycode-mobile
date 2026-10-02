@@ -2,6 +2,7 @@ package de.pyryco.mobile.e2e
 
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -70,6 +72,8 @@ import org.koin.core.context.GlobalContext
  *    make), then the link is restored and the buffered sequence replays in order (see the method KDoc).
  *  - `refusal` (#1360) — a session-scoped `model_refusal_fallback` offers Switch back on its row; the tap
  *    writes the original model, the button goes, and a fresh settings reading names that model.
+ *  - `mcp-failed` (#1457) — fakeclaude's first `mcp_status` answer names a `failed` server; the thread's
+ *    Error pill shows, and its tap opens Channel info on the MCP servers section.
  *
  * It is a thin variant of [InteractiveStreamE2ETest] (rung 3). **One** step differs: instead of tapping
  * the host row's add control (which mints a *fresh* per-conversation claude session that `fakeclaude` —
@@ -140,6 +144,15 @@ class DeterministicInteractiveStreamE2ETest {
 
     private val switchBackPrefix: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_refusal_switch_back)
+
+    // The literal text before the server name in thread_mcp_server_failed ("MCP server "). The trailing space
+    // keeps Channel info's "MCP servers" header from matching the pill.
+    private val mcpFailedPrefix: String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.thread_mcp_server_failed, MCP_NAME_CUT)
+            .substringBefore(MCP_NAME_CUT)
 
     private val runningToolElapsedLabel: String =
         InstrumentationRegistry
@@ -213,6 +226,41 @@ class DeterministicInteractiveStreamE2ETest {
                 }
             }
         assertEquals(REFUSAL_ORIGINAL_MODEL, fresh.model)
+    }
+
+    /**
+     * `mcp-failed` scenario (#1457) — every deterministic run sets `PYRY_FAKE_CLAUDE_MCP_STATUS=1`, so fakeclaude
+     * answers the daemon's own first `mcp_status` ask, made once the turn spawns it, with `pyry_mcp_test` /
+     * `failed`, and the daemon publishes that report to the conversation. The thread shows the Error pill; its
+     * tap opens Channel info on the MCP servers section. The sheet's own ask gets fakeclaude's later
+     * `connected` answer, so the failed name is not asserted there.
+     */
+    @Test
+    fun interactiveTurn_seededChannel_failedMcpServerPillOpensChannelInfo() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(MCP_FAILED_REPLY, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        val pill = hasClickAction() and SemanticsMatcher("text starts with $mcpFailedPrefix") { nodeText(it).startsWith(mcpFailedPrefix) }
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(pill).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodes(pill)
+            .onFirst()
+            .assertIsDisplayed()
+            .performClick()
+
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(MCP_SECTION_HEADER).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodesWithText(MCP_SECTION_HEADER)
+            .onFirst()
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 
     /** The real daemon-absent state keeps Retry visible until the pill restores this seeded thread (#1286). */
@@ -725,6 +773,15 @@ class DeterministicInteractiveStreamE2ETest {
 
         /** `refusal.jsonl`'s reply text, which follows the refusal line. */
         const val REFUSAL_REPLY = "refusal handled"
+
+        /** `mcp-failed.jsonl`'s reply text (#1457). */
+        const val MCP_FAILED_REPLY = "mcp checked"
+
+        /** Stands in for the server name so [mcpFailedPrefix] can cut the format at it. */
+        const val MCP_NAME_CUT = "\u0000"
+
+        // ChannelInfoSheet's header above McpServersSection (#1344), a literal in production code.
+        const val MCP_SECTION_HEADER = "MCP servers"
 
         // Production UI string (no test tags exist). Keep in sync with res/values/strings.xml:
         //   cd_send_message = "Send message".
