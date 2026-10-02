@@ -101,7 +101,8 @@ class ThreadScreenShortStreamTest {
     private companion object {
         const val MESSAGE = "Let's write the release notes."
 
-        // The row's own gutter and bubble padding; a bottom-anchored short stream sits hundreds of dp lower.
-        val MAX_TOP_GAP = 32.dp
+        // The list's 28dp top inset (#1562) plus the row's own gutter and bubble padding; a bottom-anchored
+        // short stream sits hundreds of dp lower.
+        val MAX_TOP_GAP = 28.dp + 32.dp
     }
 }

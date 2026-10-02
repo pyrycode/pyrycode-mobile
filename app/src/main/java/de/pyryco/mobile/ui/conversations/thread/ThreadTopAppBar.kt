@@ -42,6 +42,8 @@ internal val BarGutter = 20.dp
 internal val BarTopGap = 24.dp - BarTouchSlack
 private val ThreadBarTopGap = 28.dp - BarTouchSlack
 internal val BarRuleGap = 16.dp - BarTouchSlack
+
+// The reader's bar only: the thread's message area starts at its rule (#1562).
 internal val BarBottomGap = 16.dp
 internal const val BAR_RULE_ALPHA = 0.60f
 
@@ -132,7 +134,6 @@ fun ThreadTopAppBar(
                     start = BarGutter,
                     end = BarGutter,
                     top = BarRuleGap,
-                    bottom = BarBottomGap,
                 ),
             color =
                 MaterialTheme.colorScheme.threadColors.headerRule
