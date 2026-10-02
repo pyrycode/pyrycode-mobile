@@ -143,6 +143,9 @@ caller. `MarkdownReaderTopBar` reuses `ThreadTopAppBar`'s bar-metric constants (
 `private` to `internal` in `ThreadTopAppBar.kt` by #1027, visibility-only, so both bars share one set of numbers
 rather than a second copy. Since #1067 the row's end padding is `BarGutter - BarTouchSlack`, matching
 `ThreadTopAppBar`, because the row now ends in a 48dp touch target (the overflow button) instead of plain text.
+[#1562](https://github.com/pyrycode/pyrycode-mobile/issues/1562) dropped `bottom = BarBottomGap` from the
+thread bar's own rule, so this reader's bar is now `BarBottomGap`'s only user — its rule keeps the 16dp gap
+underneath it unchanged.
 
 ## Route
 

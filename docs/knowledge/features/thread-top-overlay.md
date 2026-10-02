@@ -101,11 +101,13 @@ Usage sits above the lower action, matching Figma `533:1956`. When `connectionSt
 The message area — either `EmptyThreadState` or the `LazyColumn` — is wrapped in a `Box(Modifier
 .fillMaxWidth().weight(1f))`; the child takes `fillMaxSize()`, and `ThreadTopOverlay` is drawn after it,
 `Modifier.align(Alignment.TopEnd).padding(start = ComposerGutter, top = TopOverlayTopGap, end =
-ComposerGutter)`. `TopOverlayTopGap = 8dp` — Figma pins the overlay flush to the message area's top edge;
-the plan's one open question kept 8dp instead so the first pill doesn't touch the app bar, and a dark-theme
-Robolectric render at 412dp confirmed the match against Figma `533:1956` (see the ticket's Revisions). Being
-an overlap rather than a `Column` child is load-bearing: the overlay draws *over* the scrolling messages, so
-it never reserves layout space and the list never reflows as pills appear or clear.
+ComposerGutter)`. [#1562](https://github.com/pyrycode/pyrycode-mobile/issues/1562) moved the message
+region's top edge up to the app bar's rule so scrolled rows could draw through what used to be a dead
+28dp band; `TopOverlayTopGap = MessageAreaTopInset` (28dp, the same constant `ThreadScreen.kt` uses as the
+`LazyColumn`'s top `contentPadding` and `EmptyThreadState`'s top padding) keeps the overlay's visible
+content at the y it held before that region moved, matching Figma `533:1956` / `685:4337`. Being an overlap
+rather than a `Column` child is load-bearing: the overlay draws *over* the scrolling messages, so it never
+reserves layout space and the list never reflows as pills appear or clear.
 
 `ThreadScreen` gains two new defaulted parameters that feed the overlay:
 
