@@ -159,14 +159,16 @@ class ThreadDesignCaptureTest {
         await("A hook blocked this request.", substring = true)
         design.capture(FOLDER, "session-notice", "627:5466")
 
+        // #1494: the menu names both refusal models, so the row reads their menu labels as the frames draw them.
+        fake().setModelMenu(CONVERSATION, ModelMenu(MODELS.map { (name, id) -> menuRow(name, id) }, 0))
         val refusal = refusal()
         extraItems.value = listOf(pdfMessage(), refusal)
-        await("Show details")
+        await("Refused on Opus, continued on Sonnet")
         design.capture(FOLDER, "notification-text", "620:1577")
 
         fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
         runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
-        await("Switch back to", substring = true)
+        await("Switch back to Opus")
         design.capture(FOLDER, "refusal-switch-back", "646:4707")
     }
 

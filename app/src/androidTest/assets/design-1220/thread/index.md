@@ -36,7 +36,7 @@ refusal offer, the photo file behind `retrieveAttachment` and one markdown note.
 shapes, not the frames' photo. Message text is partly the demo seed's, and timestamps follow the emulator's `en-US`
 locale ("5/10/26 - 12:00 PM" for the frames' "13.01.2026 - 13:55"). Neither is compared.
 
-**Routed defects.** #1494 refusal model names · #1496 inset sheets and the task panel's Close · #1497 Run
+**Routed defects.** #1494 refusal model names (fixed; `620:1577` and `646:4707` retaken) · #1496 inset sheets and the task panel's Close · #1497 Run
 configuration · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills · #1485 compact footer ·
 #1512 delimiter rule inset · #1513 photo above text and photo bubble width · #1529 states with no frame (Gaps) ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
@@ -76,17 +76,17 @@ verdicts apply to each of those frames, which list only what differs.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the user bubble draws its text first and the photo below it; the frame draws the photo at the top of the bubble. The refusal title wraps to two lines (see `620:1577`). The photo message bubble is about 272 px wide where the frame's (`I533:1956;132:4567`) is 222 px, so the bubble and photo sit about 50 px further left. Photo size, the other bubble widths and the file row match |
+| Geometry | mismatch: the user bubble draws its text first and the photo below it; the frame draws the photo at the top of the bubble. The refusal title wraps to two lines because this capture's repository override seeds no model menu, so the names stay monospace by design (`620:1577` seeds the menu and is one line). The photo message bubble is about 272 px wide where the frame's (`I533:1956;132:4567`) is 222 px, so the bubble and photo sit about 50 px further left. Photo size, the other bubble widths and the file row match |
 | Padding | match: 20 px bubble padding |
 | Spacing | match |
-| Typography | mismatch: refusal model names (see `620:1577`). File row name middle-ellipsized ("Filename of th…ttachment.pdf"), as the updated frame |
+| Typography | mismatch: refusal model names render as raw monospace identifiers because this capture seeds no model menu, by design (`620:1577` seeds the menu and matches). File row name middle-ellipsized ("Filename of th…ttachment.pdf"), as the updated frame |
 | Colour | match: file row icon and name in the light on-secondary-container tone the updated frame uses |
 | Borders | match: header divider, PDF outline |
 | Radii | match: bubbles, photo corners |
 | Icon paths | match: back, overflow, copy, document outline, snowflake |
 | Component state | match: thinking, send enabled, photo loaded |
 
-- **Routed:** #1513 (photo position and photo bubble width), #1494 (model names). The frame's PDF row between two paragraphs cannot be
+- **Routed:** #1513 (photo position and photo bubble width). The frame's PDF row between two paragraphs cannot be
   expressed by the app's message model; #1513 asks for that decision too.
 
 ### Conversation Thread / Tool row — `674:5853`
@@ -114,48 +114,50 @@ verdicts apply to each of those frames, which list only what differs.
 
 ### Notification text — `620:1577`
 
-- **Owning ticket:** #875 (refusal row), #1290 (message attachment)
-- **Capture:** `notification-text.png` (412x892, 1.0)
+- **Owning ticket:** #875 (refusal row), #1290 (message attachment), #1494 (model names)
+- **Capture:** `notification-text.png` (412x892, 1.0), retaken for #1494 with the menu seeded
+  (`notice-1494-results.xml`, `threadNoticeFramesAt412By892`, 1 executed, 0 failures)
 - **Side-by-side:** `notification-text-side-by-side.png`
 - **Overlay:** `notification-text-overlay.png`
-- **Verdict:** mismatch
+- **Verdict:** match
 - Reference components: `figma-620-1576.png`, `figma-390-7145.png`.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the refusal title wraps to two lines where the frame's is one |
+| Geometry | match: "Refused on Opus, continued on Sonnet" on one line, as the frame |
 | Padding | match |
 | Spacing | match: Show details sits 4 px under the title |
-| Typography | mismatch: models are named by raw identifier in a monospace span ("`claude-opus-5-5`"); the frame uses display names in the body style ("Opus") |
+| Typography | match: the menu's labels "Opus" and "Sonnet" in the title's body style and colour (#1494). An identifier the menu does not know keeps its monospace span |
 | Colour | match |
 | Borders | match |
 | Radii | match |
 | Icon paths | match: document outline with folded corner and "PDF" |
 | Component state | match: collapsed refusal with Show details |
 
-- **Routed:** #1494
+- **Routed:** none
 
 ### Refusal switch back — `646:4707`
 
-- **Owning ticket:** #1360
-- **Capture:** `refusal-switch-back.png` (412x892, 1.0)
+- **Owning ticket:** #1360, #1494 (model names)
+- **Capture:** `refusal-switch-back.png` (412x892, 1.0), retaken for #1494 with the menu seeded
+  (`notice-1494-results.xml`, 1 executed, 0 failures)
 - **Side-by-side:** `refusal-switch-back-side-by-side.png`
 - **Overlay:** `refusal-switch-back-overlay.png`
-- **Verdict:** mismatch
+- **Verdict:** match
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the two-line title pushes the button down one line; the button is wider for the identifier |
+| Geometry | match: one-line title; the button is about 150 px wide, as the frame's |
 | Padding | match: 16 px button side padding |
 | Spacing | match: 12 px from Show details to the button |
-| Typography | mismatch: "Switch back to `claude-opus-5-5`" with a monospace identifier, frame "Switch back to Opus" |
+| Typography | match: "Switch back to Opus" in the button's style, the menu label its own span (#1494) |
 | Colour | match: outlined primary button |
 | Borders | match: 1 px outline |
 | Radii | match |
 | Icon paths | match (none) |
 | Component state | match: offer armed, not pending |
 
-- **Routed:** #1494
+- **Routed:** none
 
 ### Session notice — `627:5466`
 
