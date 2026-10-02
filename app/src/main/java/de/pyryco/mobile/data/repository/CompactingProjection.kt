@@ -80,6 +80,9 @@ internal class CompactingProjection {
      */
     fun observe(conversationId: String): Flow<Boolean> = compactingConversations.map { conversationId in it }.distinctUntilChanged()
 
+    /** Every conversation compacting right now (#1452), for the host's list. Same edges as [observe]. */
+    fun observeIds(): Flow<Set<String>> = compactingConversations
+
     /**
      * Decode one v2 `compacting` envelope (#596) to its conversation id and edge bool, or **null** when
      * it cannot be read. Decodes the untrusted [Envelope.payload] through the single configured

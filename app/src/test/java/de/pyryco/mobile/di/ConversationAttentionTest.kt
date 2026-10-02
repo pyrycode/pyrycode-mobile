@@ -12,14 +12,10 @@ import org.junit.Test
 class ConversationAttentionTest {
     @Test
     fun precedenceOrdersEachAdjacentPair() {
-        assertEquals(
-            ConversationAttention.WaitingForAnswer,
-            resolveAttention(waiting = true, running = true, failed = false, unread = false),
-        )
-        assertEquals(ConversationAttention.Running, resolveAttention(waiting = false, running = true, failed = true, unread = false))
-        assertEquals(ConversationAttention.Failed, resolveAttention(waiting = false, running = false, failed = true, unread = true))
-        assertEquals(ConversationAttention.Unread, resolveAttention(waiting = false, running = false, failed = false, unread = true))
-        assertEquals(ConversationAttention.Idle, resolveAttention(waiting = false, running = false, failed = false, unread = false))
+        assertEquals(ConversationAttention.WaitingForAnswer, resolveAttention(waiting = true, running = true, unread = false))
+        assertEquals(ConversationAttention.Running, resolveAttention(waiting = false, running = true, unread = true))
+        assertEquals(ConversationAttention.Unread, resolveAttention(waiting = false, running = false, unread = true))
+        assertEquals(ConversationAttention.Idle, resolveAttention(waiting = false, running = false, unread = false))
     }
 
     @Test
@@ -43,25 +39,15 @@ class ConversationAttentionTest {
         assertEquals(ReadPosition("t1", "t1"), viewed.positions["c"])
     }
 
+    // #1451: desktop has no failed state, so a failed or stopped-early turn is an ordinary completed turn.
     @Test
-    fun failedAndStoppedEarlyAreFailedButInterruptedIsNot() {
-        val failed = HostAttentionState().onEvent(end("c", "t1", isError = true), viewing = false)
-        assertEquals(mapOf("c" to ConversationAttention.Failed), failed.resolved())
-        val stopped = HostAttentionState().onEvent(end("c", "t1", stopReason = "max_tokens"), viewing = false)
-        assertEquals(mapOf("c" to ConversationAttention.Failed), stopped.resolved())
-        val interrupted = HostAttentionState().onEvent(end("c", "t1", stopReason = "cancelled"), viewing = false)
-        assertEquals(mapOf("c" to ConversationAttention.Unread), interrupted.resolved())
-        val viewed = HostAttentionState().onEvent(end("c", "t1", isError = true), viewing = true)
-        assertEquals(emptyMap<String, ConversationAttention>(), viewed.resolved())
-    }
-
-    @Test
-    fun openingClearsUnreadAndFailedAndTheNextTurnClearsFailed() {
-        val failed = HostAttentionState().onEvent(end("c", "t1", isError = true), viewing = false)
-        assertEquals(emptyMap<String, ConversationAttention>(), failed.opened("c").resolved())
-        val nextTurn = failed.onEvent(state("c", Phase.Thinking), viewing = false)
-        assertEquals(mapOf("c" to ConversationAttention.Running), nextTurn.resolved())
-        assertEquals(mapOf("c" to ConversationAttention.Unread), nextTurn.onEvent(state("c", Phase.Idle), viewing = false).resolved())
+    fun failedAndStoppedEarlyTurnsAreUnreadUntilOpened() {
+        listOf(end("c", "t1", isError = true), end("c", "t1", stopReason = "max_tokens")).forEach { ended ->
+            val unread = HostAttentionState().onEvent(ended, viewing = false)
+            assertEquals(mapOf("c" to ConversationAttention.Unread), unread.resolved())
+            assertEquals(emptyMap<String, ConversationAttention>(), unread.opened("c").resolved())
+            assertEquals(emptyMap<String, ConversationAttention>(), HostAttentionState().onEvent(ended, viewing = true).resolved())
+        }
         assertEquals(HostAttentionState(), HostAttentionState().opened("unknown"))
     }
 
@@ -101,7 +87,7 @@ class ConversationAttentionTest {
                 .onEvent(end("b", "t1"), viewing = false)
                 .onEvent(state("d", Phase.Thinking), viewing = false)
         assertEquals(
-            mapOf("a" to ConversationAttention.Failed, "b" to ConversationAttention.Unread),
+            mapOf("a" to ConversationAttention.Unread, "b" to ConversationAttention.Unread),
             state.disconnected().resolved(),
         )
         val merged = state.restored(mapOf("b" to ReadPosition("t0", "t0"), "e" to ReadPosition("t9", null)))
@@ -112,15 +98,54 @@ class ConversationAttentionTest {
     @Test
     fun anOpenPromptOrQuestionBatchWaitsOnlyForItsOwnConversation() {
         val running = HostAttentionState().onEvent(state("c", Phase.Thinking), viewing = false)
-        assertEquals(mapOf("c" to ConversationAttention.WaitingForAnswer), running.resolve(modal("c"), emptyList()))
-        assertEquals(mapOf("c" to ConversationAttention.Running), running.resolve(modal(""), emptyList()))
+        assertEquals(mapOf("c" to ConversationAttention.WaitingForAnswer), running.resolve(listOf(modal("c")), emptyList()))
+        assertEquals(mapOf("c" to ConversationAttention.Running), running.resolve(listOf(modal("")), emptyList()))
         assertEquals(
             mapOf("c" to ConversationAttention.Running, "q" to ConversationAttention.WaitingForAnswer),
-            running.resolve(ModalUiState.Dismissed("m", "allow", "remote", "q"), listOf(QuestionBatch("q", "b", emptyList()))),
+            running.resolve(emptyList(), listOf(QuestionBatch("q", "b", emptyList()))),
         )
     }
 
-    private fun HostAttentionState.resolved() = resolve(ModalUiState.Hidden, emptyList())
+    // #1338: desktop's `selectHasOutstandingFor` — a chat waits while any outstanding prompt belongs to it.
+    @Test
+    fun everyChatHoldingAPromptWaits_andAnsweringOneLeavesTheOther() {
+        val idle = HostAttentionState()
+        val both = listOf(modal("a", "m1"), modal("b", "m2"), modal("b", "m3"))
+        assertEquals(
+            mapOf("a" to ConversationAttention.WaitingForAnswer, "b" to ConversationAttention.WaitingForAnswer),
+            idle.resolve(both, emptyList()),
+        )
+        assertEquals(mapOf("b" to ConversationAttention.WaitingForAnswer), idle.resolve(both.drop(1), emptyList()))
+        assertEquals(mapOf("b" to ConversationAttention.WaitingForAnswer), idle.resolve(listOf(modal("b", "m3")), emptyList()))
+        assertEquals(emptyMap<String, ConversationAttention>(), idle.resolve(emptyList(), emptyList()))
+    }
+
+    // #1452: a stalled, retrying, compacting or resetting chat is busy, and busy reads as Running.
+    @Test
+    fun aBusyConversationRunsBelowAPromptAndAboveUnread() {
+        val busy = HostAttentionState().withBusy(setOf("b"))
+        assertEquals(mapOf("b" to ConversationAttention.Running), busy.resolved())
+        assertEquals(mapOf("b" to ConversationAttention.WaitingForAnswer), busy.resolve(listOf(modal("b")), emptyList()))
+        assertEquals(
+            mapOf("b" to ConversationAttention.WaitingForAnswer),
+            busy.resolve(emptyList(), listOf(QuestionBatch("b", "q", emptyList()))),
+        )
+        val unread = HostAttentionState().onEvent(end("b", "t1"), viewing = false).withBusy(setOf("b"))
+        assertEquals(mapOf("b" to ConversationAttention.Running), unread.resolved())
+        assertEquals(mapOf("b" to ConversationAttention.Unread), unread.withBusy(emptySet()).resolved())
+    }
+
+    @Test
+    fun disconnectClearsBusyAndRunning() {
+        val state = HostAttentionState().onEvent(state("r", Phase.Thinking), viewing = false).withBusy(setOf("b"))
+        assertEquals(
+            mapOf("r" to ConversationAttention.Running, "b" to ConversationAttention.Running),
+            state.resolved(),
+        )
+        assertEquals(HostAttentionState(), state.disconnected())
+    }
+
+    private fun HostAttentionState.resolved() = resolve(emptyList(), emptyList())
 
     private fun state(
         id: String,
@@ -134,5 +159,8 @@ class ConversationAttentionTest {
         isError: Boolean = false,
     ) = LiveSessionEvent.TurnEnd(id, turnId, stopReason, isError = isError)
 
-    private fun modal(conversationId: String) = ModalUiState.Open("m", "permission", "title", "prompt", emptyList(), "deny", conversationId)
+    private fun modal(
+        conversationId: String,
+        modalId: String = "m",
+    ) = ModalUiState.Open(modalId, "permission", "title", "prompt", emptyList(), "deny", conversationId)
 }

@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.SessionPromptStatus
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.SerializationException
 
 /**
  * One conversation's system prompt as its editor sees it (#824).
@@ -31,8 +33,11 @@ sealed interface SystemPromptEditorState {
      * [appliedStatus] is whether the running session uses [confirmed]; `null` is unknown, which is what a
      * save leaves until its follow-up read lands, and what a failed follow-up read leaves for good.
      *
-     * [changed] reads an absent prompt as an empty box, so opening a conversation with no prompt and
-     * saving sends nothing rather than storing `""`.
+     * [changed] reads an absent prompt as an empty box. Since #1342 no control gates on it: [canSave] and
+     * [canClear] are desktop's `deriveSystemPromptSection` rules, so Save sends the box verbatim whatever it
+     * holds and Clear sends `null` whenever no write is running.
+     *
+     * [saved] is the last write's ack; [refusal] says why the last write failed. A new write clears both.
      *
      * [toString] is overridden: the generated one would print the prompt, which may hold a pasted
      * credential, into any crash trace or logged state.
@@ -43,22 +48,43 @@ sealed interface SystemPromptEditorState {
         val draft: String,
         val saving: Boolean = false,
         val saveFailed: Boolean = false,
+        val refusal: SystemPromptRefusal? = null,
+        val saved: Boolean = false,
     ) : SystemPromptEditorState {
         val draftBytes: Int = SystemPromptLimit.utf8Bytes(draft)
         val overLimit: Boolean = draftBytes > SystemPromptLimit.MAX_BYTES
         val changed: Boolean get() = draft != confirmed.orEmpty()
-        val canSave: Boolean get() = !saving && changed && !overLimit
-        val canClear: Boolean get() = !saving && confirmed != null
+        val canSave: Boolean get() = !saving && !overLimit
+        val canClear: Boolean get() = !saving
 
         override fun toString(): String =
             "Loaded(confirmed=${if (confirmed == null) "absent" else "<redacted>"}, appliedStatus=$appliedStatus, " +
-                "saving=$saving, saveFailed=$saveFailed)"
+                "saving=$saving, saveFailed=$saveFailed, refusal=$refusal, saved=$saved)"
     }
 }
 
+/** Why a write was refused, one per line of desktop's `WRITE_REJECTED` that the phone can reach (#1342). */
+enum class SystemPromptRefusal { Malformed, NotFound, Unclassified }
+
 /**
- * The system-prompt editing state shared by the create / save-as channel (#666) and edit channel (#667)
- * view models — `HostEditorController`'s shape: a plain object composed into each owner.
+ * Classifies a failed write by its code alone; the exception's message is never read. `conversation.not_found`
+ * reaches here as an [IllegalArgumentException], because `RelayRequests.mapError` converts it. Two other
+ * [IllegalArgumentException]s are not that refusal: a [SerializationException] from an ack that failed to
+ * decode, after which the daemon has probably applied the write, so it is [SystemPromptRefusal.Unclassified];
+ * and the length pre-flight in `setSystemPrompt`, which cannot fire behind [SystemPromptEditorState.Loaded.canSave].
+ */
+internal fun refusalFor(error: Exception): SystemPromptRefusal =
+    when {
+        error is RelayErrorException && error.code == "protocol.malformed" -> SystemPromptRefusal.Malformed
+        error is RelayErrorException && error.code == "conversation.not_found" -> SystemPromptRefusal.NotFound
+        error is SerializationException -> SystemPromptRefusal.Unclassified
+        error is IllegalArgumentException -> SystemPromptRefusal.NotFound
+        else -> SystemPromptRefusal.Unclassified
+    }
+
+/**
+ * One conversation's system-prompt editing state, mounted by `ThreadViewModel` for the Channel info sheet's
+ * System prompt section (#1342) — `HostEditorController`'s shape: a plain object composed into its owner.
  *
  * Bound at construction to one host's [repository] and one [conversationId], and reads the prompt once
  * on construction. It never starts, resets or restarts a session: a saved prompt applies at the
@@ -104,13 +130,13 @@ class SystemPromptEditor(
         current.update { if (it is SystemPromptEditorState.Loaded) it.copy(draft = text) else it }
     }
 
-    /** Sends the draft verbatim, `""` included; nothing when it is unchanged, over the limit, or a save is running. */
+    /** Sends the draft verbatim, `""` included; nothing when it is over the limit or a save is running. */
     fun save() {
         val target = begin { it.canSave } ?: return
         write(target.draft)
     }
 
-    /** Sends `null`, removing the stored prompt; nothing when none is stored or a save is running. */
+    /** Sends `null`, removing the stored prompt; nothing when a save is running. */
     fun clear() {
         begin { it.canClear } ?: return
         write(null)
@@ -121,7 +147,9 @@ class SystemPromptEditor(
         while (true) {
             val before = current.value as? SystemPromptEditorState.Loaded ?: return null
             if (!allowed(before)) return null
-            if (current.compareAndSet(before, before.copy(saving = true, saveFailed = false))) return before
+            if (current.compareAndSet(before, before.copy(saving = true, saveFailed = false, refusal = null, saved = false))) {
+                return before
+            }
         }
     }
 
@@ -133,7 +161,7 @@ class SystemPromptEditor(
                 if (error is CancellationException) throw error
                 RelayLog.d { "event=system_prompt_save_failed" }
                 // The draft and the last confirmed value both stay, so saving again sends the same draft.
-                updateLoaded { it.copy(saving = false, saveFailed = true) }
+                updateLoaded { it.copy(saving = false, saveFailed = true, refusal = refusalFor(error)) }
                 return@launch
             }
             RelayLog.d { "event=system_prompt_saved" }
@@ -143,6 +171,7 @@ class SystemPromptEditor(
                     confirmed = value,
                     appliedStatus = null,
                     draft = if (value == null) "" else loaded.draft,
+                    saved = true,
                 )
             }
             val status =

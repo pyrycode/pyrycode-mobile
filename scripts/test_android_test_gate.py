@@ -109,28 +109,32 @@ class AndroidGateTest(unittest.TestCase):
                             self.assertEqual(len(ET.fromstring(stdout.getvalue()).findall(".//skipped")), 2)
 
     def test_live_floor_matches_the_curated_list(self):
-        # #848: the floor is the curated list's size, so a method dropped from the list reddens the gate.
+        # #848: the floor is the curated list's size, so every listed method must execute.
         script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
         live = script[script.index('elif [ -n "${LIVE}" ]; then\n  # LIVE curates'):]
         # The LIVE branch may build the list over several assignments, so count across all of them.
         branch = live[: live.index("\nelse\n")]
         targets = [line for line in branch.split("\n") if line.lstrip().startswith('TEST_TARGET="')]
-        self.assertTrue(any("#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage" in target for target in targets))
-        self.assertTrue(any("#interactiveTurn_createEditArchiveChannel_readsPromptBack" in target for target in targets))
-        self.assertTrue(any("#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts" in target for target in targets))
-        self.assertTrue(any("#interactiveTurn_toolPrompt_rendersToolStepInThread" in target for target in targets))
-        self.assertTrue(any("#interactiveTurn_offlineRetry_reconnectsSameHostAndReplies" in target for target in targets))
-        self.assertFalse(any("#interactiveTurn_peerWorkspaceLabel_reachesEveryOpenSurfacePerHost" in target for target in targets))
-        # #1305 excludes the cross-host file method until #1369 repairs the phone after daemon #2699.
-        self.assertFalse(any("#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost" in target for target in targets))
-        # #1325 excludes five settings methods until #1397 repairs the held-settings e2e helper.
-        self.assertFalse(any("#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive" in target for target in targets))
-        self.assertEqual(gate.LIVE_MINIMUM, 38)
+        self.assertGreater(gate.LIVE_MINIMUM, 0)
         self.assertEqual(gate.LIVE_MINIMUM, sum(target.count("#interactiveTurn_") for target in targets))
         with tempfile.TemporaryDirectory() as tmp:
             short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))
             _, _, executed = gate.combine_reports([short])
             self.assertEqual(executed, gate.LIVE_MINIMUM - 1)
+
+    def test_live_curated_list_matches_the_runnable_methods(self):
+        # The list holds exactly the live class's @Test methods that are not @Ignored. A new method missing
+        # from the list, or one dropped from it in a merge, reddens this before a live run does.
+        source = (Path(__file__).parent.parent / "app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt").read_text()
+        runnable = {
+            match.group(2)
+            for match in re.finditer(r"((?:\s*@\w+(?:\([^)]*\))?\s*)+)\s*fun\s+(\w+)\s*\(", source)
+            if "@Test" in match.group(1) and "@Ignore" not in match.group(1)
+        }
+        listed = gate.curated_live_methods()
+        self.assertEqual(len(listed), len(set(listed)), "a method is listed twice")
+        self.assertEqual(sorted(runnable - set(listed)), [], "runnable live methods missing from the curated list")
+        self.assertEqual(sorted(set(listed) - runnable), [], "listed methods that are not runnable live methods")
 
     def test_live_curated_list_excludes_ignored_methods(self):
         script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
