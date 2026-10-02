@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"id":"context-overflow-1","stop_reason":"end_turn","content":[{"type":"text","text":"Prompt is too long"}]}}
+{"type":"result","subtype":"success","is_error":true,"terminal_reason":"prompt_too_long","result":"Prompt is too long","session_id":"43143143-4314-4314-8314-431431431431"}

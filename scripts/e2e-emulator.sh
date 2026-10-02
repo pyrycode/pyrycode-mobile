@@ -53,6 +53,7 @@
 #   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
 #   DETERMINISTIC=1 SCENARIO=refusal     PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, refusal switch-back
 #   DETERMINISTIC=1 SCENARIO=mcp-failed  PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, failed MCP server pill
+#   DETERMINISTIC=1 SCENARIO=context-overflow PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, Compact after overflow
 #   DETERMINISTIC=1 INTERACTIVE_RUNNER=stream-json PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, pinned runner
 # Tunables (env):
 #   PORT=<a free port>  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
@@ -136,7 +137,7 @@ FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overri
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
 SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
                                               # tool | tool-failed (#455) | tool-progress (#950) | reconnect (#476) |
-                                              # refusal (#1360) | mcp-failed (#1457) |
+                                              # refusal (#1360) | mcp-failed (#1457) | context-overflow (#1473) |
                                               # replay-order (#477) | tool-then-text (#1417). Resolved to a @Test method + fixture(s)
                                               # in the preflight below; bare DETERMINISTIC=1 (SCENARIO unset
                                               # → ping) keeps #431.
@@ -642,8 +643,14 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_failedMcpServerPillOpensChannelInfo"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/mcp-failed.jsonl}"
       ;;
+    context-overflow)
+      # #1473: the first turn ends is_error / prompt_too_long, single drop. The Compact tap's /compact is a later
+      # user turn, which fakeclaude answers with its built-in echo of the prompt.
+      TEST_METHOD="interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/context-overflow.jsonl}"
+      ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"

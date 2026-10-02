@@ -189,7 +189,8 @@ failed turn with nobody watching, and no send in between. Not fixed in #1357.
   that the Stop control itself leaves once the `cancelled` `turn_end` arrives. See [End-to-end interactive
   stream](../../e2e-interactive-stream.md) for the scenario. The Compact pill has no rung-3 proof: real
   claude cannot reliably reach `prompt_too_long`. [#1473](https://github.com/pyrycode/pyrycode-mobile/issues/1473)
-  (open) covers a deterministic rung-4 scenario.
+  covers it with the deterministic rung-4 scenario `context-overflow` instead — see [End-to-end
+  interactive stream](../../e2e-interactive-stream.md) for the scenario's shape.
 
 ## Security
 
@@ -221,8 +222,9 @@ narrowing this arm to advice the row doesn't carry at all — the row never tell
 
 - **The boundary edge can clear a notice out of wall-clock order** when a session transition and a failed
   turn both land while the thread is unsubscribed, with no send between them — see § Wiring above.
-- **The context notice's Compact pill has no live proof** — real claude cannot reliably reach
-  `prompt_too_long`; see § Testing and the open follow-up #1473.
+- **The context notice's Compact pill has no rung-3 live proof** — real claude cannot reliably reach
+  `prompt_too_long`; #1473's deterministic rung-4 scenario `context-overflow` proves the pill reaches the
+  daemon's child instead — see § Testing.
 - **`errorCategory` can be one turn stale** per the protocol; it is only read on a turn already marked
   stopped by `isError`/`outcome`, so a clean turn recovering from an API error never shows a notice from it.
 - **Compaction always wins the slot when both are somehow live** (never observed) — see § Placement.
