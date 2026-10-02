@@ -101,7 +101,19 @@ public `@Viewport(size, fontScale)` annotation;
 `ThreadActivityIndicatorCaptureTest` and `ToolRowDesignCaptureTest` now use it
 unchanged otherwise. `MarkdownReaderCaptureTest` and other androidTest capture
 classes still carry their own copy of the rule; moving them onto the shared
-rule is separate work. The same package holds the
+rule is separate work.
+
+`AttachmentVisualCaptureTest` (#1555) moved onto the shared rule too, but its
+geometry test needed two different viewports (412x892 and 320x640), so it
+split into one `@Viewport`-annotated method per size, each calling a shared
+private helper for the fixture and thread state. Applying the bare
+`ViewportRule` would also have forced 412x892 at density 160 onto
+`fileArtworkAndLabels_haveReadableContrastOnBothBubblesAndThread`, whose pixel
+regions were measured at the device's own density and which makes no viewport
+change of its own; a local wrapper `TestRule` gates `ViewportRule` on the
+`@Viewport` annotation so only the two geometry methods get it. A class mixing
+viewport-dependent methods with device-density pixel assertions needs this
+gating, not a class-wide rule. The same package holds the
 [`design-1220/` capture harness](../../../app/src/androidTest/assets/design-1220/README.md):
 `DesignCapture` (launch, real-bar capture, keyboard and menu helpers) and
 `DesignInputs`, a Koin override loaded over the app graph that redefines
@@ -305,9 +317,25 @@ with a log line otherwise. Catch only `ComposeTimeoutException` in the helper;
 any other exception from the capture should still fail the test. The retry
 cannot be proven on a healthy emulator because the timeout does not reproduce
 on demand — a focused device run only proves captures still succeed, not that
-the skip path fires. `ChannelInfoCaptureTest` and `AttachmentVisualCaptureTest`
-still call `captureToImage` unprotected; that sweep is tracked under #1046, not
-fixed here.
+the skip path fires. `ChannelInfoCaptureTest` still calls `captureToImage` unprotected; that sweep
+is tracked under #1046, not fixed here. `AttachmentVisualCaptureTest` stopped
+calling it instead (#1555, below).
+
+`AttachmentVisualCaptureTest` (#1555) hit this same fixed 2 s `forceRedraw`
+timeout on a freshly booted managed emulator with no resize and no focus loss:
+logcat showed the activity RESUMED from launch to teardown, with a frame over
+2 s ("Davey") during the device's post-boot work. The launcher focus that an
+intermittent `ComposeTimeoutException` leaves in a gate's focus record can be
+what the display showed after the failed test tore its activity down at
+teardown, not proof of a focus race — read the `LifecycleMonitor`
+RESUMED → PAUSED lines in logcat before blaming focus (the #1402 ordering
+hazard above is still real; it is just not the only cause of this symptom).
+The class removed `captureToImage` entirely rather than retrying it: its
+thumbnail wait polls semantics instead of a window capture (the placeholder
+file tile's merged node carries a "PNG" text label, the decoded `Image` node
+carries none), and its pixel captures draw the activity's decor view into a
+bitmap and crop to the target node's `boundsInWindow`, the same approach
+`capture()` already used elsewhere in the class.
 
 `captureToImage()` also times out under Robolectric itself, not only on a
 loaded emulator: a full `ThreadScreen` set under `createComposeRule` throws
