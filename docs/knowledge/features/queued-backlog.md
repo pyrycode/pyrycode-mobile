@@ -175,6 +175,79 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
 
 See [#466](../codebase/466.md) for the files, the `DequeueMessagePayloadDto` encode DTO, and verification.
 
+## Own echo position: a queued message draws below the turn it waits behind (#1558)
+
+Sending while a turn is running drew the echo straight into the thread at tap time ([#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355)),
+[`foldQueuedRows`](queued-backlog-section.md) then drew its queued treatment **in that same slot** ([#782](#dropping-a-queued-entry-dequeue_message-466)),
+and on delivery [`appendLiveMessage`](remote-conversation-repository-reads-and-thread-store.md#observemessagesconversationid--the-live-thread-read-313)
+kept the held row **where it was** ([#781](#dropping-a-queued-entry-dequeue_message-466)). So the transcript showed the message above the reply it
+waited behind, while the daemon's own stored history — which parks a queued message at *delivery*, after the
+turn's `turn_end` — had the order the ticket asks for. #1558 fixes the client's view only; it does not
+re-order a thread already cached wrong on a device, and it adds no new Figma treatment — the queued row keeps
+`QueuedMessageRow`, the delivered row keeps the user bubble.
+
+**The move lives in `ThreadProjection`, not in the fold.** Only `ThreadProjection` can see the minted-id
+ledger ([#781](#dropping-a-queued-entry-dequeue_message-466)); `foldQueuedRows` cannot, so a move inside the
+render-time join would let a `queue_state` naming a foreign id relocate another device's row. `ThreadProjection`
+tracks a per-conversation `OwnEchoQueue(queued, delivered)`: `queued` is the intersection of the minted-id
+ledger and the latest `queue_state` snapshot's ids, minus `delivered`; `delivered` is every id already moved,
+so a daemon repeating an id in a later snapshot (legal — `message_id` is unique nowhere) can never park the
+row a second time.
+
+- **While queued**, [`observe`](remote-conversation-repository-reads-and-thread-store.md#observemessagesconversationid--the-live-thread-read-313)
+  reads every row in `queued` out of the thread, runs the ordinary streaming-settle rule
+  ([`withOnlyLastRowStreaming`](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350))
+  over what is left, and appends the parked rows back in thread order — so a reply row that streams in *after*
+  the echo was sent still reads above it, and the running reply keeps its single streaming caret.
+  [`foldQueuedRows`](queued-backlog-section.md) still runs unchanged on top of this already-reordered list,
+  so its own position rule ("every thread item appears exactly once, at its own index, in order") stays true;
+  it simply never sees the echo at its tap-time index any more.
+- **The store itself keeps tap-time order while queued — only the read reorders.** Moving the echo in the
+  store at queue time was tried and rejected: `withAssistantDelta` extends only the thread's *last* row, so
+  every later delta of the running turn would open a fresh segment below an echo moved early. Leaving the
+  store alone and reordering only in `observe` means the data layer's other writers (`appendMessages`,
+  `applyAssistantDelta`, the tool folds) need no awareness of queued echoes at all.
+- **The running reply stays one bubble.** `HistoryPageReducer.withAssistantDelta` gained an optional
+  `passOver: Set<String>` naming user rows to skip when picking the "last row" a delta extends —
+  `ThreadProjection.applyAssistantDelta` passes the conversation's `queued` set, so a delta still extends the
+  reply it belongs to instead of opening a second segment below the parked echo. The history reducer's own
+  caller passes nothing; see [Remote conversation repository § Assistant reply
+  segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
+  **`passOver` only ever names an id already in `queued`**, which the echo joins on the *first* `queue_state`
+  that reports it — not at tap time. A delta that lands between the tap and that first snapshot still opens a
+  second segment below the echo, exactly as it did before this ticket; the gap is the same shape as the one
+  [Streaming assistant turns](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
+  already records for a cache composed after `observe`'s settle rule.
+- **On delivery, the row moves to the end exactly once**, on whichever of two daemon frames names it first:
+  `settleQueuedEchoes`, called from the `queue_state` arm right after `settleDrops` (see [Remote conversation
+  repository § Control sends](remote-conversation-repository-control-sends.md)), moves every id the fresh
+  drain snapshot no longer holds; `appendLiveMessage` moves an id the instant the daemon pushes its delivered
+  `message` copy, before the held-row check that would otherwise leave it in place. **The store move always
+  happens before the id stops counting as queued**, in both arrival orders, so no intermediate emission ever
+  shows the row back at its tap-time position — moving first and un-parking second is what closes that window,
+  not a special case for either order.
+- **Only this device's own user rows ever move.** `moveOwnEchoToEnd` checks the minted-id ledger and
+  `Role.User` before touching the store, and the `observe` read applies the same `Role.User` check to its
+  own `queued` membership test (a security-review finding, since the ledger's `queued ⊆ minted` invariant
+  held only by construction otherwise) — so a daemon frame naming another device's id, or a non-user row,
+  never moves or changes a row.
+- **A dropped echo is removed, not moved.** [`settleDrops`](remote-conversation-repository-control-sends.md)
+  runs first and spends the dropped id's ledger membership, so by the time `settleQueuedEchoes` looks at the
+  same snapshot the id is already gone from the ledger and cannot be moved.
+- **The daemon reports every send in a `queue_state`, idle sends included** (`Queue.EnqueueAttached` calls
+  `notify` on every enqueue) — the plan's "an idle send never appears in a snapshot" claim does not hold. An
+  idle send is unaffected anyway: it is already the thread's last row, and the daemon pushes its delivered
+  `message` right after the stdin write, before claude's first streamed token can arrive, so it is never
+  observed parked. A client design should not assume an idle send is invisible to this path.
+- **A known remaining gap:** the protocol does not promise the delivered `message` reaches the phone before
+  the drained turn's first `assistant_delta`. In practice the daemon sends the delivered copy first, since
+  the push follows the stdin write while the reply needs an API round trip; if that order ever flipped, the
+  reply would open above the still-parked echo and split around it.
+- **Live coverage:** `InteractiveStreamE2ETest.interactiveTurn_peerQueue_staysConsistentAcrossClients` asserts,
+  after its existing step 6, that the drained row sits below the last row of the peer's wait turn via
+  `boundsInRoot` — it is the only live method that draws a queued row, so it is the one live test this fix
+  needed. See [the real-Claude ladder](../../e2e-interactive-stream.md).
+
 ## Capability gate (fail-closed)
 
 The `TYPE_QUEUE_STATE` arm sits inside `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` — the same gate
@@ -260,6 +333,13 @@ is bounded to one row on one device, nothing is disclosed, and no data is lost (
 transcript). The ledger's actual job is defeating a **paired device**, which does not know this phone's
 minted ids and so cannot forge a match.
 
+**#1558 (own echo position), also `security-sensitive`, self-review PASS.** The same ledger now also gates a
+*reorder*, not only a removal: `moveOwnEchoToEnd` and the `observe` read both require `Role.User` membership
+in `mintedMessageIds` before touching a row. A hostile `queue_state` or `message` can therefore only move a
+row this device minted — never rewrite its content, and never touch an assistant, tool or foreign-device row
+— so the existing #781 threat model (forging a match costs a paired daemon nothing it couldn't already do by
+simpler means; a paired device cannot forge a match at all) extends unchanged to the move.
+
 ## Related
 
 - [#460 implementation notes](../codebase/460.md) (inbound decode) / [#466 implementation notes](../codebase/466.md)
@@ -269,6 +349,12 @@ minted ids and so cannot forge a match.
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the `TYPE_QUEUE_STATE` arm and the outbound
   `dropQueuedMessage` send; `QueueProjection` holds the `queuedByConversation` state, the decode and the
   `observeQueue` read.
+- [#1558 implementation notes](https://github.com/pyrycode/pyrycode-mobile/issues/1558) (own echo position —
+  postdates the frozen archive; notes live in this document, [Queued backlog rendering](queued-backlog-section.md),
+  [Remote conversation repository § reads and the thread store](remote-conversation-repository-reads-and-thread-store.md),
+  [§ Control sends](remote-conversation-repository-control-sends.md), [Streaming assistant
+  turns](streaming-assistant-turns.md) and [§ Assistant reply
+  segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)).
 - [Stall state](stall-state.md) (#395) — the structural twin: the decode→state→observe shape, gate, and
   test harness this reuses; the onset-only counterpoint to this full-snapshot model.
 - [API-retry status](api-retry-status.md) (#593) — follows this arm's payload-carrying `Map` projection

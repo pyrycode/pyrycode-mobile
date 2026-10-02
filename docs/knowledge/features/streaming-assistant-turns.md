@@ -99,7 +99,10 @@ This changes what the `ThreadFold` accumulator above folds against, in two ways:
 
 - **Only the newest segment can stream.** `ThreadProjection.observe` settles every streaming row but the
   last (`withOnlyLastRowStreaming`) before `Finished` ever reaches this fold, so a segment that a tool row
-  or a user message now follows is already static by the time it arrives here. **One known gap:**
+  or a user message now follows is already static by the time it arrives here. Since [#1558](https://github.com/pyrycode/pyrycode-mobile/issues/1558),
+  `observe` runs that settle rule over the thread **with this device's still-queued own echoes taken out**,
+  then appends them back at the end — so a queued echo, which sits after the running reply in store order,
+  never counts as the row that makes the reply "not last" and stops its streaming caret. **One known gap:**
   `CachingConversationRepository.observeMessages` runs `mergeCachedRows` *after* that normalisation, so a
   cached row the merge places above the live stream can still draw as streaming past its own turn — the
   normalisation covers the projection, not a later composition of it. The verifier's PR #1420 review flagged
