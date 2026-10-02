@@ -24,6 +24,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
 import kotlin.math.abs
@@ -37,11 +38,13 @@ class ChannelListColoursTest {
     private var rootView: View? = null
 
     @Test
-    fun darkPanelAndBarMatchTheReferenceWithOneBlueGreyRule() {
+    @Config(qualifiers = "w412dp-h892dp-mdpi")
+    fun darkPanelAndBarDrawTheReferenceGlowWithOneBlueGreyRule() {
         show(dark = true)
         val bitmap = draw()
-        assertPanel(bitmap, Color.rgb(11, 14, 17))
-        assertToolbarRule(bitmap, Color.rgb(34, 65, 92))
+        assertGlow(bitmap, "populated")
+        // The rule is translucent, so over the glow it shifts a few units across the width, as Figma's does.
+        assertToolbarRule(bitmap, Color.rgb(33, 68, 99), tolerance = 4)
         assertSelectedRowFill(bitmap, Color.rgb(0, 51, 85))
     }
 
@@ -55,9 +58,10 @@ class ChannelListColoursTest {
     }
 
     @Test
-    fun emptyDarkPanelHasTheSameFillAsItsBar() {
+    @Config(qualifiers = "w412dp-h892dp-mdpi")
+    fun emptyDarkPanelDrawsTheSameGlowBehindItsBar() {
         show(dark = true, empty = true)
-        assertPanel(draw(), Color.rgb(11, 14, 17))
+        assertGlow(draw(), "empty")
     }
 
     private fun show(
@@ -121,16 +125,47 @@ class ChannelListColoursTest {
         assertEquals("List background", expected, bitmap.getPixel(x, bounds.bottom.roundToInt() - 2))
     }
 
+    /** Bare-canvas samples of Figma 15:8's 412 × 892 export: the glow under the 30 % overlay, bar included. */
+    private fun assertGlow(
+        bitmap: Bitmap,
+        name: String,
+    ) {
+        val bounds = rule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).fetchSemanticsNode().boundsInRoot
+        assertEquals("412 × 892 at density 1.0", 412f to 892f, bounds.width to bounds.height)
+        val file = File(System.getProperty("java.io.tmpdir"), "sidebar-1522-$name.png")
+        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        println("Sidebar glow render: ${file.absolutePath}")
+        val reference =
+            mapOf(
+                (206 to 20) to Color.rgb(8, 24, 35),
+                (10 to 300) to Color.rgb(8, 26, 39),
+                (300 to 350) to Color.rgb(8, 33, 52),
+                (400 to 500) to Color.rgb(9, 18, 25),
+                (300 to 600) to Color.rgb(10, 15, 20),
+                (200 to 700) to Color.rgb(11, 14, 17),
+            )
+        for ((point, expected) in reference) {
+            val actual = bitmap.getPixel(bounds.left.roundToInt() + point.first, bounds.top.roundToInt() + point.second)
+            assertTrue(
+                "Glow at $point: expected ${hex(expected)}, was ${hex(actual)}",
+                closeColour(expected, actual, tolerance = 3),
+            )
+        }
+    }
+
+    private fun hex(color: Int) = "%06X".format(color and 0xFFFFFF)
+
     private fun assertToolbarRule(
         bitmap: Bitmap,
         expected: Int,
+        tolerance: Int = 1,
     ) {
         // The toolbar rule spans the panel; text and selected rows cannot fill this entire horizontal band.
         val left = (bitmap.width * 0.1f).roundToInt()
         val right = (bitmap.width * 0.9f).roundToInt()
         val matchingRows =
             (0 until bitmap.height).filter { y ->
-                (left..right).all { x -> closeColour(expected, bitmap.getPixel(x, y)) }
+                (left..right).all { x -> closeColour(expected, bitmap.getPixel(x, y), tolerance) }
             }
         val bands = matchingRows.filterIndexed { index, y -> index == 0 || y > matchingRows[index - 1] + 1 }
         assertEquals("One full-width toolbar rule", 1, bands.size)
@@ -146,7 +181,7 @@ class ChannelListColoursTest {
         val firstRuleEnd = matchingRows.first { it + 1 !in matchingRows } + 1
         assertEquals("Divider thickness", 1f, (firstRuleEnd - bands.first()) / density, 0.5f)
         assertEquals("Divider to first row including list padding", 24f, (host.top - firstRuleEnd) / density, 0.5f)
-        val rulePixels = (0 until bitmap.width).filter { closeColour(expected, bitmap.getPixel(it, bands.first())) }
+        val rulePixels = (0 until bitmap.width).filter { closeColour(expected, bitmap.getPixel(it, bands.first()), tolerance) }
         assertEquals("Divider left gutter", 20f, (rulePixels.first() - panel.left) / density, 0.5f)
         assertEquals("Divider right gutter", 20f, (panel.right - rulePixels.last() - 1) / density, 0.5f)
         // The runner's temp directory survives Robolectric's per-test sandbox cleanup for visual review.
@@ -186,8 +221,9 @@ class ChannelListColoursTest {
     private fun closeColour(
         expected: Int,
         actual: Int,
+        tolerance: Int = 1,
     ): Boolean =
-        abs(Color.red(expected) - Color.red(actual)) <= 1 &&
-            abs(Color.green(expected) - Color.green(actual)) <= 1 &&
-            abs(Color.blue(expected) - Color.blue(actual)) <= 1
+        abs(Color.red(expected) - Color.red(actual)) <= tolerance &&
+            abs(Color.green(expected) - Color.green(actual)) <= tolerance &&
+            abs(Color.blue(expected) - Color.blue(actual)) <= tolerance
 }
