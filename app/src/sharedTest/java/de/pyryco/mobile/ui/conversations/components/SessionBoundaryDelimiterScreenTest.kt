@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
@@ -192,16 +193,15 @@ class SessionBoundaryDelimiterScreenTest {
     }
 
     @Test
-    fun renders_WorkspaceChange_label_with_cwd_prefix() {
+    fun renders_WorkspaceChange_as_new_session_without_workspace_text() {
         setContentWithCapturingUriHandler(workspaceChangeBoundary(), mutableListOf())
 
         composeTestRule
-            .onNode(
-                hasText(
-                    "Workspace changed to ~/Workspace/Projects/KitchenClaw — ",
-                    substring = true,
-                ),
-            ).assertIsDisplayed()
+            .onNode(hasText("New session — ", substring = true))
+            .assertIsDisplayed()
+        composeTestRule
+            .onAllNodes(hasText("Workspace", substring = true))
+            .assertCountEquals(0)
     }
 
     @Test
