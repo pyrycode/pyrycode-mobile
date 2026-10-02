@@ -244,4 +244,40 @@ class ThreadHistoryDemandTest {
         assertFalse(restored.canAsk)
         assertEquals(ThreadHistoryTail.None, restored.tail(connected = false))
     }
+
+    // --- #1572: the newest-page ask on every host arrival --------------------------------------------
+
+    @Test
+    fun newestPageAdvancesWalk_onlyWhenTheWalksOwnNextAskWouldCarryTheEmptyCursor() {
+        val walked = ThreadHistoryDemand().asking().settled(pageCursor = "c1", atStart = false)
+        listOf(
+            ThreadHistoryDemand(),
+            walked.asking().cursorRefused(),
+            ThreadHistoryDemand().asking().failed(retryable = true),
+            ThreadHistoryDemand().asking().failed(retryable = false),
+        ).forEach { demand -> assertTrue("$demand", demand.newestPageAdvancesWalk) }
+        listOf(
+            walked,
+            ThreadHistoryDemand().restored(cursor = "saved", atStart = false),
+            ThreadHistoryDemand().restored(cursor = "", atStart = true),
+            ThreadHistoryDemand().asking(),
+            ThreadHistoryDemand(stoppedBy = HistoryWalkStop.NotAdvancing),
+        ).forEach { demand -> assertFalse("$demand", demand.newestPageAdvancesWalk) }
+    }
+
+    @Test
+    fun askingNewest_holdsTheSlotAndLeavesTheWalkWhereItWas() {
+        listOf(
+            ThreadHistoryDemand(pagesLoaded = 2).restored(cursor = "saved", atStart = false),
+            ThreadHistoryDemand().restored(cursor = "", atStart = true),
+            ThreadHistoryDemand(cursor = "c1", stoppedBy = HistoryWalkStop.RetryableFailure),
+        ).forEach { demand ->
+            val asking = demand.askingNewest()
+            assertTrue("$demand", asking.inFlight)
+            // The slot is held, so neither a pull nor a retry can overlap it.
+            assertFalse("$demand", asking.canAsk)
+            assertFalse("$demand", asking.canRetry)
+            assertEquals("$demand", demand, asking.newestSettled())
+        }
+    }
 }

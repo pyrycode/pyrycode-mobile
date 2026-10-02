@@ -192,6 +192,23 @@ internal data class ThreadHistoryDemand(
     fun cursorRefused(): ThreadHistoryDemand = copy(cursor = "", inFlight = false, stoppedBy = null)
 
     /**
+     * Whether the newest-page ask an open thread sends on every host arrival (#1572) is this walk's own next
+     * page: the walk could ask now and would ask with the empty cursor anyway. Then the page settles into the
+     * walk as a pull's would; otherwise the ask leaves the walk where it is ([askingNewest]).
+     */
+    val newestPageAdvancesWalk: Boolean get() = canAsk && cursor.isEmpty()
+
+    /**
+     * Claim the outstanding-request slot for a newest-page ask that is not the walk's next page (#1572). Only
+     * [inFlight] moves, so the cursor, the page budget and the stop reason, a saved [HistoryWalkStop.AtStart]
+     * included, are exactly what they were once [newestSettled] releases the slot.
+     */
+    fun askingNewest(): ThreadHistoryDemand = copy(inFlight = true)
+
+    /** Release the slot [askingNewest] claimed, whether the ask was answered or failed. */
+    fun newestSettled(): ThreadHistoryDemand = copy(inFlight = false)
+
+    /**
      * What the thread's oldest-end slot shows for this state (#778). While the host is not [connected]
      * the slot says older messages need a connection (#1352), unless this walk has reached the start of
      * history, as desktop's `olderSaved` notice does.

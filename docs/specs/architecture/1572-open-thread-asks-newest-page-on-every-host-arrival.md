@@ -120,6 +120,9 @@ rung-3 live scenario is #1581 (AC4), not this ticket.
 - Does a pull issued while the saved position is still being read now lose to the opening ask? Expected yes: both
   wait for the seed, the opening collector registered first, so the pull is dropped under the single-slot rule and
   the reader pulls again. Settle the test's expectations against the run.
+  **Resolved (2026-10-03):** confirmed. `history_aPullWhileTheSavedPositionIsBeingRead_asksWithTheSavedCursor` now
+  pins that the opening ask goes first, writes no position, and the next pull asks with the saved cursor. No design
+  change.
 
 ## Documentation handoff
 
