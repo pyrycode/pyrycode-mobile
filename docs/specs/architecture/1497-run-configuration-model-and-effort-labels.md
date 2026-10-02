@@ -20,4 +20,3 @@ Dark Run configuration sheet: each model is one `bodyMedium` `onBackground` labe
 ## Testing strategy
 
 `StatusSheetTest`: the labels-and-details test asserts the resolved identifier is not drawn; effort tests find "Low"/"High" and assert the tap sends "low"; a new case checks all four published levels read "Low", "Medium", "High", "Max". `ThreadComposerFooterTest.runConfigurationSelectsModelEffortAndPermission` taps "Max" and still records "max". Device evidence: `ThreadDesignCaptureTest#runConfigurationAndReaderAt412By892` on `pixel8Api35` with `requireRealSystemBars=true`, the refreshed `run-configuration.png` compared with `scripts/design-compare.py` against `figma-600-1694.png`, both committed under `app/src/androidTest/assets/design-1220/thread/`, with the `600:1694` verdict in that folder's `index.md` updated. Not operator-facing in the rung-3 sense (presentation only, no new daemon interaction), so no real-Claude scenario.
-
