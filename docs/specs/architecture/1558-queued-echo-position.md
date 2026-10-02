@@ -69,7 +69,11 @@ Rung 3: `interactiveTurn_peerQueue_staysConsistentAcrossClients` gains, after st
 
 ## Open Questions
 
-- Does a repository-level fixture for `queue_state` plus send exist that the wiring test can reuse? Resolve while writing it.
+- Does a repository-level fixture for `queue_state` plus send exist that the wiring test can reuse? **Resolved:** yes, `sendAndAck`, `queueStateEnvelope` and `messageEnvelope` in `RemoteConversationRepositoryTest`.
+
+## Revisions
+
+- **2026-10-03, implementation.** `remove(conversationId)` also drops the conversation's `ownEchoQueues` entry, as it does `endedTurns` and `compactionFolds`, so a deleted conversation leaves no echo state behind. The existing `dropQueuedMessage_settlesOnQueueStateWithoutItem_removesOwnEchoOnly` expectation changes while the item is still queued, from `[first, queued, third]` to `[first, third, queued]`: the queued echo now reads below the rows after it, which is AC 1. Its final assertion, the drop removing only the echo, is unchanged.
 
 ## Security review
 
