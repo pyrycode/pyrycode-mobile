@@ -29,6 +29,12 @@
   here, and every comparison, comes from that run; the question keyboard capture showed the 240 px test IME. Each
   `.txt` now also records `spPx`, the pixels the platform renders 14, 16, 20, 22, 24 and 28 sp as at the capture's
   font scale.
+- **#1543 redraw:** the two compact frames (`639:3308`, `636:4066`) were redrawn at Android's 150 % on 2026-10-02
+  and exported again with `get_screenshot`. Type sizes and line boxes follow `spPx`; the 11 and 12 sp sizes, which
+  `spPx` does not list, scale by 1.5 in the platform's table. The button labels' letter spacing is 1.5 times the
+  1x value, and Cancel and Continue hug their labels. All of it is overrides inside the two frames; no shared
+  component or variable changed. The captures stay #1501's, because #1543 changes only Figma, and
+  `scripts/design-compare.py` rebuilt the two compact comparisons.
 
 **How these captures differ from onboarding's.** Both prompts set `FLAG_SECURE` on the activity window while
 they show, which blacks out the harness's `UiAutomation` screenshot. The class draws the decor view into a
@@ -49,14 +55,26 @@ Typography, Colour and Icon paths and routes it to #1485, which holds the design
 sits 24 px lower than Figma's. As in the onboarding audit, that move is not a mismatch; everything else is
 compared at 1:1.
 
-**Compact frames at 150 %: the platform's scaling (#1501).** The two compact frames (`636:4066`, `639:3308`)
-scale every type size and line box linearly. API 35 at font scale 1.5 renders 16 sp as 23 px, 22 sp as 27 px,
-24 sp as 28 px and 28 sp as 29.3 px (`spPx` in `permission-compact.txt` and `question-compact.txt`), where the
-board uses 24, 33, 36 and 42. That measured difference is the cause of both compact items' remaining mismatches:
-the 52 px buttons are 8 + 36 + 8 on a linear 24 sp line box, and the app's are about 42 px on a 28 px one; the
-top-bar title's 28 sp line box is 42 px in Figma and 29.3 px in the app, about 34 against 26 px from cap to
-descender. The app keeps the platform's text size rather than overriding the user's font-size setting, and #1543
-asks for the two frames to be redrawn with Android's scaling.
+**Compact frames at 150 %: the platform's scaling (#1501, #1543).** API 35 at font scale 1.5 renders 14 sp as
+22 px, 16 sp as 23 px, 22 sp as 27 px, 24 sp as 28 px and 28 sp as 29.3 px (`spPx` in `permission-compact.txt`
+and `question-compact.txt`). #1501 found that the two compact frames (`636:4066`, `639:3308`) scaled every type
+size and line box linearly, and #1543 redrew them from that table. Against the redraw, the top-bar title, the
+button labels and the 43 px buttons match. Two rules in the app that the table does not capture account for what
+remains:
+
+- Once font scaling is non-linear, Compose sets a line's height from the converted font size and the style's
+  ratio of line height to font size (`resolveLineHeightInPx` in ui-text 1.10.4), not from the converted
+  line-height sp. 14/20 sp text gets a 31.4 px line where the frames draw 26, and 12/16 sp text gets 24 where
+  they draw 23. It shows wherever the app keeps the whole line box: the context rows and the question line, which
+  set `Trim.None`, and the Material default styles `titleMedium` and `labelMedium` (choice rows, grant label,
+  hint).
+- The styles `Type.kt` defines set no line-height style, so a single line trims to the font's own height, about
+  1.17 times its size. The 23 px button labels sit in 27 px, which gives 43 px buttons against the frames' 44, and
+  `ModalCancelButton`'s 7 px padding, with its 1 px border inside it, gives 41.
+
+Mobile and desktop share the same components and text styles, so neither changes to close these gaps (decision
+2026-10-02). Both compact items record them as mismatches, not routed. The tolerance for the two items is 2 px for
+heights, gaps and box sizes. Text is compared by glyph height, and a run up to 3 px wider counts as rendering.
 
 ### Questions · Unanswered — `636:3279`
 
@@ -139,10 +157,10 @@ asks for the two frames to be redrawn with Android's scaling.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch, the platform's scaling (see "Compact frames at 150 %"): Figma's Cancel and Continue are 52 px tall (118 and 143.5 px wide) on a linear 36 px line box; the app's are about 42 px on the 28 px line box the platform renders. Since #1484 the stacked pair sits at the card's start edge with Cancel centred over Continue, as `636:4325` |
+| Geometry | mismatch: the question card is 273 px tall against the frame's 261, see Spacing. Cancel (43 × 115 px against 44 × 115) and Continue (43 × 140 against 44 × 138) match within 2 px, and the stacked pair sits at the card's start edge with Cancel centred over Continue, as `636:4325`. The top bar's rule is 2 px higher |
 | Padding | match |
-| Spacing | match since #1501: the Other row, as Unanswered |
-| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px and the action labels render at 23 px against the frame's 24 px, both the platform's scaling (see "Compact frames at 150 %"); the footer reads "Cxt h…". Every label wraps |
+| Spacing | mismatch, Compose's line boxes (see "Compact frames at 150 %"): under the question line the first choice starts 4 px lower; each choice row is 50 px against the frame's 48, 2 px more per row; and the "Other" field sits 6 px lower under its label. Under the card the app puts Cancel 11 px down and Continue 17 px below Cancel, where the frame has 16 and 12: Material's 48 px touch target around each 43 px button takes layout space. The composer box is 52 px against the frame's 58 |
+| Typography | match: the top-bar title is 26 px from cap to descender in both, and the question, choice and action text sits at the frame's sizes within 2 px of glyph height, the action labels within 2 px of width. Mismatch: the footer reads "Cxt h…". Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
@@ -151,7 +169,8 @@ asks for the two frames to be redrawn with Android's scaling.
 
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, both questions, Cancel
   and Continue each scroll into view and display.
-- **Routed:** #1543 (redraw at Android's scaling: button heights, labels, top-bar title), #1485 (footer, truncation). Other row fixed by #1501
+- **Routed:** #1485 (footer, truncation). The line-box, action-gap and composer gaps are recorded, not routed (see
+  "Compact frames at 150 %"). Scaling redrawn by #1543, Other row fixed by #1501
 
 ### Permission · Safe default — `639:2242`
 
@@ -273,10 +292,10 @@ asks for the two frames to be redrawn with Android's scaling.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch, the platform's scaling (see "Compact frames at 150 %"): Figma's Allow once, Reject once and Cancel are 52 px tall (Cancel 118 px wide) on a linear 36 px line box; the app's are about 42 px on the platform's 28 px one. Title inside the card and start-aligned Cancel match |
+| Geometry | mismatch: Cancel is 41 px tall against the frame's 44, `ModalCancelButton`'s 7 px padding around a 27 px trimmed label (see "Compact frames at 150 %"); its 113 px width matches the frame's 115. Allow once and Reject once (43 × 248 px against 44 × 248), the title inside the card and start-aligned Cancel match. The top bar's rule is 2 px higher |
 | Padding | match |
-| Spacing | match since #1501: the hint sits under the armed choice 8 px from each button, as Figma; context block as Safe default, on the platform's line boxes |
-| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px and the button labels render at 23 px against the frame's 24 px, both the platform's scaling (see "Compact frames at 150 %"); footer "Cxt h…". The hint and "Folder" label match. Every label wraps |
+| Spacing | mismatch, Compose's line boxes (see "Compact frames at 150 %"): the "Folder" value sits 40 px under its label against the frame's 34, glyph top to glyph top, and the session grant 3 px further under the value. From the grant down, the rule text, both choices, the hint's 8 px gaps and Cancel 12 px under the card match within 2 px. The composer box is 52 px against the frame's 58 |
+| Typography | mismatch: each line of the hint runs 14 px wider, the app's `labelMedium` letter spacing (0.5 sp, 0.75 px here), which the frame's hint does not have at any size; footer "Cxt h…". The top-bar title (26 px from cap to descender in both), the button labels (23 px, widths within 2 px) and the "Folder" label match. Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
@@ -285,7 +304,9 @@ asks for the two frames to be redrawn with Android's scaling.
 
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, prompt, grant, both
   choices and Cancel each scroll into view and display.
-- **Routed:** #1543 (redraw at Android's scaling: button heights, labels, top-bar title), #1485 (footer, truncation). Choice gaps and context spacing fixed by #1501
+- **Routed:** #1485 (footer, truncation). The line-box, Cancel-height, composer and hint letter-spacing gaps are
+  recorded, not routed (see "Compact frames at 150 %"). Scaling redrawn by #1543, choice gaps and context spacing
+  fixed by #1501
 
 ### Switch chats while prompts wait — `640:2437`
 
