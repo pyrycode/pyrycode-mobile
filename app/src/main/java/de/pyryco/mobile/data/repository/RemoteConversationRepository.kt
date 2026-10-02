@@ -654,6 +654,9 @@ class RemoteConversationRepository(
                     // A snapshot is the daemon's only confirmation of a drop (#859). Settling a
                     // conversation whose backlog did not change is a no-op, so settle every one pending.
                     threadProjection.settleDrops(queueProjection)
+                    // After the drops, so a dropped echo is already gone: this device's queued echoes read
+                    // below the running turn, and a drained one settles at the end of the thread (#1558).
+                    threadProjection.settleQueuedEchoes(queueProjection)
                 }
             }
             TYPE_MODEL_LIST -> {

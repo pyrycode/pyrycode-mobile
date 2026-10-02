@@ -2783,6 +2783,22 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(inThreadList(PING_PROMPT), useUnmergedTree = true).assertCountEquals(1)
             composeTestRule.onAllNodes(queuedRow(PING_PROMPT)).assertCountEquals(0)
 
+            // 6b. #1558: the drained ping sits where claude received it — below the wait turn's last row, its
+            //     reply, and above the ping's own reply — not at the slot it was typed into mid-turn.
+            val waitReply = hasText(WAIT_REPLY, ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            val tops =
+                listOf(waitReply, inThreadList(PING_PROMPT), pingReplyMatcher()).map {
+                    composeTestRule
+                        .onNode(it, useUnmergedTree = true)
+                        .fetchSemanticsNode()
+                        .boundsInRoot.top
+                }
+            assertTrue("expected wait reply, ping prompt, ping reply top to bottom; tops $tops", tops == tops.sorted())
+            assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
+
             // 7. AC-3: with the backlog empty nothing dropped can run, and no dropped reply was ever drawn.
             composeTestRule.onAllNodes(inThreadList(DROP_PROMPT), useUnmergedTree = true).assertCountEquals(0)
             composeTestRule.onAllNodes(inThreadList(PEER_QUEUED_PROMPT), useUnmergedTree = true).assertCountEquals(0)
@@ -7463,6 +7479,10 @@ class InteractiveStreamE2ETest {
             "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
                 "with exactly: pyrywait. Command: python3 -c \"print(849)\""
         const val DROP_PROMPT = "Reply with exactly: pyrydropped"
+
+        // #1558: WAIT_PROMPT's reply, the wait turn's last row. Matched exactly, so the prompt that names it
+        // never matches.
+        const val WAIT_REPLY = "pyrywait"
 
         // #950 running-tool label. All three hold claude's Bash call on WAIT_PROMPT's permission lever. Once
         // allowed, HELD_TOOL_PROMPT's command stays open for 10 s so the label can be seen after the prompt

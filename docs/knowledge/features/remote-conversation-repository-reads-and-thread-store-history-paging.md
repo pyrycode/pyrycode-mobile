@@ -198,6 +198,15 @@ for the one composition point downstream of `observe` this does not cover.
 with no segment record — not only the last one — since a daemon bug or a race can otherwise leave an earlier
 segment stuck streaming.
 
+**`withAssistantDelta`'s `passOver: Set<String> = emptySet()` ([#1558](https://github.com/pyrycode/pyrycode-mobile/issues/1558)).**
+The "last row" a delta extends is picked by `indexOfLast`, skipping any user row whose id is in `passOver` —
+so a delta lands on the running reply even when a user row this device minted sits after it in store order
+but reads below it (a [queued own echo](queued-backlog.md#own-echo-position-a-queued-message-draws-below-the-turn-it-waits-behind-1558)).
+`ThreadProjection.applyAssistantDelta` passes its conversation's queued-echo ids; this history reducer's own
+caller passes nothing, since a page is reduced after the fact and carries no notion of "still queued." Without
+this, the echo — appended to the store at tap time, ahead of the reply's first delta — would look like the
+delta's "last row" and the reply would open a second segment below it instead of extending the one above.
+
 ### The seam join
 
 A history page is cut by entry count and byte size, never by turn, so a page can start or end inside a
