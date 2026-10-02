@@ -166,6 +166,26 @@ of the same surface in one run (`archive.png` against `archive-compact.png`),
 so re-read it from the committed capture immediately before writing that
 verdict rather than trusting an earlier run's reading.
 
+`ThreadDesignCaptureTest` (#1432) audited the thread, composer and thread
+status states through this harness. It runs in the UI gate on ATD, so a change
+to a thread panel, menu or status band can break it. Capture keyboard states
+last: a focused composer's text-selection handle is its own popup root, which
+throws off `openMenu`'s count of roots in any later step. After an image
+attachment reaches its ready state, also wait for the decode's indeterminate
+progress indicator to clear, or the bubble is captured with a spinner instead
+of the photo. Re-export every frame with `get_screenshot` at capture time and
+diff it against the earlier export: the Mobile page changed nine thread frames
+and gained a section while this audit ran, which cancelled verdicts written
+against the older exports. Check a shared-row verdict, such as one table for
+the composer and footer across every thread frame, against each frame's own
+node data, because disconnected frames restyle shared parts. The Connecting,
+Reconnecting and Offline frames dim the staged PDF tile that the connected
+frame draws in primary, and the shared verdict hid that until the third review
+(#1532). Measure before writing "match": that review re-measured accepted
+verdicts and found a 50 px bubble width (#1513), a 14 px list indent (#1533)
+and a 3 to 9 px panel drift (#1534) that a visual scan of the side-by-sides had
+passed.
+
 `MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
 (unrelated to the #1352 history-paging change, caught in its PR's UI gate and
 triaged there) hit the same `wm size` race, confirmed by two focused re-runs

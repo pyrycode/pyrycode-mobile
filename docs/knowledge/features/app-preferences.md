@@ -341,8 +341,10 @@ system bars and fixture content are outside the root palette contract. The
 `15:8` export's canvas glow was read the same way at first, but the
 [list-side audit](../../../app/src/androidTest/assets/design-1220/list/index.md)
 (#1431) found the app's canvas flat where Figma draws a blue radial glow behind
-the tree, and an earlier allowance does not excuse a visual deviation: it is a
-routed Colour mismatch (#1486), not a contract exclusion.
+the tree, and an earlier allowance does not excuse a visual deviation. That
+mismatch was routed as #1486 and closed by #1522: under the static dark
+palette, `ChannelListScreen` now draws the glow behind the tree, carrying
+`15:8`'s own gradient transform as the shader's local matrix.
 
 The remembered-model tests cover absence after changing the Settings default,
 an out-of-enum value that leaves that default intact, and verbatim persistence
