@@ -105,8 +105,9 @@ identity-keyed buffer and content-free debug-log patterns. Its two actions read 
 of one guard, matching desktop: OK needs a non-blank trimmed name, an available host and no write
 in flight; Archive needs only the host and no write in flight, independent of the field's content,
 and takes no confirmation step, since an archived chat comes back through Archive's Restore.
-[ChannelListScreen](channel-list-screen.md) is its first caller (#827): each Chats row's pencil
-opens it on that row's own host and conversation, and OK renames through that host's
+[ChannelListScreen](channel-list-screen.md) is its first caller (#827): a Chats row's pencil —
+since #1523, drawn only on the selected row, reached by opening it and pressing Back — opens it on
+that row's own host and conversation, and OK renames through that host's
 `ConversationRepository.rename`, resolved at the press — see
 [ChannelListScreen § tree and controls](channel-list-screen-tree-and-controls.md#chat-row-edit-control-827)
 and [ChannelListViewModel](channel-list-viewmodel.md#wiring). Archive chat was wired in #828, on the
@@ -273,9 +274,11 @@ available host, a non-blank trimmed name and (when the prompt is showing) a draf
 `SystemPromptLimit.MAX_BYTES`; Archive needs only the host and no write in flight, independent of either
 field, with no confirmation step — an archived channel comes back through Archive's own Restore, the
 same parity `EditChatModal`'s Archive established. [ChannelListScreen](channel-list-screen.md) is its
-only caller: the Channels row's own permanent pen — the same pen shape #827 gave Chats rows, now
+only caller: the Channels row's own pen — the same pen shape #827 gave Chats rows, now
 generalised behind `TreeConversationRow`'s `editDescription: @StringRes Int` parameter — opens it on
-that row's own host and conversation, reads the stored prompt once the row's host has a live
+that row's own host and conversation. Since #1523 the pen draws only on the selected conversation row
+(the one last opened and left with Back), so Edit channel, like Edit chat, is reached by opening the
+row, pressing Back and tapping its pen; it reads the stored prompt once the row's host has a live
 repository, opens the checkbox at that host's own stored `Conversation.muted` (#1021), and OK writes
 only what changed — a rename, then a mute write, then the prompt, each independently, in that order —
 through the
