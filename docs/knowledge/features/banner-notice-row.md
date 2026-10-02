@@ -227,6 +227,8 @@ document that repeats it.
 - Structural precedent: [`UnrecognizedMessageRow`](unrecognized-message-row.md) — same three-site landing
   shape (type + live decode + history decode + row in one ticket), but the opposite dedup posture; read
   both before adding a fourth `ThreadItem` variant that carries a wire-minted identity.
+- Sibling row: [`StoppedTurnRow`](stopped-turn-row.md) (#1356) — same bare muted-text treatment, but keyed
+  on `turnId` rather than a wire-minted `(type, ts)`, since a turn ends once.
 - Consumers: [`Conversation repository`](conversation-repository.md) (`ThreadItem`, co-located types),
   [`Remote conversation repository`](remote-conversation-repository.md) (live decode), [`Thread
   screen`](thread-screen.md) (`LazyColumn` key, render arm, `timestamp()`), [`Conversation

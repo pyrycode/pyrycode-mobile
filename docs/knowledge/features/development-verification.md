@@ -612,6 +612,13 @@ in the file and the check cannot tell the two `map`s apart. `spotlessApply` will
 not remove it either. Check each import a move leaves behind for an actual caller
 of that specific symbol, not just any identically-spelled one (#916).
 
+`spotlessApply` (ktlint) rewrites a lower-case `\uXXXX` escape in a Kotlin string
+literal into the literal invisible character it denotes — a bidi override or an
+isolate stops reading as an escape sequence in the diff and the source file. An
+upper-case hex escape (`‮` as written, not what it renders) is left alone.
+A hostile-text test fixture (e.g. `StoppedTurnTest`, #1356) stays readable in the
+source only if its escapes are typed in upper case.
+
 ## Emulator and real evidence
 
 An instrumented test proves behavior in its fixture. It does not prove camera

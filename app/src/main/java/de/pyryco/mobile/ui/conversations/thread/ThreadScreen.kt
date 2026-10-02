@@ -100,6 +100,7 @@ import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
+import de.pyryco.mobile.ui.conversations.components.StoppedTurnRow
 import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
@@ -691,6 +692,7 @@ fun ThreadScreen(
                                                         switchBack = switchBackOffer?.takeIf { it.armedBy(item) },
                                                         onSwitchBack = onSwitchBack,
                                                     )
+                                                is ThreadItem.StoppedTurn -> StoppedTurnRow(item = item, agent = state.agent)
                                             }
                                         // One render path for both kinds of queued row — the one the echo
                                         // correlated to and the one this device minted no echo for — so the
@@ -1140,6 +1142,7 @@ private fun ThreadItem.timestamp(): Instant =
         is ThreadItem.Banner -> occurredAt
         is ThreadItem.CompactionBoundary -> occurredAt
         is ThreadItem.ModelRefusal -> occurredAt
+        is ThreadItem.StoppedTurn -> occurredAt
     }
 
 internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now()): ChannelInfoUiModel =

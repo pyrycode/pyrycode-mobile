@@ -324,6 +324,41 @@ class FileConversationCacheThreadTest {
             }
         }
 
+    // ---- #1356: a stopped turn's row is kept ----------------------------------------------------
+
+    private fun stopped(
+        turnId: String,
+        reason: String = "prompt_too_long",
+        category: String = "",
+    ) = ThreadItem.StoppedTurn(turnId, reason, category, Instant.parse("2026-10-02T10:00:00.5Z"))
+
+    @Test
+    fun `stopped turn rows round-trip field-for-field in place through a fresh instance`() =
+        runTest {
+            val rows =
+                listOf(
+                    message("m1", role = Role.User),
+                    stopped("turn-1", category = "overloaded"),
+                    message("m2"),
+                    stopped("turn-2", reason = ""),
+                )
+            assertTrue(cache().writeThread("server-a", "conv-1", rows).isSuccess)
+
+            // A fresh instance over the same root is what a process restart reads.
+            assertEquals(rows, cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a document repeating a stopped turn id reads empty`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(stopped("turn-1"), stopped("turn-2"))).getOrThrow()
+            val document = threadFiles().single()
+            val tampered = document.readText().replace("\"turn-2\"", "\"turn-1\"")
+            document.writeText(tampered)
+
+            assertEquals(emptyList<ThreadItem>(), cache().readThread("server-a", "conv-1"))
+        }
+
     @Test
     fun `the row limit is one hundred thousand`() {
         assertEquals(100_000, MAX_CACHED_THREAD_ROWS)

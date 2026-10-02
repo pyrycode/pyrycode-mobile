@@ -329,6 +329,8 @@ repeats it for one frame type.
   § Scenarios, the `refusal` row, and its Follow-ups-to-ticket entry for #1360.
 - Structural precedent: [`Banner notice row`](banner-notice-row.md) — same wire-minted `(type, ts)` identity
   and dedup posture, read before adding a fifth `ThreadItem` variant of this kind.
+- Sibling row: [`StoppedTurnRow`](stopped-turn-row.md) (#1356) — same bare-text landing shape, but keyed on
+  `turnId` rather than a wire-minted `(type, ts)`.
 - Consumers: [`Conversation repository`](conversation-repository.md) (`ThreadItem`, co-located types,
   `model_announced` as the model-state authority, and — since #1360 — `LiveRefusalEvent` /
   `observeLiveRefusalEvents`), [`Remote conversation repository`](remote-conversation-repository.md)

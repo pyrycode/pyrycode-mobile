@@ -71,7 +71,7 @@ class AssistantSegmentTest {
         val rows =
             emptyList<ThreadItem>()
                 .withAssistantDelta(delta(0, "a", turn = "other"), TS_INSTANT)
-                .withFinalizedTurn(LiveSessionEvent.TurnEnd(CONVERSATION, TURN, "end_turn"))
+                .withFinalizedTurn(LiveSessionEvent.TurnEnd(CONVERSATION, TURN, "end_turn"), TS_INSTANT)
 
         assertEquals(listOf(true), rows.streaming())
     }

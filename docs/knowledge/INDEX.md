@@ -16,6 +16,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Slash-command type-ahead](features/slash-command-type-ahead.md): composer suggestions from the conversation's published slash-command menu, filtering, completion and dismissal.
 - [Banner notice row](features/banner-notice-row.md): claude's `banner` frame surfaced as an inert thread row, live and on history reload.
 - [Model refusal row](features/model-refusal-row.md): a model refusal or fallback explained in the thread, live and on history reload.
+- [Stopped-turn row](features/stopped-turn-row.md): a turn that failed or stopped early leaves a "Stopped: …" row in the thread, live and on history reload, surviving after the status-area turn-outcome arm clears.
 - [Settings](features/settings-screen.md): notifications-only modal and persisted push control.
 - [Shared mobile modal](features/mobile-modal.md): caller-controlled editing shell, theme mapping, focus and IME behavior.
 - [Host editor](features/host-editor.md): the shared Edit host state machine (`ui/host/HostEditor.kt`) used by the channel list.
