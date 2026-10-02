@@ -77,8 +77,9 @@ shell's first caller whose actions are not a fixed Cancel/OK pair but a server-s
 [#1306](permission-modal-overlay.md#what-1306-moved) later moved that overlay off this gate entirely, into
 `ThreadScreen`'s own message list — `CreateChatModal` is this gate's current caller. `MobileModal`
 and `MobileGateModal` both delegate to one private `MobileModalShell(title, onDismissRequest, gate: Boolean,
-modifier, error, footer: @Composable RowScope.(dismiss: () -> Unit) -> Unit, content)` — `gate` is the only
+modifier, error, footer: (@Composable RowScope.(dismiss: () -> Unit) -> Unit)?, content)` — `gate` is the only
 switch between them, so the editing shell's behaviour cannot drift by editing the gate path and vice versa.
+A null `footer` (used by [`MobileReadOnlyModal`](#the-read-only-panel-mobilereadonlymodal)) draws no footer row at all.
 `MobileModal` calls it with `gate = false` and its own Cancel + OK footer; `MobileGateModal` calls it with
 `gate = true` and a footer built from its own parameters — `content` supplies any non-footer actions.
 
@@ -122,20 +123,28 @@ for the gate's own security rationale.
 @Composable
 internal fun MobileReadOnlyModal(
     title: String,
-    closeLabel: String,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 )
 ```
 
-Added in #678 for [`BackgroundTaskPanel`](mobile-modal-callers.md#callers), the shell's third entry point — `MobileModal` calls
-`MobileModalShell` with its own Cancel/OK footer, `MobileGateModal` with a decision-gate footer, and this
-one with a footer of a single `ModalCancelButton(label = closeLabel, onClick = dismiss)`, all three on the
-same private `MobileModalShell(gate = false, error = null)` call for the two non-gate variants. The close
-glyph, that one footer button and Back all route to `onDismissRequest`, exactly as `MobileModal`'s Cancel
-does — there is no submit action, so a caller with nothing to send never inherits an unused OK button.
-Outside taps still do not dismiss, matching every other entry point on this shell.
+Added in #678 for [`BackgroundTaskPanel`](mobile-modal-callers.md#callers), the shell's third entry point —
+`MobileModal` calls `MobileModalShell` with its own Cancel/OK footer and `MobileGateModal` with a
+decision-gate footer, both on the same private `MobileModalShell(gate = false, error = null)` call this
+variant also uses. Through #1496, it passed a `closeLabel` and drew a footer of a single
+`ModalCancelButton(label = closeLabel, onClick = dismiss)`. None of its four Figma frames (Populated
+`568:877`, Capped `568:932`, Empty `568:981`, Never reported `568:997`) draws a footer, so
+[#1496](https://github.com/pyrycode/pyrycode-mobile/issues/1496) dropped `closeLabel` and passes
+`footer = null` instead — `MobileModalShell`'s footer parameter is nullable, and a null value skips the
+footer `Row` entirely rather than rendering an empty one. The close glyph and Back are the only dismissal
+routes left; outside taps still do not dismiss, matching every other entry point on this shell. There is no
+submit action, so a caller with nothing to send never inherits an unused OK button.
+
+The same ticket passes `extendToBottom = true` and `bottomPadding = 24.dp`, the other new switch on
+`MobileModalShell` (below): the frames' sheet fills the full 412×892 screen rather than stopping above the
+navigation bar, so this is the shell's only caller so far that sets it. `MobileModal`, `MobileGateModal` and
+`MobileDismissModal` all keep `extendToBottom`'s default of `false` and render exactly as before.
 
 ## The single-action dismissal: `MobileDismissModal`
 
@@ -146,6 +155,14 @@ Outside taps still do not dismiss, matching every other entry point on this shel
 The dialog disables platform default width and decor fitting. Safe-drawing and
 IME padding consume insets around the full-size surface. Supply content for the
 non-lazy `ColumnScope`; the shell already owns vertical scrolling.
+
+[#1496](https://github.com/pyrycode/pyrycode-mobile/issues/1496) added `extendToBottom` (default `false`)
+to let one caller's sheet run to the screen's bottom edge instead of stopping above the navigation bar: the
+`Surface` then pads only the top and horizontal sides of `safeDrawing` and drops its own `imePadding`, while
+the inner scrolling column pads the remaining bottom `safeDrawing` inset itself, ahead of its own
+`bottomPadding`. Content still ends above the navigation bar and the keyboard either way; only where that
+inset is applied — around the full surface, or inside the sheet below the content — changes.
+[`MobileReadOnlyModal`](#the-read-only-panel-mobilereadonlymodal) is its only caller so far.
 
 `MobileModalShell` measures its own height with a `BoxWithConstraints` and picks one of two
 layouts (#1135):
@@ -249,6 +266,22 @@ themes, then toggles gate `sending` and checks native disabled content colour
 and the 40 dp visible height. It also samples the header/divider and action
 pixels, including Hover. Enabled-state or border assertions alone miss the grey
 text regression; inspect the composed text's colour.
+
+[`BackgroundTaskPanelInsetsTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/BackgroundTaskPanelInsetsTest.kt)
+(#1496) dispatches a fixed 48 dp navigation-bar inset to every window
+`android.view.inspector.WindowInspector.getGlobalWindowViews()` lists, including the panel's own `Dialog`
+window, and checks that the sheet's bottom reaches the screen's bottom while the last scrolled task card,
+the partial notice and both empty-state texts still end at or above that inset — this is how a Robolectric
+test reaches a Compose `Dialog`'s window at all, since `LocalView` captured with `Modifier.composed` is
+lint-rejected even in test sources, and Robolectric's own `ShadowDialog` would not compile into the
+`androidTest` run this class also feeds. The test asserts against the inset it dispatched rather than one
+read back from Compose, which is sound only because the test runs under Robolectric; if `UI_DEVICE_ALL=1`
+ever runs it on a device with a real bar shorter than 48 dp, the bound would be too strict for that device.
+It also asserts no clickable "Close" text exists in any of the panel's four readings — the regression test
+for the removed footer button. When a visible label like that one goes away, grep the literal text as well
+as its string-resource id: `TaskCountPillKeyboardDeviceTest` hard-coded `"Close"` rather than
+`R.string.background_tasks_close`, so a grep for the id alone missed it and the device test kept closing
+the panel through the deleted footer button until the live gate caught it.
 
 [`ModalFieldPaletteTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/components/ModalFieldPaletteTest.kt)
 renders both `ChannelFormFields` wells inside `MobileModal` in dark and light themes,

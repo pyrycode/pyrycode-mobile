@@ -337,8 +337,11 @@ it (see [Thread composer footer § Actions menu](thread-composer-footer-actions-
 [Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) above) sets the same
 flag through the same `{ backgroundTasksOpen = true }` lambda, so the panel now has two openers over one
 piece of state rather than a second flag to keep in sync. Closing the
-panel — the footer Close button, the close glyph, or Back, all routed through `MobileReadOnlyModal`'s single
+panel — the close glyph or Back, routed through `MobileReadOnlyModal`'s single
 `onDismissRequest` — only flips it back, sending nothing and touching no task or conversation state.
+[#1496](mobile-modal.md#the-read-only-panel-mobilereadonlymodal) removed the footer Close button and its
+`closeLabel` parameter; the panel's sheet now also runs to the screen's bottom edge, matching its Figma
+frames.
 `state.backgroundTasks` (`BackgroundTaskRoster?`) and `state.backgroundTaskCount` (`Int`) reach
 `ThreadUiState` from two defaulted `ThreadViewModel` constructor lambdas bound in `AppModule` to the open
 host's `RelayRepositoryCoordinator.observeBackgroundTasks` / `observeLiveBackgroundTaskCount` — the same

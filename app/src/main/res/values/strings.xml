@@ -96,7 +96,6 @@
     <string name="thread_footer_pending">Applying</string>
     <!-- #678: the read-only background-task panel the Actions menu opens. Client-owned copy only. -->
     <string name="background_tasks_title">Background tasks</string>
-    <string name="background_tasks_close">Close</string>
     <string name="background_tasks_unreported">No background-task report yet</string>
     <string name="background_tasks_empty">No background tasks</string>
     <string name="background_tasks_partial">Partial list (%1$d not shown)</string>

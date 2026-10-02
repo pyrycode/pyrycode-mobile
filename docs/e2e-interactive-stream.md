@@ -1072,20 +1072,27 @@ turns — promote, mute, unmute and delete are all daemon round-trips. No rung-4
 write never depends on a claude turn, so the scripted `fakeclaude` backend has no turn to hold open for
 it.
 
-The **permission-held running-tool** scenario (#950 —
+The **permission-held running-tool** scenario (#950, repaired by #1528 —
 `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`) is likewise **always-on** (not
-`@Ignore`d): the status area naming the tool claude is running (#897's label) is a **durable** fact for as
-long as the call stays open, so it belongs in the always-on gate alongside the settings scenarios above
-(operator-bypass, above, was always-on too until it turned `@Ignore`d — see its own paragraph). A quick
-command's tool call closes before the phone can be sure to
-observe it open, so the scenario borrows #849's lever instead of timing: `RUNNING_TOOL_PROMPT`'s
-`python3 -c "print(950)"` is never auto-allowed, so claude's `tool_use` arrives and the call waits on a
-permission prompt that only the `SecondClientPeer` paired with `--allow-remote-permissions` can answer
-(the phone stays unprivileged, as every other scenario expects). While the prompt is pending, the test
-asserts the exact `cd_thread_tool_running` description (`"Claude is running Bash"`) is displayed; the peer
-allows the command once, and once the peer's own `turn_end` frame arrives, the description is asserted
-gone. One real claude turn. The rung-4 `tool` and `tool-progress` scenarios are this scenario's
-deterministic twins, proving the same label (without and with an elapsed reading) on every scripted run.
+`@Ignore`d): the status area naming the tool claude is running (#897's label) is a **durable** fact once
+the peer allows the call, so it belongs in the always-on gate alongside the settings scenarios above
+(operator-bypass, above, was always-on too until it turned `@Ignore`d — see its own paragraph). The call
+is still held the #849 way: it is never auto-allowed, so claude's `tool_use` arrives and the call waits on
+a permission prompt that only the `SecondClientPeer` paired with `--allow-remote-permissions` can answer
+(the phone stays unprivileged, as every other scenario expects). Since #1483, `ThreadStatusArea` reads
+`thread_status_waiting_for_permission` ("Waiting for permission") in place of the status arms while that
+prompt is open, so the running-tool label cannot be observed during the hold: the test asserts the
+"Waiting for permission" reading is displayed and that the `cd_thread_tool_running` label does not exist.
+A quick command's tool call would then close before the phone can be sure to observe it open once allowed,
+so #1528 gave the held call its own prompt, `HELD_TOOL_PROMPT`, whose `python3` sleeps 10 s before
+printing — long enough to observe once allowed, and well under claude's ~30 s first `tool_progress`
+heartbeat, so the label the test waits for has no elapsed reading. The peer allows the command once; while
+it runs, the test asserts the exact `cd_thread_tool_running` description (`"Claude is running Bash"`) is
+displayed, and once the peer's own `turn_end` frame arrives, the description is asserted gone. One real
+claude turn, of at least 10 s. `RUNNING_TOOL_PROMPT`'s quick `python3 -c "print(950)"` is unchanged and
+stays reserved for the two background-push scenarios below, which only need the prompt to exist, not to
+stay open. The rung-4 `tool` and `tool-progress` scenarios are this scenario's deterministic twins,
+proving the same label (without and with an elapsed reading) on every scripted run.
 
 **`@Ignore`d**, and deliberately not added to the LIVE curated list: `interactiveTurn_longRunningTool_statusAreaShowsElapsed`
 holds the same permission-prompt lever with `ELAPSED_TOOL_PROMPT`'s `python3 -c "import time;
