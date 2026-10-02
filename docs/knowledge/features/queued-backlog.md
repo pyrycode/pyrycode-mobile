@@ -98,8 +98,9 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
 
 - **The backlog row still leaves only on the next `queue_state`** (#467's non-optimistic ruling, which the
   daemon owns) — the method mutates no `queuedByConversation` entry itself.
-  **The sender's own thread echo is different (#781).** `sendMessage` posts that row locally after its
-  `send_message` ack, because interactive mode streams no user-message event back — the daemon never
+  **The sender's own thread echo is different (#781).** `sendMessage` posts that row locally as it issues
+  the `send_message` request ([#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355) moved this
+  ahead of the ack), because interactive mode streams no user-message event back — the daemon never
   authored it, so a confirmed drop also removes it, or the thread keeps a row that reads as a message
   claude received when it never was. The removal targets exactly one `ThreadItem.MessageItem`, correlated
   on `QueuedMessage.messageId`, and is invisible to `observeQueue` / `observeLastMessage`.
@@ -134,8 +135,10 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
   `queue_state` that would remove the item first if read afterwards (safe to read early since
   `queued_msg_id` is a per-conversation counter that is never recycled). Once the confirming `queue_state`
   settles the drop, the resolved id is checked against a connection-scoped **minted-id ledger** —
-  `conversationId -> the message ids this device minted and echoed`, written by `sendMessage` after its
-  own ack — and the matching thread row is removed only if the id is non-empty and present in that ledger,
+  `conversationId -> the message ids this device minted and echoed`, written by `sendMessage` as it issues
+  the send ([#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355); a failed send's id is left in
+  the ledger too, harmlessly, since no queued item will ever carry it) — and the matching thread row is
+  removed only if the id is non-empty and present in that ledger,
   which also consumes it (so a second queued item legally sharing the same `message_id` removes nothing on
   its own drop). **This is § Queue (v2)'s multi-device rule made mechanical**: the thread projection alone
   is not a valid correlation store, because it also holds rows folded from history pages (#623/#778) that

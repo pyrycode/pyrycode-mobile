@@ -35,6 +35,7 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ResetStatus
+import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SystemPromptLimit
@@ -71,6 +72,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -477,6 +479,28 @@ class ThreadViewModel(
             ::Pair,
         ).distinctUntilChanged()
 
+    /**
+     * Claude's latest estimate of this session's cost (#1346): the newest positive finite `cost_usd_total`
+     * on this conversation's `turn_end`s. Each replaces the last (the value is already a running total, so
+     * it is never summed), and an absent, zero, negative or non-finite one leaves the earlier value standing.
+     * Collected eagerly so it lasts as long as this view model, as desktop keeps it while the timeline lives;
+     * `WhileSubscribed` would forget it whenever the screen stops collecting. Claude's claim: never logged.
+     */
+    private val sessionCostUsd: StateFlow<Double?> =
+        liveSessionEvents
+            .filterIsInstance<LiveSessionEvent.TurnEnd>()
+            .mapNotNull { event ->
+                event.costUsdTotal?.takeIf { event.conversationId == conversationId && it.isFinite() && it > 0 }
+            }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Channel info's Session readings (#1346): what Claude reports about its session, with the permission
+     * mode [runningModel] leaves unread, and [sessionCostUsd]. A second `observeSessionFacts` subscription is
+     * a projection read that sends nothing. None of it reaches [runConfigFlow].
+     */
+    private val channelInfoSession: Flow<Pair<SessionFacts?, Double?>> =
+        combine(repository.observeSessionFacts(conversationId), sessionCostUsd, ::Pair)
+
     /** This conversation's MCP server reading (#1344), seeded so a source that never emits cannot stall [state]. */
     private val mcpStatusReading: Flow<McpStatus> =
         repository
@@ -613,6 +637,8 @@ class ThreadViewModel(
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
         }.combine(backgroundTaskReading) { uiState, (roster, count) ->
             uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+        }.combine(channelInfoSession) { uiState, (facts, cost) ->
+            uiState.copy(reportedSessionFacts = facts, sessionCostUsd = cost)
         }.combine(mcpStatusReading) { uiState, mcp ->
             uiState.copy(mcpStatus = mcp)
         }.stateIn(
@@ -1525,61 +1551,64 @@ class ThreadViewModel(
     }
 
     /**
-     * Send [text], then clear this chat's draft — **only** once the daemon has accepted it (#789).
+     * Send [text] trimmed, as desktop's `submitMessage` does (#1355): whitespace-only text sends nothing
+     * and leaves the draft as it was. The draft clears **before** the send launches, and the repository
+     * draws the echo before the daemon replies, so the message shows the moment Send is tapped.
      *
-     * The clear sits *inside* the guarded lambda, which is the whole mechanism:
-     * [launchGuardedRepoCall]'s catches wrap the block, so a [de.pyryco.mobile.data.network
-     * .RelayErrorException] server error, a not-connected [IllegalStateException] or an unwired
-     * [UnsupportedOperationException] skips this line and leaves the text in the composer, ready to
-     * resend. Before this, the composer cleared on tap and the guard swallowed the failure, so a
-     * refused send silently ate the message. Same success-only-continuation shape as [sendArchive].
-     *
-     * The equality guard keeps an in-flight send from eating text typed while it was in flight. It
-     * compares against [ComposerDraftStore] directly and **not** against [draft]: the exposed flow is
-     * derived, so its value lags an edit made from inside an already-running coroutine until that
-     * dispatch yields, and the guard would then clear text it had never seen. The store's own value is
-     * the authority and is read synchronously. [draft] is for rendering; this is for deciding.
-     *
-     * It is a check-then-act after a suspension point and is safe because both sides and
-     * [onDraftChange] run on `viewModelScope`'s `Dispatchers.Main.immediate`, so no edit can interleave
-     * between them.
+     * A refused send — a [de.pyryco.mobile.data.network.RelayErrorException] server error, a not-connected
+     * [IllegalStateException] or an unwired [UnsupportedOperationException], each swallowed by
+     * [launchGuardedRepoCall] — does not put the text back: the echo stays in the thread, as on desktop,
+     * which has no failure surface for a send. This drops #789's restore-on-failure.
      */
     fun sendMessage(text: String) {
         if (!connectedFor("send")) return
         if (_attachmentsSending.value) return
+        val trimmed = text.trim()
         // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
-        if (text.isBlank()) return
+        if (trimmed.isEmpty()) return
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
         if (attachments.isNotEmpty()) {
-            return sendWithAttachments(text, attachments) {
-                if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
-            }
+            // #1355: the guarded clear runs once the uploads succeed, before the send.
+            return sendWithAttachments(
+                trimmed,
+                attachments,
+                onUploaded = {
+                    if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+                },
+                onSent = {},
+            )
         }
+        onDraftChange("")
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
-            sendInLocalWindow { repository.sendMessage(state.value.conversationId, text) }
-            if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+            sendInLocalWindow { repository.sendMessage(state.value.conversationId, trimmed) }
         }
     }
 
     /**
      * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
-     * (#932). [text] is never blank: [sendMessage] refuses that before reading the attachments (#1328).
+     * (#932). [text] is the trimmed text and never blank: [sendMessage] refuses that before reading the
+     * attachments (#1328); [onComposerCommand] passes its command.
      *
      * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
      * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that
      * upload. One file's bytes are live at a time. The first failed read or upload stops the send before
      * anything else is uploaded or sent; a thrown upload or send is swallowed by [launchGuardedRepoCall].
-     * Either way the text and every entry stay in the draft — the way a failed text send is reported.
+     * Either way the text and every entry stay in the draft.
      *
-     * On success [onSent] runs — [sendMessage]'s guarded draft clear, or [onComposerCommand]'s log, which
-     * leaves the draft alone (#1348) — and only the snapshot's entries are removed, so an attachment added
-     * while this send was in flight survives it.
+     * Once every upload has succeeded, and before the send (#1355), [onUploaded] runs — [sendMessage]'s
+     * guarded draft clear, which runs only while the store still holds the text as typed: the store, not the
+     * derived [draft], because the exposed flow lags an edit made from inside a running coroutine. Both sides
+     * and [onDraftChange] run on `viewModelScope`'s `Dispatchers.Main.immediate`, so text typed during the
+     * uploads is never swallowed. Only the snapshot's entries are then removed, so an attachment added during
+     * the uploads survives. After the send returns, [onSent] runs — [onComposerCommand]'s log, which leaves the
+     * draft alone (#1348). A send that then fails restores neither, as a failed text send restores nothing.
      */
     private fun sendWithAttachments(
         text: String,
         attachments: List<PendingAttachment>,
+        onUploaded: () -> Unit = {},
         onSent: () -> Unit,
     ) {
         _attachmentsSending.value = true
@@ -1597,11 +1626,12 @@ class ThreadViewModel(
                 // #984: before the send, because the confirmed row can be drawn while it is suspended. A
                 // send that then fails leaves harmless entries: its retry names the same ids.
                 draftStore.recordSentOriginals(serverId, conversationId, originals)
+                onUploaded()
+                draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
                 sendInLocalWindow { repository.sendMessage(target, text, references) }
                 onSent()
-                draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
             } finally {
                 // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
                 _attachmentsSending.value = false
@@ -2494,7 +2524,7 @@ class ThreadViewModel(
                 closeChannelInfo()
                 launchGuardedRepoCall {
                     repository.delete(state.value.conversationId)
-                    // #790: success-only, the position [sendMessage]'s own clear occupies — each of the
+                    // #790: success-only — each of the
                     // three failure types [launchGuardedRepoCall] swallows skips this line, leaving the
                     // draft for a conversation that still exists. Keyed by the route's own pair, the one
                     // [onDraftChange] wrote under, never re-derived from `state`. Before the `PopBack`

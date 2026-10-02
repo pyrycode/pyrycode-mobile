@@ -289,6 +289,7 @@ class ThreadScreenChannelInfoTest {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
+        // The Session section (#1346) sits above Actions, so Delete starts below the 320dp-wide viewport.
         composeTestRule.onNodeWithText("Delete").performScrollTo().performClick()
 
         assertEquals(listOf(ThreadEvent.Delete), events)
