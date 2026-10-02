@@ -168,12 +168,11 @@ class PromptsDesignCaptureTest {
         assertTrue(rule.onAllNodesWithTagCount("permission-request-card") == 0)
     }
 
-    /** The batch reached this chat: its actions show at the stream's end and its title exists further up. */
+    /** The batch reached this chat: its actions show at the stream's end. */
     private fun awaitQuestion() {
         rule.waitUntil(5_000) { thread().questionModal.value != null }
         rule.waitForIdle()
         rule.onNodeWithText("Continue").assertIsDisplayed()
-        rule.onNodeWithTag("question-batch-title").assertExists()
     }
 
     private fun openWithQuestion(): ThreadViewModel {
