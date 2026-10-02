@@ -68,6 +68,19 @@ a local `LineHeightStyle(Center, Trim.None)` (named `FrameLineBox`, matching
 copy, not yet worth extracting into this shared ramp) to take the frame's
 untrimmed line box instead.
 
+[Settings](settings-screen.md)'s four Notifications texts (the "Notifications"
+label, the push row, the "Notification sound" headline and its "Default" line)
+carry the same local `LineHeightStyle(Center, Trim.None)` pattern — a fourth
+copy (#1503), still not worth extracting. Each trimmed text box there measured
+only 1–5 dp short on its own, but because the rows stack in one column each
+shortfall pulled the next row up, so the drift compounded to -3, -6 and -10 px
+by the bottom of the list, and the footer's Done looked correct until measured
+against the frame. A geometry test comparing one row's offset in isolation can
+pass while a lower row is still off; assert every row's offset from a common
+anchor (here, the sheet's top) to catch the compounding, and use
+`@GraphicsMode(NATIVE)` — Robolectric's default font metrics do not reproduce
+the trim at all, so an untrimmed test can pass against broken code.
+
 Separately, at density 1.0 Android hints text layout by rounding each glyph's
 advance to a whole device pixel. A label-large emphasized (600-weight) run of
 16 glyphs can come out 4 px wider than Figma's unhinted metrics as a result —
