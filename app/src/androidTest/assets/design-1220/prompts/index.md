@@ -35,6 +35,9 @@
   1x value, and Cancel and Continue hug their labels. All of it is overrides inside the two frames; no shared
   component or variable changed. The captures stay #1501's, because #1543 changes only Figma, and
   `scripts/design-compare.py` rebuilt the two compact comparisons.
+- **Hint letter spacing (#1543 follow-up):** the armed hint in `639:2882` and `639:3308` had no letter spacing,
+  where the app's `labelMedium` tracks 0.5 sp. It now has 0.5 px at 1x and 0.75 px at 150 %. Both frames were
+  exported again on 2026-10-02 and their comparisons rebuilt; the captures did not change.
 
 **How these captures differ from onboarding's.** Both prompts set `FLAG_SECURE` on the activity window while
 they show, which blacks out the harness's `UiAutomation` screenshot. The class draws the decor view into a
@@ -160,7 +163,7 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 3
 | Geometry | mismatch: the question card is 273 px tall against the frame's 261, see Spacing. Cancel (43 × 115 px against 44 × 115) and Continue (43 × 140 against 44 × 138) match within 2 px, and the stacked pair sits at the card's start edge with Cancel centred over Continue, as `636:4325`. The top bar's rule is 2 px higher |
 | Padding | match |
 | Spacing | mismatch, Compose's line boxes (see "Compact frames at 150 %"): under the question line the first choice starts 4 px lower; each choice row is 50 px against the frame's 48, 2 px more per row; and the "Other" field sits 6 px lower under its label. Under the card the app puts Cancel 11 px down and Continue 17 px below Cancel, where the frame has 16 and 12: Material's 48 px touch target around each 43 px button takes layout space. The composer box is 52 px against the frame's 58 |
-| Typography | match: the top-bar title is 26 px from cap to descender in both, and the question, choice and action text sits at the frame's sizes within 2 px of glyph height, the action labels within 2 px of width. Mismatch: the footer reads "Cxt h…". Every label wraps |
+| Typography | match: the top-bar title is 26 px from cap to descender in both, and the question, choice and action text sits at the frame's sizes within 2 px of glyph height, the action labels within 2 px of width. Mismatch: the choice labels and descriptions run up to 13 px wider ("A systems language" 175 px against 162), the app's `labelMedium` letter spacing (0.75 px here), which the frame's choice text does not have; the footer reads "Cxt h…". Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
@@ -170,7 +173,8 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 3
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, both questions, Cancel
   and Continue each scroll into view and display.
 - **Routed:** #1485 (footer, truncation). The line-box, action-gap and composer gaps are recorded, not routed (see
-  "Compact frames at 150 %"). Scaling redrawn by #1543, Other row fixed by #1501
+  "Compact frames at 150 %"). The choice text's missing letter spacing is a gap in the frame, not yet routed.
+  Scaling redrawn by #1543, Other row fixed by #1501
 
 ### Permission · Safe default — `639:2242`
 
@@ -251,7 +255,7 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 3
 | Geometry | mismatch: placement, as Safe default. Title inside the card and start-aligned Cancel match |
 | Padding | match |
 | Spacing | match since #1501: "Tap Allow once again to confirm." sits between Allow once and Reject once 8 px from each, as Figma; context block as Safe default |
-| Typography | mismatch: footer "Cxt high: 84%". The hint (12 px Medium, on-primary-container), title and "Folder" label match |
+| Typography | mismatch: footer "Cxt high: 84%". The hint (12 px Medium, on-primary-container, 0.5 px letter spacing since the #1543 follow-up, 189 px wide in both), title and "Folder" label match |
 | Colour | mismatch: footer warning colour. The tonal armed fill matches |
 | Borders | match |
 | Radii | match |
@@ -295,7 +299,7 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 3
 | Geometry | mismatch: Cancel is 41 px tall against the frame's 44, `ModalCancelButton`'s 7 px padding around a 27 px trimmed label (see "Compact frames at 150 %"); its 113 px width matches the frame's 115. Allow once and Reject once (43 × 248 px against 44 × 248), the title inside the card and start-aligned Cancel match. The top bar's rule is 2 px higher |
 | Padding | match |
 | Spacing | mismatch, Compose's line boxes (see "Compact frames at 150 %"): the "Folder" value sits 40 px under its label against the frame's 34, glyph top to glyph top, and the session grant 3 px further under the value. From the grant down, the rule text, both choices, the hint's 8 px gaps and Cancel 12 px under the card match within 2 px. The composer box is 52 px against the frame's 58 |
-| Typography | mismatch: each line of the hint runs 14 px wider, the app's `labelMedium` letter spacing (0.5 sp, 0.75 px here), which the frame's hint does not have at any size; footer "Cxt h…". The top-bar title (26 px from cap to descender in both), the button labels (23 px, widths within 2 px) and the "Folder" label match. Every label wraps |
+| Typography | mismatch: footer "Cxt h…". The top-bar title (26 px from cap to descender in both), the button labels (23 px, widths within 2 px), the hint (0.75 px letter spacing since the #1543 follow-up, each line within 1 px of width) and the "Folder" label match. Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
@@ -304,8 +308,7 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 3
 
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, prompt, grant, both
   choices and Cancel each scroll into view and display.
-- **Routed:** #1485 (footer, truncation). The line-box, Cancel-height, composer and hint letter-spacing gaps are
-  recorded, not routed (see "Compact frames at 150 %"). Scaling redrawn by #1543, choice gaps and context spacing
+- **Routed:** #1485 (footer, truncation). The line-box, Cancel-height and composer gaps are recorded, not routed (see "Compact frames at 150 %"). Scaling redrawn by #1543, choice gaps and context spacing
   fixed by #1501
 
 ### Switch chats while prompts wait — `640:2437`
