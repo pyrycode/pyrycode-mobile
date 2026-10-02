@@ -150,11 +150,11 @@ internal class ThreadProjection {
 
     /**
      * Apply one `model_refusal_fallback` or `model_refusal_no_fallback` envelope (#875): decode it by its
-     * type, then fold its row. A malformed one is dropped.
+     * type, then fold its row. A malformed one is dropped. Returns the routing conversation id and the
+     * decoded refusal with its `scope` (#1360), for the caller's live signal, or `null` when dropped.
      */
-    fun applyModelRefusal(envelope: Envelope) {
-        decodeModelRefusal(envelope)?.let { (conversationId, row) -> appendModelRefusal(conversationId, row) }
-    }
+    fun applyModelRefusal(envelope: Envelope): Pair<String, LiveRefusalEvent.Refused>? =
+        decodeModelRefusal(envelope)?.also { (conversationId, refused) -> appendModelRefusal(conversationId, refused.refusal) }
 
     /**
      * Append [rows] (`conversationId -> Message`) into [threadByConversation] as [ThreadItem.MessageItem]
@@ -662,20 +662,21 @@ internal class ThreadProjection {
      * [ThreadItem.ModelRefusal], or **null** when it cannot be folded. The DTO is chosen by [Envelope.type],
      * which is the only thing that tells the two frames apart. The row's identity is the envelope's `ts`, so a
      * malformed `ts` drops the frame exactly as a malformed payload does. Mirrors [decodeBanner], and like it
-     * logs nothing: every field but the conversation id is claude-authored.
+     * logs nothing: every field but the conversation id is claude-authored. The fallback frame's `scope`
+     * rides beside the row (#1360); the row itself still drops it.
      */
-    private fun decodeModelRefusal(envelope: Envelope): Pair<String, ThreadItem.ModelRefusal>? =
+    private fun decodeModelRefusal(envelope: Envelope): Pair<String, LiveRefusalEvent.Refused>? =
         try {
             val occurredAt = Instant.parse(envelope.ts)
             when (envelope.type) {
                 RemoteConversationRepository.TYPE_MODEL_REFUSAL_FALLBACK ->
                     MobileJson
                         .decodeFromJsonElement<ModelRefusalFallbackPayloadDto>(envelope.payload)
-                        .let { it.conversationId to it.toRow(occurredAt) }
+                        .let { it.conversationId to LiveRefusalEvent.Refused(it.toRow(occurredAt), it.scope) }
                 RemoteConversationRepository.TYPE_MODEL_REFUSAL_NO_FALLBACK ->
                     MobileJson
                         .decodeFromJsonElement<ModelRefusalNoFallbackPayloadDto>(envelope.payload)
-                        .let { it.conversationId to it.toRow(occurredAt) }
+                        .let { it.conversationId to LiveRefusalEvent.Refused(it.toRow(occurredAt), scope = null) }
                 else -> null
             }
         } catch (e: IllegalArgumentException) {

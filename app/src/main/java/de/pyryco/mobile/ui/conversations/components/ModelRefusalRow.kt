@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,11 +11,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -29,12 +32,35 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 import kotlinx.datetime.Instant
 
 private val RefusalRowVerticalSpacing = 12.dp
 private val RefusalVerticalPadding = 8.dp
 private val RefusalCollapsedGap = 4.dp
 private val RefusalExpandedGap = 8.dp
+private val SwitchBackBorderWidth = 1.dp
+private val SwitchBackHorizontalPadding = 16.dp
+private val SwitchBackVerticalPadding = 7.dp
+private const val SWITCH_BACK_PENDING_ALPHA = 0.38f
+
+/**
+ * The thread's offer to switch back to the model claude refused on (#1360), drawn on the refusal row that
+ * armed it ([armedBy]). Only a live session-scoped fallback refusal arms one, never a restored row; the
+ * ViewModel owns that rule. [originalModel] is claude-authored and verbatim; the button strips it with
+ * [refusalModelDisplay]. [pending] means a model write is outstanding; [failed] means this offer's last write
+ * was refused or failed.
+ */
+@Immutable
+data class SwitchBackOffer(
+    val occurredAt: Instant,
+    val originalModel: String,
+    val pending: Boolean,
+    val failed: Boolean,
+) {
+    /** Whether [item] is the fallback refusal row that armed this offer: the row's own `(type, ts)` identity. */
+    fun armedBy(item: ThreadItem.ModelRefusal): Boolean = item.fallbackModel != null && item.occurredAt == occurredAt
+}
 
 /**
  * A refusal appears as bare text in the message stream, matching Figma's Thread notification component.
@@ -58,6 +84,8 @@ fun ModelRefusalRow(
     item: ThreadItem.ModelRefusal,
     agent: ConversationAgent,
     modifier: Modifier = Modifier,
+    switchBack: SwitchBackOffer? = null,
+    onSwitchBack: () -> Unit = {},
 ) {
     // Only the toggle is saved, scoped by the row's LazyColumn key.
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -67,6 +95,8 @@ fun ModelRefusalRow(
         expanded = expanded,
         onToggle = { expanded = !expanded },
         modifier = modifier,
+        switchBack = switchBack,
+        onSwitchBack = onSwitchBack,
     )
 }
 
@@ -77,6 +107,8 @@ private fun ModelRefusalRowContent(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    switchBack: SwitchBackOffer? = null,
+    onSwitchBack: () -> Unit = {},
 ) {
     val banner = bannerDisplayText(item.banner)
     val expandable = banner.isNotBlank()
@@ -87,32 +119,101 @@ private fun ModelRefusalRowContent(
         } else {
             stringResource(R.string.cd_thread_refusal_expand, name)
         }
+    // #1360: the toggle's hit area stays the title block; the switch-back button sits below it, outside it.
     Column(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(start = MessageContentGutter, end = MessageContentGutter, bottom = RefusalRowVerticalSpacing)
-                .then(if (expandable) Modifier.clickable(onClickLabel = clickLabel, onClick = onToggle) else Modifier)
-                .padding(vertical = RefusalVerticalPadding),
-        verticalArrangement = Arrangement.spacedBy(if (expanded) RefusalExpandedGap else RefusalCollapsedGap),
+                .padding(start = MessageContentGutter, end = MessageContentGutter, bottom = RefusalRowVerticalSpacing),
     ) {
-        Text(
-            text = refusalTitle(item),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        if (expandable && expanded) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .then(if (expandable) Modifier.clickable(onClickLabel = clickLabel, onClick = onToggle) else Modifier)
+                    .padding(vertical = RefusalVerticalPadding),
+            verticalArrangement = Arrangement.spacedBy(if (expanded) RefusalExpandedGap else RefusalCollapsedGap),
+        ) {
             Text(
-                text = attributedBanner(name, banner, item.bannerTruncated),
+                text = refusalTitle(item),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (expandable && expanded) {
+                Text(
+                    text = attributedBanner(name, banner, item.bannerTruncated),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            if (expandable) {
+                Text(
+                    text = stringResource(if (expanded) R.string.thread_refusal_hide_details else R.string.thread_refusal_show_details),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        if (switchBack != null) {
+            SwitchBackAction(
+                offer = switchBack,
+                onSwitchBack = onSwitchBack,
+                modifier = Modifier.padding(bottom = RefusalVerticalPadding),
             )
         }
-        if (expandable) {
+    }
+}
+
+/**
+ * The switch-back button (#1360, Figma 646-2833): the small secondary button, disabled and drawn at 38% while
+ * a model write is pending, with the retry line under it after a failed write. The block above it ends in
+ * [RefusalVerticalPadding], which stands for Figma's 4 dp gap plus 4 dp top padding.
+ */
+@Composable
+private fun SwitchBackAction(
+    offer: SwitchBackOffer,
+    onSwitchBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(RefusalCollapsedGap)) {
+        Surface(
+            onClick = onSwitchBack,
+            enabled = !offer.pending,
+            shape = MaterialTheme.shapes.modalControl,
+            color = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.primary,
+            border = BorderStroke(SwitchBackBorderWidth, MaterialTheme.colorScheme.primary),
+            // A clickable Surface reserves Material's 48 dp touch target around the 30 dp button.
+            modifier = Modifier.alpha(if (offer.pending) SWITCH_BACK_PENDING_ALPHA else 1f),
+        ) {
             Text(
-                text = stringResource(if (expanded) R.string.thread_refusal_hide_details else R.string.thread_refusal_show_details),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
+                text = switchBackLabel(offer.originalModel),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = SwitchBackHorizontalPadding, vertical = SwitchBackVerticalPadding),
             )
+        }
+        if (offer.failed) {
+            Text(
+                text = stringResource(R.string.thread_refusal_switch_back_failed),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+/** "Switch back to " in client copy, then the stripped model as its own monospace span, as the title does. */
+@Composable
+private fun switchBackLabel(model: String): AnnotatedString {
+    val prefix = stringResource(R.string.thread_refusal_switch_back)
+    val unknownModel = stringResource(R.string.thread_refusal_unknown_model)
+    return buildAnnotatedString {
+        append(prefix)
+        val display = refusalModelDisplay(model)
+        if (display == null) {
+            append(unknownModel)
+        } else {
+            withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(display) }
         }
     }
 }
@@ -187,6 +288,8 @@ private val PreviewFallback =
         occurredAt = PreviewInstant,
     )
 
+private val PreviewOffer = SwitchBackOffer(PreviewInstant, "claude-opus-5-5", pending = false, failed = false)
+
 private val PreviewTruncated =
     ThreadItem.ModelRefusal(
         originalModel = "claude-opus-5-5",
@@ -212,6 +315,27 @@ private fun ModelRefusalRowPreviewMatrix() {
         ModelRefusalRowContent(item = PreviewFallback, agent = ConversationAgent.Claude, expanded = true, onToggle = {})
         ModelRefusalRowContent(item = PreviewTruncated, agent = ConversationAgent.Codex, expanded = true, onToggle = {})
         ModelRefusalRowContent(item = PreviewUnknownNoBanner, agent = ConversationAgent.Claude, expanded = false, onToggle = {})
+        ModelRefusalRowContent(
+            item = PreviewFallback,
+            agent = ConversationAgent.Claude,
+            expanded = false,
+            onToggle = {},
+            switchBack = PreviewOffer,
+        )
+        ModelRefusalRowContent(
+            item = PreviewFallback,
+            agent = ConversationAgent.Claude,
+            expanded = false,
+            onToggle = {},
+            switchBack = PreviewOffer.copy(pending = true),
+        )
+        ModelRefusalRowContent(
+            item = PreviewFallback,
+            agent = ConversationAgent.Claude,
+            expanded = false,
+            onToggle = {},
+            switchBack = PreviewOffer.copy(failed = true),
+        )
     }
 }
 

@@ -1955,6 +1955,21 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
 | `offline-retry` (#1286) | actual Offline pill retries the same host and a new reply renders | `ping.jsonl` | one |
 | `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
+| `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to haiku"; the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
+
+`refusal` selects
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
+and belongs to `python3 scripts/android-test-gate.py scripted-all`. No rung-3 twin exists or is planned:
+real claude cannot be made to refuse on demand, so this scripted scenario is the end-to-end proof the
+[model refusal row](knowledge/features/model-refusal-row.md#switch-back-1360) feature asks for.
+`refusal.jsonl` is one claude line, `{"type":"system","subtype":"model_refusal_fallback",...}` with
+`scope: "session"`, `original_model: "haiku"`, `fallback_model: "sonnet"`, then a short assistant reply —
+`haiku` because the scripted daemon's `set_session_settings` accepts only the models fakeclaude's canned
+`initialize` menu offers (`sonnet`, `haiku`), and the line carries no top-level `message` key, which would
+stop it reaching the refusal handler ahead of the fold. The test waits for the turn's reply (the model menu
+is held once fakeclaude has spawned, so tapping any earlier would race it), taps Switch back, waits for the
+button to disappear, then reads a **fresh, non-held** `observeSessionSettings` value from the coordinator's
+live repository and asserts it names `haiku` — the daemon round trip, not just the button's disappearance.
 
 `offline-retry` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`
@@ -1974,6 +1989,7 @@ DETERMINISTIC=1 SCENARIO=tool-then-text PYRYCODE_SRC=~/Workspace/Projects/pyryco
 DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # running-tool label elapsed → gone
 DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
 DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
+DETERMINISTIC=1 SCENARIO=refusal      PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # refusal switch-back
 ```
 
 **`stream`** — `stream.jsonl` is three `text` lines with **distinct** `message.id`s, so the producer
@@ -2875,6 +2891,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — added:** [#1360](https://github.com/pyrycode/pyrycode-mobile/issues/1360) adds the
+  `refusal` scripted scenario (see [Scenarios](#scenarios-454) above) and
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`.
+  No rung-3 twin: real claude cannot be made to refuse on demand, so the `TEST_TARGET` LIVE selector and
+  `LIVE_MINIMUM` are unchanged, and the real-Claude model round trip stays `@Ignore`d on
+  [#1397](https://github.com/pyrycode/pyrycode-mobile/issues/1397). The scripted gate ran this scenario
+  alone (each scenario overwrites the prior XML): 1 executed, 0 failed, 0 skipped, and
+  `python3 -m unittest scripts/test_android_test_gate.py` (37 pass) covers `refusal`'s entry in
+  `SCENARIOS`.
 
 - **Coverage — added:** [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410) adds
   `InteractiveStreamE2ETest.interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
