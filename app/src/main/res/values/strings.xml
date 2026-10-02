@@ -211,6 +211,7 @@
     <string name="thread_notice_dismiss">Dismiss notice</string>
     <string name="thread_history_dead_end_label">Earlier messages are unavailable</string>
     <string name="cd_thread_history_dead_end">Earlier messages in this conversation are unavailable</string>
+    <string name="thread_history_offline_label">Older messages require a connection.</string>
     <string name="thread_interrupt_label">Stop</string>
     <string name="cd_thread_interrupt">Stop the running turn</string>
     <string name="cd_thread_copy_message">Copy this message</string>

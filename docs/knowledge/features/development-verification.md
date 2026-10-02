@@ -276,6 +276,14 @@ name, so the size stays attached to the test it belongs to.
 to a shared `TestRule` before a third capture test needs it rather than
 copying it again.
 
+`MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
+(unrelated to the #1352 history-paging change, caught in its PR's UI gate and
+triaged there) hit the same `wm size` race, confirmed by two focused re-runs
+both passing 2/2 — the race is intermittent, not a property of the test
+itself, so a single red run proves nothing about whose change caused it.
+Filed as #1467. A third class now needs this shape: the shared `TestRule`
+extraction flagged above is overdue.
+
 Reply assertions must not depend on total substring-count growth: removing queued
 prompt text can offset a newly displayed assistant reply. For fresh discussions
 sending only `PING_PROMPT`, `awaitDisplayedPingReply` matches exact,

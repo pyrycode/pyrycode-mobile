@@ -2,6 +2,9 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.rememberScrollableState
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,7 +44,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -56,6 +58,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -108,7 +111,6 @@ import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.theme.threadColors
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
@@ -217,9 +219,8 @@ fun ThreadScreen(
     // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id). Since #782 it is bound
     // per row by the fold rather than handed to a foot-of-list section.
     onDropQueued: (Long) -> Unit = {},
-    // #777: the reader has reached the oldest loaded row — ask for the next page back. Wired by
-    // MainActivity → vm::onDemandOlderHistory. Safe to fire repeatedly: the ViewModel's demand drops an
-    // ask that arrives while a request is outstanding or after the walk has stopped.
+    // #1352: the reader pulled toward older messages at the thread's oldest end — ask for the next page
+    // back. Wired by MainActivity → vm::onDemandOlderHistory, which decides whether the ask is sent.
     onDemandOlderHistory: () -> Unit = {},
     // #778: the reader pressed the oldest-end retry affordance. Wired by MainActivity →
     // vm::onRetryOlderHistory, and inert unless the walk stopped on a retryable failure.
@@ -544,11 +545,21 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
+                    // #1352: a pull toward older messages is the only history ask. Inert while a page is
+                    // loading, so a second pull sends nothing; the ViewModel still decides the rest.
+                    val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
+                    val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
+                    val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
                     if (!state.hasMessages && state.queuedMessages.isEmpty() && shownQuestion == null && openRequest == null) {
+                        // An empty thread is at its oldest end. The scrollable consumes nothing; it only lets
+                        // a drag reach the pull.
+                        val emptyThreadPull = remember { OlderHistoryGesture(nearOldestEnd = { true }, onDemand = pullForOlderHistory) }
                         EmptyThreadState(
                             modifier =
                                 Modifier
                                     .fillMaxSize()
+                                    .olderHistoryPull(emptyThreadPull)
+                                    .scrollable(rememberScrollableState { 0f }, Orientation.Vertical)
                                     .padding(horizontal = 24.dp),
                         )
                     } else {
@@ -561,33 +572,20 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                         val listState = rememberLazyListState()
-                        // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
-                        // visible index, not the first.
-                        //
-                        // The row count is read through rememberUpdatedState over the THREAD ITEMS, never through
-                        // layoutInfo.totalItemsCount: the latter counts the oldest-end loading row itself, so a
-                        // page answering atStart = false with zero entries would self-drive with no further user
-                        // input — ask, the indicator mounts, the count rises, the page settles, the indicator
-                        // unmounts, the count falls, the predicate re-fires. Reading the thread's own count makes
-                        // the indicator's presence unable to move the predicate: at the oldest end the last
-                        // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
-                        // so distinctUntilChanged sees no edge and no second demand is issued.
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0)
-                        val historyRowCount by rememberUpdatedState(rows.size + promptRowCount)
-                        val hasHistoryRows by rememberUpdatedState(rows.isNotEmpty())
-                        val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
-                        LaunchedEffect(listState) {
-                            snapshotFlow {
-                                val oldestVisible =
-                                    listState.layoutInfo.visibleItemsInfo
-                                        .lastOrNull()
-                                        ?.index ?: -1
-                                hasHistoryRows && oldestVisible >= historyRowCount - 1
-                            }.distinctUntilChanged()
-                                .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
-                        }
+                        // #1352: prompt rows take the lowest indices of the reversed list and are never
+                        // history, so the oldest thread row sits after them.
+                        val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
+                        val askBandPx by rememberUpdatedState(with(LocalDensity.current) { HistoryAskBand.toPx() })
+                        val listPull =
+                            remember(listState) {
+                                OlderHistoryGesture(
+                                    nearOldestEnd = { listState.layoutInfo.isNearOldestEnd(oldestRowIndex, askBandPx) },
+                                    onDemand = pullForOlderHistory,
+                                )
+                            }
                         // #1314: one following state, derived from position on every scroll as desktop's
                         // useThreadScrollPin does, replaces the #185 streaming pin, the #981 newest-row pin and
                         // the #1305/#1306 prompt reveal. New rows, streamed growth and a new prompt pin a reader
@@ -604,7 +602,7 @@ fun ThreadScreen(
                         )
                         LazyColumn(
                             state = listState,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
                             reverseLayout = true,
                         ) {
                             openRequest?.let { open ->
@@ -716,6 +714,7 @@ fun ThreadScreen(
                                 ThreadHistoryTail.Retry ->
                                     item(key = HISTORY_TAIL_KEY) { HistoryRetryRow(onRetry = onRetryOlderHistory) }
                                 ThreadHistoryTail.DeadEnd -> item(key = HISTORY_TAIL_KEY) { HistoryDeadEndRow() }
+                                ThreadHistoryTail.Offline -> item(key = HISTORY_TAIL_KEY) { HistoryOfflineRow() }
                             }
                         }
                     }
