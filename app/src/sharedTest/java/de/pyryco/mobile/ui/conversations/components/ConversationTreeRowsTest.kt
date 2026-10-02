@@ -46,6 +46,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 // Robolectric measures text with real fonts here, so the one-line truncation checks hold; the device
@@ -263,6 +264,60 @@ class ConversationTreeRowsTest {
                 }
             assertEquals("$state draws the error fill", 0, errorPixels)
         }
+    }
+
+    // #1524: Figma 15:8 rings every dot in `inversePrimary` (#32628D) and fills the open row's idle dot with it.
+    // At the default density the 1dp ring is all anti-aliased edge; at xxxhdpi it paints solid pixels.
+    @Config(qualifiers = "xxxhdpi")
+    @Test
+    fun conversationRow_staticDark_ringsInInversePrimary_andFillsTheSelectedIdleDot() {
+        data class Case(
+            val attention: ConversationAttention,
+            val selected: Boolean,
+        )
+        val case = mutableStateOf(Case(ConversationAttention.Idle, selected = false))
+        var ring = Color.Unspecified
+        var primary = Color.Unspecified
+        var view: View? = null
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ring = MaterialTheme.colorScheme.inversePrimary
+                primary = MaterialTheme.colorScheme.primary
+                view = LocalView.current
+                Box(modifier = Modifier.width(rowWidth)) {
+                    TreeConversationRow(
+                        conversationName = "rocd-thinking",
+                        selected = case.value.selected,
+                        onClick = {},
+                        attention = case.value.attention,
+                    )
+                }
+            }
+        }
+
+        fun countPixels(c: Case): Pair<Int, Int> {
+            case.value = c
+            return composeTestRule.runOnIdle {
+                val root = checkNotNull(view)
+                val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+                root.draw(Canvas(bitmap))
+                val pixels = IntArray(bitmap.width * bitmap.height)
+                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                pixels.count { it == ring.toArgb() } to pixels.count { it == primary.toArgb() }
+            }
+        }
+
+        val idle = countPixels(Case(ConversationAttention.Idle, selected = false))
+        val unread = countPixels(Case(ConversationAttention.Unread, selected = false))
+        val selectedIdle = countPixels(Case(ConversationAttention.Idle, selected = true))
+        listOf("idle" to idle, "unread" to unread, "selected idle" to selectedIdle).forEach { (name, counts) ->
+            assertTrue("$name ring draws no inversePrimary", counts.first > 0)
+            assertEquals("$name ring still draws primary", 0, counts.second)
+        }
+        assertTrue(
+            "selected idle dot is not filled with its ring colour: ${selectedIdle.first} vs ${idle.first}",
+            selectedIdle.first > idle.first,
+        )
     }
 
     @Test
