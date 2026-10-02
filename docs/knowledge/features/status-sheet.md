@@ -121,15 +121,13 @@ private fun ModelRow(
 )
 ```
 
-`Row(Modifier.fillMaxWidth().selectable(selected, enabled, onClick, role = Role.RadioButton).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.Top)` with three children:
+`Row(Modifier.fillMaxWidth().selectable(selected, enabled, onClick, role = Role.RadioButton).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.Top)` with two children:
 
 1. `RadioButton(selected = selected, enabled = enabled, onClick = null)` — default M3 colors. **`onClick = null` is required**, not optional — the row's `selectable` modifier owns the click semantics; passing the handler to both fires the callback twice. The lint-clean shape is `onClick = null` on the inner `RadioButton`.
 2. `Spacer(width = 12.dp)`.
-3. `Column` with two `Text`s:
-   - Title `Text(text = choice.label, style = bodyLarge, color = onSurface, maxLines = 2, overflow = Ellipsis)` — Claude uses the ASCII family from the raw published `value` (one `claude-` prefix removed, leading ASCII letters, initial capital), falling back to inert `displayName` if no family derives. Codex uses inert published `displayName` verbatim. The derived family is bounded and made inert too; the raw value remains the write argument. `maxLines` guards the layout.
-   - Detail `Text(text = choice.detail, style = bodySmall, color = onSurfaceVariant, maxLines = 1, overflow = Ellipsis)`, rendered only `if (choice.detail.isNotEmpty())` — `choice.detail` is the row's own `resolvedModel`, inert, and blanked by the ViewModel when it says nothing `choice.label` doesn't already say. Replaces the pre-#807 private `Model.description()` mapping table (below) — the row's own `resolvedModel` is the honest equivalent: what this family currently resolves to, rather than three Figma-derived taglines for three device enum entries that no longer drive this sheet.
+3. Title `Text(text = choice.label, style = bodyMedium, color = onBackground, maxLines = 1, overflow = Ellipsis)` — Claude uses the ASCII family from the raw published `value` (one `claude-` prefix removed, leading ASCII letters, initial capital), falling back to inert `displayName` if no family derives. Codex uses inert published `displayName` verbatim. The derived family is bounded and made inert too; the raw value remains the write argument. `maxLines` guards the layout.
 
-`Alignment.Top` (not `CenterVertically`) is load-bearing: the detail text wraps to multiple lines on narrow widths; centring the radio against the wrapped block looks broken. Top-aligning the radio to the title baseline keeps the visual anchor stable across detail heights.
+**Through [#1497](https://github.com/pyrycode/pyrycode-mobile/issues/1497)** the row was a `Column` of two `Text`s: the title above, and a second `Text(text = choice.detail, style = bodySmall, color = onSurfaceVariant/onPrimaryContainer, maxLines = 1, overflow = Ellipsis)` rendered `if (choice.detail.isNotEmpty())` — `choice.detail` being the row's own `resolvedModel`, inert, and blanked by the ViewModel when it said nothing `choice.label` didn't already say. `600:1694` draws one `bodyMedium` label per row with no helper line; **#1497 deleted the `Column` and the detail `Text` outright**, so `ModelRow` now draws the label alone and `Alignment.Top` on the row no longer has a wrapped second line to anchor against — it is kept only because it is the row's existing vertical-alignment choice, not because anything below the title still wraps. `ThreadModelChoice.detail` and the ViewModel that fills it are untouched; the field just has no renderer left in this file. The two rows of one family that only `detail` told apart (`opus` and `opus[1m]`, both labelled "Opus") are now visually identical in the sheet — `InteractiveStreamE2ETest.awaitAnnouncedMark` tells them apart by sheet position instead (see [`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md) § model and effort settings round trip).
 
 ### `Modifier.selectable(role = Role.RadioButton)` on the row, not on the radio
 
@@ -165,6 +163,15 @@ Split into [StatusSheet — running model and context window readings](status-sh
 The selected model's published effort levels appear in supplied order, two radio rows per
 line. An empty list states that no levels were published. Row-level selection semantics
 surround the 20 dp visual mark; the existing effort note appears beneath the rows.
+
+**Since [#1497](https://github.com/pyrycode/pyrycode-mobile/issues/1497)** each row's label is
+`effort.label.replaceFirstChar { it.titlecase() }` — `600:1694` reads "Low", "Medium", "High" and "Max",
+not the verbatim published `"low"`/`"medium"`/`"high"`/`"max"`. `onEffortSelected` still receives
+`effort.value`, the raw wire string, unaffected by the display change. The capitalisation applies to this
+sheet's rows only; the composer footer's own effort menu and every daemon write keep the verbatim level.
+`InteractiveStreamE2ETest` restates the same rule as `effortLabel(level)` (`inert()` then
+`uppercaseChar()` on the first letter) and runs every effort label it matches through it — see
+[`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md) § model and effort settings round trip.
 
 ### `YoloRow` — retired by #650
 

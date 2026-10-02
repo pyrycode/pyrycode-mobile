@@ -780,9 +780,12 @@ chat X inherited (no pick, no explicit saved model) and sends it one real ping. 
 computes the expected marked row itself from the fresh model menu and the host repository's own announced
 model, using its own copy of the three-tier rule `ThreadRunConfig.selectedChoice` applies (exact `value`,
 then `resolvedModel`, then family; the first tier with any candidate decides, more than one marks nothing).
-`awaitAnnouncedMark` then asserts either that row is marked by its label and `resolved_model` detail, or that
-no model radio is marked and the family note shows outside a radio — and, either way, that no radio reads
-"Default". It then opens Run configuration on X and picks a different published row, confirming the pick
+`awaitAnnouncedMark` (#1497: Run configuration's one-line rows no longer draw `resolved_model`, so two rows
+of one family can read alike) first waits until the model radios, in sheet order, read the menu's
+non-default Claude labels in menu order, then asserts either that the only marked radio sits at the expected
+row's index in that list, or that no model radio is marked and the family note shows outside a radio — proving
+which row is marked by position rather than text. Either way, no radio reads "Default". It then opens Run
+configuration on X and picks a different published row, confirming the pick
 stays marked — no longer the announcement — after leaving and reopening X, while chat Y's own separately
 saved model is untouched throughout. The runnable scenario is in `InteractiveStreamE2ETest`; it does not
 depend on the separately reported `ThreadRunConfig.running` display text, only on the raw `announcedModel`
@@ -3143,7 +3146,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
   first tier with any candidate decides, more than one marks nothing). `awaitAnnouncedMark` replaces the
   former `awaitNoModelMarked`: it checks every non-default Claude row of the fresh menu, including rows that
   share a family label, so it cannot pass by skipping the rows most likely to be marked wrongly, and it
-  requires either exactly the expected row (by label and `resolved_model` detail) or no model row at all with
+  requires either exactly the expected row's position in that label-ordered list (#1497 dropped the
+  `resolved_model` detail line the rows once differed by) or no model row at all with
   the family note shown outside a radio — either way, that no radio reads "Default". X is then picked to a
   different published row in Run configuration and the pick is confirmed to survive leaving and reopening,
   no longer tracking the announcement; Y's own separately saved model is untouched throughout. The selector

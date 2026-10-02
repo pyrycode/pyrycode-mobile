@@ -3226,13 +3226,13 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             pickFooterOption(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude))
             awaitFooter(changeModelLabel, row.dropdownLabel(ConversationAgent.Claude))
-            pickFooterOption(changeEffortLabel, level.inert())
-            awaitFooter(changeEffortLabel, level.inert())
+            pickFooterOption(changeEffortLabel, effortLabel(level))
+            awaitFooter(changeEffortLabel, effortLabel(level))
 
             val chosen = freshSettings(chat.id)
             assertEquals("saved effort after the tap", level, chosen.effort)
             assertTrue("claude reports an applied effort before any turn", chosen.effectiveEffort !is EffectiveEffort.Applied)
-            awaitFooter(changeEffortLabel, level.inert())
+            awaitFooter(changeEffortLabel, effortLabel(level))
 
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
@@ -3240,7 +3240,7 @@ class InteractiveStreamE2ETest {
 
             leaveThread()
             openChatRow(name)
-            awaitFooter(changeEffortLabel, level.inert()) { it == null }
+            awaitFooter(changeEffortLabel, effortLabel(level)) { it == null }
         } finally {
             restoreSettings(originals)
         }
@@ -3290,8 +3290,8 @@ class InteractiveStreamE2ETest {
             assertSaved(priming.id, "", "")
             openChatRow(primingName)
             awaitFooter(changeModelLabel, inheritedModelLabel(publishedMenu(priming.id)))
-            pickFooterOption(changeEffortLabel, remembered.inert())
-            awaitFooter(changeEffortLabel, remembered.inert())
+            pickFooterOption(changeEffortLabel, effortLabel(remembered))
+            awaitFooter(changeEffortLabel, effortLabel(remembered))
             assertEquals("the acknowledged tap was not remembered", remembered, rememberedEffort())
             leaveThread()
 
@@ -3327,10 +3327,10 @@ class InteractiveStreamE2ETest {
 
             // 5. A saved effort of its own is kept: settled on it, confirmed by the reply, and still settled.
             openChatRow(explicitName)
-            awaitFooter(changeEffortLabel, explicit.inert())
+            awaitFooter(changeEffortLabel, effortLabel(explicit))
             assertEquals("the explicit saved effort was overwritten", explicit, freshSettings(explicitChat.id).effort)
             composeTestRule.waitForIdle()
-            awaitFooter(changeEffortLabel, explicit.inert())
+            awaitFooter(changeEffortLabel, effortLabel(explicit))
         } finally {
             restoreSettings(originals)
             relaunched?.close()
@@ -6190,7 +6190,7 @@ class InteractiveStreamE2ETest {
                 if (applied.value.isEmpty()) {
                     EFFORT_PLACEHOLDER_LABEL to claudeNote(R.string.thread_effort_note_default_unavailable)
                 } else {
-                    applied.value.inert() to null
+                    effortLabel(applied.value) to null
                 }
         }
 
@@ -6202,7 +6202,7 @@ class InteractiveStreamE2ETest {
         conversationId: String,
         level: String,
     ) {
-        awaitFooter(changeEffortLabel, level.inert())
+        awaitFooter(changeEffortLabel, effortLabel(level))
         assertEquals("the recalled saved effort before the first message", level, freshSettings(conversationId).effort)
         sendFromPhone(PING_PROMPT)
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
@@ -6267,6 +6267,12 @@ class InteractiveStreamE2ETest {
         return announced.model.takeUnless { announced.truncated }.orEmpty()
     }
 
+    /**
+     * Run configuration's effort label for the published [level] (#1497): its first letter capitalised,
+     * restated here so the scenario does not share the code it checks. Saved and applied values stay verbatim.
+     */
+    private fun effortLabel(level: String): String = level.inert().replaceFirstChar { it.uppercaseChar() }
+
     /** Desktop's family rule, restated here so the scenario does not share the code it checks. */
     private fun claudeFamily(identifier: String): String =
         identifier
@@ -6299,54 +6305,51 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Run configuration marks exactly [marked]'s radio, told apart by its label and `resolved_model` detail,
-     * or, with [marked] `null`, no model radio at all and shows [note] outside the radios (#1308). Every
-     * non-default Claude row of [menu] counts, including rows whose family label another row shares, since
-     * those are the rows a wrong mark would land on.
+     * Run configuration marks exactly [marked]'s radio, or, with [marked] `null`, no model radio at all and
+     * shows [note] outside the radios (#1308). Model rows draw only their label (#1497), so two rows sharing
+     * a family label read alike; the marked radio is told apart by its position among the model radios,
+     * which render in [menu] order. Every non-default Claude row of [menu] counts, including rows whose
+     * family label another row shares, since those are the rows a wrong mark would land on.
      */
     private fun awaitAnnouncedMark(
         menu: ModelMenu,
         marked: ModelMenuRow?,
         note: String,
     ) {
-        val labels =
-            menu.rows
-                .filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
-                .map { it.dropdownLabel(ConversationAgent.Claude) }
-                .toSet()
-        val markedModelRadio =
-            SemanticsMatcher("a marked model radio") { node ->
+        val rows = menu.rows.filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
+        val rowLabels = rows.map { it.dropdownLabel(ConversationAgent.Claude) }
+        val labels = rowLabels.toSet()
+        val modelRadio =
+            SemanticsMatcher("a model radio") { node ->
                 node.config.getOrNull(SemanticsProperties.Role) == SemanticsRole.RadioButton &&
-                    node.config.getOrNull(SemanticsProperties.Selected) == true &&
                     node.config
                         .getOrNull(SemanticsProperties.Text)
                         ?.firstOrNull()
                         ?.text in labels
             }
-        val expected =
-            marked?.let { row ->
-                val label = row.dropdownLabel(ConversationAgent.Claude)
-                val detail = row.resolvedModel.inert().takeIf { it.isNotBlank() && it != label }
-                listOfNotNull(label, detail)
-            }
+        val expectedMarks = listOfNotNull(marked?.let { row -> rows.indexOfFirst { it.value == row.value } })
 
-        fun markedTexts() =
-            composeTestRule.onAllNodes(markedModelRadio).fetchSemanticsNodes().map { node ->
+        // The model radios in sheet order, as (label, marked) pairs.
+        fun radios() =
+            composeTestRule.onAllNodes(modelRadio).fetchSemanticsNodes().map { node ->
                 node.config
                     .getOrNull(SemanticsProperties.Text)
                     .orEmpty()
-                    .map { it.text }
+                    .joinToString("") { it.text } to (node.config.getOrNull(SemanticsProperties.Selected) == true)
             }
+
+        fun markedIndices() = radios().withIndex().filter { it.value.second }.map { it.index }
         openRunConfiguration()
         try {
-            if (expected != null) {
-                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { markedTexts() == listOf(expected) }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { radios().map { it.first } == rowLabels }
+            if (marked != null) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { markedIndices() == expectedMarks }
             } else {
                 val standaloneNote = hasText(note) and SemanticsMatcher.keyNotDefined(SemanticsProperties.Role)
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                     composeTestRule.onAllNodes(standaloneNote).fetchSemanticsNodes().isNotEmpty()
                 }
-                assertEquals("a model radio is marked for an ambiguous or unmatched announcement", emptyList<List<String>>(), markedTexts())
+                assertEquals("a model radio is marked for an ambiguous or unmatched announcement", emptyList<Int>(), markedIndices())
             }
         } finally {
             composeTestRule.onNodeWithContentDescription("Close").performClick()

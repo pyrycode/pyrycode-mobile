@@ -210,7 +210,8 @@ enum class SaveAsChannelFailure { Promote, SystemPrompt }
  * argument [ConversationRepository.setSessionSettings] takes; it is an alias (`sonnet`), a bracketed
  * variant (`opus[1m]`) or `default`, so nothing parses it and nothing presents it as a version.
  * [label] is the display-only Claude family derived from [value] or the inert published name; Codex
- * uses the inert published name. [detail] is inert resolved text. [resolvedModel] stays raw for exact
+ * uses the inert published name. [detail] is inert resolved text that Run configuration no longer draws
+ * (#1497). [resolvedModel] stays raw for exact
  * inherited-default comparison and is never rendered directly.
  */
 data class ThreadModelChoice(
