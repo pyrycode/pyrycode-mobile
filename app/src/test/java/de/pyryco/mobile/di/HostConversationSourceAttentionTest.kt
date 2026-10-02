@@ -4,17 +4,26 @@ import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ReadPosition
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
+import de.pyryco.mobile.data.repository.SessionPump
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -91,7 +100,7 @@ class HostConversationSourceAttentionTest {
         withSource { a, _, source ->
             a.events.emit(end("c", "t1", isError = true))
             runCurrent()
-            assertEquals(mapOf("c" to ConversationAttention.Failed), source.attention.value["a"])
+            assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
             source.markOpened("a", "c")
 
             a.repositories.value = null
@@ -131,8 +140,8 @@ class HostConversationSourceAttentionTest {
     @Test
     fun aPromptOrQuestionForTheConversationWaitsForAnswer() =
         withSource { a, b, source ->
-            a.modal.value = ModalUiState.Open("m", "permission", "t", "p", emptyList(), "deny", "c")
-            b.modal.value = ModalUiState.Open("m", "permission", "t", "p", emptyList(), "deny", "")
+            a.prompts("c" to "m")
+            b.prompts("" to "m")
             b.batches.value = listOf(QuestionBatch("q", "batch", emptyList()))
             runCurrent()
             assertEquals(
@@ -143,10 +152,39 @@ class HostConversationSourceAttentionTest {
                 source.attention.value,
             )
 
-            a.modal.value = ModalUiState.Dismissed("m", "allow", "remote", "c")
+            a.prompts()
             b.batches.value = emptyList()
             runCurrent()
             assertEquals(mapOf("a" to emptyMap<String, ConversationAttention>(), "b" to emptyMap()), source.attention.value)
+        }
+
+    // #1338: a second prompt is never hidden behind the first, in the list or in the alerts.
+    @Test
+    fun everyChatHoldingAPromptWaitsAndAlertsOnce_andAnsweringOneLeavesTheOther() =
+        withSource { a, _, source ->
+            val alerts = collectAlerts(source)
+            a.prompts("chat-a" to "m1")
+            runCurrent()
+            a.prompts("chat-a" to "m1", "chat-b" to "m2")
+            runCurrent()
+            a.prompts("chat-a" to "m1", "chat-b" to "m2")
+            runCurrent()
+            assertEquals(
+                mapOf("chat-a" to ConversationAttention.WaitingForAnswer, "chat-b" to ConversationAttention.WaitingForAnswer),
+                source.attention.value["a"],
+            )
+            assertEquals(
+                listOf(
+                    AttentionAlert("a", "chat-a", AttentionAlert.Kind.Prompt, "modal:m1"),
+                    AttentionAlert("a", "chat-b", AttentionAlert.Kind.Prompt, "modal:m2"),
+                ),
+                alerts,
+            )
+
+            a.prompts("chat-b" to "m2")
+            runCurrent()
+            assertEquals(mapOf("chat-b" to ConversationAttention.WaitingForAnswer), source.attention.value["a"])
+            assertEquals(2, alerts.size)
         }
 
     @Test
@@ -214,11 +252,11 @@ class HostConversationSourceAttentionTest {
         withSource { a, b, source ->
             val alerts = collectAlerts(source)
             val open = ModalUiState.Open("m1", "permission", "t", "p", emptyList(), "deny", "c")
-            a.modal.value = open
+            a.modals.value = HostModalState(listOf(open))
             runCurrent()
-            a.modal.value = open.copy(prompt = "re-shown")
+            a.modals.value = HostModalState(listOf(open.copy(prompt = "re-shown")))
             a.batches.value = listOf(QuestionBatch("c", "q1", emptyList()))
-            b.modal.value = open.copy(conversationId = "")
+            b.modals.value = HostModalState(listOf(open.copy(conversationId = "")))
             b.batches.value = listOf(QuestionBatch(" ", "q0", emptyList()))
             runCurrent()
             a.batches.value = listOf(QuestionBatch("c", "q1", emptyList()), QuestionBatch("d", "q2", emptyList()))
@@ -328,6 +366,131 @@ class HostConversationSourceAttentionTest {
             assertEquals(mapOf("replayed" to ConversationAttention.Unread), source.attention.value["a"])
         }
 
+    // #1452: each busy fact blinks only its own conversation on its own host, until that fact's clear edge.
+    @Test
+    fun eachBusyFactRunsOnlyItsConversationUntilItsOwnClearEdge() =
+        withRemoteSource { a, b, source, _ ->
+            val facts =
+                listOf(
+                    "stall" to listOf(::stall to ::liveEvent),
+                    "api_retry" to listOf(::apiRetry to ::apiRetryEnd),
+                    "compacting" to listOf(::compacting to ::compactingEnd),
+                    "resetting" to listOf(::resetting to ::resettingEnd, ::resetting to ::sessionTransition),
+                )
+            facts.forEach { (fact, edges) ->
+                edges.forEach { (on, off) ->
+                    listOf(Triple(a, "a", "c1"), Triple(b, "b", "c2")).forEach { (pump, host, id) ->
+                        pump.push(on(id))
+                        runCurrent()
+                        val other = if (host == "a") "b" else "a"
+                        assertEquals(
+                            fact,
+                            mapOf(host to mapOf(id to ConversationAttention.Running), other to emptyMap()),
+                            source.attention.value,
+                        )
+
+                        pump.push(off(id))
+                        runCurrent()
+                        // #1361: a session transition appends a boundary row, which marks the background chat
+                        // unread; reading it leaves only the busy edge under test.
+                        if (off(id).first == "session_transition") source.markOpened(host, id)
+                        assertEquals(
+                            fact,
+                            mapOf("a" to emptyMap<String, ConversationAttention>(), "b" to emptyMap()),
+                            source.attention.value,
+                        )
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun disconnectingAHostClearsOnlyItsBusyBlinks() =
+        withRemoteSource { a, b, source, hostA ->
+            a.push(stall("c1"))
+            a.push(compacting("c2"))
+            b.push(apiRetry("c1"))
+            runCurrent()
+            assertEquals(
+                mapOf(
+                    "a" to mapOf("c1" to ConversationAttention.Running, "c2" to ConversationAttention.Running),
+                    "b" to mapOf("c1" to ConversationAttention.Running),
+                ),
+                source.attention.value,
+            )
+
+            hostA.repositories.value = null
+            runCurrent()
+            assertEquals(mapOf("a" to emptyMap(), "b" to mapOf("c1" to ConversationAttention.Running)), source.attention.value)
+
+            // A new connection's repository starts with nothing busy.
+            hostA.repositories.value =
+                RemoteConversationRepository(BusyPump(), backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+            runCurrent()
+            assertEquals(mapOf("a" to emptyMap(), "b" to mapOf("c1" to ConversationAttention.Running)), source.attention.value)
+        }
+
+    /** Two hosts, each over a real [RemoteConversationRepository] whose frames the pumps deliver; host `a` last. */
+    private fun withRemoteSource(block: suspend TestScope.(BusyPump, BusyPump, HostConversationSource, Host) -> Unit) =
+        runTest {
+            val pumps = listOf(BusyPump(), BusyPump())
+            val hosts = listOf(Host("a"), Host("b"))
+            hosts.zip(pumps).forEach { (host, pump) ->
+                host.repositories.value =
+                    RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+            }
+            val source =
+                HostConversationSource(
+                    MutableStateFlow(hosts.map { it.entry }),
+                    { null },
+                    StandardTestDispatcher(testScheduler),
+                    viewing = viewing,
+                )
+            try {
+                runCurrent()
+                block(pumps[0], pumps[1], source, hosts[0])
+            } finally {
+                source.dispose()
+            }
+        }
+
+    /** Channel-backed inbound surface: unlimited buffer so a frame pushed before collection survives. */
+    private class BusyPump : SessionPump {
+        private val inboundChannel = Channel<Envelope>(Channel.UNLIMITED)
+        private var nextId = 1L
+
+        override val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
+
+        override fun send(envelope: Envelope): Boolean = true
+
+        fun push(frame: Pair<String, String>) {
+            inboundChannel.trySend(
+                Envelope(id = nextId++, type = frame.first, ts = TS, payload = MobileJson.parseToJsonElement(frame.second)),
+            )
+        }
+    }
+
+    private fun stall(id: String) = "stall" to """{"conversation_id":"$id"}"""
+
+    private fun liveEvent(id: String) = "turn_state" to """{"conversation_id":"$id","state":"idle"}"""
+
+    private fun apiRetry(id: String) = "api_retry" to """{"conversation_id":"$id","active":true,"current":2,"total":10}"""
+
+    private fun apiRetryEnd(id: String) = "api_retry" to """{"conversation_id":"$id","active":false,"current":2,"total":10}"""
+
+    private fun compacting(id: String) = "compacting" to """{"conversation_id":"$id","active":true}"""
+
+    private fun compactingEnd(id: String) = "compacting" to """{"conversation_id":"$id","active":false}"""
+
+    private fun resetting(id: String) =
+        "resetting" to """{"conversation_id":"$id","active":true,"phase":"wrapping_up","handoff":"pending"}"""
+
+    private fun resettingEnd(id: String) = "resetting" to """{"conversation_id":"$id","active":false,"phase":"","handoff":""}"""
+
+    private fun sessionTransition(id: String) =
+        "session_transition" to
+            """{"conversation_id":"$id","previous_session_id":"s1","new_session_id":"s2","reason":"clear","occurred_at":"$TS","workspace_cwd":null}"""
+
     private fun TestScope.collectAlerts(source: HostConversationSource): List<AttentionAlert> {
         val alerts = mutableListOf<AttentionAlert>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { source.alerts.toList(alerts) }
@@ -362,9 +525,19 @@ class HostConversationSourceAttentionTest {
         val repositories = MutableStateFlow<ConversationRepository?>(rows)
         val status = MutableStateFlow(ConnectionStatus(RelayLinkStatus.Idle, PyrycodeLinkStatus.Down))
         val events = MutableSharedFlow<LiveSessionEvent>(extraBufferCapacity = 16)
-        val modal = MutableStateFlow<ModalUiState>(ModalUiState.Hidden)
+        val modals = MutableStateFlow(HostModalState())
         val batches = MutableStateFlow<List<QuestionBatch>>(emptyList())
-        val entry = HostConversationConnection(id, null, repositories, status, events, modal, batches)
+        val entry = HostConversationConnection(id, null, repositories, status, events, modals, batches)
+
+        /** Holds one permission prompt per (conversationId, modalId) pair, in order. */
+        fun prompts(vararg held: Pair<String, String>) {
+            modals.value =
+                HostModalState(
+                    held.map { (conversationId, modalId) ->
+                        ModalUiState.Open(modalId, "permission", "t", "p", emptyList(), "deny", conversationId)
+                    },
+                )
+        }
     }
 
     /** A connection's repository whose thread row counts the test sets directly (#1361). */
@@ -410,5 +583,6 @@ class HostConversationSourceAttentionTest {
 
     private companion object {
         val LIVE = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+        const val TS = "2026-10-02T10:00:00Z"
     }
 }

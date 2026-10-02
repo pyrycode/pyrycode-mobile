@@ -4,7 +4,6 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConnectionStatus
-import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayConnectionController
@@ -53,7 +52,6 @@ class RelayConnectionRegistry(
     internal val hostConnections = hosts.asStateFlow()
 
     val currentRepository: StateFlow<ConversationRepository?> = project(null) { it.coordinator.currentRepository }
-    val currentModal: StateFlow<ModalUiState> = project(ModalUiState.Hidden) { it.coordinator.currentModal }
     val connectionStatus: StateFlow<ConnectionStatus> = project(IDLE) { it.coordinator.connectionStatus }
     val liveSessionEvents = selection.flatMapLatest { it?.coordinator?.liveSessionEvents ?: emptyFlow() }
 
@@ -143,7 +141,7 @@ class RelayConnectionRegistry(
                         coordinator.connectionStatus,
                         // #877: this host's own attention sources, never the selected host's.
                         coordinator.liveSessionEvents,
-                        coordinator.currentModal,
+                        coordinator.hostModals,
                         coordinator.questionBatches,
                     )
                 }

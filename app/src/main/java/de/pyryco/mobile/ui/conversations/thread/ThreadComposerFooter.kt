@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -41,6 +42,7 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
 import de.pyryco.mobile.ui.conversations.components.agentName
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.warning
 
 /**
  * The composer footer's option controls (#808). [Permission] joined at #650 and [Actions] at #884, each
@@ -374,30 +376,57 @@ internal fun footerShrinkCap(
     return left
 }
 
+/** The footer's context-usage steps (#1412), after desktop's `contextUsageStep` (desktop #1062). */
+internal enum class ContextUsageStep { Normal, Warning, High }
+
+/** The step for a reported [percent] (#1412): below 50 is normal, 50 to 69 a warning, 70 and above high. */
+internal fun contextUsageStep(percent: Int): ContextUsageStep =
+    when {
+        percent >= 70 -> ContextUsageStep.High
+        percent >= 50 -> ContextUsageStep.Warning
+        else -> ContextUsageStep.Normal
+    }
+
 /**
  * Figma's `Cxt: 84%` text (110:3497): Claude's reported [percent] as sent, in the footer's body-small style.
  * `null` is the unavailable state, dimmed like a disabled button and described as unavailable — never `0%`.
+ * A reading is coloured by its [contextUsageStep] (#1412), and the high step says so in text and description.
  */
 @Composable
 private fun ContextSegment(
     percent: Int?,
     modifier: Modifier = Modifier,
 ) {
-    val description =
-        if (percent != null) {
-            stringResource(R.string.cd_context_usage, percent)
-        } else {
-            stringResource(R.string.cd_context_usage_unavailable)
+    val text: String
+    val description: String
+    val color: Color
+    if (percent == null) {
+        text = stringResource(R.string.thread_footer_context_unavailable)
+        description = stringResource(R.string.cd_context_usage_unavailable)
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        when (contextUsageStep(percent)) {
+            ContextUsageStep.Normal -> {
+                text = stringResource(R.string.thread_footer_context, percent)
+                description = stringResource(R.string.cd_context_usage, percent)
+                color = MaterialTheme.colorScheme.primary
+            }
+            ContextUsageStep.Warning -> {
+                text = stringResource(R.string.thread_footer_context, percent)
+                description = stringResource(R.string.cd_context_usage, percent)
+                color = MaterialTheme.colorScheme.warning
+            }
+            ContextUsageStep.High -> {
+                text = stringResource(R.string.thread_footer_context_high, percent)
+                description = stringResource(R.string.cd_context_usage_high, percent)
+                color = MaterialTheme.colorScheme.error
+            }
         }
+    }
     Text(
-        text =
-            if (percent != null) {
-                stringResource(R.string.thread_footer_context, percent)
-            } else {
-                stringResource(R.string.thread_footer_context_unavailable)
-            },
+        text = text,
         style = MaterialTheme.typography.bodySmall,
-        color = if (percent != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = color,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier.testTag(CONTEXT_USAGE_TEST_TAG).semantics { contentDescription = description },
@@ -475,7 +504,8 @@ private val previewRunConfig =
         savedEffort = "max",
         permissionMode = "plan",
         sessionId = "s1",
-        contextPercent = 84,
+        // An ordinary reading, as Figma 110:3497 draws it; 84 would now be the high step (#1412).
+        contextPercent = 42,
     )
 
 @Preview(name = "ComposerFooter — Dark", showBackground = true, widthDp = 372)

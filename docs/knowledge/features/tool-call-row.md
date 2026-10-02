@@ -370,7 +370,7 @@ rendering doesn't ripple into the data-layer fake.
   real `ThreadScreen` fold instead: `ToolRowNestingTest` (`app/src/sharedTest/.../thread/`) asserts that a
   matched child and a grandchild each carry their own "Subagent step, level N" description and that a
   top-level or unmatched-parent row carries none. See [Thread screen § Subagent tool-row
-  nesting](./thread-screen-how-it-works-list-and-status-row.md#subagent-tool-row-nesting-896) and the
+  nesting](./thread-screen-subagent-tool-rows.md#subagent-tool-row-nesting-896) and the
   derivation's own unit coverage, `ToolNestingDepthsTest`.
 
 ## Edge cases / limitations

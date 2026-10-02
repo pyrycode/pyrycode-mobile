@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.ReplayCursor
+import de.pyryco.mobile.data.network.RequestContextUsagePayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
@@ -41,6 +42,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
@@ -133,8 +136,8 @@ class RemoteConversationRepository(
      */
     private val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks(),
     /**
-     * The five readings the host pushes and the phone never asks for again (#1317): announced model, session
-     * facts, context usage, usage limit and slash-command menu. [RelayRepositoryCoordinator] owns the instance
+     * The five readings the host pushes (#1317): announced model, session facts, context usage, usage limit and
+     * slash-command menu. Only context usage is also asked for, by [requestContextUsage] (#1410). [RelayRepositoryCoordinator] owns the instance
      * for the host's pairing and threads it into each repository, the [finishedBackgroundTasks] shape, so a
      * reconnect starts from the held readings rather than nothing. Every arm still applies, replaces and
      * clears through it as before. Since #1320 it also holds the model menus and the last successful
@@ -167,15 +170,32 @@ class RemoteConversationRepository(
     private val usageLimitProjection = hostReadings.usageLimit
     private val thinkingProgressProjection = ThinkingProgressProjection()
     private val resettingProjection = ResettingProjection()
+
+    /** The turn phase of every conversation on this connection (#1313); see [TurnPhaseProjection]. */
+    private val turnPhaseProjection = TurnPhaseProjection()
     private val announcedModelProjection = hostReadings.announcedModel
     private val sessionFactsProjection = hostReadings.sessionFacts
 
     /**
      * The context-usage reading of every conversation (#945), held for the host's pairing (#1317). [onInbound]
      * hands it `context_usage` behind the `interactive` gate and the `session_transition` clear. It sends
-     * nothing: see [ContextUsageProjection].
+     * nothing; the ask is this connection's [requestContextUsage] (#1410).
      */
     private val contextUsageProjection = hostReadings.contextUsage
+
+    /**
+     * The MCP server reading of every conversation on **this connection** (#1343): the held report, the five
+     * request flags, the three request verbs and their refusal correlation. Deliberately not in [HostReadings]: a
+     * reconnect starts from nothing and the surface asks again. [onInbound] hands it `mcp_status` behind the
+     * `interactive` gate and the refusal half of `error`. Its ids come from [relayRequests]' one counter, through a
+     * lambda for the reason [modelMenuProjection] gives.
+     */
+    private val mcpStatusProjection =
+        McpStatusProjection(
+            send = pump::send,
+            negotiatedCapabilities = negotiatedCapabilities,
+            nextRequestId = { relayRequests.nextRequestId() },
+        )
 
     /**
      * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
@@ -533,6 +553,8 @@ class RemoteConversationRepository(
                 envelope.inReplyTo?.let { id ->
                     relayRequests.waiter(id)?.completeExceptionally(relayRequests.mapError(envelope.payload))
                     modelMenuProjection.applyRefusal(id, envelope.payload)
+                    // The MCP asks (#1343) register in their own ledger, disjoint by the same one counter.
+                    mcpStatusProjection.applyRefusal(id, envelope.payload)
                 }
             TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
                 // A v2 structured live-session envelope (#385). AC #2: gate on the negotiated
@@ -549,13 +571,16 @@ class RemoteConversationRepository(
                         // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
                         // onset arm below — both are inside the same `interactive` gate.
                         stallProjection.clear(event.conversationId)
+                        // Hold the conversation's turn phase (#1313) for every conversation, open or not, so
+                        // a thread opened mid-turn reads it at once. Only `turn_state` and `turn_end` move it.
+                        turnPhaseProjection.apply(event)
                         // Fold the structured turn into the same thread store ([ThreadProjection]) the live
                         // `message` arm writes, so every row interleaves by arrival order (AC #4): a
                         // `tool_use`/`tool_result` pair into one evolving tool row (#387), and the
                         // `assistant_delta` stream into one streaming assistant row that `turn_end`
-                        // finalizes (#337). `turn_state` stays a stream-only signal — the thinking
-                        // indicator reads it off the live-event stream below (#406) — and every event
-                        // is surfaced on that stream regardless of whether it also folds a row.
+                        // finalizes (#337). `turn_state` folds no row — the thinking indicator reads the
+                        // held phase above (#1313) — and every event is surfaced on the live-event stream
+                        // below regardless of whether it also folds a row.
                         when (event) {
                             is LiveSessionEvent.AssistantDelta -> threadProjection.applyAssistantDelta(event)
                             is LiveSessionEvent.ToolUse -> threadProjection.applyToolUse(event)
@@ -669,6 +694,13 @@ class RemoteConversationRepository(
                 // ask (#945): see [ContextUsageProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     contextUsageProjection.apply(envelope)
+                }
+            }
+            TYPE_MCP_STATUS -> {
+                // A conversation's MCP server report, pushed or answering one of this client's MCP requests
+                // (#1343): see [McpStatusProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    mcpStatusProjection.apply(envelope)
                 }
             }
             TYPE_SESSION_TRANSITION -> {
@@ -1031,6 +1063,31 @@ class RemoteConversationRepository(
     override fun refreshSessionSettings(conversationId: String) = sessionSettingsCommands.refreshSessionSettings(conversationId)
 
     /**
+     * Send one `request_context_usage` naming [conversationId] (#1410), the `askForModelMenu` posture in
+     * [ModelMenuProjection]: an empty id and a connection without `interactive` send nothing, and a send the
+     * transport refuses or throws on is dropped, never retried. No waiter is registered. The answer is a
+     * `context_usage` the [TYPE_CONTEXT_USAGE] arm applies by its own `conversation_id`, and a refusal is an
+     * `error` whose `in_reply_to` matches nothing, so it leaves the reading as it was. Never logs: the id is a
+     * cross-conversation correlation key.
+     */
+    override fun requestContextUsage(conversationId: String) {
+        if (conversationId.isEmpty()) return
+        if (CAPABILITY_INTERACTIVE !in negotiatedCapabilities()) return
+        val request =
+            Envelope(
+                id = relayRequests.nextRequestId(),
+                type = TYPE_REQUEST_CONTEXT_USAGE,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(RequestContextUsagePayloadDto(conversationId = conversationId)),
+            )
+        try {
+            pump.send(request)
+        } catch (e: Exception) {
+            // Absorbed: the next open or reconnect asks again.
+        }
+    }
+
+    /**
      * The `backfill_since` request for [conversationId]'s full thread (#313). Wire shape per server
      * SSOT `internal/protocol/messaging.go` `BackfillSincePayload` (#272): full history is requested
      * from the Unix epoch ([BACKFILL_ALL_HISTORY_SINCE]) with an advisory cap
@@ -1081,13 +1138,43 @@ class RemoteConversationRepository(
 
     override fun observeCompacting(conversationId: String): Flow<Boolean> = compactingProjection.observe(conversationId)
 
+    override fun observeTurnPhase(conversationId: String): Flow<LiveSessionEvent.TurnState.Phase> =
+        turnPhaseProjection.observe(conversationId)
+
     override fun observeResetting(conversationId: String): Flow<ResetStatus?> = resettingProjection.observe(conversationId)
+
+    override fun observeBusyConversations(): Flow<Set<String>> =
+        combine(
+            stallProjection.observeIds(),
+            apiRetryProjection.observeIds(),
+            compactingProjection.observeIds(),
+            resettingProjection.observeIds(),
+        ) { stalled, retrying, compacting, resetting -> stalled + retrying + compacting + resetting }.distinctUntilChanged()
 
     override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = announcedModelProjection.observe(conversationId)
 
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsageProjection.observe(conversationId)
+
+    override fun observeMcpStatus(conversationId: String): Flow<McpStatus> = mcpStatusProjection.observe(conversationId)
+
+    override fun requestMcpStatus(conversationId: String) = mcpStatusProjection.requestStatus(conversationId)
+
+    override fun reconnectMcpServer(
+        conversationId: String,
+        serverName: String,
+    ) = mcpStatusProjection.reconnect(conversationId, serverName)
+
+    override fun toggleMcpServer(
+        conversationId: String,
+        serverName: String,
+        enabled: Boolean,
+    ) = mcpStatusProjection.toggle(conversationId, serverName, enabled)
+
+    override fun endMcpReconnectWait(conversationId: String) = mcpStatusProjection.endReconnectWait(conversationId)
+
+    override fun endMcpToggleWait(conversationId: String) = mcpStatusProjection.endToggleWait(conversationId)
 
     override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> =
         attachmentOfferProjection.observe(conversationId)
@@ -1574,11 +1661,35 @@ class RemoteConversationRepository(
         const val TYPE_CONTEXT_USAGE = "context_usage"
 
         /**
+         * Capability-gated status event: one conversation's MCP server report, `{conversation_id, servers,
+         * dropped_servers}` (#1343, pyrycode#2375) — pyrycode `docs/protocol-mobile.md` § `mcp_status`. Pushed once
+         * per eligible child, and also the correlated answer to [TYPE_MCP_STATUS_REQUEST], and to an accepted
+         * [TYPE_MCP_RECONNECT] or [TYPE_MCP_TOGGLE]. Opens, closes and alters no turn.
+         */
+        const val TYPE_MCP_STATUS = "mcp_status"
+
+        /**
+         * Phone → daemon: ask for one conversation's current [TYPE_MCP_STATUS] (#1343, pyrycode#2381). Refused with
+         * `protocol.malformed`, [ERROR_CONVERSATION_NOT_FOUND] or [ERROR_MCP_STATUS_UNAVAILABLE]. Interactive-gated.
+         */
+        const val TYPE_MCP_STATUS_REQUEST = "mcp_status_request"
+
+        /**
+         * Phone → daemon: reconnect one MCP server on the conversation's live child (#1343, pyrycode#2420). Accepted
+         * answers with a correlated [TYPE_MCP_STATUS]; every refusal is [ERROR_MCP_ACTUATION_REFUSED].
+         */
+        const val TYPE_MCP_RECONNECT = "mcp_reconnect"
+
+        /** Phone → daemon: turn one MCP server on or off (#1343, pyrycode#2420). Answered like [TYPE_MCP_RECONNECT]. */
+        const val TYPE_MCP_TOGGLE = "mcp_toggle"
+
+        /**
          * Phone → daemon: ask for a fresh [TYPE_CONTEXT_USAGE] reading of one conversation (#945, pyrycode#2431).
          * Payload is the single `conversation_id` key; the reply is a [TYPE_CONTEXT_USAGE] correlated by
          * `in_reply_to`, or an `error` carrying [ERROR_CONVERSATION_NOT_FOUND] or [ERROR_CONTEXT_USAGE_UNAVAILABLE].
-         * Interactive-gated: a conn without it is answered with nothing at all. The phone does not send it until
-         * pyrycode#2563 stops a mid-turn ask from holding up the connection's later frames (#946).
+         * Interactive-gated: a conn without it is answered with nothing at all. Sent by [requestContextUsage] when a
+         * thread opens and when its host returns (#1410); since pyrycode#2563 a mid-turn ask no longer holds up the
+         * connection's later frames.
          */
         const val TYPE_REQUEST_CONTEXT_USAGE = "request_context_usage"
 
@@ -1760,10 +1871,23 @@ class RemoteConversationRepository(
         /**
          * Server `error.code` refusing a [TYPE_REQUEST_CONTEXT_USAGE] because the daemon hosts the conversation but
          * has neither a fresh nor a remembered reading (#945, pyrycode#2431/#2461). Retryable after a backoff, but
-         * the phone does not retry: the reading stays absent until the next turn-end frame, so nothing branches on
-         * this code and [ContextUsageProjection] handles no refusal at all.
+         * the phone does not retry [requestContextUsage] (#1410): the reading stays as it was until the next frame,
+         * so nothing branches on this code and [ContextUsageProjection] handles no refusal at all.
          */
         const val ERROR_CONTEXT_USAGE_UNAVAILABLE = "context_usage.unavailable"
+
+        /**
+         * Server `error.code` refusing a [TYPE_MCP_STATUS_REQUEST] for a hosted conversation with no live eligible
+         * child or no usable child reply (#1343). The only status-ask refusal that marks the reading unavailable.
+         */
+        const val ERROR_MCP_STATUS_UNAVAILABLE = "mcp_status.unavailable"
+
+        /**
+         * The single merged `error.code` for every [TYPE_MCP_RECONNECT] or [TYPE_MCP_TOGGLE] refusal (#1343). The
+         * phone settles any correlated refusal of those verbs the same way, so nothing branches on this code; it
+         * documents the contract.
+         */
+        const val ERROR_MCP_ACTUATION_REFUSED = "mcp_actuation.refused"
 
         /** Client-side synthetic code for an undecodable `error` payload (#346 fallback, never hangs). */
         const val ERROR_MALFORMED_REPLY = "error.malformed_reply"

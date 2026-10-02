@@ -1,6 +1,12 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.lifecycle.SavedStateHandle
@@ -77,7 +83,10 @@ class ScriptedThreadHarness(
      *  injected as the VM's interrupt lambda so the screen test can assert exactly-once invocation. */
     private val interruptTargets = mutableListOf<String>()
 
-    private val vm =
+    /** The open thread's ViewModel; [openConversation] swaps it for another conversation's (#1313). */
+    private var vm by mutableStateOf(newVm(conversationId))
+
+    private fun newVm(conversationId: String) =
         ThreadViewModel(
             savedStateHandle = SavedStateHandle(mapOf("conversationId" to conversationId)),
             // #586: the same inert tap the live graph installs, so the rung-2 non-vacuity proof covers the
@@ -98,33 +107,43 @@ class ScriptedThreadHarness(
      */
     fun start() {
         composeRule.setContent {
+            val open = vm
             PyrycodeMobileTheme {
+                val colors = MaterialTheme.colorScheme
+                SideEffect { colorScheme = colors }
                 // collectAsState (not collectAsStateWithLifecycle): these are StateFlows and
                 // createComposeRule has no LifecycleOwner.
                 ThreadScreen(
-                    state = vm.state.collectAsState().value,
+                    state = open.state.collectAsState().value,
                     onBack = {},
                     onSendMessage = {},
-                    connectionState = vm.connectionState.collectAsState().value,
+                    connectionState = open.connectionState.collectAsState().value,
                     onRetry = {},
-                    isThinking = vm.isThinking.collectAsState().value,
-                    apiRetry = vm.apiRetry.collectAsState().value,
-                    usageLimit = vm.usageLimit.collectAsState().value,
-                    resetting = vm.resetting.collectAsState().value,
-                    isCompacting = vm.isCompacting.collectAsState().value,
-                    // #805: a `replay = 0` live-event fold like isBusy, so it subscribes in this same pass.
-                    turnOutcome = vm.turnOutcome.collectAsState().value,
-                    thinkingProgress = vm.thinkingProgress.collectAsState().value,
-                    // #459: subscribe isBusy in the same composition pass as state/isThinking so its
-                    // `replay = 0` upstream is live before any push* (awaitReady's top-bar proof covers it).
-                    isBusy = vm.isBusy.collectAsState().value,
-                    onInterrupt = vm::onInterrupt,
+                    isThinking = open.isThinking.collectAsState().value,
+                    apiRetry = open.apiRetry.collectAsState().value,
+                    usageLimit = open.usageLimit.collectAsState().value,
+                    resetting = open.resetting.collectAsState().value,
+                    isCompacting = open.isCompacting.collectAsState().value,
+                    // #805: a `replay = 0` live-event fold, so it subscribes in this same pass.
+                    turnOutcome = open.turnOutcome.collectAsState().value,
+                    thinkingProgress = open.thinkingProgress.collectAsState().value,
+                    // #459: the interrupt affordance. Like isThinking it reads the repository's held turn phase
+                    // (#1313), so a frame pushed before this pass subscribes is still shown.
+                    isBusy = open.isBusy.collectAsState().value,
+                    // #1311: the stall arm and the local-send window.
+                    isStalled = open.isStalled.collectAsState().value,
+                    localSendPending = open.localSendPending.collectAsState().value,
+                    onInterrupt = open::onInterrupt,
                 )
             }
         }
         seedConversation()
         awaitReady()
     }
+
+    /** The colour scheme the render surface resolved, so a colour assertion follows the theme (#1311). */
+    lateinit var colorScheme: ColorScheme
+        private set
 
     /** Number of times the interrupt affordance's tap invoked the VM's interrupt-send action (#459). */
     fun interruptInvocations(): Int = interruptTargets.size
@@ -138,8 +157,28 @@ class ScriptedThreadHarness(
         text: String,
     ) = pump.push(assistantDeltaEnvelope(conversationId, turnId, seq, text))
 
-    /** Script one `turn_state` ("thinking" | "responding" | "idle") (#406). */
-    fun pushTurnState(state: String) = pump.push(turnStateEnvelope(conversationId, state))
+    /**
+     * Script one `turn_state` ("thinking" | "responding" | "idle") (#406). [targetConversationId] defaults
+     * to the harness's own conversation; pass another id to script a turn in a chat that is not open (#1313).
+     */
+    fun pushTurnState(
+        state: String,
+        targetConversationId: String = conversationId,
+    ) = pump.push(turnStateEnvelope(targetConversationId, state))
+
+    /**
+     * Open [conversationId] in place of the current thread (#1313): seed it as the only conversation, under
+     * [name], and compose a fresh ViewModel for it over the same repository, the way navigating to another
+     * chat does. Blocks until its name shows in the top bar.
+     */
+    fun openConversation(
+        conversationId: String,
+        name: String,
+    ) {
+        pump.push(conversationsEnvelope(seedSnapshot(conversationId, name)))
+        composeRule.runOnIdle { vm = newVm(conversationId) }
+        awaitReady(name)
+    }
 
     /**
      * Script one `api_retry` edge (#593) — [active] `true` is the rising edge (re-fire it with a climbed
@@ -263,6 +302,26 @@ class ScriptedThreadHarness(
         resultSummary: String,
     ) = pump.push(toolResultEnvelope(conversationId, turnId, toolUseId, isError, resultSummary))
 
+    /** Script one `tool_progress` — claude's elapsed reading for the open call [toolUseId] (#812). */
+    fun pushToolProgress(
+        turnId: String,
+        toolUseId: String,
+        elapsedSeconds: Int,
+    ) = pump.push(toolProgressEnvelope(conversationId, turnId, toolUseId, elapsedSeconds))
+
+    /** Script one `tool_denied` — claude refused the call [toolUseId], which leaves the open set (#811). */
+    fun pushToolDenied(
+        turnId: String,
+        toolUseId: String,
+        toolName: String,
+    ) = pump.push(toolDeniedEnvelope(conversationId, turnId, toolUseId, toolName))
+
+    /**
+     * Script one `stall` onset (#395). The wire has no clearing edge: the next live-session event clears it
+     * through `StallProjection`. Projects a retained `MutableStateFlow`, like [pushCompacting].
+     */
+    fun pushStall() = pump.push(stallEnvelope(conversationId))
+
     /**
      * Script one `session_transition` — folds a `ThreadItem.SessionBoundary` into the thread in arrival
      * order (#336), routed on the harness's own [conversationId] like the other `push*` methods so the
@@ -310,18 +369,18 @@ class ScriptedThreadHarness(
 
     /**
      * Block until the render pipeline is live and the VM's `replay = 0` live-event collectors are
-     * subscribed — the single most likely flake source. [ThreadViewModel.isThinking] subscribes upstream
-     * to the `replay = 0` `liveSessionEvents` only once [start]'s `collectAsState` composes, so any
-     * `turn_state` pushed before then is dropped, not buffered. Proof of liveness: the seeded
-     * conversation's name rendered in the top bar, which means [ThreadViewModel.state] (and, from the same
-     * composition pass, `isThinking`) has subscribed and processed an emission. Gate every live `push*`
-     * behind this.
+     * subscribed — the single most likely flake source. The ViewModel's live-event folds (the thread rows,
+     * [ThreadViewModel.turnOutcome]) subscribe to the `replay = 0` `liveSessionEvents` only once [start]'s
+     * `collectAsState` composes, so an event pushed before then is dropped from them, not buffered. Proof
+     * of liveness: the [name] rendered in the top bar, which means [ThreadViewModel.state] (and, from the
+     * same composition pass, every other flow) has subscribed and processed an emission. Gate every live
+     * `push*` behind this.
      */
-    private fun awaitReady() {
+    private fun awaitReady(name: String = seedName) {
         composeRule.waitForIdle()
         composeRule.waitUntil(timeoutMillis = READY_TIMEOUT_MS) {
             composeRule
-                .onAllNodesWithText(seedName, substring = true)
+                .onAllNodesWithText(name, substring = true)
                 .fetchSemanticsNodes()
                 .isNotEmpty()
         }
@@ -575,6 +634,58 @@ private fun toolResultEnvelope(
             MobileJson.parseToJsonElement(
                 """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","is_error":$isError,"result_summary":"$resultSummary"}""",
             ),
+    )
+
+/** A `tool_progress` envelope `{conversation_id, turn_id, tool_use_id, elapsed_seconds}` (#812). */
+private fun toolProgressEnvelope(
+    conversationId: String,
+    turnId: String,
+    toolUseId: String,
+    elapsedSeconds: Int,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "tool_progress",
+        ts = TS,
+        payload =
+            buildJsonObject {
+                put("conversation_id", conversationId)
+                put("turn_id", turnId)
+                put("tool_use_id", toolUseId)
+                put("elapsed_seconds", elapsedSeconds)
+            },
+    )
+
+/** A `tool_denied` envelope (#811) with a fixed harness reason. */
+private fun toolDeniedEnvelope(
+    conversationId: String,
+    turnId: String,
+    toolUseId: String,
+    toolName: String,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "tool_denied",
+        ts = TS,
+        payload =
+            buildJsonObject {
+                put("conversation_id", conversationId)
+                put("turn_id", turnId)
+                put("tool_use_id", toolUseId)
+                put("tool_name", toolName)
+                put("decision_reason_type", "other")
+                put("decision_reason", "denied by the harness")
+                put("message", "The user denied this call.")
+            },
+    )
+
+/** A `stall` envelope `{conversation_id}` (#395): onset only. */
+private fun stallEnvelope(conversationId: String): Envelope =
+    Envelope(
+        id = 1L,
+        type = "stall",
+        ts = TS,
+        payload = buildJsonObject { put("conversation_id", conversationId) },
     )
 
 /**

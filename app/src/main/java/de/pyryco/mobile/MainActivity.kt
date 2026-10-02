@@ -443,10 +443,14 @@ internal fun PyryNavHost(
                 val turnOutcome by vm.turnOutcome.collectAsStateWithLifecycle()
                 val thinkingProgress by vm.thinkingProgress.collectAsStateWithLifecycle()
                 val isBusy by vm.isBusy.collectAsStateWithLifecycle()
+                // #1311: the band's stall arm and its local-send window.
+                val isStalled by vm.isStalled.collectAsStateWithLifecycle()
+                val localSendPending by vm.localSendPending.collectAsStateWithLifecycle()
                 val modalState by vm.currentModal.collectAsStateWithLifecycle()
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
                 val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
+                val systemPrompt by vm.systemPrompt.collectAsStateWithLifecycle()
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
                 val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
                 val attachmentUploadProgress by vm.attachmentUploadProgress.collectAsStateWithLifecycle()
@@ -487,6 +491,8 @@ internal fun PyryNavHost(
                     turnOutcome = turnOutcome,
                     thinkingProgress = thinkingProgress,
                     isBusy = isBusy,
+                    isStalled = isStalled,
+                    localSendPending = localSendPending,
                     onInterrupt = vm::onInterrupt,
                     modalState = modalState,
                     armedOptionId = armedOptionId,
@@ -512,6 +518,7 @@ internal fun PyryNavHost(
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
+                    systemPrompt = systemPrompt,
                     // #933: the composer's attachment picker and strip, over the same per-chat draft store.
                     attachments = pendingAttachments,
                     attachmentsSending = attachmentsSending,
@@ -520,10 +527,15 @@ internal fun PyryNavHost(
                     onRemoveAttachment = vm::removeAttachment,
                     attachmentRefusals = vm.attachmentRefusals,
                     attachmentSendFailures = vm.attachmentSendFailures,
+                    // #1314: an accepted send follows the thread's newest end again.
+                    sentMessages = vm.sentMessages,
                     // #984: the thread's message attachments, loaded as their rows come on screen.
                     attachmentStates = attachmentStates,
                     onAttachmentShown = vm::onAttachmentShown,
                     onRetryAttachment = vm::onRetryAttachment,
+                    // #1329: a file other than an image loads only when it is tapped, then opens or saves.
+                    onRequestAttachment = vm::onAttachmentRequested,
+                    attachmentLoads = vm.attachmentLoads,
                     // #843: the tree row's re-pair route (#842), keyed by this destination's own host. The
                     // thread stays on the back stack beneath it, so Cancel returns to the cached history.
                     showRePair = rePairAvailable,

@@ -1,0 +1,5 @@
+{"type":"assistant","message":{"id":"ttt-1","content":[{"type":"text","text":"Checking foxtrot first."}]}}
+{"type":"assistant","message":{"id":"ttt-1","content":[{"type":"tool_use","id":"toolu_e2e_ttt","name":"Bash","input":{}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_e2e_ttt","content":"done","is_error":false}]}}
+{"type":"assistant","message":{"id":"ttt-2","stop_reason":"end_turn","content":[{"type":"text","text":"Then zulu after."}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"43143143-4314-4314-8314-431431431431"}

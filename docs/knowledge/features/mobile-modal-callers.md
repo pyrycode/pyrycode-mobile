@@ -265,7 +265,10 @@ shows `typed ?: read.prompt.orEmpty()` and stays **disabled** — with a static 
 `ChannelFormFields`'s new `promptNote` slot — until the caller's `prompt: ChannelPromptReading` reading
 arrives as `Read`, at which point it shows the stored prompt verbatim and a `Differs` status adds a
 static next-session line in the same slot. Until the field is enabled, `onSubmit` reports the prompt as
-`null` rather than an empty draft, so nothing the operator never saw can be written. OK needs an
+`null` rather than an empty draft, so nothing the operator never saw can be written. Emptying the field
+after it is enabled and pressing OK clears the stored prompt rather than storing `""` — `submitChannelEdit`
+sends `null` for a draft over a stored prompt that the operator emptied, desktop's `promptWriteFor` rule
+(#1342) — while leaving the field exactly as it loaded and pressing OK sends nothing. OK needs an
 available host, a non-blank trimmed name and (when the prompt is showing) a draft within
 `SystemPromptLimit.MAX_BYTES`; Archive needs only the host and no write in flight, independent of either
 field, with no confirmation step — an archived channel comes back through Archive's own Restore, the

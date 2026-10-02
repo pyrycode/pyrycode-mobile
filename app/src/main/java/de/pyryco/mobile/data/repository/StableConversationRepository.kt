@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
@@ -100,6 +101,10 @@ class StableConversationRepository(
 
     override fun observeCompacting(conversationId: String): Flow<Boolean> = switchToLive(false) { it.observeCompacting(conversationId) }
 
+    /** The live connection's held turn phase (#1313); idle with no connection, and a new one starts idle. */
+    override fun observeTurnPhase(conversationId: String): Flow<LiveSessionEvent.TurnState.Phase> =
+        switchToLive(LiveSessionEvent.TurnState.Phase.Idle) { it.observeTurnPhase(conversationId) }
+
     override fun observeResetting(conversationId: String): Flow<ResetStatus?> =
         switchToLive<ResetStatus?>(null) { it.observeResetting(conversationId) }
 
@@ -118,12 +123,47 @@ class StableConversationRepository(
         heldReadings?.observeSessionFacts(conversationId) ?: switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
-     * The context-usage reading for [conversationId] (#945), held or switched as [observeAnnouncedModel] is. The
-     * phone never asks for it, so without [heldReadings] it stays absent after a reconnect until the
-     * conversation's next turn ends.
+     * The context-usage reading for [conversationId] (#945), held or switched as [observeAnnouncedModel] is. Held,
+     * it survives a reconnect until the open thread's [requestContextUsage] answer (#1410) or the next turn's push
+     * replaces it; without [heldReadings] it stays absent until one of them lands.
      */
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
         heldReadings?.observeContextUsage(conversationId) ?: switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
+
+    /** Switched, never held (#1343): the MCP reading is per connection, so a reconnect starts from nothing. */
+    override fun observeMcpStatus(conversationId: String): Flow<McpStatus> =
+        switchToLive(McpStatus()) { it.observeMcpStatus(conversationId) }
+
+    /**
+     * The five MCP commands (#1343) forward through [currentRepository]`.value`, the [refreshSessionSettings]
+     * shape, not [live]: with no connection nothing can be sent, so nothing is set and nothing throws.
+     */
+    override fun requestMcpStatus(conversationId: String) {
+        currentRepository.value?.requestMcpStatus(conversationId)
+    }
+
+    override fun reconnectMcpServer(
+        conversationId: String,
+        serverName: String,
+    ) {
+        currentRepository.value?.reconnectMcpServer(conversationId, serverName)
+    }
+
+    override fun toggleMcpServer(
+        conversationId: String,
+        serverName: String,
+        enabled: Boolean,
+    ) {
+        currentRepository.value?.toggleMcpServer(conversationId, serverName, enabled)
+    }
+
+    override fun endMcpReconnectWait(conversationId: String) {
+        currentRepository.value?.endMcpReconnectWait(conversationId)
+    }
+
+    override fun endMcpToggleWait(conversationId: String) {
+        currentRepository.value?.endMcpToggleWait(conversationId)
+    }
 
     /**
      * The files offered in [conversationId] on the owner host's live connection (#898). The switch is what
@@ -205,6 +245,11 @@ class StableConversationRepository(
      */
     override fun refreshSessionSettings(conversationId: String) {
         currentRepository.value?.refreshSessionSettings(conversationId)
+    }
+
+    /** Ask the live repository for a fresh context reading (#1410); a no-op with no connection, like [refreshSessionSettings]. */
+    override fun requestContextUsage(conversationId: String) {
+        currentRepository.value?.requestContextUsage(conversationId)
     }
 
     /**

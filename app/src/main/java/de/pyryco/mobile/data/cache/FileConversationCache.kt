@@ -1,9 +1,11 @@
 package de.pyryco.mobile.data.cache
 
+import de.pyryco.mobile.data.model.AssistantSegment
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.MobileJson
@@ -413,6 +415,19 @@ private data class CachedMessage(
     val tool: CachedToolCall? = null,
     /** #983. Defaulted, so a document written before references existed reads back with none. */
     val attachments: List<CachedAttachment> = emptyList(),
+    /** #1350. Defaulted, so a row written before segments existed reads back with none. */
+    val segment: CachedSegment? = null,
+)
+
+/**
+ * An [AssistantSegment]'s record (#1350): the turn id and, per folded delta in order, its `seq` and text
+ * length. Two parallel lists rather than one object per delta, to keep a long reply's record small.
+ */
+@Serializable
+private data class CachedSegment(
+    val turnId: String,
+    val seqs: List<Int>,
+    val lengths: List<Int>,
 )
 
 /** One [MessageAttachment]: `null` hints are omitted on encode (`explicitNulls = false`) and read back as `null`. */
@@ -456,6 +471,10 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
                         timestamp = message.timestamp.toString(),
                         tool = message.toolCall?.let { CachedToolCall(it.toolName, it.input, it.output, it.status) },
                         attachments = message.attachments.map { CachedAttachment(it.attachmentId, it.displayName, it.mimeType) },
+                        segment =
+                            message.segment?.let { segment ->
+                                CachedSegment(segment.turnId, segment.deltas.map { it.seq }, segment.deltas.map { it.length })
+                            },
                     ),
             )
         is ThreadItem.SessionBoundary ->
@@ -483,6 +502,7 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
                 isStreaming = false,
                 toolCall = message.tool?.let { ToolCall(it.toolName, it.input, it.output, it.status) },
                 attachments = message.attachments.map { MessageAttachment(it.attachmentId, it.displayName, it.mimeType) },
+                segment = message.segment?.toDomain(message.content),
             ),
         )
     } else {
@@ -490,4 +510,16 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
             ThreadItem.SessionBoundary(it.previousSessionId, it.newSessionId, it.reason, Instant.parse(it.occurredAt), it.workspaceCwd)
         }
     }
+}
+
+/**
+ * The [AssistantSegment] this record describes, or `null` when it does not describe [content] (#1350):
+ * empty, of unequal lists, with a `seq` that does not rise or a negative length, or with lengths that do not
+ * sum to the content's length. A bad record costs the row its join with a newer half, never the document.
+ */
+private fun CachedSegment.toDomain(content: String): AssistantSegment? {
+    if (seqs.isEmpty() || seqs.size != lengths.size) return null
+    if (seqs.zipWithNext().any { (a, b) -> b <= a } || lengths.any { it < 0 }) return null
+    if (lengths.sumOf { it.toLong() } != content.length.toLong()) return null
+    return AssistantSegment(turnId, seqs.zip(lengths) { seq, length -> SegmentDelta(seq, length) })
 }

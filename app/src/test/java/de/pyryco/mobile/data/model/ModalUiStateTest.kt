@@ -1,19 +1,20 @@
 package de.pyryco.mobile.data.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 /**
- * Pure fold tests for [ModalUiState.reduce] (#492): the "which modal is open" accumulation moved out of
- * [de.pyryco.mobile.ui.conversations.thread.ThreadViewModel] to the process-scoped coordinator, and the
- * type + fold relocated here to `data/model`. The fold is a pure function with no flow/coroutine/VM
- * scaffolding, so these exercise it by direct calls (simpler than the old `MutableSharedFlow`-driven
- * ThreadViewModel versions). The wiring of this fold into the coordinator's process-scoped `StateFlow`
- * is covered by `RelayRepositoryCoordinatorTest.currentModal_*`.
+ * Pure fold tests for [HostModalState.reduce] (#1337): the host holds every outstanding prompt keyed on
+ * `modalId`, and each thread sees its own through [HostModalState.scopedTo]. The fold is a pure function, so
+ * these exercise it by direct calls. Its wiring into the coordinator's process-scoped `StateFlow`, including
+ * the clear on each new connection, is covered by `RelayRepositoryCoordinatorTest`.
  */
 class ModalUiStateTest {
+    private val empty = HostModalState()
+
     @Test
-    fun shownFromHidden_becomesOpenCarryingEveryFieldVerbatimInWireOrder() {
+    fun shownFromEmpty_holdsAnOpenCarryingEveryFieldVerbatimInWireOrder() {
         val options =
             listOf(
                 ModalOption("allow_once", "Allow once"),
@@ -22,7 +23,7 @@ class ModalUiStateTest {
                 ModalOption("reject_always", "Reject always"),
             )
         val next =
-            ModalUiState.Hidden.reduce(
+            empty.reduce(
                 ModalEvent.Shown(
                     modalId = "m1",
                     modalClass = "permission",
@@ -35,112 +36,143 @@ class ModalUiStateTest {
             )
 
         assertEquals(
-            ModalUiState.Open(
-                modalId = "m1",
-                modalClass = "permission",
-                title = "Run command?",
-                prompt = "rm -rf /tmp/build",
-                options = options,
-                defaultOptionId = "reject_once",
-                conversationId = "c1",
+            listOf(
+                ModalUiState.Open(
+                    modalId = "m1",
+                    modalClass = "permission",
+                    title = "Run command?",
+                    prompt = "rm -rf /tmp/build",
+                    options = options,
+                    defaultOptionId = "reject_once",
+                    conversationId = "c1",
+                ),
             ),
-            next,
+            next.outstanding,
         )
         // Option list carried verbatim, in wire array order (the canonical display order).
-        assertEquals(options, (next as ModalUiState.Open).options)
+        assertEquals(options, next.outstanding.single().options)
     }
 
     @Test
-    fun matchingDismiss_clearsOpenWithVerbatimOutcomeAndSource() {
+    fun matchingDismiss_removesThePromptAndRecordsTheVerbatimOutcomeAndSource() {
         // Every source value — the closed set plus a forward-compat value — is carried verbatim.
         for (source in listOf("remote", "local", "timeout", "future_source_v3")) {
-            val open = open(modalId = "m1")
-            val next = open.reduce(ModalEvent.Dismissed(modalId = "m1", outcome = "allow_once", source = source))
+            val next = held(open("m1")).reduce(ModalEvent.Dismissed(modalId = "m1", outcome = "allow_once", source = source))
 
-            // The dismissed state carries the open modal's conversation (#816): the wire dismiss has none.
+            // The dismissal carries the held prompt's conversation (#816): the wire dismiss has none.
+            assertEquals(emptyList<ModalUiState.Open>(), next.outstanding)
             assertEquals(
-                ModalUiState.Dismissed(modalId = "m1", outcome = "allow_once", source = source, conversationId = "c1"),
-                next,
+                listOf(ModalUiState.Dismissed(modalId = "m1", outcome = "allow_once", source = source, conversationId = "c1")),
+                next.resolved,
             )
         }
     }
 
-    // #817: the permission context rides the fold, and a later Shown replaces it wholesale.
+    // #817: the permission context rides the fold, and a re-send of the same id replaces it.
     @Test
-    fun shownCarriesItsPermissionContext_andALaterShownReplacesIt() {
+    fun shownCarriesItsPermissionContext_andAReSendReplacesIt() {
         val context = ModalContext(reason = "A rule matched", reasonType = "rule", blockedPath = "/etc", description = "d")
         val shown = ModalEvent.Shown("m1", "permission", "t", "p", emptyList(), "d", "c1", context)
 
-        val opened = ModalUiState.Hidden.reduce(shown)
-        assertEquals(context, (opened as ModalUiState.Open).context)
+        val opened = empty.reduce(shown)
+        assertEquals(context, opened.outstanding.single().context)
 
-        val replaced = opened.reduce(shown.copy(modalId = "m2", context = ModalContext.None))
-        assertEquals(ModalContext.None, (replaced as ModalUiState.Open).context)
+        val replaced = opened.reduce(shown.copy(context = ModalContext.None))
+        assertEquals(ModalContext.None, replaced.outstanding.single().context)
     }
 
-    // #818: the always-allow rules ride the fold, and a later Shown without an offer replaces them.
+    // #818: the always-allow rules ride the fold, and a re-send without an offer replaces them.
     @Test
-    fun shownCarriesItsAlwaysAllowRules_andALaterShownReplacesThem() {
+    fun shownCarriesItsAlwaysAllowRules_andAReSendReplacesThem() {
         val shown =
             ModalEvent.Shown("m1", "permission", "t", "p", emptyList(), "d", "c1", alwaysAllowRules = listOf("Read", "Bash(ls)"))
 
-        val opened = ModalUiState.Hidden.reduce(shown)
-        assertEquals(listOf("Read", "Bash(ls)"), (opened as ModalUiState.Open).alwaysAllowRules)
+        val opened = empty.reduce(shown)
+        assertEquals(listOf("Read", "Bash(ls)"), opened.outstanding.single().alwaysAllowRules)
 
-        val replaced = opened.reduce(shown.copy(modalId = "m2", alwaysAllowRules = emptyList()))
-        assertEquals(emptyList<String>(), (replaced as ModalUiState.Open).alwaysAllowRules)
+        val replaced = opened.reduce(shown.copy(alwaysAllowRules = emptyList()))
+        assertEquals(emptyList<String>(), replaced.outstanding.single().alwaysAllowRules)
     }
 
     // #818: only a permission ask with an available offer shows it.
     @Test
     fun offersAlwaysAllow_onlyForAPermissionAskWithRules() {
-        val withRules = open(modalId = "m1").copy(alwaysAllowRules = listOf("Read"))
+        val withRules = open("m1").copy(alwaysAllowRules = listOf("Read"))
         assertEquals(true, withRules.offersAlwaysAllow)
         assertEquals(false, withRules.copy(modalClass = "trust").offersAlwaysAllow)
         assertEquals(false, withRules.copy(modalClass = "future_class").offersAlwaysAllow)
-        assertEquals(false, open(modalId = "m1").offersAlwaysAllow)
+        assertEquals(false, open("m1").offersAlwaysAllow)
     }
 
     @Test
-    fun nonMatchingDismiss_leavesOpenUnchanged() {
-        val open = open(modalId = "m1")
-        // A dismiss for a different modalId must not clear the open modal (spoofed-dismiss safety).
-        val next = open.reduce(ModalEvent.Dismissed(modalId = "m2", outcome = "reject_once", source = "remote"))
-
-        assertEquals(open, next)
+    fun unknownDismiss_changesNothing() {
+        // A dismiss for an id the host does not hold must not clear anything (spoofed-dismiss safety).
+        val state = held(open("m1"))
+        assertSame(state, state.reduce(ModalEvent.Dismissed(modalId = "m2", outcome = "reject_once", source = "remote")))
+        assertSame(empty, empty.reduce(ModalEvent.Dismissed("m1", "reject_once", "remote")))
     }
 
     @Test
-    fun dismissFromHiddenOrDismissed_isNoOp() {
-        val fromHidden = ModalUiState.Hidden.reduce(ModalEvent.Dismissed("m1", "reject_once", "remote"))
-        assertEquals(ModalUiState.Hidden, fromHidden)
+    fun aSecondChatsPrompt_isHeldBesideTheFirst() {
+        val next = held(open("a1", "A")).reduce(shown("b1", "B"))
 
-        val alreadyDismissed = ModalUiState.Dismissed("m1", "reject_once", "remote")
-        val next = alreadyDismissed.reduce(ModalEvent.Dismissed("m2", "allow_once", "local"))
-        assertEquals(alreadyDismissed, next)
+        assertEquals(listOf("a1", "b1"), next.outstanding.map { it.modalId })
+        assertEquals("a1", (next.scopedTo("A") as ModalUiState.Open).modalId)
+        assertEquals("b1", (next.scopedTo("B") as ModalUiState.Open).modalId)
     }
 
     @Test
-    fun shownSupersedesOpen_unconditionallyLastShownWins() {
-        val next = open(modalId = "m1").reduce(ModalEvent.Shown("m2", "permission", "t", "p", emptyList(), "d"))
-        assertEquals("m2", (next as ModalUiState.Open).modalId)
+    fun dismissingOneChatsPrompt_leavesTheOther() {
+        val next = held(open("a1", "A"), open("b1", "B")).reduce(ModalEvent.Dismissed("a1", "allow_once", "local"))
+
+        assertEquals(ModalUiState.Dismissed("a1", "allow_once", "local", "A"), next.scopedTo("A"))
+        assertEquals("b1", (next.scopedTo("B") as ModalUiState.Open).modalId)
     }
 
     @Test
-    fun repeatShownWithSameModalId_replacesOpenInPlace() {
-        // A reconnect re-sends the outstanding modal_shown with the same modal_id and conversation (#816).
-        val resent = ModalEvent.Shown("m1", "permission", "Run command?", "do it now", emptyList(), "d", "c1")
-        val next = open(modalId = "m1").reduce(resent)
+    fun repeatShownForAHeldId_replacesThatPromptInPlace() {
+        // A re-send keeps the prompt's position, so a chat keeps showing the prompt it showed.
+        val resent = shown("a1", "A").copy(prompt = "do it now")
+        val next = held(open("a1", "A"), open("b1", "B")).reduce(resent)
 
-        assertEquals(
-            ModalUiState.Open("m1", "permission", "Run command?", "do it now", emptyList(), "d", "c1"),
-            next,
-        )
+        assertEquals(listOf("a1", "b1"), next.outstanding.map { it.modalId })
+        assertEquals("do it now", next.outstanding.first().prompt)
+    }
+
+    @Test
+    fun aDismissedId_isNotShownAgainOnTheSameFold() {
+        val dismissed = held(open("a1", "A")).reduce(ModalEvent.Dismissed("a1", "allow_once", "remote"))
+
+        val next = dismissed.reduce(shown("a1", "A"))
+
+        assertSame(dismissed, next)
+        assertEquals(ModalUiState.Dismissed("a1", "allow_once", "remote", "A"), next.scopedTo("A"))
+    }
+
+    @Test
+    fun aChatShowsItsFirstOutstandingPrompt_thenItsLatestDismissal() {
+        val state = held(open("a1", "A"), open("a2", "A"))
+        assertEquals("a1", (state.scopedTo("A") as ModalUiState.Open).modalId)
+
+        val afterFirst = state.reduce(ModalEvent.Dismissed("a1", "allow_once", "local"))
+        assertEquals("a2", (afterFirst.scopedTo("A") as ModalUiState.Open).modalId)
+
+        val afterBoth = afterFirst.reduce(ModalEvent.Dismissed("a2", "reject_once", "timeout"))
+        assertEquals(ModalUiState.Dismissed("a2", "reject_once", "timeout", "A"), afterBoth.scopedTo("A"))
+        assertEquals(ModalUiState.Hidden, afterBoth.scopedTo("B"))
+    }
+
+    @Test
+    fun hostScopedTo_blankConversation_rendersInNoThread() {
+        val state = held(open("m1", ""))
+        assertEquals(ModalUiState.Hidden, state.scopedTo(""))
+        assertEquals(ModalUiState.Hidden, state.scopedTo("c1"))
+        assertEquals(ModalUiState.Hidden, held(open("m1")).scopedTo(""))
     }
 
     @Test
     fun scopedTo_keepsOpenAndDismissedOnlyForTheirOwnConversation() {
-        val open = open(modalId = "m1")
+        val open = open("m1")
         val dismissed = ModalUiState.Dismissed("m1", "reject_once", "remote", conversationId = "c1")
 
         assertEquals(open, open.scopedTo("c1"))
@@ -153,14 +185,32 @@ class ModalUiStateTest {
     @Test
     fun scopedTo_blankConversationOnEitherSide_rendersInNoThread() {
         // An unscoped prompt (no conversation_id on the wire) belongs to no thread, never to every thread.
-        val unscoped = open(modalId = "m1").copy(conversationId = "")
+        val unscoped = open("m1").copy(conversationId = "")
         assertEquals(ModalUiState.Hidden, unscoped.scopedTo(""))
         assertEquals(ModalUiState.Hidden, unscoped.scopedTo("c1"))
         assertEquals(ModalUiState.Hidden, ModalUiState.Dismissed("m1", "o", "remote").scopedTo(""))
-        assertEquals(ModalUiState.Hidden, open(modalId = "m1").scopedTo(""))
+        assertEquals(ModalUiState.Hidden, open("m1").scopedTo(""))
     }
 
-    private fun open(modalId: String): ModalUiState.Open =
+    private fun held(vararg prompts: ModalUiState.Open) = HostModalState(outstanding = prompts.toList())
+
+    private fun shown(
+        modalId: String,
+        conversationId: String,
+    ) = ModalEvent.Shown(
+        modalId = modalId,
+        modalClass = "permission",
+        title = "Run command?",
+        prompt = "do the thing",
+        options = listOf(ModalOption("allow_once", "Allow once"), ModalOption("reject_once", "Reject once")),
+        defaultOptionId = "reject_once",
+        conversationId = conversationId,
+    )
+
+    private fun open(
+        modalId: String,
+        conversationId: String = "c1",
+    ): ModalUiState.Open =
         ModalUiState.Open(
             modalId = modalId,
             modalClass = "permission",
@@ -168,6 +218,6 @@ class ModalUiStateTest {
             prompt = "do the thing",
             options = listOf(ModalOption("allow_once", "Allow once"), ModalOption("reject_once", "Reject once")),
             defaultOptionId = "reject_once",
-            conversationId = "c1",
+            conversationId = conversationId,
         )
 }

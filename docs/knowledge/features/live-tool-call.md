@@ -59,10 +59,21 @@ new exported type in the slice. See [Data model](data-model.md).
 | **`tool_progress`** ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) | `withToolProgress` | update the matching **`Running`** row in place: `elapsedSeconds = elapsedSeconds` verbatim (zero/negative/backwards kept as sent); **no matching row, or the row is no longer `Running` → no-op** — a heartbeat never adds a row, reopens a closed call, or overwrites its outcome |
 
 `failed ⟺ ToolResult.isError == true`; `done` otherwise; a row already `Denied` stays `Denied`
-regardless of which `tool_result` arrives afterwards. Correlation is by **`toolUseId`, not by
-position** — and the match is namespaced `id == toolUseId && role == Role.Tool` so a server-supplied
-`toolUseId` can never collide with a real `message_id` and clobber a message. The `toolUseId` is the
-row's `Message.id`.
+regardless of which `tool_result` arrives afterwards. Correlation for `tool_result` / `tool_denied` /
+`tool_progress` is by **`toolUseId`, not by position** — and the match is namespaced
+`id == toolUseId && role == Role.Tool` so a server-supplied `toolUseId` can never collide with a real
+`message_id` and clobber a message. The `toolUseId` is the row's `Message.id`.
+
+**`tool_use`'s own repeat check is id-only, not role-namespaced
+([#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350)).** `withToolUse`'s "if absent" guard
+checks whether *any* `Message` — tool, user or assistant — already carries this `toolUseId`, not only an
+existing `Role.Tool` row. This is the mirror image of the segment-key guard
+[Remote conversation repository § Assistant reply segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+needed once a turn's text can be keyed `"<turnId>#<seq>"`: a hostile or buggy daemon could otherwise send a
+`tool_use` whose id equals an assistant segment's key (or another message's id), and the thread's `"msg:<id>"`
+`LazyColumn` key would collide. Widening the check costs nothing on the honest path — an id a `tool_use`
+would otherwise legitimately reuse never also names a message or segment — and only ever suppresses a row,
+never completes or reopens one.
 
 ### First result wins and first denial wins (#1316)
 
@@ -220,6 +231,16 @@ crash, a duplicate row, or an orphan:
 | `tool_progress` naming no known row, or a row that is `Done`/`Failed`/`Denied` ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) | `withToolProgress` finds no matching `Running` row → **no-op**, no row added, no outcome touched |
 | Malformed `tool_progress` payload ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) | dropped at `applyToolProgress`'s own `catch (IllegalArgumentException)` (live lane) or the replay lane's existing `try` — that one envelope/entry is dropped, the collector survives |
 | `tool_progress` for a `conversation_id` mobile holds no rows for ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) | `applyToolProgress` returns the map **unchanged**, the same no-empty-slice guard as `tool_denied` |
+
+**Text after a tool row opens a new reply bubble below it
+([#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350)).** Before #1350, an `assistant_delta`
+always extended the one assistant row of its turn wherever that row sat, so a turn that wrote text, ran a
+tool, then wrote more text drew one bubble above the tool row. `HistoryPageReducer.withAssistantDelta` now
+extends the thread's **last** row only when that row is already an assistant segment of the same turn — a
+tool row (or any other row) in between makes the next delta open a new segment at the end, so the second
+piece of text draws **below** the tool row this call opened. See
+[Streaming assistant turns § Finished rows are now per-segment](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
+and [Remote conversation repository § Assistant reply segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
 
 ## Chronological interleave (AC #4) — why it's free
 
