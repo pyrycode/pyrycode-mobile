@@ -58,3 +58,11 @@ Driven by the verifier's review on PR #1542.
 - **#1541's blockers.** Rows covered by #1493, #1495 and #1500 link them, since their verdicts sit in `thread/index.md` but the issues are open. The Codex agent switch row is `not shipped` and does not count toward parity while #1118 is open. The verdict counts only the open issues that block #1541.
 - **#1539's frames.** The Figma section `696:4676` was re-read after #1539's design decision, so its rows become `frame only` or `no separate frame`. The launch splash links #1545, which owns its mismatch, and #1545 was added as a blocker of #1541.
 - **State and legend.** Issue states are re-recorded at `main` `832f647e`. The status legend now defines every value a row uses. The coverage check adds the two preview-only modals, the empty channel list and the platform permission dialogs.
+
+### 2026-10-02 — second verifier rework
+
+Driven by the verifier's second review on PR #1542.
+
+- **#1541 retired.** Juhana closed #1541 as not planned: no app-wide re-verification follows. The verdict stays "parity not reached", records #1541's closure as an owner-decided deviation from the re-verification criterion, and names the open issues as the only route to the remaining captures. New contract: the verdict counts the open linked issues itself rather than through #1541's blockers.
+- **Merged indexes re-read.** After merging `main` at `cb21e634`, the prompts rows follow the merged `prompts/index.md`: #1485 stays linked, #1501 (and #1484 where the index says so) are recorded as fixed, and the compact rows link #1543's redraw. Issue states are re-recorded at `cb21e634`; 23 counted issues are open.
+- **Routing and rows.** The Launcher icon section `703:5001` is routed to #1546. The compact thread row links #1519 beside its family root #1499 and names its owners. The waiting-marks rows use the defined `audited, unverified` status. The Markdown reader table adds the linked-reader entry point `Routes.MARKDOWN_LINK`.

@@ -116,11 +116,11 @@ python3 scripts/design-compare.py <state>.png figma-<node>.png <folder>/<state>
 Every screen, modal, sheet, menu and material UI state reachable from the `MainActivity` routes and the
 `ThreadScreen` overlays, joined from the four audit indexes and checked against source and Figma.
 
-- **App commit:** `main` at `832f647e`. No code or test source changed for this inventory; the audits' own
+- **App commit:** `main` at `cb21e634`. No code or test source changed for this inventory; the audits' own
   commits are in their indexes.
 - **Figma inspection:** the Mobile page `0:1` and the Components page `347:5692`, read with `get_metadata` on
   2026-10-02, and the Mobile page's section Reachable states · #1539 `696:4676` re-read the same day after it
-  was drawn.
+  was drawn. The audit rows were re-read against the indexes as merged at `cb21e634`.
 - **Status:** each row takes one of these values.
   - `audited, match` and `audited, mismatch` have a verdict in the linked index section.
   - `audited, unverified` was in an audit's scope, but the capture did not reach the state; its linked issue
@@ -134,9 +134,9 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
   - `out of scope` is drawn by the platform, not the app.
   - `not shipped` is a frame for a feature the app does not have; it does not count toward parity.
   - `retired` is a frame replaced by a later one.
-- **Linked issues** are the routed mismatches and gaps; each one's state at `832f647e` is under
+- **Linked issues** are the routed mismatches and gaps; each one's state at `cb21e634` is under
   [Linked issues](#linked-issues). An `audited` row whose only issues are closed matched, or was fixed after
-  its capture; #1541 re-checks the fixed ones. When an issue closed as a family root, its open split children
+  its capture; no app-wide re-check follows (see [Verdict](#verdict)). When an issue closed as a family root, its open split children
   are linked on the same row.
 
 ### Onboarding
@@ -169,7 +169,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Collapsed folders and hosts | `15:8` | audited, unverified | › Channel List | #738 | #1486, #1521 |
 | Conversation status dot: Waiting, Running, Unread | `15:8` | audited, unverified | › Channel List (Colour) | #738 | #1486, #1524 |
 | Disconnected, re-pair-required and update-required host rows | `672:3493` | frame only | `list/index.md` › Gaps | #840, #1336, #842, #1009 | #1504 |
-| Waiting marks while prompts wait | `640:2440` | frame only | `prompts/index.md` › Switch chats while prompts wait | #1338 | #1507 |
+| Waiting marks while prompts wait | `640:2440` | audited, unverified | `prompts/index.md` › Switch chats while prompts wait (`switch-list.png` captured, marks unjudged) | #1338 | #1507 |
 | Create-chat failure snackbar | none | gap | #1504's comment | #958 | #1504 |
 
 ### Thread, composer and footer
@@ -186,7 +186,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Actions menu | `675:5938` | audited, match | › Actions menu | #884 | #1500 |
 | Keyboard open | `675:6160` | audited, match | › Keyboard open | #1149 | #1500 |
 | Keyboard open, compact 150 % | `676:3981` | audited, mismatch | › Keyboard open / Compact 150% | #1149, #1347, #1412 | #1485, #1500 |
-| Compact thread, notices, menus, task panel, Run configuration | none at 320x700 | audited for clipping | › Compact, keyboard and menus | as above | #1485, #1499, #1496 |
+| Compact thread, notices, menus, task panel, Run configuration | none at 320x700 | audited for clipping | › Compact, keyboard and menus | #1149, #1347, #1412 (compact layout); #1199, #884 (menus); #1295 (task panel); #1195 (Run configuration); #1002 (usage-limit pill) | #1485, #1499 (family root), #1519, #1496 |
 | Status bar icons | none | audited, match | › Status bar | #1510 | #1510 |
 | Turn outcome pill and stopped-turn row | `685:3992`, `620:1574` | frame only | `thread/index.md` › Gaps | #1356, #897 | #1529 |
 | Slash-command type-ahead | `685:4232` | frame only | › Gaps | #885 | #1529 |
@@ -230,6 +230,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
 | Markdown Reader | `553:2574` | audited, mismatch | `thread/index.md` › Markdown Reader | #1291 | #1533 |
+| Linked Markdown reader (`Routes.MARKDOWN_LINK`, `LinkedMarkdownReaderDestination`, opened by `ThreadNavigation.OpenLinkedMarkdown`) | `553:2574` | audited, mismatch | as Markdown Reader: it draws the same `MarkdownReaderScreen` | #1291 | #1533 |
 | Reader notices (save failed, saved, open failed) | `696:5101` | frame only | not audited | #1291 | #1539 |
 | Reader overflow menu | `675:5883` (decision on #1539) | no separate frame | not audited | #1291 | #1539 |
 
@@ -286,16 +287,16 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
-| Questions · Unanswered | `636:3279` | audited, mismatch | `prompts/index.md` › Questions · Unanswered | #1305, #1299 | #1501, #1485 |
-| Questions · Answers selected | `636:3540` | audited, mismatch | › Questions · Answers selected | #1305, #1299 | #1501, #1485 |
-| Questions · Other and keyboard | `636:3803` | audited, mismatch | › Questions · Other and keyboard | #1305 | #1501, #1485 |
-| Questions · Compact 150 % | `636:4066` | audited, mismatch | › Questions · Compact text at 150% | #1305 | #1501, #1485 |
-| Permission · Safe default | `639:2242` | audited, mismatch | › Permission · Safe default | #1306, #1300, #1483 | #1509, #1501, #1485 |
-| Permission · Session grant offered, selected | `639:2451`, `639:2666` | audited, mismatch | › Permission · Session grant offered; › … selected | #1306, #818 | #1509, #1501, #1485 |
-| Permission · Confirm Allow once | `639:2882` | audited, mismatch | › Permission · Confirm Allow once (armed) | #1306, #451 | #1509, #1501, #1485 |
-| Trust · Safe default | `639:3099` | audited, mismatch | › Trust · Safe default | #1306, #1483 | #1509, #1501, #1485 |
-| Permission · Compact 150 % | `639:3308` | audited, mismatch | › Permission · Compact text at 150% | #1306, #1483 | #1501, #1485 |
-| Switch chats while prompts wait | `640:2437` | audited, unverified (the list's waiting marks) | › Switch chats while prompts wait | #1305, #1306, #1337, #1338 | #1507 |
+| Questions · Unanswered | `636:3279` | audited, mismatch | `prompts/index.md` › Questions · Unanswered | #1305, #1299 | #1485; #1501 and #1484 fixed |
+| Questions · Answers selected | `636:3540` | audited, mismatch | › Questions · Answers selected | #1305, #1299 | #1485; #1501 fixed |
+| Questions · Other and keyboard | `636:3803` | audited, mismatch | › Questions · Other and keyboard | #1305 | #1485; #1501 and #1484 fixed |
+| Questions · Compact 150 % | `636:4066` | audited, mismatch | › Questions · Compact text at 150% | #1305 | #1485; #1543 redrew the frame, #1501 fixed |
+| Permission · Safe default | `639:2242` | audited, mismatch | › Permission · Safe default | #1306, #1300, #1483 | #1509, #1485; #1501 fixed |
+| Permission · Session grant offered, selected | `639:2451`, `639:2666` | audited, mismatch | › Permission · Session grant offered; › … selected | #1306, #818, #1483 | #1509, #1485; #1501 fixed |
+| Permission · Confirm Allow once | `639:2882` | audited, mismatch | › Permission · Confirm Allow once (armed) | #1306, #451, #1483 | #1509, #1485; #1501 fixed |
+| Trust · Safe default | `639:3099` | audited, mismatch | › Trust · Safe default | #1306, #1483 | #1509, #1485; #1501 fixed |
+| Permission · Compact 150 % | `639:3308` | audited, mismatch | › Permission · Compact text at 150% | #1306, #1483 | #1485; #1543 redrew the frame, #1501 fixed |
+| Switch chats while prompts wait | `640:2437` | audited, unverified | › Switch chats while prompts wait (the list's waiting marks unjudged) | #1305, #1306, #1337, #1338 | #1507 |
 | Refused answer, send failure, prompts while disconnected | `668:3054`, `668:3094`, `668:3169` | frame only | `prompts/index.md` › Gaps | #1340, #1305, #1321 | #1502 |
 
 ## Coverage check (#1434)
@@ -318,7 +319,7 @@ those rows are now `frame only` or `no separate frame`, and #1539 owns their cap
 **Outside the inventory.** Platform-drawn surfaces are not the app's to match: the system file picker, the
 camera permission dialog the scanner requests, and the notifications permission dialog `MainActivity` requests.
 The Mobile page's section Launcher icon `703:5001`, drawn after this inspection, is the home-screen icon rather
-than a surface reachable from the `MainActivity` routes; #1541's re-read of frames added since routes it.
+than a surface reachable from the `MainActivity` routes; #1546 owns it.
 
 **Unreachable in source.** No new defect; listed so a later inventory does not count them as gaps.
 
@@ -341,14 +342,15 @@ reachable, so none links an issue.
 
 ## Linked issues
 
-State of every issue linked above, read with `gh issue view` against `main` at `832f647e` on 2026-10-02.
+State of every issue linked above, read with `gh issue view` against `main` at `cb21e634` on 2026-10-02.
 
 | Issue | State | Subject |
 |---|---|---|
 | #1118 | open | Codex agent switch (frames `578:3248`, `578:3442`); halted, not counted toward parity |
 | #1461 | closed | Pairing — Connecting loading button |
 | #1462 | closed | Pair Screen glow |
-| #1485 | open | composer footer band and compact context label |
+| #1484 | closed | question actions under the footer, disabled Continue |
+| #1485 | closed | composer footer band and compact context label |
 | #1486 | closed | Channel List against `15:8` (family root; split into #1521 to #1525) |
 | #1487 | open | Archive default tab, tapped fill, row pitch, large-text wrap |
 | #1488 | open | Channel Info against `668:5355` and `668:5460` |
@@ -361,7 +363,7 @@ State of every issue linked above, read with `gh issue view` against `main` at `
 | #1498 | closed | "Workspace changed" delimiter |
 | #1499 | closed | Offline pill (family root; the usage-limit pill split into #1519) |
 | #1500 | open | capture the Thread states frames `674:5852`; verdicts already in `thread/index.md` |
-| #1501 | open | prompt spacing and button heights |
+| #1501 | closed | prompt spacing and button heights |
 | #1502 | open | capture the prompt edge states `668:3051` |
 | #1503 | open | Settings rows spacing |
 | #1504 | open | capture the List states `670:5299` and list snackbars |
@@ -383,11 +385,20 @@ State of every issue linked above, read with `gh issue view` against `main` at `
 | #1534 | closed | background-task panel spacing |
 | #1539 | open | frames or decisions for the uncovered states (filed by #1434); capture of `696:4676` |
 | #1540 | open | capture the refusal row's component states (filed by #1434) |
+| #1541 | closed, not planned | re-verify app-wide parity (filed by #1434); retired by the owner, see [Verdict](#verdict) |
+| #1543 | closed | redraw the compact prompt frames at Android's 150 % |
 | #1545 | open | launch splash against `701:5001` |
+| #1546 | open | launcher icon against `703:5001` |
 
 ## Verdict
 
-**Parity not reached.** 24 linked issues that count toward parity are open at `832f647e`. #1118 is
-also open, but its Codex agent switch frames draw a feature the app has not shipped, so they do not count
-until #1118 ships. #1541 re-verifies app-wide parity; it is blocked by each of the 24 open issues and by
-#1434, which lands this README.
+**Parity not reached.** 23 linked issues that count toward parity are open at `cb21e634`: #1487, #1488,
+#1489, #1493, #1494, #1495, #1497, #1500, #1502, #1503, #1504, #1506, #1507, #1512, #1513, #1519, #1523,
+#1525, #1529, #1539, #1540, #1545 and #1546. #1118 is also open, but its Codex agent switch frames draw a
+feature the app has not shipped, so they do not count until #1118 ships.
+
+**No re-verification follows.** #1434 filed #1541 to re-verify parity once these issues close, as its
+acceptance criteria asked. Juhana closed #1541 as not planned on 2026-10-02: Mobile is done when it runs on
+Juhana's phone through Play internal testing, and no new design audit rounds start. The open issues above drain on
+their own, each through its own capture and comparison; with no app-wide re-check, they are the only route to
+the `frame only` captures. This is an owner-decided deviation from the ticket's re-verification criterion.
