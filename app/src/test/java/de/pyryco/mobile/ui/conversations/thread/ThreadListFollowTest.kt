@@ -15,7 +15,15 @@ class ThreadListFollowTest {
         offset: Int = 0,
         content: Any? = "msg:30",
         scrolling: Boolean = false,
-    ) = ListFrame(anchorKey = key, anchorIndex = index, anchorOffset = offset, content = content, scrolling = scrolling)
+        promptRows: Int = 0,
+    ) = ListFrame(
+        anchorKey = key,
+        anchorIndex = index,
+        anchorOffset = offset,
+        content = content,
+        scrolling = scrolling,
+        promptRows = promptRows,
+    )
 
     private fun step(
         previous: ListFrame?,
@@ -107,6 +115,23 @@ class ThreadListFollowTest {
         assertEquals(FollowStep(following = false, pin = false), step(refused, refused.copy(scrolling = false), following = false))
         val atEnd = frame(scrolling = true)
         assertEquals(FollowStep(following = true, pin = false), step(atEnd, atEnd.copy(scrolling = false), following = true))
+    }
+
+    @Test
+    fun aPromptLeavingFromUnderTheReader_followsAndPins() {
+        // The reader rests on the card with Cancel out of view; the card leaves and index 1 names an older row.
+        val onCard = frame(key = "permission-card:m1", index = 1, promptRows = 3)
+        val left = frame(key = "msg:29", index = 1, content = "msg:30")
+        assertEquals(FollowStep(following = true, pin = true), step(onCard, left, following = false))
+        // A frame whose composition dropped the prompt before its layout did pins as well.
+        assertEquals(FollowStep(following = true, pin = true), step(onCard, onCard.copy(promptRows = 0), following = false))
+    }
+
+    @Test
+    fun aPromptLeavingWhileTheAnchorIsAMessageRow_changesNothing() {
+        val reading = frame(key = "msg:20", index = 13, offset = 40, promptRows = 3)
+        val left = reading.copy(anchorIndex = 10, promptRows = 0)
+        assertEquals(FollowStep(following = false, pin = false), step(reading, left, following = false))
     }
 
     private companion object {
