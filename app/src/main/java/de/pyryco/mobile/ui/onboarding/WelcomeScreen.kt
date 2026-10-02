@@ -1,8 +1,6 @@
 package de.pyryco.mobile.ui.onboarding
 
 import android.content.res.Configuration
-import android.graphics.RadialGradient
-import android.graphics.Shader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,12 +28,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.graphics.Matrix
-import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.shadow.Shadow
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.vector.VectorPath
@@ -62,8 +57,6 @@ fun WelcomeScreen(
     onSetup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val glowColor = MaterialTheme.colorScheme.primaryContainer
-    val glowEdge = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0f)
     val logo = ImageVector.vectorResource(R.drawable.ic_pyry_logo)
     val logoShape =
         remember(logo) {
@@ -79,40 +72,7 @@ fun WelcomeScreen(
             modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.surface)
-                .drawWithCache {
-                    val xScale = size.width / 412f
-                    val yScale = size.height / 892f
-                    // Welcome's Figma radial transform retains both the ellipse and its tilt.
-                    val shader =
-                        RadialGradient(
-                            0f,
-                            0f,
-                            10f,
-                            intArrayOf(glowColor.toArgb(), glowEdge.toArgb()),
-                            floatArrayOf(0f, 0.76012f),
-                            Shader.TileMode.CLAMP,
-                        ).apply {
-                            setLocalMatrix(
-                                android.graphics.Matrix().apply {
-                                    setValues(
-                                        floatArrayOf(
-                                            43.8f * xScale,
-                                            13.523f * xScale,
-                                            196f * xScale,
-                                            -11.95f * yScale,
-                                            49.567f * yScale,
-                                            265f * yScale,
-                                            0f,
-                                            0f,
-                                            1f,
-                                        ),
-                                    )
-                                },
-                            )
-                        }
-                    val brush = ShaderBrush(shader)
-                    onDrawBehind { drawRect(brush) }
-                },
+                .onboardingGlow(),
     ) {
         // Figma and Android wrap this 320 dp measure at different words with the same bodyLarge style.
         val useReferenceBodyWrap = maxWidth >= 384.dp && LocalDensity.current.fontScale <= 1f

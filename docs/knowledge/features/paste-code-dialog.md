@@ -23,7 +23,17 @@ Cancel and the toolbar back arrow share the Android Back event.
 The footer opens `https://github.com/pyrycode/pyrycode-mobile`.
 
 The 412×892 mobile design uses theme colors and typography, an atmospheric glow,
-the supplied 24 dp back-arrow asset and bottom-aligned 56 dp actions. Each filled
+the supplied 24 dp back-arrow asset and bottom-aligned 56 dp actions. Since #1462
+the glow is the shared `Modifier.onboardingGlow()` from
+[Welcome](welcome-screen.md#how-it-works) applied to the full-screen outer
+`Column`, right after its `surface` background and before `systemBarsPadding()` —
+the same Figma `6:32` transform scaled to the window, covering the header too.
+Before #1462 this screen drew its own `drawBehind` radial gradient scaled
+`scaleY = 1.5f` behind the body only, which left dark bands down both side edges
+between the header and the Pair button; a vertically scaled ellipse does not
+reach a full-width frame's corners the way the shared affine transform does.
+`ScannerScreen`'s `Confirming` phase replaces this column entirely and is
+unaffected. Each filled
 field keeps its label at the top even when empty, with the draft below it and a
 separate trailing clear control. A controlled `BasicTextField` puts label and text
 inside one full-height editable surface; placing only the text line there made
@@ -287,6 +297,14 @@ above the keyboard. Focus or text input alone can pass with no keyboard; see
 of the Compose root also omits the keyboard window; the visible-IME captures use
 `UiAutomation.takeScreenshot()`.
 
+`PairCodeScreenGlowTest` (Robolectric, `app/src/sharedTest`, `@GraphicsMode(NATIVE)`,
+dark theme, #1462) draws the root view to a bitmap in first-pair, re-pair
+(`targetName`) and invalid-code states: both side edges at 30% height and the
+header's right edge are bluer than plain surface (no dark bands, glow reaches
+the header), and side-edge pixels in the header band and mid-body are
+pixel-identical to `WelcomeScreen` at the same window size — proving the shared
+modifier, not a separate reimplementation, produced the match.
+
 `PairCodeScreenInsetsTest` (Robolectric, `app/src/sharedTest`) puts the host
 activity edge to edge and applies fixed nonzero status and navigation insets
 with `ViewCompat.dispatchApplyWindowInsets`, since Robolectric reports none on
@@ -326,7 +344,7 @@ remains [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676)'s scope.
 
 - [Pair-with-code design and revisions](../../specs/architecture/639-pair-with-code.md);
   [system-bar insets and the 48 dp Back target](../../specs/architecture/1141-pair-code-system-bar-insets.md)
-  (#1141)
+  (#1141); [full-screen Figma glow](../../specs/architecture/1462-pair-code-full-screen-glow.md) (#1462)
 - [Navigation](navigation.md) § [Insets](navigation.md#configuration), [scanner](scanner-screen.md) and
   [paired-server collection](paired-server-store.md)
 - [Legacy dialog history](../codebase/501.md): store-free callback contract retained

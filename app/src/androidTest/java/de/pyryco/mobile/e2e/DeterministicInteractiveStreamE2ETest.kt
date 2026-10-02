@@ -74,6 +74,8 @@ import org.koin.core.context.GlobalContext
  *    writes the original model, the button goes, and a fresh settings reading names that model.
  *  - `mcp-failed` (#1457) — fakeclaude's first `mcp_status` answer names a `failed` server; the thread's
  *    Error pill shows, and its tap opens Channel info on the MCP servers section.
+ *  - `context-overflow` (#1473) — the first turn ends `is_error` / `prompt_too_long`; the status area offers
+ *    Compact, whose `/compact` reaches the daemon's child and comes back as fakeclaude's echo.
  *
  * It is a thin variant of [InteractiveStreamE2ETest] (rung 3). **One** step differs: instead of tapping
  * the host row's add control (which mints a *fresh* per-conversation claude session that `fakeclaude` —
@@ -153,6 +155,12 @@ class DeterministicInteractiveStreamE2ETest {
             .targetContext
             .getString(R.string.thread_mcp_server_failed, MCP_NAME_CUT)
             .substringBefore(MCP_NAME_CUT)
+
+    private val contextNotice: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_recovery_context)
+
+    private val compactPill: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_recovery_compact)
 
     private val runningToolElapsedLabel: String =
         InstrumentationRegistry
@@ -261,6 +269,36 @@ class DeterministicInteractiveStreamE2ETest {
             .onFirst()
             .performScrollTo()
             .assertIsDisplayed()
+    }
+
+    /**
+     * `context-overflow` scenario (#1473) — the fixture's `result` is `is_error` with `terminal_reason`
+     * `prompt_too_long`, so the status area shows the context notice and Compact. The tap sends `/compact`, which
+     * the daemon hands its child as an ordinary message, and fakeclaude answers any later turn by echoing the
+     * prompt. The phone's sent row and that echo both read exactly `/compact`, with no role tag between them,
+     * so the second such node is the daemon's answer. The send clears the notice.
+     */
+    @Test
+    fun interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+
+        val compact = hasContentDescription(compactPill) and hasClickAction()
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(contextNotice)).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodes(compact).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(COMPACT_COMMAND).assertCountEquals(0)
+        composeTestRule
+            .onAllNodes(compact)
+            .onFirst()
+            .assertIsDisplayed()
+            .performClick()
+
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(COMPACT_COMMAND).fetchSemanticsNodes().size >= 2
+        }
+        composeTestRule.onAllNodes(hasContentDescription(contextNotice)).assertCountEquals(0)
     }
 
     /** The real daemon-absent state keeps Retry visible until the pill restores this seeded thread (#1286). */
@@ -776,6 +814,9 @@ class DeterministicInteractiveStreamE2ETest {
 
         /** `mcp-failed.jsonl`'s reply text (#1457). */
         const val MCP_FAILED_REPLY = "mcp checked"
+
+        /** `ComposerAction.CompactSession`'s command, which fakeclaude echoes back verbatim (#1473). */
+        const val COMPACT_COMMAND = "/compact"
 
         /** Stands in for the server name so [mcpFailedPrefix] can cut the format at it. */
         const val MCP_NAME_CUT = "\u0000"

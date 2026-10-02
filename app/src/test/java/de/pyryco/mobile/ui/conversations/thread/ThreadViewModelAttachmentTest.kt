@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -59,6 +60,7 @@ class ThreadViewModelAttachmentTest {
         private val uploadOutcome: (filename: String) -> AttachmentUploadResult = { AttachmentUploadResult.Stored("id-$it") },
         private val sendFailure: Throwable? = null,
         private val whileSending: () -> Unit = {},
+        private val neverReplies: Boolean = false,
         private val beforeUpload: suspend () -> Unit = {},
         private val duringUpload: suspend (filename: String, onProgress: (Int, Int) -> Unit) -> Unit = { _, _ -> },
         private val delegate: FakeConversationRepository = FakeConversationRepository(),
@@ -97,6 +99,7 @@ class ThreadViewModelAttachmentTest {
             sendFailure?.let { throw it }
             sends += text to attachments.map { it.attachmentId }
             sentAttachments += attachments
+            if (neverReplies) awaitCancellation()
             return delegate.sendMessage(conversationId, text)
         }
     }
@@ -309,26 +312,57 @@ class ThreadViewModelAttachmentTest {
         }
 
     @Test
-    fun aThrownSend_keepsTheTextAndTheAcknowledgedIds() =
+    fun aThrownSend_afterTheUploads_restoresNeitherTheTextNorTheEntries() =
         runTest {
+            // #1355 AC #3: once the uploads succeed the composer clears, and a refused send does not undo it.
             val store = ComposerDraftStore()
-            val reader = FakeReader()
             val repository = RecordingRepository(sendFailure = IllegalStateException("not connected"))
-            val vm = vm(repository, store, reader)
-            vm.onDraftChange("keep me")
+            val vm = vm(repository, store)
+            vm.onDraftChange("gone")
             vm.attach("a")
 
-            vm.sendMessage("keep me")
+            vm.sendMessage("gone")
             advanceUntilIdle()
 
-            assertEquals("keep me", vm.draft.value)
-            assertEquals(listOf("id-a"), vm.pendingAttachments.value.map { it.attachmentId })
+            assertEquals("", vm.draft.value)
+            assertTrue(vm.pendingAttachments.value.isEmpty())
+        }
 
-            // A retry reads nothing again: the id is already held.
-            reader.reads.clear()
-            vm.sendMessage("keep me")
+    @Test
+    fun theUploadsSucceeding_clearsTheComposer_andSendsTheTrimmedText_beforeAnyReply() =
+        runTest {
+            // #1355 AC #4: the send never completes, yet the text and the entries are already gone.
+            val store = ComposerDraftStore()
+            val repository = RecordingRepository(neverReplies = true)
+            val vm = vm(repository, store)
+            vm.onDraftChange("  look \n")
+            vm.attach("a")
+
+            vm.sendMessage("  look \n")
             advanceUntilIdle()
-            assertTrue(reader.reads.isEmpty())
+
+            assertEquals(listOf("look" to listOf("id-a")), repository.sends)
+            assertEquals("", vm.draft.value)
+            assertTrue(vm.pendingAttachments.value.isEmpty())
+        }
+
+    @Test
+    fun textTypedDuringTheUploads_survivesTheClear() =
+        runTest {
+            // The clear compares the store against the text as typed, untrimmed, so an edit made while
+            // the files upload is not swallowed.
+            val store = ComposerDraftStore()
+            var vm: ThreadViewModel? = null
+            val repository = RecordingRepository(beforeUpload = { vm?.onDraftChange(" first \nand more") })
+            vm = vm(repository, store)
+            vm.onDraftChange(" first ")
+            vm.attach("a")
+
+            vm.sendMessage(" first ")
+            advanceUntilIdle()
+
+            assertEquals(listOf("first" to listOf("id-a")), repository.sends)
+            assertEquals(" first \nand more", vm.draft.value)
         }
 
     @Test
@@ -442,7 +476,8 @@ class ThreadViewModelAttachmentTest {
         runTest {
             val refused = RecordingRepository(uploadOutcome = { AttachmentUploadResult.ReconnectRequired })
             val thrown = RecordingRepository(sendFailure = IllegalStateException("not connected"))
-            for (repository in listOf(refused, thrown)) {
+            // A failed upload keeps the entry; a thrown send has already cleared it with the text (#1355).
+            for ((repository, remaining) in listOf(refused to listOf("a"), thrown to emptyList())) {
                 val vm = vm(repository, ComposerDraftStore())
                 vm.attach("a")
 
@@ -450,7 +485,7 @@ class ThreadViewModelAttachmentTest {
                 advanceUntilIdle()
 
                 assertFalse(vm.attachmentsSending.value)
-                assertEquals(listOf("a"), vm.pendingAttachments.value.map { it.displayName })
+                assertEquals(remaining, vm.pendingAttachments.value.map { it.displayName })
             }
         }
 

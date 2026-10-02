@@ -359,7 +359,7 @@ class RemoteConversationRepositoryAttachmentTest {
     // ---- naming uploaded attachments on a sent message (#830) -----------------------------------
 
     @Test
-    fun sendWithIds_namesEachOnceInCallerOrder_andTheAckAddsTheMessageLikeATextOnlySend() =
+    fun sendWithIds_namesEachOnceInCallerOrder_andDrawsTheEchoBeforeTheAckLikeATextOnlySend() =
         runTest {
             val pump = FakeSessionPump()
             val repo = repo(pump)
@@ -373,8 +373,10 @@ class RemoteConversationRepositoryAttachmentTest {
             val payload = sent.payload.jsonObject
             assertEquals("conv-1", payload.getValue("conversation_id").jsonPrimitive.content)
             assertEquals(listOf(ID_B, ID_A), payload.getValue("attachment_ids").jsonArray.map { it.jsonPrimitive.content })
-            assertNull("nothing is added before the ack", send())
-            assertEquals(emptyList<ThreadItem>(), thread.last())
+            assertNull("the send still awaits its ack", send())
+            // #1355: the echo is drawn before the reply, under the frame's own message_id.
+            val echo = (thread.last().single() as ThreadItem.MessageItem).message
+            assertEquals(payload.getValue("message_id").jsonPrimitive.content, echo.id)
 
             pump.push(ack(sent.id))
             runCurrent()
@@ -384,6 +386,7 @@ class RemoteConversationRepositoryAttachmentTest {
             assertEquals("hi", message.content)
             assertEquals(payload.getValue("message_id").jsonPrimitive.content, message.id)
             assertEquals(listOf(ThreadItem.MessageItem(message)), thread.last())
+            assertEquals(echo, message)
             assertEquals(listOf("event=send_message attachments=2"), logs)
         }
 
@@ -463,7 +466,7 @@ class RemoteConversationRepositoryAttachmentTest {
         }
 
     @Test
-    fun sendRefusedWithAttachmentNotFound_surfacesTheCodeAndAddsNothing() =
+    fun sendRefusedWithAttachmentNotFound_surfacesTheCodeAndKeepsTheEcho() =
         runTest {
             val pump = FakeSessionPump()
             val repo = repo(pump)
@@ -478,7 +481,8 @@ class RemoteConversationRepositoryAttachmentTest {
             val failure = requireNotNull(send()).exceptionOrNull()
             assertTrue("expected RelayErrorException, got $failure", failure is RelayErrorException)
             assertEquals("attachment.not_found", (failure as RelayErrorException).code)
-            assertEquals(listOf(emptyList<ThreadItem>()), thread)
+            // #1355: as on desktop, a refused send leaves its echo drawn.
+            assertEquals(1, thread.last().size)
         }
 
     // #1369: the daemon pushes the delivered send back to its sender (pyrycode#2699), naming only bare ids.
@@ -513,7 +517,8 @@ class RemoteConversationRepositoryAttachmentTest {
             assertEquals("a held id re-emits nothing", emitted, thread.size)
         }
 
-    // #1369: the push can beat the ack. Its bare-id row is then replaced by the send's confirmed insert.
+    // #1369: the push can beat the ack. The echo is drawn before the send (#1355), so the push already finds
+    // the named row and keeps it, and the ack changes nothing.
     @Test
     fun pushBeforeAck_theConfirmedInsertLeavesTheNamedRow() =
         runTest {
@@ -532,7 +537,7 @@ class RemoteConversationRepositoryAttachmentTest {
             pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
             runCurrent()
             assertEquals(
-                listOf(MessageAttachment(ID_A), MessageAttachment(ID_B)),
+                listOf(NAMED_A, NAMED_B),
                 (thread.last().single() as ThreadItem.MessageItem).message.attachments,
             )
 

@@ -45,6 +45,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
@@ -3204,12 +3205,12 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun sendMessage_whenRefused_leavesTheDraftToResend() =
+    fun sendMessage_whenRefused_doesNotRestoreTheDraft() =
         runTest {
-            // AC #2, negative half — the defect this ticket fixes. The clear sits inside the guarded
-            // block after the repo call, so each of the three failure types launchGuardedRepoCall
-            // swallows jumps past it and the text stays put. Uncaught throws are captured because a
-            // throw escaping viewModelScope reaches the default handler, not runTest.
+            // #1355 AC #3: as on desktop, the composer clears on tap and a refused send does not put the
+            // text back — the echo stays in the thread instead (#789's restore-on-failure is dropped).
+            // Each of the three failure types launchGuardedRepoCall swallows stays quiet. Uncaught throws
+            // are captured because a throw escaping viewModelScope reaches the default handler, not runTest.
             val uncaught = mutableListOf<Throwable>()
             val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
             Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
@@ -3234,8 +3235,8 @@ class ThreadViewModelTest {
                     vm.sendMessage("worth keeping")
                     advanceUntilIdle()
 
-                    assertEquals("refused by $failure must keep the draft", "worth keeping", vm.draft.value)
-                    assertEquals("worth keeping", store.draftFor("pyrybox", DRAFT_CONV))
+                    assertEquals("refused by $failure must not restore the draft", "", vm.draft.value)
+                    assertEquals("", store.draftFor("pyrybox", DRAFT_CONV))
                 }
                 assertTrue("a refused send must stay quiet, not crash: $uncaught", uncaught.isEmpty())
             } finally {
@@ -3244,10 +3245,28 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun sendMessage_trimsTheText_andClearsTheDraftBeforeAnyReply() =
+        runTest {
+            // #1355 AC #1: the send never completes, yet the composer is already clear and the
+            // repository was handed the trimmed text.
+            val store = ComposerDraftStore()
+            val repository = NeverRepliesRepository()
+            val vm = makeVm(threadHandle("pyrybox", DRAFT_CONV), repository, draftStore = store)
+            advanceUntilIdle()
+            vm.onDraftChange("  hi \n")
+
+            vm.sendMessage("  hi \n")
+            advanceUntilIdle()
+
+            assertEquals(listOf("hi"), repository.sentTexts)
+            assertEquals("", vm.draft.value)
+            assertTrue(store.drafts.value.isEmpty())
+        }
+
+    @Test
     fun sendMessage_whenTheDraftChangedInFlight_leavesTheNewTextAlone() =
         runTest {
-            // The clear is guarded on the draft still equalling what was sent, so an accepted send
-            // cannot swallow text typed while it was in flight.
+            // The draft clears before the send launches, so text typed while it is in flight survives it.
             val store = ComposerDraftStore()
             var vm: ThreadViewModel? = null
             val repository =
@@ -4769,6 +4788,21 @@ class ThreadViewModelTest {
         serverId: String,
         conversationId: String,
     ): SavedStateHandle = SavedStateHandle(initialState = mapOf("serverId" to serverId, "conversationId" to conversationId))
+
+    /** Records each sent text and never returns: a daemon reply that never arrives (#1355). */
+    private class NeverRepliesRepository(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val sentTexts = mutableListOf<String>()
+
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+        ): Message {
+            sentTexts += text
+            awaitCancellation()
+        }
+    }
 
     /**
      * Runs [whileSending] inside the suspend `sendMessage` call, before it returns (#789) — the user

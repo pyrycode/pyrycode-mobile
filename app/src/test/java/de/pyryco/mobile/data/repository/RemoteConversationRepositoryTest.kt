@@ -684,9 +684,9 @@ class RemoteConversationRepositoryTest {
             assertEquals(message.id, last.last()!!.id)
         }
 
-    // AC #4: a correlated server error surfaces as RelayErrorException (exposing code); no projection.
+    // #1355: the echo is drawn before the reply, so a refusal still throws but leaves it in place, as on desktop.
     @Test
-    fun sendMessage_onServerError_throwsRelayErrorAndLeavesProjectionsUnchanged() =
+    fun sendMessage_onServerError_throwsRelayErrorAndKeepsTheEcho() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope)
@@ -705,9 +705,12 @@ class RemoteConversationRepositoryTest {
             assertEquals("server.binary_offline", (ex as RelayErrorException).code)
             assertTrue(ex.retryable)
 
-            // Nothing inserted on the failure path.
-            assertEquals(listOf(emptyList<String>()), thread.map { messageIds(it) })
-            assertEquals(listOf<Message?>(null), last)
+            val echoId =
+                sent.payload.jsonObject
+                    .getValue("message_id")
+                    .jsonPrimitive.content
+            assertEquals(listOf(echoId), messageIds(thread.last()))
+            assertEquals(echoId, last.last()!!.id)
         }
 
     // AC #3: an unknown conversation (server error conversation.not_found) throws IllegalArgumentException.
@@ -727,12 +730,19 @@ class RemoteConversationRepositoryTest {
 
             val ex = send().exceptionOrNull()
             assertTrue("expected IllegalArgumentException, got $ex", ex is IllegalArgumentException)
-            assertEquals(listOf(emptyList<String>()), thread.map { messageIds(it) })
+            assertEquals(
+                listOf(
+                    sent.payload.jsonObject
+                        .getValue("message_id")
+                        .jsonPrimitive.content,
+                ),
+                messageIds(thread.last()),
+            )
         }
 
-    // AC #4: a not-Open session (pump.send returns false) throws IllegalStateException; no projection.
+    // A not-Open session (pump.send returns false) throws IllegalStateException; the echo drawn before the send stays (#1355).
     @Test
-    fun sendMessage_whenSendReturnsFalse_throwsIllegalStateAndLeavesProjectionsUnchanged() =
+    fun sendMessage_whenSendReturnsFalse_throwsIllegalStateAndKeepsTheEcho() =
         runTest {
             val pump = FakeSessionPump()
             pump.sendResult = false
@@ -746,8 +756,79 @@ class RemoteConversationRepositoryTest {
 
             val ex = send().exceptionOrNull()
             assertTrue("expected IllegalStateException, got $ex", ex is IllegalStateException)
-            assertEquals(listOf(emptyList<String>()), thread.map { messageIds(it) })
-            assertEquals(listOf<Message?>(null), last)
+            val echoId =
+                pump.sent
+                    .single { it.type == "send_message" }
+                    .payload.jsonObject
+                    .getValue("message_id")
+                    .jsonPrimitive.content
+            assertEquals(listOf(echoId), messageIds(thread.last()))
+            assertEquals(echoId, last.last()!!.id)
+        }
+
+    // #1355 AC #1: the echo and the list's last message are drawn before any reply, under the frame's own
+    // message_id, and the reply that finally arrives draws no second row.
+    @Test
+    fun sendMessage_drawsTheEchoBeforeTheReply_andTheAckAddsNoSecondRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val thread = collectMessages(repo, "c1")
+            val last = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "send_message" }
+            val echoId =
+                sent.payload.jsonObject
+                    .getValue("message_id")
+                    .jsonPrimitive.content
+            assertEquals(listOf(echoId), messageIds(thread.last()))
+            val echo = (thread.last().single() as ThreadItem.MessageItem).message
+            assertEquals("hi", echo.content)
+            assertEquals(Role.User, echo.role)
+            assertEquals(echoId, last.last()!!.id)
+
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            assertEquals(echoId, send().getOrThrow().id)
+            assertEquals(listOf(echoId), messageIds(thread.last()))
+        }
+
+    // #1355 AC #2: a message sent during a running turn is queued before its ack lands. The echo is already
+    // the one row with that id, and a confirmed drop of the queued item still removes it.
+    @Test
+    fun sendMessage_queuedBeforeTheAck_holdsOneRow_andAConfirmedDropRemovesIt() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val send = startSend(repo, "c-1", "two")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "send_message" }
+            val echoId =
+                sent.payload.jsonObject
+                    .getValue("message_id")
+                    .jsonPrimitive.content
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = echoId))))
+            runCurrent()
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+            assertEquals(echoId, send().getOrThrow().id)
+            assertEquals(listOf(echoId), messageIds(thread.last()))
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            assertTrue(drop().isSuccess)
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), messageIds(thread.last()))
         }
 
     // Correlation hygiene: an ack matching no pending request is a no-op; the collector survives and
