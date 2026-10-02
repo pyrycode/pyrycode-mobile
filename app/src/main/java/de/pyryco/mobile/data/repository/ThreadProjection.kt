@@ -41,13 +41,14 @@ import java.util.concurrent.atomic.AtomicLong
 internal class ThreadProjection {
     /**
      * `conversationId -> ordered thread rows` ([ThreadItem.MessageItem] + [ThreadItem.SessionBoundary])
-     * for the conversation — backfilled history (`message_chunk`) plus live `message`s and structured
+     * for the conversation — backfilled history (`message_chunk`) plus live user `message`s and structured
      * turns, deduped by `message_id`, interleaved in wire/arrival order with `session_transition`
      * boundaries (#313, #336). Written by the repository's single inbound collector **and** by [RemoteConversationRepository.sendMessage]'s
      * confirmed insert (#346) — two writers, but every write goes through the atomic
      * [appendMessages] / [appendSessionBoundary] / [MutableStateFlow.update] fold, so concurrent updates
      * retry-merge correctly. [RemoteConversationRepository.observeMessages] fans out from it through [observe]. Message rows are order-preserving: first
-     * insertion fixes a message's position, a repeat `message_id` updates it in place (the dedup rule);
+     * insertion fixes a message's position; through [appendMessages] a repeat `message_id` updates it in
+     * place (the dedup rule), while [appendLiveMessage] keeps the held row unchanged (#1351);
      * boundaries append in arrival order, skipping one the thread already holds ([holdsBoundary]). The thread is
      * complete-on-first-emission once backfill arrives and live rows append after.
      */
@@ -149,11 +150,11 @@ internal class ThreadProjection {
 
     /**
      * Apply one `model_refusal_fallback` or `model_refusal_no_fallback` envelope (#875): decode it by its
-     * type, then fold its row. A malformed one is dropped.
+     * type, then fold its row. A malformed one is dropped. Returns the routing conversation id and the
+     * decoded refusal with its `scope` (#1360), for the caller's live signal, or `null` when dropped.
      */
-    fun applyModelRefusal(envelope: Envelope) {
-        decodeModelRefusal(envelope)?.let { (conversationId, row) -> appendModelRefusal(conversationId, row) }
-    }
+    fun applyModelRefusal(envelope: Envelope): Pair<String, LiveRefusalEvent.Refused>? =
+        decodeModelRefusal(envelope)?.also { (conversationId, refused) -> appendModelRefusal(conversationId, refused.refusal) }
 
     /**
      * Append [rows] (`conversationId -> Message`) into [threadByConversation] as [ThreadItem.MessageItem]
@@ -171,6 +172,25 @@ internal class ThreadProjection {
                 updated[conversationId] = updated[conversationId].orEmpty().withMessage(message)
             }
             updated
+        }
+    }
+
+    /**
+     * Append one live `message` [message] to [conversationId]'s thread (#1351), **keeping a row the thread
+     * already holds** under the same `message_id` rather than replacing it the way [appendMessages] does.
+     * The daemon pushes the operator's delivered message to every conn, the sender's included, and the
+     * sender's confirmed row carries the attachment names and send time that the pushed copy lacks. The
+     * identity is [withMessage]'s, id-only and role-agnostic. A held id returns the map unchanged, so
+     * nothing re-emits.
+     */
+    fun appendLiveMessage(
+        conversationId: String,
+        message: Message,
+    ) {
+        threadByConversation.update { current ->
+            val thread = current[conversationId].orEmpty()
+            val held = thread.any { it is ThreadItem.MessageItem && it.message.id == message.id }
+            if (held) current else current + (conversationId to (thread + ThreadItem.MessageItem(message)))
         }
     }
 
@@ -653,20 +673,21 @@ internal class ThreadProjection {
      * [ThreadItem.ModelRefusal], or **null** when it cannot be folded. The DTO is chosen by [Envelope.type],
      * which is the only thing that tells the two frames apart. The row's identity is the envelope's `ts`, so a
      * malformed `ts` drops the frame exactly as a malformed payload does. Mirrors [decodeBanner], and like it
-     * logs nothing: every field but the conversation id is claude-authored.
+     * logs nothing: every field but the conversation id is claude-authored. The fallback frame's `scope`
+     * rides beside the row (#1360); the row itself still drops it.
      */
-    private fun decodeModelRefusal(envelope: Envelope): Pair<String, ThreadItem.ModelRefusal>? =
+    private fun decodeModelRefusal(envelope: Envelope): Pair<String, LiveRefusalEvent.Refused>? =
         try {
             val occurredAt = Instant.parse(envelope.ts)
             when (envelope.type) {
                 RemoteConversationRepository.TYPE_MODEL_REFUSAL_FALLBACK ->
                     MobileJson
                         .decodeFromJsonElement<ModelRefusalFallbackPayloadDto>(envelope.payload)
-                        .let { it.conversationId to it.toRow(occurredAt) }
+                        .let { it.conversationId to LiveRefusalEvent.Refused(it.toRow(occurredAt), it.scope) }
                 RemoteConversationRepository.TYPE_MODEL_REFUSAL_NO_FALLBACK ->
                     MobileJson
                         .decodeFromJsonElement<ModelRefusalNoFallbackPayloadDto>(envelope.payload)
-                        .let { it.conversationId to it.toRow(occurredAt) }
+                        .let { it.conversationId to LiveRefusalEvent.Refused(it.toRow(occurredAt), scope = null) }
                 else -> null
             }
         } catch (e: IllegalArgumentException) {

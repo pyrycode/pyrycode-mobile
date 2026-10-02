@@ -152,6 +152,15 @@ interface ConversationRepository {
     fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = flowOf(null)
 
     /**
+     * Emits [conversationId]'s live refusal frames and session transitions (#1360), in wire order, as they
+     * arrive. Hot, nothing replayed: history pages, the cache and a reopened thread never emit here, which is
+     * what lets a consumer tell a refusal that just happened from a restored row.
+     *
+     * Default `emptyFlow()`, the same cascade-avoidance as [observeAnnouncedModel].
+     */
+    fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = emptyFlow()
+
+    /**
      * Emits the facts claude last reported about its own run for [conversationId] (#890): its build and the
      * permission posture it claims, or **`null` until a report arrives**. Cold flow; re-emits on every
      * change. Each `session_facts` frame replaces the reading. Cleared exactly as [observeAnnouncedModel] is.
@@ -900,8 +909,8 @@ sealed interface ThreadItem {
      *
      * **[text] is claude-authored and unsanitized** — bounded daemon-side at 4 KiB, never cleaned. It is
      * held verbatim; the render boundary owes the control-character and escape stripping (see
-     * `BannerNoticeRow`). Consumers must render it inert and attributed to claude, must not persist it, and
-     * must not log it.
+     * `BannerNoticeRow`). Consumers must render it inert and attributed to claude and must not log it. The
+     * thread cache stores it as held (#1353), and a restored row renders through the same boundary.
      *
      * Identity: [occurredAt], the envelope's (or stored entry's) `ts` — the protocol's `(type, ts)` join
      * key with the type implied by this variant. Invariant: unique among a thread's banners. The thread's
@@ -934,7 +943,7 @@ sealed interface ThreadItem {
      * obligation — both thread writers skip one the thread already holds (`holdsCompactionBoundary`) —
      * documented here and asserted in tests, not enforced at construction (as [SessionBoundary]).
      *
-     * Never cached: history replay restores it.
+     * The thread cache stores it (#1353), since history loads only when the user asks.
      *
      * @param preTokens claude's context size before the compaction, or null when it stated none, stated
      *   `null`, or stated a value that is not a non-negative safe integer. Never a stand-in `0`.
@@ -958,7 +967,8 @@ sealed interface ThreadItem {
      *
      * **Every string here is claude-authored and unsanitized** — bounded daemon-side, never cleaned. Held
      * verbatim; the render boundary owes the stripping (see `ModelRefusalRow`). Consumers must render them
-     * inert and attributed to claude, must not persist them, and must not log them.
+     * inert and attributed to claude and must not log them. The thread cache stores them as held (#1353), and
+     * a restored row renders through the same boundary.
      *
      * Identity: the frame type — `fallbackModel != null` — plus [occurredAt], the envelope's (or stored
      * entry's) `ts`: the protocol's `(type, ts)` join key. Invariant: unique among a thread's refusal rows.
@@ -1467,6 +1477,25 @@ data class AnnouncedModel(
     val model: String,
     val truncated: Boolean,
 )
+
+/**
+ * One live event of [ConversationRepository.observeLiveRefusalEvents] (#1360): what arms or clears a thread's
+ * switch-back offer. Wire SSOT: pyrycode `docs/protocol-mobile.md` § `model_refusal_fallback`.
+ */
+sealed interface LiveRefusalEvent {
+    /**
+     * A refusal frame as it arrived: the row it folded and, for a fallback frame, its `scope`, verbatim
+     * (`null` for `model_refusal_no_fallback`, which has none). `scope` is claude's open string; compare it,
+     * never render or log it.
+     */
+    data class Refused(
+        val refusal: ThreadItem.ModelRefusal,
+        val scope: String?,
+    ) : LiveRefusalEvent
+
+    /** The conversation's session was replaced (`session_transition`), which ends a Reset too. */
+    data object SessionReplaced : LiveRefusalEvent
+}
 
 /**
  * What claude reported about its own run for a conversation's latest turn (#890, pyrycode#2253/#2254) — the

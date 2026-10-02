@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 
@@ -117,6 +118,14 @@ class StableConversationRepository(
     override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> =
         heldReadings?.observeAnnouncedModel(conversationId)
             ?: switchToLive<AnnouncedModel?>(null) { it.observeAnnouncedModel(conversationId) }
+
+    /**
+     * The live refusal events for [conversationId] (#1360), switched over the live connection. Never held:
+     * they are events, so the gap between connections emits nothing and a reconnect replays nothing.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> =
+        currentRepository.flatMapLatest { repo -> repo?.observeLiveRefusalEvents(conversationId) ?: emptyFlow() }
 
     /** The session-facts reading for [conversationId] (#890), held or switched as [observeAnnouncedModel] is. */
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> =

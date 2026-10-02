@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
@@ -45,7 +46,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -363,6 +366,20 @@ class RemoteConversationRepository(
     val modalEvents: SharedFlow<ModalEvent> = mutableModalEvents.asSharedFlow()
 
     /**
+     * Live refusal frames and session transitions keyed by conversation id (#1360), the source of
+     * [observeLiveRefusalEvents]. The [mutableLiveSessionEvents] posture: events, not state, so nothing is
+     * replayed, and [BufferOverflow.DROP_OLDEST] keeps [MutableSharedFlow.tryEmit] from ever stalling the
+     * inbound collector. A dropped event can only leave a switch-back offer unarmed or stale; a write still
+     * needs the user's tap.
+     */
+    private val liveRefusalEvents =
+        MutableSharedFlow<Pair<String, LiveRefusalEvent>>(
+            replay = 0,
+            extraBufferCapacity = 16,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
+    /**
      * The clarification batches outstanding on **this connection** (#822), held by [QuestionBatchProjection]
      * (#913), which folds `question_shown` / `question_dismissed` and sends the answers and refusals. A new
      * connection builds a new repository, so this starts empty and the reconcile rebuilds it. On the concrete
@@ -422,16 +439,22 @@ class RemoteConversationRepository(
                 val (conversationId, message) =
                     try {
                         val dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
-                        dto.conversationId to dto.toMessage(envelope, sessionId = "")
+                        val message = dto.toMessage(envelope, sessionId = "")
+                        dto.conversationId to
+                            if (message.role == Role.User) {
+                                message.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
+                            } else {
+                                message
+                            }
                     } catch (e: IllegalArgumentException) {
                         return
                     }
-                // Keep the most-recent by timestamp (the strictly-greater fold below). The live
-                // message is also a thread row (#313): append it to the conversation thread in
-                // arrival order, deduped by message_id. The thread is a distinct projection from
-                // the last-message preview.
+                // Keep the most-recent by timestamp (the strictly-greater fold below). Only a user
+                // message is a thread row (#1351), as on desktop: the v2 path mints `message` for the
+                // operator's delivered turn alone, and assistant output arrives as structured events.
+                // A held id — the phone's own confirmed send among them — is kept, not replaced.
                 conversationListProjection.recordLastMessage(conversationId, message)
-                threadProjection.appendMessages(listOf(conversationId to message))
+                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message)
             }
             TYPE_MESSAGE_CHUNK -> {
                 // The `backfill_since` response (#313): a batch of finished messages, each carrying
@@ -749,6 +772,9 @@ class RemoteConversationRepository(
                         // Eighth write since #945: the context reading described the replaced session, so it is
                         // dropped until the new session's first turn ends. Same routing.
                         contextUsageProjection.onSessionTransition(conversationId)
+                        // Ninth since #1360: the replaced session's switch-back offer is over. Emitted on the same
+                        // flow as the refusals, so the two keep their wire order.
+                        liveRefusalEvents.tryEmit(conversationId to LiveRefusalEvent.SessionReplaced)
                     }
                 }
             }
@@ -810,8 +836,10 @@ class RemoteConversationRepository(
                 // the refusal row — and inert toward every neighbour: no liveSessionEvents emission, no turn
                 // opened, closed or altered, no status touched, and no model state, which `model_announced`
                 // alone owns. Nothing here logs any payload field: all of them but the id are claude's.
+                // #1360: the one other write is the live signal, carrying the decoded refusal with its `scope`.
+                // Only this live arm emits it; the history lane never does.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    threadProjection.applyModelRefusal(envelope)
+                    threadProjection.applyModelRefusal(envelope)?.let { liveRefusalEvents.tryEmit(it) }
                 }
             }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
@@ -1152,6 +1180,9 @@ class RemoteConversationRepository(
         ) { stalled, retrying, compacting, resetting -> stalled + retrying + compacting + resetting }.distinctUntilChanged()
 
     override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = announcedModelProjection.observe(conversationId)
+
+    override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> =
+        liveRefusalEvents.filter { it.first == conversationId }.map { it.second }
 
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 

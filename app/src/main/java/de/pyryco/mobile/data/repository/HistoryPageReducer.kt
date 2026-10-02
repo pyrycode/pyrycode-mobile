@@ -535,9 +535,10 @@ private fun List<ThreadItem>.withHistoryEntry(
  * The references a stored user turn names, a `send_message` (#983) or a user `message` (#1020), in wire order: every id that is not the published
  * lowercase-UUIDv4 shape is dropped and the rest kept, a repeat keeps its first position, and at most
  * [MessageAttachmentIds.MAX] survive, the bound the daemon enforced on the send. A replayed entry is not
- * re-validated by the daemon, so this is the only check between it and the thread.
+ * re-validated by the daemon, so this is the only check between it and the thread. The live `message`
+ * arm (#1351) runs the same check on a pushed user turn.
  */
-private fun storedAttachmentReferences(ids: List<String>?): List<MessageAttachment> =
+internal fun storedAttachmentReferences(ids: List<String>?): List<MessageAttachment> =
     ids
         .orEmpty()
         .filter(::isAttachmentIdShape)
@@ -664,11 +665,14 @@ internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<Th
     if (cached.isEmpty()) return this
     val kept = withAttachmentHintsFrom(cached)
     val heads = segmentHeads()
+    // Built once so the merge stays linear in the cached base, which holds a thread's whole history (#1353).
+    val heldAt = HashMap<Any, Int>(size)
+    forEachIndexed { index, row -> heldAt.putIfAbsent(row.joinIdentity(), index) }
     // Slot i is in front of this thread's row i; slot size is after its last row.
     val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
     var slot = 0
     for (row in cached) {
-        val held = indexOfFirst { listOf(it).alreadyHolds(row) }
+        val held = heldAt[row.joinIdentity()] ?: -1
         if (held >= 0) {
             slot = held + 1
             continue
@@ -852,6 +856,20 @@ private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
         is ThreadItem.Banner -> holdsBanner(row)
         is ThreadItem.CompactionBoundary -> holdsCompactionBoundary(row)
         is ThreadItem.ModelRefusal -> holdsModelRefusal(row)
+    }
+
+/**
+ * The identity [alreadyHolds] joins this row on, as a hashable key (#1353): two rows hold each other exactly
+ * when their identities are equal. The kind leads each key, so rows of different kinds never collide.
+ */
+private fun ThreadItem.joinIdentity(): Any =
+    when (this) {
+        is ThreadItem.MessageItem -> listOf("message", message.id)
+        is ThreadItem.SessionBoundary -> listOf("boundary", previousSessionId, newSessionId, occurredAt)
+        is ThreadItem.UnrecognizedMessage -> listOf("unrecognized", id)
+        is ThreadItem.Banner -> listOf("banner", occurredAt)
+        is ThreadItem.CompactionBoundary -> listOf("compaction", occurredAt)
+        is ThreadItem.ModelRefusal -> listOf("refusal", fallbackModel != null, occurredAt)
     }
 
 /**
