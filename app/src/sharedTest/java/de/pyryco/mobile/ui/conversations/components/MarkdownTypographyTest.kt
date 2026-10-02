@@ -39,7 +39,7 @@ class MarkdownTypographyTest {
                 MarkdownReaderScreen(MarkdownDocument("Typography.md", fixture), onBack = {})
             }
         }
-        assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal)
+        assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
         assertSpecialStyles(codeSize = 13)
     }
 
@@ -54,7 +54,7 @@ class MarkdownTypographyTest {
                 )
             }
         }
-        assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal)
+        assertBody(16, 24, 12f, 6f, quoteStyle = FontStyle.Normal, inlineMarkers = true)
     }
 
     @Test
@@ -100,6 +100,7 @@ class MarkdownTypographyTest {
         itemGap: Float,
         taskGap: Float = itemGap,
         quoteStyle: FontStyle = FontStyle.Italic,
+        inlineMarkers: Boolean = false,
     ) {
         val bodyTexts =
             listOf(
@@ -123,15 +124,16 @@ class MarkdownTypographyTest {
         for (text in bodyTexts) {
             val style =
                 rule
-                    .onNodeWithText(text, useUnmergedTree = true)
+                    .onNodeWithText(text, substring = true, useUnmergedTree = true)
                     .layout()
                     .layoutInput.style
             assertEquals(text, size.sp, style.fontSize)
             assertEquals(text, lineHeight.sp, style.lineHeight)
         }
-        for (marker in listOf("•", "1.", "2.")) {
-            val nodes = rule.onAllNodesWithText(marker, useUnmergedTree = true)
-            nodes.assertCountEquals(if (marker == "•") 6 else 1)
+        // The reader writes the marker into the item's paragraph (#1533, Figma `553:2574`); a thread keeps it separate.
+        for (marker in listOf("•", "1.", "2.").map { if (inlineMarkers) "$it  " else it }) {
+            val nodes = rule.onAllNodesWithText(marker, substring = inlineMarkers, useUnmergedTree = true)
+            nodes.assertCountEquals(if (marker.startsWith("•")) 6 else 1)
             for (index in nodes.fetchSemanticsNodes().indices) {
                 val style = nodes[index].layout().layoutInput.style
                 assertEquals(marker, size.sp, style.fontSize)
@@ -167,8 +169,8 @@ class MarkdownTypographyTest {
         after: String,
         expected: Float,
     ) {
-        val first = rule.onNodeWithText(before, useUnmergedTree = true).getUnclippedBoundsInRoot()
-        val second = rule.onNodeWithText(after, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val first = rule.onNodeWithText(before, substring = true, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val second = rule.onNodeWithText(after, substring = true, useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertEquals("$before -> $after", expected, (second.top - first.bottom).value, 0.6f)
     }
 

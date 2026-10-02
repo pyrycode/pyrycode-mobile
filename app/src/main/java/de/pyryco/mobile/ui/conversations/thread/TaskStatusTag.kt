@@ -52,12 +52,13 @@ internal fun TaskStatusTag(
         Text(
             text = label,
             style =
-                MaterialTheme.typography.labelSmall.copy(
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                    letterSpacing = 0.5.sp,
-                    fontWeight = FontWeight.Medium,
-                ),
+                MaterialTheme.typography.labelSmall
+                    .copy(
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        letterSpacing = 0.5.sp,
+                        fontWeight = FontWeight.Medium,
+                    ).untrimmedLineBox(),
             color = content,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
